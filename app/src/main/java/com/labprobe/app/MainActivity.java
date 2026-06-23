@@ -37,13 +37,12 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.URL;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Random;
@@ -52,6 +51,11 @@ import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import okhttp3.Dns;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 public class MainActivity extends Activity {
     private final ExecutorService io = Executors.newCachedThreadPool();
@@ -84,6 +88,8 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("labprobe", MODE_PRIVATE);
         if (!prefs.contains("hub_url")) prefs.edit().putString("hub_url", "http://192.168.5.46:58443").apply();
         if (!prefs.contains("token")) prefs.edit().putString("token", "").apply();
+        if (!prefs.contains("hub_dns")) prefs.edit().putString("hub_dns", "223.5.5.5").apply();
+        if (!prefs.contains("hub_ipv6_first")) prefs.edit().putBoolean("hub_ipv6_first", true).apply();
         dark = prefs.getBoolean("dark", false);
         applyColors();
         buildBase();
@@ -180,7 +186,7 @@ public class MainActivity extends Activity {
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(text);
-        t.setTextSize(28);
+        t.setTextSize(30);
         t.setTypeface(Typeface.DEFAULT_BOLD);
         parent.addView(t, new LinearLayout.LayoutParams(-1, -2));
         TextView st = new TextView(this);
@@ -348,15 +354,35 @@ public class MainActivity extends Activity {
 
     private void screenTools() {
         ScrollView s = scroll(); LinearLayout p = box(s);
-        header(p, "工具", "Ping · DNS · Telnet · SSH");
+        header(p, "工具", "网络诊断 · 端口检测 · SSH 单条命令");
+        toolToolbar(p);
         toolPing(p);
         toolDns(p);
         toolTelnet(p);
         toolSsh(p);
     }
 
+    private void toolToolbar(LinearLayout p) {
+        LinearLayout c = card(p, "功能导航");
+        c.addView(textView("左侧为功能名，右侧为检测结果。当前版本不做后台刷新，所有功能手动执行。", subtext, 12));
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setPadding(0, dp(8), 0, 0);
+        String[] labels = {"Ping 延迟", "DNS 解析", "TCP 端口", "SSH 命令"};
+        for (String label : labels) {
+            TextView v = chip(label, accent);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.setMargins(0, 0, dp(8), 0);
+            chips.addView(v, lp);
+        }
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        hsv.addView(chips);
+        c.addView(hsv, new LinearLayout.LayoutParams(-1, -2));
+    }
+
     private void toolPing(LinearLayout p) {
-        LinearLayout c = card(p, "Ping");
+        LinearLayout c = card(p, "Ping 延迟测试");
         c.addView(textView("用于 ICMP 延迟测试。间隔单位是 ms，可填 30 / 100 / 1000。", subtext, 12));
         EditText host = input("目标，例如 223.5.5.5", "223.5.5.5"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText count = input("次数", "4"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(count, lp);
@@ -367,7 +393,7 @@ public class MainActivity extends Activity {
     }
 
     private void toolDns(LinearLayout p) {
-        LinearLayout c = card(p, "DNS / nsLookup");
+        LinearLayout c = card(p, "DNS 解析 / nsLookup");
         c.addView(textView("支持系统 DNS、指定 DNS 服务器、A/AAAA 记录查询。默认用 223.5.5.5，避免手机私有 DNS 或代理把结果改成 127.0.0.1。", subtext, 12));
         EditText host = input("域名，例如 net86.dynv6.net", "net86.dynv6.net"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText server = input("DNS服务器：system / 223.5.5.5 / 8.8.8.8", "223.5.5.5"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(server, lp);
@@ -377,7 +403,7 @@ public class MainActivity extends Activity {
     }
 
     private void toolTelnet(LinearLayout p) {
-        LinearLayout c = card(p, "Telnet / TCP 端口测试");
+        LinearLayout c = card(p, "TCP 端口测试 / Telnet");
         c.addView(textView("这是 TCP Connect 测试，用于判断 TCP 端口是否开放；不能判断 UDP 端口，例如 WireGuard UDP。", subtext, 12));
         EditText host = input("IP 或域名", "192.168.5.46"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText port = input("端口", "58443"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(port, lp);
@@ -388,7 +414,7 @@ public class MainActivity extends Activity {
 
     private void toolSsh(LinearLayout p) {
         LinearLayout c = card(p, "SSH 单条命令");
-        c.addView(textView("适合执行 uptime、wg show 等简单命令。部分老 SSH 只支持 ssh-rsa，APP 直连可能失败。", subtext, 12));
+        c.addView(textView("适合执行 uptime、wg show 等简单命令。本版已增强 ssh-rsa / 老 KEX 兼容；如果仍失败，建议继续用路由器脚本或专业 SSH 工具。", subtext, 12));
         EditText host = input("主机", "192.168.5.1"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText port = input("端口", "54133"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(port, lp);
         EditText user = input("用户名", "root"); LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-1, dp(48)); lp2.setMargins(0, dp(8),0,0); c.addView(user, lp2);
@@ -426,10 +452,27 @@ public class MainActivity extends Activity {
         ScrollView s = scroll(); LinearLayout p = box(s);
         header(p, "我的", "Hub 设置与主题");
         LinearLayout c = card(p, "连接设置");
-        EditText url = input("Hub 地址", prefs.getString("hub_url", "")); c.addView(url, new LinearLayout.LayoutParams(-1, dp(48)));
-        EditText token = input("APP_TOKEN", prefs.getString("token", "")); LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, dp(48)); tlp.setMargins(0, dp(8),0,0); c.addView(token, tlp);
-        Button save = button("保存设置"); save.setOnClickListener(v -> { prefs.edit().putString("hub_url", trimSlash(url.getText().toString())).putString("token", token.getText().toString().trim()).apply(); toast("已保存"); }); c.addView(save, new LinearLayout.LayoutParams(-1, dp(46)));
-        Button test = button("测试连接"); test.setOnClickListener(v -> fetch("/health", false, res -> toast(res.length() > 0 ? "连接成功" : "连接失败"))); LinearLayout.LayoutParams xp = new LinearLayout.LayoutParams(-1, dp(46)); xp.setMargins(0, dp(8),0,0); c.addView(test, xp);
+        EditText url = input("Hub地址，例如 http://192.168.5.46:58443 或 https://lp.net86.dynv6.net:2186", prefs.getString("hub_url", ""));
+        c.addView(url, new LinearLayout.LayoutParams(-1, dp(48)));
+        EditText token = input("APP_TOKEN", prefs.getString("token", ""));
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, dp(48)); tlp.setMargins(0, dp(8), 0, 0); c.addView(token, tlp);
+        EditText hubDns = input("连接 DNS：223.5.5.5 / 8.8.8.8 / system", prefs.getString("hub_dns", "223.5.5.5"));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-1, dp(48)); dlp.setMargins(0, dp(8), 0, 0); c.addView(hubDns, dlp);
+        c.addView(textView("说明：Hub 请求不再直接走系统 DNS。默认用 223.5.5.5 查询，优先 IPv6，避免被私有 DNS/代理解析成 127.0.0.1。", subtext, 12));
+        Button save = button("保存设置");
+        save.setOnClickListener(v -> {
+            prefs.edit()
+                    .putString("hub_url", url.getText().toString().trim())
+                    .putString("token", token.getText().toString().trim())
+                    .putString("hub_dns", hubDns.getText().toString().trim())
+                    .putBoolean("hub_ipv6_first", true)
+                    .apply();
+            toast("已保存");
+        });
+        c.addView(save, new LinearLayout.LayoutParams(-1, dp(46)));
+        Button test = button("测试连接");
+        test.setOnClickListener(v -> fetch("/health", false, res -> toast(res.length() > 0 ? "连接成功" : "连接失败")));
+        LinearLayout.LayoutParams xp = new LinearLayout.LayoutParams(-1, dp(46)); xp.setMargins(0, dp(8),0,0); c.addView(test, xp);
 
         LinearLayout theme = card(p, "主题");
         Button mode = button(dark ? "切换到白天模式" : "切换到黑夜模式");
@@ -437,7 +480,7 @@ public class MainActivity extends Activity {
         theme.addView(mode, new LinearLayout.LayoutParams(-1, dp(46)));
 
         LinearLayout about = card(p, "关于");
-        about.addView(textView("LabProbe / 极客网探\n版本 0.2.0\n原生 Android + Material 3 Expressive 风格\n当前版本采用手动刷新，不做后台推送。", subtext, 14));
+        about.addView(textView("LabProbe / 极客网探\n版本 0.3.0\n原生 Android + Material 3 Expressive 风格\n本版修复：Hub 自定义 DNS、优先 IPv6、老 SSH 兼容增强、工具栏功能名。", subtext, 14));
     }
 
     private void refreshAll() {
@@ -466,16 +509,60 @@ public class MainActivity extends Activity {
 
     private String httpGet(String path, boolean auth) throws Exception {
         String base = trimSlash(prefs.getString("hub_url", ""));
-        URL u = new URL(base + path);
-        HttpURLConnection c = (HttpURLConnection) u.openConnection();
-        c.setConnectTimeout(5000);
-        c.setReadTimeout(8000);
-        if (auth) c.setRequestProperty("Authorization", "Bearer " + prefs.getString("token", ""));
-        int code = c.getResponseCode();
-        InputStream in = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
-        String body = read(in);
-        if (code < 200 || code >= 300) throw new RuntimeException(code + " " + body);
-        return body;
+        String fullUrl = base + path;
+        OkHttpClient client = new OkHttpClient.Builder()
+                .dns(new HubDns())
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                .build();
+        Request.Builder rb = new Request.Builder().url(fullUrl).get();
+        if (auth) rb.header("Authorization", "Bearer " + prefs.getString("token", ""));
+        try (Response response = client.newCall(rb.build()).execute()) {
+            String body = response.body() == null ? "" : response.body().string();
+            if (!response.isSuccessful()) throw new RuntimeException(response.code() + " " + body);
+            return body;
+        }
+    }
+
+    private class HubDns implements Dns {
+        @Override
+        public List<InetAddress> lookup(String hostname) throws UnknownHostException {
+            String dnsServer = prefs == null ? "223.5.5.5" : prefs.getString("hub_dns", "223.5.5.5").trim();
+            if (dnsServer.length() == 0 || dnsServer.equalsIgnoreCase("system") || dnsServer.equals("系统")) {
+                List<InetAddress> sys = Dns.SYSTEM.lookup(hostname);
+                return filterLoopback(sys);
+            }
+            try {
+                if (isIpLiteral(hostname)) return Dns.SYSTEM.lookup(hostname);
+                List<InetAddress> result = new ArrayList<>();
+                // 优先 IPv6；如果有 AAAA 就只用 AAAA，避免误连不可达 IPv4。
+                for (String ip : queryDns(dnsServer, hostname, 28)) {
+                    InetAddress a = InetAddress.getByName(ip);
+                    if (!a.isLoopbackAddress()) result.add(a);
+                }
+                if (result.isEmpty()) {
+                    for (String ip : queryDns(dnsServer, hostname, 1)) {
+                        InetAddress a = InetAddress.getByName(ip);
+                        if (!a.isLoopbackAddress()) result.add(a);
+                    }
+                }
+                if (!result.isEmpty()) return result;
+            } catch (Exception ignored) { }
+            List<InetAddress> fallback = filterLoopback(Dns.SYSTEM.lookup(hostname));
+            if (fallback.isEmpty()) throw new UnknownHostException(hostname + " resolved to loopback only");
+            return fallback;
+        }
+    }
+
+    private List<InetAddress> filterLoopback(List<InetAddress> src) {
+        List<InetAddress> out = new ArrayList<>();
+        for (InetAddress a : src) if (!a.isLoopbackAddress()) out.add(a);
+        return out;
+    }
+
+    private boolean isIpLiteral(String host) {
+        if (host == null) return false;
+        return host.matches("^[0-9.]+$") || host.contains(":");
     }
 
     private JSONObject statusData() throws Exception {
@@ -587,10 +674,16 @@ public class MainActivity extends Activity {
                 session.setPassword(pass);
                 Properties config = new Properties();
                 config.put("StrictHostKeyChecking", "no");
+                config.put("PreferredAuthentications", "password,keyboard-interactive,publickey");
                 config.put("server_host_key", "ssh-rsa,ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521");
                 config.put("PubkeyAcceptedAlgorithms", "+ssh-rsa");
+                config.put("kex", "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha256,ecdh-sha2-nistp256,curve25519-sha256");
+                config.put("cipher.s2c", "aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,3des-cbc");
+                config.put("cipher.c2s", "aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,3des-cbc");
+                config.put("mac.s2c", "hmac-sha1,hmac-sha2-256,hmac-sha2-512");
+                config.put("mac.c2s", "hmac-sha1,hmac-sha2-256,hmac-sha2-512");
                 session.setConfig(config);
-                session.connect(8000);
+                session.connect(10000);
                 channel = (ChannelExec) session.openChannel("exec");
                 channel.setCommand(command);
                 ByteArrayOutputStream err = new ByteArrayOutputStream();
