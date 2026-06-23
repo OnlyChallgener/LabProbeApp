@@ -150,6 +150,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
 }
 
+@Composable
 fun Modifier.expressiveBackground(): Modifier = background(
     Brush.verticalGradient(
         listOf(
@@ -550,7 +551,7 @@ fun SettingsScreen(prefs: AppPrefs, dark: Boolean, onDark: (Boolean) -> Unit) = 
     }
     item {
         ExpressiveCard("关于", "Kotlin + Jetpack Compose + Material 3 Expressive 风格", Icons.Rounded.Info) {
-            Text("LabProbe / 极客网探\n版本 0.4.1\n当前版本手动刷新，不做后台推送。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontWeight = FontWeight.SemiBold)
+            Text("LabProbe / 极客网探\n版本 0.4.2\n当前版本手动刷新，不做后台推送。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontWeight = FontWeight.SemiBold)
         }
     }
 }

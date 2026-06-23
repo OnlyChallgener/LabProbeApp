@@ -1,4 +1,4 @@
-# LabProbe / 极客网探 v0.4.1
+# LabProbe / 极客网探 v0.4.2
 
 Kotlin + Jetpack Compose + Material 3 风格重构版。
 
@@ -28,6 +28,6 @@ Kotlin + Jetpack Compose + Material 3 风格重构版。
 完成后下载 `LabProbe-debug-apk`。
 
 
-## v0.4.1
+## v0.4.2
 - SSH 按锐捷实测算法调整：ssh-rsa host key、curve25519-sha256@libssh.org、aes256-ctr、hmac-sha2-256。
 - 增加 password / keyboard-interactive 登录兼容。
