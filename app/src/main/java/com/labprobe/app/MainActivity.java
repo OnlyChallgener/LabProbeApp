@@ -38,11 +38,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Random;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -218,10 +222,12 @@ public class MainActivity extends Activity {
         a.setTextSize(14);
         r.addView(a, new LinearLayout.LayoutParams(0, -2, 1));
         TextView b = new TextView(this);
-        b.setText(v == null || v.length() == 0 ? "-" : v);
+        String valueText = v == null || v.length() == 0 || "null".equals(v) ? "-" : v;
+        b.setText(valueText);
         b.setTextColor(text);
         b.setTextSize(14);
         b.setGravity(Gravity.RIGHT);
+        if (!"-".equals(valueText)) b.setOnClickListener(x -> copy(valueText));
         r.addView(b, new LinearLayout.LayoutParams(0, -2, 1.35f));
         p.addView(r, new LinearLayout.LayoutParams(-1, -2));
     }
@@ -272,28 +278,24 @@ public class MainActivity extends Activity {
 
         try {
             JSONObject st = statusData();
-            LinearLayout ip = card(p, "出口地址");
+            LinearLayout ip = card(p, "NAS 出口地址");
             JSONObject router = st.optJSONObject("router");
             JSONObject nas = st.optJSONObject("nas");
-            row(ip, "路由器 IPv4", opt(router, "exitIpv4"));
-            row(ip, "路由器 IPv6", opt(router, "exitIpv6"));
-            row(ip, "NAS IPv4", opt(nas, "exitIpv4"));
-            row(ip, "NAS IPv6", opt(nas, "exitIpv6"));
+            row(ip, "NAS 出口 IPv4", opt(nas, "exitIpv4"));
+            row(ip, "NAS 出口 IPv6", opt(nas, "exitIpv6"));
+            row(ip, "在线终端", opt(router, "onlineDeviceCount"));
+            ip.addView(textView("地址可直接点击复制。路由器 IPv6 暂不采集，先以 NAS 出口地址为准。", subtext, 12));
 
-            LinearLayout wg = card(p, "WireGuard / STUN");
+            LinearLayout wg = card(p, "STUN / VPN 地址");
             String wgAddr = opt(st.optJSONObject("wireguard"), "publicAddress");
             String stunAddr = opt(st.optJSONObject("stun"), "publicAddress");
             row(wg, "WireGuard", wgAddr);
             row(wg, "STUN", stunAddr);
-            LinearLayout btns = new LinearLayout(this); btns.setOrientation(LinearLayout.HORIZONTAL);
-            Button c1 = button("复制 WG"); c1.setOnClickListener(v -> copy(wgAddr));
-            Button c2 = button("复制 STUN"); c2.setOnClickListener(v -> copy(stunAddr));
-            btns.addView(c1, new LinearLayout.LayoutParams(0, dp(44), 1));
-            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0, dp(44), 1); blp.setMargins(dp(8),0,0,0);
-            btns.addView(c2, blp); wg.addView(btns);
+            wg.addView(textView("点击地址即可复制，不再单独放复制按钮。", subtext, 12));
 
             LinearLayout dd = card(p, "DDNS");
-            Object ddnsObj = st.opt("ddns");
+            Object ddnsObj = st.opt("ddnsResolved");
+            if (ddnsObj == null || JSONObject.NULL.equals(ddnsObj)) ddnsObj = st.opt("ddns");
             dd.addView(textView(formatDdns(ddnsObj), subtext, 13));
         } catch (Exception e) {
             LinearLayout empty = card(p, "当前暂无数据");
@@ -355,6 +357,7 @@ public class MainActivity extends Activity {
 
     private void toolPing(LinearLayout p) {
         LinearLayout c = card(p, "Ping");
+        c.addView(textView("用于 ICMP 延迟测试。间隔单位是 ms，可填 30 / 100 / 1000。", subtext, 12));
         EditText host = input("目标，例如 223.5.5.5", "223.5.5.5"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText count = input("次数", "4"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(count, lp);
         EditText interval = input("间隔 ms，可填 30", "1000"); LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-1, dp(48)); lp2.setMargins(0, dp(8),0,0); c.addView(interval, lp2);
@@ -365,13 +368,17 @@ public class MainActivity extends Activity {
 
     private void toolDns(LinearLayout p) {
         LinearLayout c = card(p, "DNS / nsLookup");
+        c.addView(textView("支持系统 DNS、指定 DNS 服务器、A/AAAA 记录查询。默认用 223.5.5.5，避免手机私有 DNS 或代理把结果改成 127.0.0.1。", subtext, 12));
         EditText host = input("域名，例如 net86.dynv6.net", "net86.dynv6.net"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
+        EditText server = input("DNS服务器：system / 223.5.5.5 / 8.8.8.8", "223.5.5.5"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(server, lp);
+        EditText type = input("记录类型：ALL / A / AAAA", "ALL"); LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-1, dp(48)); lp2.setMargins(0, dp(8),0,0); c.addView(type, lp2);
         TextView out = mono("等待解析"); c.addView(out);
-        Button run = button("解析"); run.setOnClickListener(v -> runDns(host.getText().toString(), out)); c.addView(run, new LinearLayout.LayoutParams(-1, dp(46)));
+        Button run = button("解析"); run.setOnClickListener(v -> runDns(host.getText().toString(), server.getText().toString(), type.getText().toString(), out)); c.addView(run, new LinearLayout.LayoutParams(-1, dp(46)));
     }
 
     private void toolTelnet(LinearLayout p) {
         LinearLayout c = card(p, "Telnet / TCP 端口测试");
+        c.addView(textView("这是 TCP Connect 测试，用于判断 TCP 端口是否开放；不能判断 UDP 端口，例如 WireGuard UDP。", subtext, 12));
         EditText host = input("IP 或域名", "192.168.5.46"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText port = input("端口", "58443"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(port, lp);
         EditText timeout = input("超时 ms，可填 30", "1000"); LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-1, dp(48)); lp2.setMargins(0, dp(8),0,0); c.addView(timeout, lp2);
@@ -381,6 +388,7 @@ public class MainActivity extends Activity {
 
     private void toolSsh(LinearLayout p) {
         LinearLayout c = card(p, "SSH 单条命令");
+        c.addView(textView("适合执行 uptime、wg show 等简单命令。部分老 SSH 只支持 ssh-rsa，APP 直连可能失败。", subtext, 12));
         EditText host = input("主机", "192.168.5.1"); c.addView(host, new LinearLayout.LayoutParams(-1, dp(48)));
         EditText port = input("端口", "54133"); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(8),0,0); c.addView(port, lp);
         EditText user = input("用户名", "root"); LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-1, dp(48)); lp2.setMargins(0, dp(8),0,0); c.addView(user, lp2);
@@ -401,6 +409,7 @@ public class MainActivity extends Activity {
             if (arr == null || arr.length() == 0) { LinearLayout c = card(p, "暂无事件"); c.addView(textView("Lucky Webhook 或锐捷状态变化后会出现在这里。", subtext, 14)); return; }
             for (int i=arr.length()-1;i>=0;i--) {
                 JSONObject e = arr.optJSONObject(i); if (e == null) continue;
+                if (isSensitiveWebhookNoise(e)) continue;
                 LinearLayout c = card(p, e.optString("title", e.optString("type", "事件")));
                 row(c, "类型", e.optString("type", ""));
                 row(c, "名称", e.optString("name", e.optString("device", "")));
@@ -428,7 +437,7 @@ public class MainActivity extends Activity {
         theme.addView(mode, new LinearLayout.LayoutParams(-1, dp(46)));
 
         LinearLayout about = card(p, "关于");
-        about.addView(textView("LabProbe / 极客网探\n版本 0.1.0\n原生 Android + Material 3 Expressive 风格\n当前版本采用手动刷新，不做后台推送。", subtext, 14));
+        about.addView(textView("LabProbe / 极客网探\n版本 0.2.0\n原生 Android + Material 3 Expressive 风格\n当前版本采用手动刷新，不做后台推送。", subtext, 14));
     }
 
     private void refreshAll() {
@@ -520,16 +529,34 @@ public class MainActivity extends Activity {
         return sb.length()==0 ? r.trim() : sb.toString().trim();
     }
 
-    private void runDns(String host, TextView out) {
+    private void runDns(String host, String server, String recordType, TextView out) {
         out.setText("解析中...");
         io.execute(() -> {
             String r;
             try {
+                String domain = host.trim();
+                String dns = server.trim();
+                String type = recordType.trim().toUpperCase(Locale.ROOT);
+                if (type.length() == 0) type = "ALL";
                 long st = System.currentTimeMillis();
-                InetAddress[] addrs = InetAddress.getAllByName(host.trim());
                 StringBuilder sb = new StringBuilder();
-                sb.append("耗时 ").append(System.currentTimeMillis()-st).append("ms\n");
-                for (InetAddress a:addrs) sb.append(a.getHostAddress()).append('\n');
+                if (dns.length() == 0 || dns.equalsIgnoreCase("system") || dns.equals("系统")) {
+                    InetAddress[] addrs = InetAddress.getAllByName(domain);
+                    sb.append("完成：系统 DNS ").append(addrs.length).append(" 条\n");
+                    sb.append("耗时 ").append(System.currentTimeMillis()-st).append("ms\n\n");
+                    for (InetAddress a:addrs) {
+                        String ip = a.getHostAddress();
+                        sb.append(ip).append(ip.contains(":") ? " (IPv6)" : " (IPv4)").append("\n");
+                    }
+                } else {
+                    List<String> results = new ArrayList<>();
+                    if (type.equals("ALL") || type.equals("A")) results.addAll(queryDns(dns, domain, 1));
+                    if (type.equals("ALL") || type.equals("AAAA")) results.addAll(queryDns(dns, domain, 28));
+                    sb.append("完成：").append(dns).append(" DNS ").append(results.size()).append(" 条\n");
+                    sb.append("耗时 ").append(System.currentTimeMillis()-st).append("ms\n\n");
+                    for (String ip: results) sb.append(ip).append(ip.contains(":") ? " (IPv6)" : " (IPv4)").append("\n");
+                }
+                sb.append("\n提示：点击结果文本可选中复制。Geo 归属地后续会接离线库/接口。");
                 r = sb.toString();
             } catch (Exception e) { r = "解析失败: " + e.getMessage(); }
             String rr = r; main.post(() -> out.setText(rr));
@@ -577,6 +604,80 @@ public class MainActivity extends Activity {
             finally { if (channel != null) channel.disconnect(); if (session != null) session.disconnect(); }
             String rr = r; main.post(() -> out.setText(rr));
         });
+    }
+
+    private List<String> queryDns(String server, String domain, int qtype) throws Exception {
+        byte[] query = buildDnsQuery(domain, qtype);
+        DatagramSocket socket = new DatagramSocket();
+        socket.setSoTimeout(3000);
+        DatagramPacket packet = new DatagramPacket(query, query.length, InetAddress.getByName(server), 53);
+        socket.send(packet);
+        byte[] buf = new byte[1500];
+        DatagramPacket resp = new DatagramPacket(buf, buf.length);
+        socket.receive(resp);
+        socket.close();
+        return parseDnsResponse(Arrays.copyOf(resp.getData(), resp.getLength()), qtype);
+    }
+
+    private byte[] buildDnsQuery(String domain, int qtype) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int id = new Random().nextInt(65535);
+        out.write((id >> 8) & 0xff); out.write(id & 0xff);
+        out.write(0x01); out.write(0x00);
+        out.write(0x00); out.write(0x01);
+        out.write(0x00); out.write(0x00);
+        out.write(0x00); out.write(0x00);
+        out.write(0x00); out.write(0x00);
+        for (String label : domain.split("\\.")) {
+            byte[] b = label.getBytes("UTF-8");
+            out.write(b.length); out.write(b);
+        }
+        out.write(0x00);
+        out.write((qtype >> 8) & 0xff); out.write(qtype & 0xff);
+        out.write(0x00); out.write(0x01);
+        return out.toByteArray();
+    }
+
+    private List<String> parseDnsResponse(byte[] data, int expectedType) throws Exception {
+        List<String> list = new ArrayList<>();
+        if (data.length < 12) return list;
+        int qd = u16(data, 4);
+        int an = u16(data, 6);
+        int[] off = new int[]{12};
+        for (int i=0;i<qd;i++) { skipName(data, off); off[0] += 4; }
+        for (int i=0;i<an && off[0] + 12 <= data.length;i++) {
+            skipName(data, off);
+            int type = u16(data, off[0]); off[0] += 2;
+            off[0] += 2;
+            off[0] += 4;
+            int len = u16(data, off[0]); off[0] += 2;
+            if (off[0] + len > data.length) break;
+            if ((expectedType == 1 && type == 1 && len == 4) || (expectedType == 28 && type == 28 && len == 16)) {
+                byte[] addr = Arrays.copyOfRange(data, off[0], off[0] + len);
+                list.add(InetAddress.getByAddress(addr).getHostAddress());
+            }
+            off[0] += len;
+        }
+        return list;
+    }
+
+    private int u16(byte[] d, int o) { return ((d[o] & 0xff) << 8) | (d[o+1] & 0xff); }
+
+    private void skipName(byte[] d, int[] off) {
+        int p = off[0];
+        while (p < d.length) {
+            int len = d[p] & 0xff;
+            if (len == 0) { p++; break; }
+            if ((len & 0xC0) == 0xC0) { p += 2; break; }
+            p += 1 + len;
+        }
+        off[0] = p;
+    }
+
+    private boolean isSensitiveWebhookNoise(JSONObject e) {
+        String type = e.optString("type", "");
+        String nv = e.optString("newValue", "");
+        return "lucky_webhook".equals(type) && nv.contains("token");
     }
 
     private TextView textView(String s, int color, int sp) { TextView v = new TextView(this); v.setText(s); v.setTextColor(color); v.setTextSize(sp); v.setPadding(0, dp(6), 0, dp(6)); return v; }

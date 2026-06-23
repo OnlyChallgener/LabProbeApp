@@ -5,6 +5,8 @@
     <application
         android:theme="@style/AppTheme"
         android:label="LabProbe"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:allowBackup="true"
         android:resizeableActivity="true"
