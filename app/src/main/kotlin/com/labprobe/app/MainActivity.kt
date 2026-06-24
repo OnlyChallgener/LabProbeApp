@@ -455,46 +455,33 @@ fun ExpressiveNav(titles: List<String>, icons: List<ImageVector>, selected: Int,
 @Composable
 fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? = null, accent: Color = MaterialTheme.colorScheme.primary, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(28.dp)
-    val bg = Brush.linearGradient(
-        listOf(
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-            accent.copy(alpha = 0.045f),
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.985f)
-        )
-    )
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(5.dp, shape, clip = false),
+            .shadow(4.dp, shape, clip = false),
         shape = shape,
-        color = Color.Transparent,
-        tonalElevation = 0.dp
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.10f))
     ) {
-        Box(
-            Modifier
-                .clip(shape)
-                .background(bg)
-                .border(1.dp, accent.copy(alpha = 0.08f), shape)
-        ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (icon != null) {
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.18f), accent.copy(alpha = 0.08f)))),
-                            contentAlignment = Alignment.Center
-                        ) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
-                        Spacer(Modifier.width(9.dp))
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.54f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
-                    }
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (icon != null) {
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(accent.copy(alpha = 0.13f)),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp)) }
+                    Spacer(Modifier.width(10.dp))
                 }
-                content()
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
+                }
             }
+            content()
         }
     }
 }
@@ -566,11 +553,11 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
 
 @Composable
 fun labOutlinedColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
-    unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
-    disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),
-    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f),
+    focusedContainerColor = MaterialTheme.colorScheme.surface,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.58f),
+    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.32f),
     focusedTextColor = MaterialTheme.colorScheme.onSurface,
     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
     cursorColor = MaterialTheme.colorScheme.primary
@@ -587,10 +574,10 @@ fun CompactHistoryInput(label: String, hint: String, value: String, onValueChang
             singleLine = true,
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(18.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
+            shape = RoundedCornerShape(22.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(52.dp)
+            modifier = Modifier.weight(1f).height(60.dp)
         )
     }
 }
@@ -605,10 +592,10 @@ fun CompactLabeledInput(label: String, hint: String, value: String, onValueChang
             placeholder = { Text(hint, fontSize = 11.5.sp, maxLines = 1) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(18.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
+            shape = RoundedCornerShape(22.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(52.dp)
+            modifier = Modifier.weight(1f).height(60.dp)
         )
     }
 }
@@ -661,10 +648,10 @@ fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit
             onValueChange = onValueChange,
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(16.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+            shape = RoundedCornerShape(20.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.fillMaxWidth().height(50.dp)
+            modifier = Modifier.fillMaxWidth().height(58.dp)
         )
     }
 }
@@ -719,10 +706,10 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(18.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+            shape = RoundedCornerShape(22.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f).height(60.dp)
         )
     }
 }
@@ -731,7 +718,7 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
 fun LabeledInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Text, password: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f))
+        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f).height(60.dp))
     }
 }
 
@@ -742,7 +729,7 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
-            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth())
+            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(60.dp))
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
                 options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
             }
@@ -968,8 +955,8 @@ fun PingTool(prefs: AppPrefs) {
                     points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }
                     running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
+            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
         }
     }
     ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingStats(points); PingChart(points) }
@@ -987,75 +974,72 @@ fun PingChart(points: List<PingPoint>) {
         rawMax <= 500 -> 500
         else -> ((rawMax + 99) / 100) * 100
     }
-    val yTicks = listOf(0, yMax / 5, yMax * 2 / 5, yMax * 3 / 5, yMax * 4 / 5, yMax).distinct()
+    val yTicks = listOf(0, yMax / 4, yMax / 2, yMax * 3 / 4, yMax).distinct()
     val xCount = points.size.coerceAtLeast(1)
     val xStep = (xCount / 7).coerceAtLeast(1)
     val xMarks = (0 until xCount step xStep).take(8).toList().ifEmpty { listOf(0) }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(186.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        Color(0xFFEFF7FF),
-                        Color(0xFFEAFBFA),
-                        MaterialTheme.colorScheme.primary.copy(alpha = .06f)
-                    )
-                )
-            )
-            .padding(8.dp)
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFFEAF6FF),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .08f)),
+        modifier = Modifier.fillMaxWidth().height(240.dp)
     ) {
-        if (points.isEmpty()) {
-            Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.45f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        }
-        Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 16.dp, top = 10.dp, bottom = 26.dp)) {
-            val w = size.width
-            val h = size.height
-            val axis = Color(0xFF64748B).copy(alpha = 0.26f)
-            val grid = Color(0xFF64748B).copy(alpha = 0.12f)
-            val textPaint = Paint().apply {
-                color = android.graphics.Color.argb(150, 75, 85, 99)
-                textSize = 9.sp.toPx()
-                isAntiAlias = true
-                textAlign = Paint.Align.RIGHT
+        Box(Modifier.fillMaxSize().padding(12.dp)) {
+            if (points.isEmpty()) {
+                Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.42f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
-            yTicks.forEach { tick ->
-                val y = h - (tick.toFloat() / yMax.toFloat() * h)
-                drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1.1f)
-                drawContext.canvas.nativeCanvas.drawText(tick.toString(), -8f, y + 3.5f, textPaint)
-            }
-            drawLine(axis, Offset(0f, h), Offset(w, h), strokeWidth = 1.5f)
-            drawLine(axis, Offset(0f, 0f), Offset(0f, h), strokeWidth = 1.5f)
-            val xPaint = Paint().apply {
-                color = android.graphics.Color.argb(150, 75, 85, 99)
-                textSize = 9.sp.toPx()
-                isAntiAlias = true
-                textAlign = Paint.Align.CENTER
-            }
-            xMarks.forEach { mark ->
-                val x = if (xCount <= 1) 0f else w * mark / (xCount - 1)
-                drawLine(grid.copy(alpha = .08f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
-                drawContext.canvas.nativeCanvas.drawText("${mark}s", x, h + 20f, xPaint)
-            }
-            if (points.size >= 2) {
-                val path = Path()
-                var started = false
-                points.forEachIndexed { idx, p ->
-                    if (p.ms != null) {
-                        val x = w * idx / (points.size - 1).coerceAtLeast(1)
-                        val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
-                        if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
-                        drawCircle(Color.White.copy(alpha = .92f), radius = 3.8f, center = Offset(x, y))
-                        drawCircle(Color(0xFF2563EB), radius = 2.2f, center = Offset(x, y))
-                    } else started = false
+            Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 12.dp, top = 12.dp, bottom = 30.dp)) {
+                val w = size.width
+                val h = size.height
+                val axis = Color(0xFF64748B).copy(alpha = 0.38f)
+                val grid = Color(0xFF64748B).copy(alpha = 0.13f)
+                val textPaint = Paint().apply {
+                    color = android.graphics.Color.argb(165, 75, 85, 99)
+                    textSize = 10.sp.toPx()
+                    isAntiAlias = true
+                    textAlign = Paint.Align.RIGHT
                 }
-                drawPath(path, Color(0xFF2563EB), style = Stroke(width = 3.6f, cap = StrokeCap.Round))
+                yTicks.forEach { tick ->
+                    val y = h - (tick.toFloat() / yMax.toFloat() * h)
+                    drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1.05f)
+                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), -10f, y + 4f, textPaint)
+                }
+                drawLine(axis, Offset(0f, h), Offset(w, h), strokeWidth = 1.4f)
+                drawLine(axis, Offset(0f, 0f), Offset(0f, h), strokeWidth = 1.4f)
+                val xPaint = Paint().apply {
+                    color = android.graphics.Color.argb(165, 75, 85, 99)
+                    textSize = 10.sp.toPx()
+                    isAntiAlias = true
+                    textAlign = Paint.Align.CENTER
+                }
+                xMarks.forEach { mark ->
+                    val x = if (xCount <= 1) 0f else w * mark / (xCount - 1)
+                    drawLine(grid.copy(alpha = .09f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
+                    drawContext.canvas.nativeCanvas.drawText("${mark}s", x, h + 22f, xPaint)
+                }
+                if (points.size >= 2) {
+                    val path = Path()
+                    var started = false
+                    points.forEachIndexed { idx, p ->
+                        if (p.ms != null) {
+                            val x = w * idx / (points.size - 1).coerceAtLeast(1)
+                            val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
+                            if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+                        } else started = false
+                    }
+                    drawPath(path, Color(0xFF2563EB), style = Stroke(width = 3.2f, cap = StrokeCap.Round))
+                    points.forEachIndexed { idx, p ->
+                        if (p.ms != null) {
+                            val x = w * idx / (points.size - 1).coerceAtLeast(1)
+                            val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
+                            drawCircle(Color(0xFF2563EB), radius = 2.3f, center = Offset(x, y))
+                        }
+                    }
+                }
             }
+            Text("ms", modifier = Modifier.align(Alignment.TopStart).padding(start = 2.dp, top = 4.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), fontWeight = FontWeight.Bold)
+            Text("s", modifier = Modifier.align(Alignment.BottomEnd), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), fontWeight = FontWeight.Bold)
         }
-        Text("ms", modifier = Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 6.dp), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
-        Text("s", modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1079,14 +1063,14 @@ fun PingStats(points: List<PingPoint>) {
 @Composable
 fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.height(50.dp),
+        modifier = modifier.height(56.dp),
         shape = RoundedCornerShape(18.dp),
-        color = color.copy(alpha = .08f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
+        color = color.copy(alpha = .075f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.Center) {
-            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 12.8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 7.dp), verticalArrangement = Arrangement.Center) {
+            Text(label, fontSize = 10.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1119,27 +1103,26 @@ fun DnsTool(prefs: AppPrefs) {
 
 @Composable
 fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
+    val parts = h.summary.split(" · ").filter { it.isNotBlank() }
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = .045f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .08f)),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
+        tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth().clickable { onCopy() }
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(h.time, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f), maxLines = 1)
+                Text(h.time, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1)
                 Spacer(Modifier.weight(1f))
                 Text(h.domain, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
             }
-            Text(
-                h.summary,
-                fontSize = 12.2.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 16.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .80f)
-            )
+            val lines = if (parts.isEmpty()) listOf(h.summary) else parts.take(3)
+            lines.forEach { line ->
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    Text(line, fontSize = 12.3.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .82f), maxLines = 1)
+                }
+            }
         }
     }
 }
@@ -1441,7 +1424,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.1\n统一 OneUI + Material 3 质感，修复 Ping 参数、图表、查询记录与每日总结。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.2\n收敛修复：去重叠色块，重做 Ping 图表，优化输入框与 DNS 查询记录。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
