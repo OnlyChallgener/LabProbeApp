@@ -14,6 +14,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -66,6 +67,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
+import java.net.URLEncoder
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -95,6 +97,12 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putBoolean("dark", v).apply()
     var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
+
+    private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(3)
+    private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(3).joinToString("\n")).apply() }
+    fun history(key: String): List<String> = getHistory("history_" + key)
+    fun addHistory(key: String, value: String) { val v = value.trim(); if (v.isNotBlank()) putHistory("history_" + key, listOf(v) + getHistory("history_" + key).filter { it != v }) }
+    fun removeHistory(key: String, value: String) { putHistory("history_" + key, getHistory("history_" + key).filter { it != value }) }
 
     var cacheStatus: String get() = sp.getString("cache_status", "") ?: ""
         set(v) = sp.edit().putString("cache_status", v).apply()
@@ -348,9 +356,34 @@ fun PillButton(text: String, icon: ImageVector? = null, enabled: Boolean = true,
 @Composable
 fun InfoRow(label: String, value: String?, copyable: Boolean = false) {
     val ctx = LocalContext.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(82.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f), fontWeight = FontWeight.Bold, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(value?.takeIf { it.isNotBlank() } ?: "未获取", Modifier.weight(1f).then(if (copyable && !value.isNullOrBlank()) Modifier.clickable { copy(ctx, value) } else Modifier), color = if (value.isNullOrBlank()) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
+    val text = value?.takeIf { it.isNotBlank() } ?: "未获取"
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(76.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (copyable && value?.isNotBlank() == true) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable { copy(ctx, value) }, verticalAlignment = Alignment.CenterVertically) {
+                Text(text, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1)
+            }
+        } else {
+            Text(text, Modifier.weight(1f), color = if (value.isNullOrBlank()) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+fun HistoryChips(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) {
+    var tick by remember { mutableStateOf(0) }
+    val items = remember(tick, keyName) { prefs.history(keyName) }
+    if (items.isNotEmpty()) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items.forEach { item ->
+                InputChip(
+                    selected = false,
+                    onClick = { onPick(item) },
+                    label = { Text(item, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingIcon = { Icon(Icons.Rounded.Close, null, Modifier.size(15.dp).clickable { prefs.removeHistory(keyName, item); tick++ }) }
+                )
+            }
+        }
     }
 }
 
@@ -565,10 +598,13 @@ fun DnsTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope(); val ctx = LocalContext.current
     ExpressiveCard("查询配置", "DNS1 失败自动尝试 DNS2，结果附带 Geo。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
         LabeledInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it })
-        LabeledInput("DNS1", "223.5.5.5 / 2400:3200::1", dns1, { dns1 = it; prefs.dns1 = it })
+        HistoryChips("dns_domain", prefs) { domain = it; prefs.dnsDomain = it }
+        LabeledInput("DNS1", "system / 223.5.5.5 / 2400:3200::1", dns1, { dns1 = it; prefs.dns1 = it })
+        HistoryChips("dns1", prefs) { dns1 = it; prefs.dns1 = it }
         LabeledInput("DNS2", "8.8.8.8 / dns.google / system", dns2, { dns2 = it; prefs.dns2 = it })
+        HistoryChips("dns2", prefs) { dns2 = it; prefs.dns2 = it }
         SelectInput("记录", type, listOf("A", "AAAA", "ALL")) { type = it; prefs.dnsRecord = it }
-        PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) { scope.launch { msg = "查询中..."; val records = dnsLookup(domain, dns1, dns2, type); result = records; msg = "完成：${records.size} 条" } }
+        PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) { scope.launch { msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2); val records = dnsLookup(domain, dns1, dns2, type, prefs); result = records; msg = "完成：${records.size} 条" } }
     }
     ExpressiveCard("查询结果", msg, Icons.Rounded.TravelExplore, Color(0xFF06B6D4)) { if (result.isEmpty()) Text("暂无结果", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f)); result.forEach { r -> DnsResultRow(r) { copy(ctx, r.value) } } }
 }
@@ -593,10 +629,12 @@ fun TcpTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     ExpressiveCard("探测配置", "TCP 可判断开放；UDP 无响应只能判定开放或过滤。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
         SelectInput("协议", protocol, listOf("TCP", "UDP")) { protocol = it; prefs.portProtocol = it }
-        LabeledInput("主机", "lp.net86.dynv6.net", host, { host = it; prefs.tcpHost = it })
+        LabeledInput("主机", "lp.net86.dynv6.net / IPv6", host, { host = it; prefs.tcpHost = it })
+        HistoryChips("port_host", prefs) { host = it; prefs.tcpHost = it }
         LabeledInput("端口", "2186", port, { port = it; prefs.tcpPort = it }, KeyboardType.Number)
+        HistoryChips("port_port", prefs) { port = it; prefs.tcpPort = it }
         LabeledInput("超时", "1000", timeout, { timeout = it; prefs.tcpTimeout = it }, KeyboardType.Number)
-        PillButton("开始探测", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) { scope.launch { result = if (protocol == "UDP") udpProbeSmart(host, port.toIntOrNull() ?: 53, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) else tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) } }
+        PillButton("开始探测", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) { scope.launch { prefs.addHistory("port_host", host); prefs.addHistory("port_port", port); result = if (protocol == "UDP") udpProbeSmart(host, port.toIntOrNull() ?: 53, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) else tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) } }
     }
     ExpressiveCard("探测结果", protocol, Icons.Rounded.Route, Color(0xFF64748B)) { ResultText(result) }
 }
@@ -613,13 +651,14 @@ fun SshTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     ExpressiveCard("连接与命令", "默认 ip -6 neigh show；支持保存密码开关。", Icons.Rounded.Terminal, Color(0xFF64748B)) {
         LabeledInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it })
+        HistoryChips("ssh_host", prefs) { host = it; prefs.sshHost = it }
         LabeledInput("端口", "54133", port, { port = it; prefs.sshPort = it }, KeyboardType.Number)
         LabeledInput("用户", "root", user, { user = it; prefs.sshUser = it })
         LabeledInput("密码", "SSH 密码", password, { password = it; if (savePass) prefs.sshPassword = it }, password = true)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("保存", Modifier.width(58.dp), fontWeight = FontWeight.Black, fontSize = 12.sp); Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" }); Text("保存密码", fontSize = 12.sp) }
         LabeledInput("命令", "ip -6 neigh show", command, { command = it; prefs.sshCommand = it })
-        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show pppoe-wan", "运行" to "uptime").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
-        PillButton("执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF64748B)) { scope.launch { result = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" } } }
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
+        PillButton("执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF64748B)) { scope.launch { prefs.addHistory("ssh_host", host); result = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" } } }
     }
     ExpressiveCard("执行结果", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(result) }
 }
@@ -627,9 +666,81 @@ fun SshTool(prefs: AppPrefs) {
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
 
 @Composable
-fun EventsScreen(state: AppState, onRefresh: () -> Unit) = ScreenShell("记录", "STUN / DDNS / 终端变化", action = { AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) }) }) {
-    ExpressiveCard("事件同步", "隐藏 token-only 错误 Webhook。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-    state.events.forEach { e -> ExpressiveCard(e.title, e.time, Icons.Rounded.Bolt, Color(0xFF7C3AED)) { InfoRow("类型", e.type); InfoRow("名称", e.name); InfoRow("旧值", e.oldValue, true); InfoRow("新值", e.newValue, true) } }
+fun EventsScreen(state: AppState, onRefresh: () -> Unit) = ScreenShell("记录", "紧凑事件流 · 点击地址可复制", action = { AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) }) }) {
+    ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    state.events.forEach { e -> EventCompactCard(e) }
+}
+
+@Composable
+fun EventCompactCard(e: EventItem) {
+    val ctx = LocalContext.current
+    val isOnline = e.type.contains("online")
+    val isOffline = e.type.contains("offline")
+    val accent = when {
+        isOnline -> Color(0xFF16A34A)
+        isOffline -> Color(0xFF7C3AED)
+        e.type.contains("stun") || e.type.contains("wireguard") -> Color(0xFF0EA5E9)
+        e.type.contains("ddns") -> Color(0xFFF59E0B)
+        else -> Color(0xFF64748B)
+    }
+    val icon = when {
+        isOnline -> Icons.Rounded.PhoneAndroid
+        isOffline -> Icons.Rounded.Bedtime
+        e.type.contains("stun") || e.type.contains("wireguard") -> Icons.Rounded.SyncAlt
+        e.type.contains("ddns") -> Icons.Rounded.Public
+        else -> Icons.Rounded.Bolt
+    }
+    Surface(modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(20.dp), clip = false), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .97f)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(e.title.ifBlank { e.name }, fontSize = 15.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(e.time, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), maxLines = 1)
+                }
+                Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha=.12f)) { Text(eventLabel(e.type), Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1) }
+            }
+            when {
+                isOnline -> {
+                    TwoCols("IP", e.newValue.takeIf { it.contains(".") || it.contains(":") } ?: "在线", "设备", e.name)
+                }
+                isOffline -> {
+                    TwoCols("状态", "已断开", "设备", e.name)
+                    if (e.oldValue.isNotBlank()) InfoRow("在线时长", e.oldValue.takeIf { it.contains("时") || it.contains("分") } ?: "见详情")
+                }
+                else -> {
+                    InfoRow("名称", e.name)
+                    InfoRow("新值", e.newValue, true)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TwoCols(l1: String, v1: String, l2: String, v2: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MiniField(l1, v1, Modifier.weight(1f))
+        MiniField(l2, v2, Modifier.weight(1f))
+    }
+}
+
+@Composable
+fun MiniField(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.46f), fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(value.ifBlank { "-" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.76f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+fun eventLabel(type: String): String = when {
+    type.contains("online") -> "上线"
+    type.contains("offline") -> "离线"
+    type.contains("stun") -> "STUN"
+    type.contains("ddns") -> "DDNS"
+    type.contains("router") -> "路由"
+    else -> "事件"
 }
 
 @Composable
@@ -722,18 +833,64 @@ object DnsWire {
     private fun u16(data: ByteArray, off: Int): Int = ((data[off].toInt() and 0xff) shl 8) or (data[off+1].toInt() and 0xff)
 }
 
-suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String): List<DnsRecord> = withContext(Dispatchers.IO) {
-    val servers = listOf(dns1.ifBlank { DEFAULT_DNS1 }, dns2.ifBlank { DEFAULT_DNS2 }).distinct()
+suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String, prefs: AppPrefs): List<DnsRecord> = withContext(Dispatchers.IO) {
+    val servers = listOf(dns1.ifBlank { "system" }, dns2.ifBlank { DEFAULT_DNS2 }).distinct()
     for (server in servers) {
         val raw = mutableListOf<DnsRecord>()
-        if (server.equals("system", true)) raw += InetAddress.getAllByName(domain).filterNot { it.hostAddress == "127.0.0.1" }.filter { type == "ALL" || (type == "AAAA") == (it is Inet6Address) }.map { DnsRecord(it.hostAddress ?: it.hostName, if (it is Inet6Address) "AAAA" else "A", "系统DNS") }
-        else { if (type == "A" || type == "ALL") raw += DnsWire.query(domain, server, 1).filter { it != "127.0.0.1" }.map { DnsRecord(it, "A", server) }; if (type == "AAAA" || type == "ALL") raw += DnsWire.query(domain, server, 28).map { DnsRecord(it, "AAAA", server) } }
-        if (raw.isNotEmpty()) return@withContext raw.map { it.copy(geo = geoLookup(it.value)) }
+        if (server.equals("system", true)) {
+            raw += InetAddress.getAllByName(domain)
+                .filterNot { it.hostAddress == "127.0.0.1" }
+                .filter { type == "ALL" || (type == "AAAA") == (it is Inet6Address) }
+                .map { DnsRecord(it.hostAddress ?: it.hostName, if (it is Inet6Address) "AAAA" else "A", "系统DNS") }
+        } else {
+            if (type == "A" || type == "ALL") raw += DnsWire.query(domain, server, 1).filter { it != "127.0.0.1" }.map { DnsRecord(it, "A", server) }
+            if (type == "AAAA" || type == "ALL") raw += DnsWire.query(domain, server, 28).map { DnsRecord(it, "AAAA", server) }
+        }
+        if (raw.isNotEmpty()) return@withContext raw.map { it.copy(geo = geoLookup(it.value, prefs)) }
     }
     listOf(DnsRecord("无记录或超时", type, servers.joinToString(" / ")))
 }
 
-fun geoLookup(ip: String): String = runCatching { val c = OkHttpClient.Builder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).build(); val text = c.newCall(Request.Builder().url("https://ipwho.is/$ip").build()).execute().body?.string().orEmpty(); val o = JSONObject(text); if (!o.optBoolean("success", false)) "Geo 暂不可用" else listOf(o.optString("country"), o.optString("region"), o.optString("city"), o.optJSONObject("connection")?.optString("asn")?.let { "AS$it" } ?: "", o.optJSONObject("connection")?.optString("org") ?: "").filter { it.isNotBlank() }.joinToString(" ") }.getOrDefault("Geo 暂不可用")
+fun geoLookup(ip: String, prefs: AppPrefs): String {
+    val hub = prefs.hub.trim().trimEnd('/')
+    val token = prefs.token.trim()
+    if (hub.isNotBlank() && token.isNotBlank() && !ip.startsWith("无记录")) {
+        runCatching {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(4, TimeUnit.SECONDS)
+                .readTimeout(4, TimeUnit.SECONDS)
+                .dns(CustomDns(prefs.hubDns))
+                .build()
+            val url = joinUrl(hub, "/api/geo?ip=${URLEncoder.encode(ip, "UTF-8")}")
+            val req = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
+            val text = client.newCall(req).execute().body?.string().orEmpty()
+            val o = JSONObject(text)
+            if (o.optBoolean("ok")) {
+                val g = o.optJSONObject("geo") ?: JSONObject()
+                val local = g.optString("localLabel")
+                val operator = g.optString("operator")
+                val geo = g.optString("geoText")
+                val confidence = g.optString("confidence")
+                return listOf(
+                    local.takeIf { it.isNotBlank() }?.let { "本地：$it" } ?: "",
+                    operator.takeIf { it.isNotBlank() }?.let { "运营商：$it" } ?: "",
+                    geo.takeIf { it.isNotBlank() }?.let { "Geo参考：$it" } ?: "",
+                    confidence.takeIf { it.isNotBlank() }?.let { "置信：$it" } ?: ""
+                ).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "Geo 暂不可用" }
+            }
+        }
+    }
+    return runCatching {
+        val c = OkHttpClient.Builder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).build()
+        val text = c.newCall(Request.Builder().url("https://ipwho.is/$ip").build()).execute().body?.string().orEmpty()
+        val o = JSONObject(text)
+        if (!o.optBoolean("success", false)) "Geo 暂不可用" else listOf(
+            o.optString("country"), o.optString("region"), o.optString("city"),
+            o.optJSONObject("connection")?.optString("asn")?.let { "AS$it" } ?: "",
+            o.optJSONObject("connection")?.optString("org") ?: ""
+        ).filter { it.isNotBlank() }.joinToString(" ")
+    }.getOrDefault("Geo 暂不可用")
+}
 
 suspend fun pingOnce(host: String, timeoutMs: Int): Int? = withContext(Dispatchers.IO) { runCatching { val timeoutSec = (timeoutMs / 1000).coerceAtLeast(1); val p = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", timeoutSec.toString(), host).redirectErrorStream(true).start(); val text = p.inputStream.bufferedReader().readText(); p.waitFor((timeoutSec+2).toLong(), TimeUnit.SECONDS); Regex("time[=<]([0-9.]+)").find(text)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.roundToInt() }.getOrNull() }
 
@@ -784,7 +941,7 @@ suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: St
     val session = JSch().getSession(user, host, port); session.setPassword(pass)
     val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="no"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256"; cfg["PubkeyAcceptedAlgorithms"]="+ssh-rsa,rsa-sha2-256,rsa-sha2-512"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["cipher.c2s"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)
     session.userInfo = object: UserInfo, UIKeyboardInteractive { override fun getPassphrase(): String?=null; override fun getPassword(): String=pass; override fun promptPassword(message:String?)=true; override fun promptPassphrase(message:String?)=false; override fun promptYesNo(message:String?)=true; override fun showMessage(message:String?){}; override fun promptKeyboardInteractive(destination:String?, name:String?, instruction:String?, prompt:Array<out String>?, echo:BooleanArray?): Array<String> = Array(prompt?.size ?: 0) { pass } }
-    session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); append("\nexit=").append(exit) }
+    session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { append(if (exit == 0) "执行成功" else "执行失败 · exit $exit"); append("\n"); append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); if (exit != 0) append("\n返回码：").append(exit) }
 }
 
 fun parseDeviceArray(json: String): List<DeviceItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; return (0 until arr.length()).mapNotNull { parseDevice(arr.optJSONObject(it)) } }
