@@ -13,7 +13,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -49,6 +51,7 @@ import com.jcraft.jsch.JSch
 import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,7 +76,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-private const val DEFAULT_HUB = "http://192.168.5.46:58443"
+private const val DEFAULT_HUB = ""
 private const val DEFAULT_DNS1 = "223.5.5.5"
 private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
@@ -97,6 +100,9 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putBoolean("dark", v).apply()
     var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
+
+    var homeOrder: String get() = sp.getString("home_order", "status,exit,vpn,devices") ?: "status,exit,vpn,devices"
+        set(v) = sp.edit().putString("home_order", v).apply()
 
     private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(3)
     private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(3).joinToString("\n")).apply() }
@@ -171,8 +177,21 @@ data class DeviceItem(
     val lastSeenAt: String
 )
 
-data class EventItem(val title: String, val type: String, val name: String, val oldValue: String, val newValue: String, val time: String)
-data class DnsRecord(val value: String, val type: String, val source: String, val geo: String = "")
+data class EventItem(
+    val id: Int,
+    val title: String,
+    val type: String,
+    val name: String,
+    val oldValue: String,
+    val newValue: String,
+    val time: String,
+    val ip: String = "",
+    val rssi: String = "",
+    val band: String = "",
+    val rxrate: String = "",
+    val onlineDurationText: String = ""
+)
+data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
 data class PingPoint(val index: Int, val ms: Int?, val text: String)
 
 class AppState(private val prefs: AppPrefs) {
@@ -181,38 +200,75 @@ class AppState(private val prefs: AppPrefs) {
     var onlineDevices by mutableStateOf(parseDeviceArray(prefs.cacheOnlineDevices))
     var events by mutableStateOf(parseEvents(prefs.cacheEvents))
     var loading by mutableStateOf(false)
-    var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "上次刷新：${prefs.lastRefresh}")
+    var hubConnected by mutableStateOf(prefs.lastRefresh.isNotBlank() && prefs.hub.isNotBlank())
+    var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
 
-    suspend fun refreshAll() {
+    suspend fun refreshAll(forceHealth: Boolean = false) {
         if (prefs.hub.isBlank()) {
             message = "Hub 地址为空，请先输入"
             return
         }
         loading = true
-        message = "正在连接 Hub，最多尝试 3 次..."
         try {
             val api = HubApi(prefs)
-            api.healthWithRetry(3)
-            message = "连接成功，正在刷新数据..."
-            val stRoot = api.getStatus()
-            val devWatched = api.getDevices(false)
-            val devOnline = api.getDevices(true)
-            val evs = api.getEvents()
-            status = stRoot
-            devices = devWatched
-            onlineDevices = devOnline
-            events = evs
-            prefs.cacheStatus = stRoot.toString()
-            prefs.cacheDevices = JSONArray(devWatched.map { it.toJson() }).toString()
-            prefs.cacheOnlineDevices = JSONArray(devOnline.map { it.toJson() }).toString()
-            prefs.cacheEvents = JSONArray(evs.map { it.toJson() }).toString()
-            prefs.lastRefresh = nowClock()
-            message = "刷新成功：${prefs.lastRefresh}"
-        } catch (e: Exception) {
-            message = "连接失败：${e.message}"
+            if (!hubConnected || forceHealth) {
+                message = "正在连接 Hub，最多尝试 3 次..."
+                api.healthWithRetry(3)
+                hubConnected = true
+            }
+            message = "正在刷新数据..."
+            fetchData(api)
+        } catch (first: Exception) {
+            if (hubConnected) {
+                message = "刷新失败，正在重连 Hub..."
+                try {
+                    val api = HubApi(prefs)
+                    api.healthWithRetry(3)
+                    hubConnected = true
+                    message = "重连成功，正在刷新数据..."
+                    fetchData(api)
+                } catch (second: Exception) {
+                    hubConnected = false
+                    message = "连接失败，保留缓存：${second.message}"
+                }
+            } else {
+                hubConnected = false
+                message = "连接失败，保留缓存：${first.message}"
+            }
         } finally {
             loading = false
         }
+    }
+
+    private suspend fun fetchData(api: HubApi) {
+        val stRoot = api.getStatus()
+        val devWatched = api.getDevices(false)
+        val devOnline = api.getDevices(true)
+        val evs = api.getEvents()
+        status = stRoot
+        devices = devWatched
+        onlineDevices = devOnline
+        events = evs
+        prefs.cacheStatus = stRoot.toString()
+        prefs.cacheDevices = JSONArray(devWatched.map { it.toJson() }).toString()
+        prefs.cacheOnlineDevices = JSONArray(devOnline.map { it.toJson() }).toString()
+        prefs.cacheEvents = JSONArray(evs.map { it.toJson() }).toString()
+        prefs.lastRefresh = nowClock()
+        hubConnected = true
+        message = "刷新成功：${prefs.lastRefresh}"
+    }
+
+    fun markHubChanged() {
+        hubConnected = false
+        message = "Hub 设置已变更，请测试或刷新"
+    }
+
+    suspend fun deleteEvent(event: EventItem) {
+        if (event.id <= 0) { events = events.filterNot { it == event }; return }
+        runCatching { HubApi(prefs).deleteEvent(event.id) }
+        events = events.filterNot { it.id == event.id }
+        prefs.cacheEvents = JSONArray(events.map { it.toJson() }).toString()
+        message = "已删除事件，可通过刷新同步最新记录"
     }
 }
 
@@ -262,7 +318,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { scope.launch { state.refreshAll() } }
                         "devices" -> DevicesScreen(state)
                         "tools" -> ToolsHomeScreen { route = it }
-                        "events" -> EventsScreen(state) { scope.launch { state.refreshAll() } }
+                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" })
+                        "daily" -> DailyScreen(prefs) { route = "events" }
                         "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it })
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
@@ -370,20 +427,49 @@ fun InfoRow(label: String, value: String?, copyable: Boolean = false) {
 }
 
 @Composable
-fun HistoryChips(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) {
+fun InfoRowVisible(label: String, value: String?, copyable: Boolean = false) {
+    if (!value.isNullOrBlank()) InfoRow(label, value, copyable)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
     var tick by remember { mutableStateOf(0) }
     val items = remember(tick, keyName) { prefs.history(keyName) }
-    if (items.isNotEmpty()) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Box {
+        IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty()) {
+            Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(22.dp))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (items.isEmpty()) DropdownMenuItem(text = { Text("暂无历史") }, onClick = { expanded = false })
             items.forEach { item ->
-                InputChip(
-                    selected = false,
-                    onClick = { onPick(item) },
-                    label = { Text(item, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    trailingIcon = { Icon(Icons.Rounded.Close, null, Modifier.size(15.dp).clickable { prefs.removeHistory(keyName, item); tick++ }) }
+                DropdownMenuItem(
+                    text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = { onPick(item); expanded = false },
+                    trailingIcon = { Icon(Icons.Rounded.Close, null, Modifier.size(17.dp).clickable { prefs.removeHistory(keyName, item); tick++ }) }
                 )
             }
         }
+    }
+}
+
+@Composable
+fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, keyboardType: KeyboardType = KeyboardType.Text, password: Boolean = false) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) },
+            singleLine = true,
+            trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
+            visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            shape = RoundedCornerShape(18.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -409,30 +495,77 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) = ScreenShell("LabProbe", "家庭网络仪表盘", action = { AssistChip(onClick = onRefresh, label = { Text(if (state.loading) "刷新中" else "刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) }) }) {
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) = ScreenShell("LabProbe", "家庭网络仪表盘", action = {
+    AssistChip(onClick = onRefresh, label = { Text(if (state.loading) "刷新中" else "刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
+}) {
+    var edit by remember { mutableStateOf(false) }
+    var order by remember { mutableStateOf(prefs.homeOrder.split(',').filter { it.isNotBlank() }.ifEmpty { listOf("status","exit","vpn","devices") }) }
     val data = (state.status?.optJSONObject("data") ?: state.status)
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = nas?.optString("exitIpv6").orEmpty()
+    val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress")
+    val stun = data?.optJSONObject("stun")?.optString("publicAddress")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        AssistChip(onClick = { edit = !edit }, label = { Text(if (edit) "完成排序" else "排序", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.DragIndicator, null, Modifier.size(16.dp)) })
+        Text("长按/点击排序后用箭头调整首页卡片顺序", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.46f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    val cards = order.distinct().filter { it in listOf("status","exit","vpn","devices") } + listOf("status","exit","vpn","devices").filter { it !in order }
+    cards.forEach { key ->
+        val content: @Composable () -> Unit = when (key) {
+            "status" -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { StatusCard(prefs, state, autoRefresh, onAuto) } } }
+            "exit" -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { ExitCard(nas, router) } } }
+            "vpn" -> { { if (!wg.isNullOrBlank() || !stun.isNullOrBlank()) HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { VpnCard(wg, stun) } } }
+            else -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { DevicesHomeCard(state) } } }
+        }
+        content()
+    }
+}
+
+@Composable
+fun HomeSortWrap(edit: Boolean, key: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
+    Box {
+        content()
+        if (edit) Row(Modifier.align(Alignment.TopEnd).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            IconButton(onClick = { val i=order.indexOf(key); if(i>0) onOrder(order.toMutableList().also { java.util.Collections.swap(it, i, i-1) }) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.KeyboardArrowUp, null) }
+            IconButton(onClick = { val i=order.indexOf(key); if(i>=0 && i<order.size-1) onOrder(order.toMutableList().also { java.util.Collections.swap(it, i, i+1) }) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.KeyboardArrowDown, null) }
+        }
+    }
+}
+
+@Composable
+fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit) {
     ExpressiveCard("状态总览", state.message, Icons.Rounded.Dashboard, Color(0xFF2D63D8)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusPill("Hub", if (prefs.hub.isBlank()) "未设" else "就绪", Color(0xFF2D63D8))
+            StatusPill("Hub", if (prefs.hub.isBlank()) "未设" else if (state.hubConnected) "就绪" else "待连", Color(0xFF2D63D8))
             StatusPill("终端", "${state.onlineDevices.size} 在线", Color(0xFFF59E0B))
         }
-        SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S"), onAuto)
-        InfoRow("上次", prefs.lastRefresh)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.weight(1f)) { SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S"), onAuto) }
+            Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
+        }
     }
+}
+
+@Composable
+fun ExitCard(nas: JSONObject?, router: JSONObject?) {
     ExpressiveCard("出口与路由", "NAS 出口、路由 WAN IPv6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9)) {
-        InfoRow("NAS IPv4", nas?.optString("exitIpv4"), true)
-        InfoRow("NAS IPv6", nasV6, true)
-        InfoRow("路由 WAN", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"), true)
+        InfoRowVisible("NAS IPv4", nas?.optString("exitIpv4"), true)
+        InfoRowVisible("NAS IPv6", nas?.optString("exitIpv6"), true)
+        InfoRowVisible("路由 WAN", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"), true)
     }
-    ExpressiveCard("VPN / STUN", "WG 由 NAS IPv6 生成；STUN 来自 Lucky。", Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
-        val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress")
-        val stun = data?.optJSONObject("stun")?.optString("publicAddress")
-        InfoRow("WG", wg, true)
-        InfoRow("STUN", stun, true)
+}
+
+@Composable
+fun VpnCard(wg: String?, stun: String?) {
+    ExpressiveCard("VPN / STUN", "仅显示已获取的 WireGuard / OpenVPN / EasyTier 地址。", Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
+        InfoRowVisible("WG", wg, true)
+        InfoRowVisible("STUN", stun, true)
     }
+}
+
+@Composable
+fun DevicesHomeCard(state: AppState) {
     ExpressiveCard("关注终端", "在线时长、下线发现时间精确到秒。", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
         if (state.devices.isEmpty()) Text("暂无缓存，点击刷新。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
         state.devices.take(4).forEach { DeviceLine(it, details = true) }
@@ -480,7 +613,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 @Composable
 fun ToolsHomeScreen(open: (String) -> Unit) = ScreenShell("工具", "二级页面，返回仍在 APP 内") {
     ToolEntry("Ping 延迟", "实时采样 · 1 秒刷新曲线", Icons.Rounded.Speed, Color(0xFF7C3AED)) { open("tool_ping") }
-    ToolEntry("DNS 解析", "双 DNS · A/AAAA · Geo", Icons.Rounded.Dns, Color(0xFF2563EB)) { open("tool_dns") }
+    ToolEntry("DNS 解析", "双 DNS · A/AAAA · 运营商", Icons.Rounded.Dns, Color(0xFF2563EB)) { open("tool_dns") }
     ToolEntry("端口探测", "TCP / UDP · 域名优先 AAAA", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) { open("tool_port") }
     ToolEntry("SSH 命令", "锐捷 / NAS 单条命令", Icons.Rounded.Terminal, Color(0xFF64748B)) { open("tool_ssh") }
 }
@@ -503,7 +636,7 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
 @Composable
 fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("Ping 测试", "采样间隔可变，界面固定 1 秒刷新", onBack) { PingTool(prefs) }
 @Composable
-fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与 Geo 匹配", onBack) { DnsTool(prefs) }
+fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
 @Composable
 fun PortProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("端口探测", "TCP / UDP，支持域名、IPv4、IPv6", onBack) { TcpTool(prefs) }
 @Composable
@@ -516,59 +649,82 @@ fun PingTool(prefs: AppPrefs) {
     var interval by remember { mutableStateOf(prefs.pingInterval) }
     var timeout by remember { mutableStateOf(prefs.pingTimeout) }
     var running by remember { mutableStateOf(false) }
+    var job by remember { mutableStateOf<Job?>(null) }
     var points by remember { mutableStateOf<List<PingPoint>>(emptyList()) }
     var log by remember { mutableStateOf("等待测试") }
     val scope = rememberCoroutineScope()
     ExpressiveCard("参数", "默认 20 次；采样可 30/100/200/500/1000ms。", Icons.Rounded.Tune, Color(0xFF7C3AED)) {
-        LabeledInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it })
-        LabeledInput("次数", "20", count, { count = it; prefs.pingCount = it }, KeyboardType.Number)
-        SelectInput("间隔", interval, listOf("30", "100", "200", "500", "1000")) { interval = it; prefs.pingInterval = it }
+        LabeledHistoryInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it }, "ping_host", prefs)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.weight(1f)) { LabeledInput("次数", "20", count, { count = it; prefs.pingCount = it }, KeyboardType.Number) }
+            Box(Modifier.weight(1f)) { SelectInput("间隔", interval, listOf("30", "100", "200", "500", "1000")) { interval = it; prefs.pingInterval = it } }
+        }
         LabeledInput("超时", "1000", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number)
-        PillButton(if (running) "测试中..." else "开始 Ping", Icons.Rounded.PlayArrow, !running, Color(0xFF7C3AED)) {
-            running = true; points = emptyList(); log = "开始测试..."
-            scope.launch {
-                val c = count.toIntOrNull() ?: 20
-                val inter = interval.toLongOrNull() ?: 500L
-                val to = timeout.toIntOrNull() ?: 1000
-                val buffer = mutableListOf<PingPoint>()
-                var lastUi = System.currentTimeMillis()
-                for (i in 1..c) {
-                    val ms = pingOnce(host, to)
-                    buffer += PingPoint(i, ms, if (ms == null) "#$i timeout" else "#$i ${ms}ms")
-                    val now = System.currentTimeMillis()
-                    if (now - lastUi >= 1000L || i == c) {
-                        points = buffer.toList()
-                        log = buffer.takeLast(8).joinToString("\n") { it.text }
-                        lastUi = now
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                prefs.addHistory("ping_host", host)
+                running = true; points = emptyList(); log = "开始测试..."
+                job?.cancel()
+                job = scope.launch {
+                    val c = count.toIntOrNull() ?: 20
+                    val inter = interval.toLongOrNull() ?: 500L
+                    val to = timeout.toIntOrNull() ?: 1000
+                    val buffer = mutableListOf<PingPoint>()
+                    var lastUi = System.currentTimeMillis()
+                    for (i in 1..c) {
+                        if (!running) break
+                        val ms = pingOnce(host, to)
+                        buffer += PingPoint(i, ms, if (ms == null) "#$i timeout" else "#$i ${ms}ms")
+                        val now = System.currentTimeMillis()
+                        if (now - lastUi >= 1000L || i == c) { points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }; lastUi = now }
+                        delay(inter)
                     }
-                    delay(inter)
+                    points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }
+                    running = false
                 }
-                running = false
-            }
+            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
         }
     }
-    ExpressiveCard("延迟曲线", "文字和图表固定约 1 秒刷新，避免闪烁。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingChart(points); PingStats(points) }
+    ExpressiveCard("延迟曲线", "X 轴为时间 s，Y 轴为延迟 ms；图表约 1 秒刷新。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingChart(points); PingStats(points) }
     ExpressiveCard("响应日志", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(log) }
 }
 
 @Composable
 fun PingChart(points: List<PingPoint>) {
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f), modifier = Modifier.fillMaxWidth().height(166.dp)) {
-        Canvas(Modifier.fillMaxSize().padding(16.dp)) {
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f), modifier = Modifier.fillMaxWidth().height(190.dp)) {
+        Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 12.dp, top = 16.dp, bottom = 26.dp)) {
             val ok = points.filter { it.ms != null }
-            val max = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
+            val rawMax = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
+            val yMax = when { rawMax <= 50 -> 50; rawMax <= 100 -> 100; rawMax <= 200 -> 200; rawMax <= 500 -> 500; else -> ((rawMax + 99) / 100) * 100 }
             val w = size.width; val h = size.height
-            for (i in 0..4) drawLine(Color.Gray.copy(alpha = 0.17f), Offset(0f, h * i / 4f), Offset(w, h * i / 4f), strokeWidth = 1f)
+            val axis = Color.Gray.copy(alpha = 0.30f)
+            drawLine(axis, Offset(0f,h), Offset(w,h), strokeWidth=2f)
+            drawLine(axis, Offset(0f,0f), Offset(0f,h), strokeWidth=2f)
+            val yTicks = 5
+            for (i in 0..yTicks) {
+                val y = h * i / yTicks
+                drawLine(Color.Gray.copy(alpha = 0.15f), Offset(0f, y), Offset(w, y), strokeWidth = 1f)
+            }
             if (points.size >= 2) {
                 val path = Path(); var started = false
                 points.forEachIndexed { idx, p ->
                     if (p.ms != null) {
                         val x = w * idx / (points.size - 1).coerceAtLeast(1)
-                        val y = h - (p.ms.toFloat() / max.toFloat() * h)
+                        val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
                         if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
                     } else started = false
                 }
                 drawPath(path, Color(0xFF38BDF8), style = Stroke(width = 5f, cap = StrokeCap.Round))
+            }
+        }
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Text("ms", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f))
+            Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                val maxIdx = points.size.coerceAtLeast(1)
+                val marks = (0 until maxIdx).filterIndexed { index, _ -> index % ((maxIdx / 7).coerceAtLeast(1)) == 0 }.take(8)
+                if (marks.isEmpty()) Text("0s", fontSize = 10.sp) else marks.forEach { Text("${it}s", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f)) }
             }
         }
     }
@@ -596,13 +752,10 @@ fun DnsTool(prefs: AppPrefs) {
     var result by remember { mutableStateOf<List<DnsRecord>>(emptyList()) }
     var msg by remember { mutableStateOf("等待解析") }
     val scope = rememberCoroutineScope(); val ctx = LocalContext.current
-    ExpressiveCard("查询配置", "DNS1 失败自动尝试 DNS2，结果附带 Geo。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
-        LabeledInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it })
-        HistoryChips("dns_domain", prefs) { domain = it; prefs.dnsDomain = it }
-        LabeledInput("DNS1", "system / 223.5.5.5 / 2400:3200::1", dns1, { dns1 = it; prefs.dns1 = it })
-        HistoryChips("dns1", prefs) { dns1 = it; prefs.dns1 = it }
-        LabeledInput("DNS2", "8.8.8.8 / dns.google / system", dns2, { dns2 = it; prefs.dns2 = it })
-        HistoryChips("dns2", prefs) { dns2 = it; prefs.dns2 = it }
+    ExpressiveCard("查询配置", "DNS1 失败自动尝试 DNS2，仅显示运营商。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
+        LabeledHistoryInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it }, "dns_domain", prefs)
+        LabeledHistoryInput("DNS1", "system / 223.5.5.5 / 2400:3200::1", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs)
+        LabeledHistoryInput("DNS2", "8.8.8.8 / dns.google / system", dns2, { dns2 = it; prefs.dns2 = it }, "dns2", prefs)
         SelectInput("记录", type, listOf("A", "AAAA", "ALL")) { type = it; prefs.dnsRecord = it }
         PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) { scope.launch { msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2); val records = dnsLookup(domain, dns1, dns2, type, prefs); result = records; msg = "完成：${records.size} 条" } }
     }
@@ -614,7 +767,7 @@ fun DnsResultRow(r: DnsRecord, onCopy: () -> Unit) {
     Surface(shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .06f), modifier = Modifier.fillMaxWidth().clickable { onCopy() }) {
         Column(Modifier.padding(11.dp)) {
             Text("${r.value} (${r.type})", fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOf(r.geo, r.source).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(listOf(r.operator, r.source).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -629,10 +782,8 @@ fun TcpTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     ExpressiveCard("探测配置", "TCP 可判断开放；UDP 无响应只能判定开放或过滤。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
         SelectInput("协议", protocol, listOf("TCP", "UDP")) { protocol = it; prefs.portProtocol = it }
-        LabeledInput("主机", "lp.net86.dynv6.net / IPv6", host, { host = it; prefs.tcpHost = it })
-        HistoryChips("port_host", prefs) { host = it; prefs.tcpHost = it }
-        LabeledInput("端口", "2186", port, { port = it; prefs.tcpPort = it }, KeyboardType.Number)
-        HistoryChips("port_port", prefs) { port = it; prefs.tcpPort = it }
+        LabeledHistoryInput("主机", "lp.net86.dynv6.net / IPv6", host, { host = it; prefs.tcpHost = it }, "port_host", prefs)
+        LabeledHistoryInput("端口", "2186", port, { port = it; prefs.tcpPort = it }, "port_port", prefs, KeyboardType.Number)
         LabeledInput("超时", "1000", timeout, { timeout = it; prefs.tcpTimeout = it }, KeyboardType.Number)
         PillButton("开始探测", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) { scope.launch { prefs.addHistory("port_host", host); prefs.addHistory("port_port", port); result = if (protocol == "UDP") udpProbeSmart(host, port.toIntOrNull() ?: 53, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) else tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) } }
     }
@@ -650,14 +801,13 @@ fun SshTool(prefs: AppPrefs) {
     var result by remember { mutableStateOf("等待连接") }
     val scope = rememberCoroutineScope()
     ExpressiveCard("连接与命令", "默认 ip -6 neigh show；支持保存密码开关。", Icons.Rounded.Terminal, Color(0xFF64748B)) {
-        LabeledInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it })
-        HistoryChips("ssh_host", prefs) { host = it; prefs.sshHost = it }
+        LabeledHistoryInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs)
         LabeledInput("端口", "54133", port, { port = it; prefs.sshPort = it }, KeyboardType.Number)
         LabeledInput("用户", "root", user, { user = it; prefs.sshUser = it })
         LabeledInput("密码", "SSH 密码", password, { password = it; if (savePass) prefs.sshPassword = it }, password = true)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("保存", Modifier.width(58.dp), fontWeight = FontWeight.Black, fontSize = 12.sp); Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" }); Text("保存密码", fontSize = 12.sp) }
         LabeledInput("命令", "ip -6 neigh show", command, { command = it; prefs.sshCommand = it })
-        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime", "内核" to "uname -a", "存储" to "df -h").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
         PillButton("执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF64748B)) { scope.launch { prefs.addHistory("ssh_host", host); result = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" } } }
     }
     ExpressiveCard("执行结果", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(result) }
@@ -666,13 +816,19 @@ fun SshTool(prefs: AppPrefs) {
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
 
 @Composable
-fun EventsScreen(state: AppState, onRefresh: () -> Unit) = ScreenShell("记录", "紧凑事件流 · 点击地址可复制", action = { AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) }) }) {
-    ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-    state.events.forEach { e -> EventCompactCard(e) }
+fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit) = ScreenShell("记录", "紧凑事件流 · 左滑删除 · 每日总结", action = {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
+        AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
+    }
+}) {
+    val scope = rememberCoroutineScope()
+    ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+    state.events.forEach { e -> EventCompactCard(e) { scope.launch { state.deleteEvent(e) } } }
 }
 
 @Composable
-fun EventCompactCard(e: EventItem) {
+fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
     val ctx = LocalContext.current
     val isOnline = e.type.contains("online")
     val isOffline = e.type.contains("offline")
@@ -700,14 +856,15 @@ fun EventCompactCard(e: EventItem) {
                     Text(e.time, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), maxLines = 1)
                 }
                 Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha=.12f)) { Text(eventLabel(e.type), Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1) }
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp)) }
             }
             when {
                 isOnline -> {
-                    TwoCols("IP", e.newValue.takeIf { it.contains(".") || it.contains(":") } ?: "在线", "设备", e.name)
+                    TwoCols("IP", e.ip.ifBlank { e.newValue.takeIf { it.contains(".") || it.contains(":") } ?: "在线" }, "信号", listOf(e.rssi, e.band, e.rxrate).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "-" })
                 }
                 isOffline -> {
                     TwoCols("状态", "已断开", "设备", e.name)
-                    if (e.oldValue.isNotBlank()) InfoRow("在线时长", e.oldValue.takeIf { it.contains("时") || it.contains("分") } ?: "见详情")
+                    if (e.oldValue.isNotBlank()) InfoRow("在线时长", e.onlineDurationText.ifBlank { e.oldValue.takeIf { it.contains("时") || it.contains("分") } ?: "-" })
                 }
                 else -> {
                     InfoRow("名称", e.name)
@@ -743,6 +900,49 @@ fun eventLabel(type: String): String = when {
     else -> "事件"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结", "实时聚合，最近 7 天", onBack) {
+    val scope = rememberCoroutineScope()
+    var dates by remember { mutableStateOf<List<String>>(emptyList()) }
+    var selected by remember { mutableStateOf("") }
+    var data by remember { mutableStateOf<JSONObject?>(null) }
+    var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        runCatching { HubApi(prefs).getDailyList() }.onSuccess { root -> dates = (root.optJSONArray("dates") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) } }; selected = dates.firstOrNull().orEmpty() }
+        runCatching { HubApi(prefs).getDaily(null) }.onSuccess { data = it.optJSONObject("daily") ?: it }
+    }
+    ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
+        Box {
+            PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                dates.take(7).forEach { d -> DropdownMenuItem(text = { Text(d) }, onClick = { selected = d; expanded = false; scope.launch { runCatching { HubApi(prefs).getDaily(d) }.onSuccess { data = it.optJSONObject("daily") ?: it } } }) }
+            }
+        }
+    }
+    val d = data
+    if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
+        val summary = d.optJSONObject("summary") ?: JSONObject()
+        ExpressiveCard("概览", d.optString("date"), Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusPill("终端", summary.optInt("deviceChanges",0).toString()+"次", Color(0xFF16A34A))
+                if (summary.optInt("vpnChanges",0)>0) StatusPill("VPN", summary.optInt("vpnChanges",0).toString()+"次", Color(0xFF0EA5E9))
+                if (summary.optInt("ddnsChanges",0)>0) StatusPill("DDNS", summary.optInt("ddnsChanges",0).toString()+"次", Color(0xFFF59E0B))
+            }
+        }
+        val sections = d.optJSONObject("sections") ?: JSONObject()
+        fun arr(name:String) = sections.optJSONArray(name) ?: JSONArray()
+        listOf("devices" to "终端情况", "vpn" to "VPN / STUN", "network" to "网络变化", "ddns" to "DDNS 状态").forEach { (key,title) ->
+            val a = arr(key)
+            if (a.length() > 0) ExpressiveCard(title, "${a.length()} 条", Icons.Rounded.Notes, Color(0xFF64748B)) {
+                for (i in 0 until a.length()) { val o=a.optJSONObject(i) ?: continue; Text(o.optString("text", o.toString()), fontSize=12.sp, fontWeight=FontWeight.SemiBold, maxLines=2, overflow=TextOverflow.Ellipsis) }
+            }
+        }
+        val note = d.optString("note")
+        if (note.isNotBlank()) ExpressiveCard("备注", null, Icons.Rounded.Info, Color(0xFF64748B)) { Text(note, fontSize=12.sp) }
+    }
+}
+
 @Composable
 fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh: String, onDark: (Boolean) -> Unit, onAuto: (String) -> Unit) = ScreenShell("我的", "Hub · 自动刷新 · 主题") {
     var hub by remember { mutableStateOf(prefs.hub) }
@@ -751,16 +951,16 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
     var msg by remember { mutableStateOf("等待测试") }
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     ExpressiveCard("连接设置", "Hub 请求优先 AAAA / IPv6，失败 3 次不清空缓存。", Icons.Rounded.Link, Color(0xFF2563EB)) {
-        LabeledInput("Hub", "http://192.168.5.46:58443", hub, { hub = it })
+        LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("Token", "APP_TOKEN", token, { token = it })
         LabeledInput("DNS", "223.5.5.5 / system", dns, { dns = it })
         SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S")) { onAuto(it); prefs.autoRefresh = it }
         Text(msg, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        PillButton("保存设置", Icons.Rounded.Save, accent = Color(0xFF2563EB)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; toast(ctx, "已保存") }
-        PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; scope.launch { msg = runCatching { HubApi(prefs).health() }.getOrElse { "失败：${it.message}" } } }
+        PillButton("保存设置", Icons.Rounded.Save, accent = Color(0xFF2563EB)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }
+        PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.6.0\n前台自动刷新；工具二级页面；UDP 端口探测。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.7.2\n运营商识别；Hub 已连接后直接刷新；失败后再重连。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
@@ -783,6 +983,9 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun getStatus(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/status", true)) }
     suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) { val path = if (online) "/api/devices?view=online" else "/api/devices"; val root = JSONObject(getText(path, true)); parseDeviceArray((root.optJSONArray("devices") ?: JSONArray()).toString()) }
     suspend fun getEvents(): List<EventItem> = withContext(Dispatchers.IO) { val root = JSONObject(getText("/api/events", true)); parseEvents((root.optJSONArray("events") ?: JSONArray()).toString()).reversed() }
+    suspend fun deleteEvent(id: Int): String = withContext(Dispatchers.IO) { deleteText("/api/events/$id") }
+    suspend fun getDaily(date: String? = null): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText(if (date.isNullOrBlank()) "/api/daily/latest" else "/api/daily?date=$date", true)) }
+    suspend fun getDailyList(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/daily/list", true)) }
 
     private fun retryText(path: String, auth: Boolean, attempts: Int): String {
         var last: Exception? = null
@@ -799,6 +1002,14 @@ class HubApi(private val prefs: AppPrefs) {
     private fun getText(path: String, auth: Boolean): String {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         val req = Request.Builder().url(joinUrl(prefs.hub, path)).apply { if (auth && prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
+        val res = client.newCall(req).execute()
+        val text = res.body?.string().orEmpty()
+        if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
+        return text
+    }
+    private fun deleteText(path: String): String {
+        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        val req = Request.Builder().url(joinUrl(prefs.hub, path)).delete().apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
         val res = client.newCall(req).execute()
         val text = res.body?.string().orEmpty()
         if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
@@ -846,12 +1057,12 @@ suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String, 
             if (type == "A" || type == "ALL") raw += DnsWire.query(domain, server, 1).filter { it != "127.0.0.1" }.map { DnsRecord(it, "A", server) }
             if (type == "AAAA" || type == "ALL") raw += DnsWire.query(domain, server, 28).map { DnsRecord(it, "AAAA", server) }
         }
-        if (raw.isNotEmpty()) return@withContext raw.map { it.copy(geo = geoLookup(it.value, prefs)) }
+        if (raw.isNotEmpty()) return@withContext raw.map { it.copy(operator = operatorLookup(it.value, prefs)) }
     }
     listOf(DnsRecord("无记录或超时", type, servers.joinToString(" / ")))
 }
 
-fun geoLookup(ip: String, prefs: AppPrefs): String {
+fun operatorLookup(ip: String, prefs: AppPrefs): String {
     val hub = prefs.hub.trim().trimEnd('/')
     val token = prefs.token.trim()
     if (hub.isNotBlank() && token.isNotBlank() && !ip.startsWith("无记录")) {
@@ -869,27 +1080,16 @@ fun geoLookup(ip: String, prefs: AppPrefs): String {
                 val g = o.optJSONObject("geo") ?: JSONObject()
                 val local = g.optString("localLabel")
                 val operator = g.optString("operator")
-                val geo = g.optString("geoText")
-                val confidence = g.optString("confidence")
+                val asn = g.optString("asn")
                 return listOf(
                     local.takeIf { it.isNotBlank() }?.let { "本地：$it" } ?: "",
                     operator.takeIf { it.isNotBlank() }?.let { "运营商：$it" } ?: "",
-                    geo.takeIf { it.isNotBlank() }?.let { "Geo参考：$it" } ?: "",
-                    confidence.takeIf { it.isNotBlank() }?.let { "置信：$it" } ?: ""
-                ).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "Geo 暂不可用" }
+                    asn.takeIf { it.isNotBlank() }?.let { "AS$it" } ?: ""
+                ).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "运营商未知" }
             }
         }
     }
-    return runCatching {
-        val c = OkHttpClient.Builder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).build()
-        val text = c.newCall(Request.Builder().url("https://ipwho.is/$ip").build()).execute().body?.string().orEmpty()
-        val o = JSONObject(text)
-        if (!o.optBoolean("success", false)) "Geo 暂不可用" else listOf(
-            o.optString("country"), o.optString("region"), o.optString("city"),
-            o.optJSONObject("connection")?.optString("asn")?.let { "AS$it" } ?: "",
-            o.optJSONObject("connection")?.optString("org") ?: ""
-        ).filter { it.isNotBlank() }.joinToString(" ")
-    }.getOrDefault("Geo 暂不可用")
+    return "运营商未知"
 }
 
 suspend fun pingOnce(host: String, timeoutMs: Int): Int? = withContext(Dispatchers.IO) { runCatching { val timeoutSec = (timeoutMs / 1000).coerceAtLeast(1); val p = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", timeoutSec.toString(), host).redirectErrorStream(true).start(); val text = p.inputStream.bufferedReader().readText(); p.waitFor((timeoutSec+2).toLong(), TimeUnit.SECONDS); Regex("time[=<]([0-9.]+)").find(text)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.roundToInt() }.getOrNull() }
@@ -941,14 +1141,14 @@ suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: St
     val session = JSch().getSession(user, host, port); session.setPassword(pass)
     val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="no"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256"; cfg["PubkeyAcceptedAlgorithms"]="+ssh-rsa,rsa-sha2-256,rsa-sha2-512"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["cipher.c2s"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)
     session.userInfo = object: UserInfo, UIKeyboardInteractive { override fun getPassphrase(): String?=null; override fun getPassword(): String=pass; override fun promptPassword(message:String?)=true; override fun promptPassphrase(message:String?)=false; override fun promptYesNo(message:String?)=true; override fun showMessage(message:String?){}; override fun promptKeyboardInteractive(destination:String?, name:String?, instruction:String?, prompt:Array<out String>?, echo:BooleanArray?): Array<String> = Array(prompt?.size ?: 0) { pass } }
-    session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { append(if (exit == 0) "执行成功" else "执行失败 · exit $exit"); append("\n"); append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); if (exit != 0) append("\n返回码：").append(exit) }
+    session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { val hasOut = out.isNotBlank(); val title = when { exit == 0 -> "执行成功"; exit == -1 && hasOut -> "执行完成 · 未获取退出码"; exit != 0 && hasOut -> "执行完成 · exit $exit"; else -> "执行失败 · exit $exit" }; append(title); append("\n"); append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); if (exit != 0 && !hasOut) append("\n返回码：").append(exit) }
 }
 
 fun parseDeviceArray(json: String): List<DeviceItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; return (0 until arr.length()).mapNotNull { parseDevice(arr.optJSONObject(it)) } }
-fun parseEvents(json: String): List<EventItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; val out= mutableListOf<EventItem>(); for(i in 0 until arr.length()){ val o=arr.optJSONObject(i) ?: continue; val type=o.optString("type"); val nv=o.optString("newValue"); if(type=="lucky_webhook"&&(nv.contains("token",true)||nv.length<10)) continue; out+=EventItem(o.optString("title", type.ifBlank{"事件"}), type, o.optString("name"), o.optString("oldValue","-"), maskSensitive(nv.ifBlank{o.optString("value","-")}), o.optString("createdAt", o.optString("time"))) }; return out }
+fun parseEvents(json: String): List<EventItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; val out= mutableListOf<EventItem>(); for(i in 0 until arr.length()){ val o=arr.optJSONObject(i) ?: continue; if (o.optBoolean("deleted", false)) continue; val type=o.optString("type"); val nv=o.optString("newValue"); if(type=="lucky_webhook"&&(nv.contains("token",true)||nv.length<10)) continue; out+=EventItem(o.optInt("id",0), o.optString("title", type.ifBlank{"事件"}), type, o.optString("name"), o.optString("oldValue","-"), maskSensitive(nv.ifBlank{o.optString("value","-")}), o.optString("createdAt", o.optString("time")), o.optString("ip"), o.optString("rssi"), o.optString("band"), o.optString("rxrate"), o.optString("onlineDurationText")) }; return out }
 fun parseDevice(o: JSONObject?): DeviceItem? { if (o==null) return null; val mac=o.optString("mac"); val name=o.optString("name").ifBlank{o.optString("devRecommend")}.ifBlank{o.optString("hostName")}.ifBlank{mac}; return DeviceItem(name, mac, o.optBoolean("online", true), o.optString("ip").ifBlank{o.optString("userIp")}, o.optString("ssid"), o.optString("band"), o.optString("rssi"), o.optString("rxrate"), o.optString("onlineSince").ifBlank{o.optString("onlinetime")}, o.optString("offlineAt"), o.optString("onlineDurationText"), o.optString("lastSeenAt")) }
 fun DeviceItem.toJson(): JSONObject = JSONObject().put("name",name).put("mac",mac).put("online",online).put("ip",ip).put("ssid",ssid).put("band",band).put("rssi",rssi).put("rxrate",rxrate).put("onlineSince",onlineSince).put("offlineAt",offlineAt).put("onlineDurationText",onlineDurationText).put("lastSeenAt",lastSeenAt)
-fun EventItem.toJson(): JSONObject = JSONObject().put("title",title).put("type",type).put("name",name).put("oldValue",oldValue).put("newValue",newValue).put("createdAt",time)
+fun EventItem.toJson(): JSONObject = JSONObject().put("id",id).put("title",title).put("type",type).put("name",name).put("oldValue",oldValue).put("newValue",newValue).put("createdAt",time).put("ip",ip).put("rssi",rssi).put("band",band).put("rxrate",rxrate).put("onlineDurationText",onlineDurationText)
 fun joinUrl(base: String, path: String): String { val b=base.trim().trimEnd('/'); return if(path.startsWith("/")) b+path else "$b/$path" }
 fun maskSensitive(s: String): String = s.replace(Regex("(?i)(token|password|secret)[^,}]*"), "$1:***")
 fun nowClock(): String = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
