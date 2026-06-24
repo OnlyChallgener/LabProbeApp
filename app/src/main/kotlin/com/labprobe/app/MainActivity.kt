@@ -649,56 +649,103 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
+private val ParamFieldHeight = 56.dp
+private val ParamFieldRadius = 18.dp
+
 @Composable
-fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(20.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
-            colors = labOutlinedColors(),
-            modifier = Modifier.fillMaxWidth().height(62.dp)
+fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+    Surface(
+        modifier = modifier.height(ParamFieldHeight),
+        shape = RoundedCornerShape(ParamFieldRadius),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        tonalElevation = 1.dp,
+        shadowElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            content = content
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(
+            label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f),
+            maxLines = 1,
+            modifier = Modifier.padding(start = 2.dp)
+        )
+        ParamFrame(Modifier.fillMaxWidth()) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                textStyle = LocalTextStyle.current.copy(
+                    fontSize = 14.5.sp,
+                    fontFamily = FontFamily.SansSerif,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                ),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
 @Composable
 fun TinyParamSelect(label: String, value: String, options: List<String>, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
-            OutlinedTextField(
-                value = value + "ms",
-                onValueChange = {},
-                readOnly = true,
-                singleLine = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(20.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
-                colors = labOutlinedColors(),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(62.dp)
+    Box(modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f),
+                maxLines = 1,
+                modifier = Modifier.padding(start = 2.dp)
             )
-            ExposedDropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                shape = RoundedCornerShape(22.dp),
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-                tonalElevation = 6.dp,
-                shadowElevation = 10.dp
-            ) {
-                options.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
-                        onClick = { onChange(option); expanded = false },
-                        leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
-                    )
-                }
+            ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
+                Text(
+                    value + "ms",
+                    fontSize = 14.5.sp,
+                    fontFamily = FontFamily.SansSerif,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    Icons.Rounded.KeyboardArrowDown,
+                    null,
+                    Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f)
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            shape = RoundedCornerShape(22.dp),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
+                    onClick = { onChange(option); expanded = false },
+                    leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
+                )
             }
         }
     }
@@ -1468,7 +1515,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.4\n修复：Ping 图表去掉实线坐标轴与大统计卡；X/Y 动态刻度不拥挤；DNS 查询记录最多三行且长内容横滑。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.5\n修复：包含 v0.8.4 的 Ping 图表与 DNS 记录改动；统一次数/间隔/超时数字框高度、圆角、边框和文字垂直居中。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
