@@ -173,8 +173,7 @@ class AppPrefs(context: Context) {
                 r.value + if (r.operator.isNotBlank()) " " + operatorText(r.operator) else ""
             }
         }
-        val summary = listOfNotNull(line("A"), line("AAAA")).joinToString("
-")
+        val summary = listOfNotNull(line("A"), line("AAAA")).joinToString("\n")
         if (summary.isBlank()) return
         val arr = JSONArray()
         (listOf(DnsQueryHistory(d, now, summary, signature)) + old).take(10).forEach { h ->
@@ -1515,7 +1514,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.5\n修复：包含 v0.8.4 的 Ping 图表与 DNS 记录改动；统一次数/间隔/超时数字框高度、圆角、边框和文字垂直居中。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.6\n修复：包含 v0.8.4 的 Ping 图表与 DNS 记录改动；统一次数/间隔/超时数字框高度、圆角、边框和文字垂直居中；修复 DNS 查询记录换行导致的 Kotlin 编译错误。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
