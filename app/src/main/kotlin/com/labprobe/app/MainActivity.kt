@@ -22,6 +22,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -40,11 +42,14 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jcraft.jsch.ChannelExec
@@ -59,6 +64,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import android.graphics.Paint
@@ -83,6 +90,27 @@ private const val DEFAULT_HUB = ""
 private const val DEFAULT_DNS1 = "223.5.5.5"
 private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
+
+private val LabTypography: Typography = run {
+    val t = Typography()
+    Typography(
+        displayLarge = t.displayLarge.copy(fontFamily = FontFamily.SansSerif),
+        displayMedium = t.displayMedium.copy(fontFamily = FontFamily.SansSerif),
+        displaySmall = t.displaySmall.copy(fontFamily = FontFamily.SansSerif),
+        headlineLarge = t.headlineLarge.copy(fontFamily = FontFamily.SansSerif),
+        headlineMedium = t.headlineMedium.copy(fontFamily = FontFamily.SansSerif),
+        headlineSmall = t.headlineSmall.copy(fontFamily = FontFamily.SansSerif),
+        titleLarge = t.titleLarge.copy(fontFamily = FontFamily.SansSerif),
+        titleMedium = t.titleMedium.copy(fontFamily = FontFamily.SansSerif),
+        titleSmall = t.titleSmall.copy(fontFamily = FontFamily.SansSerif),
+        bodyLarge = t.bodyLarge.copy(fontFamily = FontFamily.SansSerif),
+        bodyMedium = t.bodyMedium.copy(fontFamily = FontFamily.SansSerif),
+        bodySmall = t.bodySmall.copy(fontFamily = FontFamily.SansSerif),
+        labelLarge = t.labelLarge.copy(fontFamily = FontFamily.SansSerif),
+        labelMedium = t.labelMedium.copy(fontFamily = FontFamily.SansSerif),
+        labelSmall = t.labelSmall.copy(fontFamily = FontFamily.SansSerif)
+    )
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,6 +140,38 @@ class AppPrefs(context: Context) {
     fun history(key: String): List<String> = getHistory("history_" + key)
     fun addHistory(key: String, value: String) { val v = value.trim(); if (v.isNotBlank()) putHistory("history_" + key, listOf(v) + getHistory("history_" + key).filter { it != v }) }
     fun removeHistory(key: String, value: String) { putHistory("history_" + key, getHistory("history_" + key).filter { it != value }) }
+
+    fun dnsQueryHistory(): List<DnsQueryHistory> {
+        val arr = runCatching { JSONArray(sp.getString("dns_query_history", "[]") ?: "[]") }.getOrElse { JSONArray() }
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            DnsQueryHistory(
+                domain = o.optString("domain"),
+                time = o.optString("time"),
+                summary = o.optString("summary"),
+                signature = o.optString("signature")
+            )
+        }.filter { it.domain.isNotBlank() && it.summary.isNotBlank() }.take(10)
+    }
+
+    fun addDnsQueryHistory(domain: String, records: List<DnsRecord>) {
+        val d = domain.trim()
+        if (d.isBlank() || records.isEmpty()) return
+        val valid = records.filter { it.value.isNotBlank() && !it.value.startsWith("无记录") }
+        if (valid.isEmpty()) return
+        val signature = d + "|" + valid.map { it.type + ":" + it.value }.distinct().sorted().joinToString(",")
+        val old = dnsQueryHistory()
+        if (old.any { it.signature == signature }) return
+        val now = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        val summary = valid.joinToString(" · ") { it.type + " " + it.value + if (it.operator.isNotBlank()) " " + it.operator else "" }
+        val arr = JSONArray()
+        (listOf(DnsQueryHistory(d, now, summary, signature)) + old).take(10).forEach { h ->
+            arr.put(JSONObject().put("domain", h.domain).put("time", h.time).put("summary", h.summary).put("signature", h.signature))
+        }
+        sp.edit().putString("dns_query_history", arr.toString()).apply()
+    }
+
+    fun clearDnsQueryHistory() { sp.edit().putString("dns_query_history", "[]").apply() }
 
     var cacheStatus: String get() = sp.getString("cache_status", "") ?: ""
         set(v) = sp.edit().putString("cache_status", v).apply()
@@ -198,6 +258,7 @@ data class EventItem(
     val onlineDurationText: String = ""
 )
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
+data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
 data class PingPoint(val index: Int, val ms: Int?, val text: String)
 
 class AppState(private val prefs: AppPrefs) {
@@ -308,12 +369,12 @@ fun LabProbeApp(prefs: AppPrefs) {
         background = Color(0xFF090D18), surface = Color(0xFF111827), onSurface = Color(0xFFEFF6FF)
     )
 
-    MaterialTheme(colorScheme = if (dark) darkScheme else light) {
+    MaterialTheme(colorScheme = if (dark) darkScheme else light, typography = LabTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "events", "settings")
         val navTitles = listOf("首页", "终端", "工具", "记录", "我的")
         val navIcons = listOf(Icons.Rounded.Home, Icons.Rounded.Devices, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
-        val selected = mainRoutes.indexOf(if (route.startsWith("tool_")) "tools" else route).let { if (it < 0) 0 else it }
-        BackHandler(route.startsWith("tool_")) { route = "tools" }
+        val selected = mainRoutes.indexOf(if (route.startsWith("tool_")) "tools" else if (route == "daily") "events" else route).let { if (it < 0) 0 else it }
+        BackHandler(route.startsWith("tool_") || route == "daily") { route = if (route == "daily") "events" else "tools" }
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = { ExpressiveNav(navTitles, navIcons, selected) { route = mainRoutes[it] } }
@@ -391,16 +452,21 @@ fun ExpressiveNav(titles: List<String>, icons: List<ImageVector>, selected: Int,
 
 @Composable
 fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? = null, accent: Color = MaterialTheme.colorScheme.primary, content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(22.dp), clip = false), shape = RoundedCornerShape(22.dp), tonalElevation = 2.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(26.dp), clip = false),
+        shape = RoundedCornerShape(26.dp),
+        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.965f)
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
-                    Box(Modifier.size(33.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha = 0.13f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp)) }
+                    Box(Modifier.size(32.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
                     Spacer(Modifier.width(9.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 16.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f), maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 15.sp)
+                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
                 }
             }
             content()
@@ -445,29 +511,33 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
     val items = remember(tick, keyName) { prefs.history(keyName) }
     Box {
         IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty()) {
-            Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(22.dp))
+            Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f))
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.widthIn(min = 220.dp, max = 330.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface)
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp,
+            modifier = Modifier.widthIn(min = 230.dp, max = 340.dp).padding(vertical = 6.dp)
         ) {
-            if (items.isEmpty()) DropdownMenuItem(text = { Text("暂无历史", fontSize = 12.sp) }, onClick = { expanded = false })
+            Text("最近使用", modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f))
             items.forEach { item ->
                 DropdownMenuItem(
-                    text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
+                    text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
                     onClick = { onPick(item); expanded = false },
                     trailingIcon = {
-                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary.copy(alpha = .10f)) {
-                            Icon(Icons.Rounded.Close, null, Modifier.size(25.dp).padding(5.dp).clickable { prefs.removeHistory(keyName, item); tick++ }, tint = MaterialTheme.colorScheme.primary)
+                        IconButton(onClick = { prefs.removeHistory(keyName, item); tick++ }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
                         }
-                    }
+                    },
+                    colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.onSurface)
                 )
             }
         }
     }
 }
-
 
 @Composable
 fun CompactHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, keyboardType: KeyboardType = KeyboardType.Text) {
@@ -480,9 +550,9 @@ fun CompactHistoryInput(label: String, hint: String, value: String, onValueChang
             singleLine = true,
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(18.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
-            modifier = Modifier.weight(1f).height(50.dp)
+            modifier = Modifier.weight(1f).height(46.dp)
         )
     }
 }
@@ -497,9 +567,9 @@ fun CompactLabeledInput(label: String, hint: String, value: String, onValueChang
             placeholder = { Text(hint, fontSize = 11.5.sp, maxLines = 1) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(18.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
-            modifier = Modifier.weight(1f).height(50.dp)
+            modifier = Modifier.weight(1f).height(46.dp)
         )
     }
 }
@@ -517,18 +587,75 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
                 readOnly = true,
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(18.dp),
                 textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(50.dp)
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(46.dp)
             )
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = .98f))
+                shape = RoundedCornerShape(22.dp),
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
+                tonalElevation = 6.dp,
+                shadowElevation = 10.dp
             ) {
                 options.forEach { option ->
                     DropdownMenuItem(
                         text = { Text(option, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
+                        onClick = { onChange(option); expanded = false },
+                        leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1)
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            shape = RoundedCornerShape(16.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+            modifier = Modifier.fillMaxWidth().height(42.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TinyParamSelect(label: String, value: String, options: List<String>, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1)
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+            OutlinedTextField(
+                value = value + "ms",
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                shape = RoundedCornerShape(16.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(42.dp)
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                shape = RoundedCornerShape(22.dp),
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
+                tonalElevation = 6.dp,
+                shadowElevation = 10.dp
+            ) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
                         onClick = { onChange(option); expanded = false },
                         leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
                     )
@@ -573,7 +700,7 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
             OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp), modifier = Modifier.menuAnchor().fillMaxWidth())
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface)) {
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
                 options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
             }
         }
@@ -769,14 +896,14 @@ fun PingTool(prefs: AppPrefs) {
     var points by remember { mutableStateOf<List<PingPoint>>(emptyList()) }
     var log by remember { mutableStateOf("等待测试") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("参数", "默认 20 次；采样可 30/100/200/500/1000ms。", Icons.Rounded.Tune, Color(0xFF7C3AED)) {
+    ExpressiveCard("参数", "默认 20 次；采样 30/100/200/500/1000ms。", Icons.Rounded.Tune, Color(0xFF7C3AED)) {
         CompactHistoryInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it }, "ping_host", prefs)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f)) { CompactLabeledInput("次数", "20", count, { count = it; prefs.pingCount = it }, KeyboardType.Number) }
-            Box(Modifier.weight(1f)) { CompactSelectInput("间隔", interval, listOf("30", "100", "200", "500", "1000")) { interval = it; prefs.pingInterval = it } }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInput("次数", count, { count = it; prefs.pingCount = it }, KeyboardType.Number, Modifier.weight(.82f))
+            TinyParamSelect("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Modifier.weight(1.1f))
+            TinyParamInput("超时", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number, Modifier.weight(1f))
         }
-        CompactLabeledInput("超时", "1000", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = {
                 prefs.addHistory("ping_host", host)
                 running = true; points = emptyList(); log = "开始测试..."
@@ -798,11 +925,11 @@ fun PingTool(prefs: AppPrefs) {
                     points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }
                     running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
+            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
         }
     }
-    ExpressiveCard("延迟曲线", "X 轴为时间 s，Y 轴为延迟 ms；图表约 1 秒刷新。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingChart(points); PingStats(points) }
+    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingChart(points); PingStats(points) }
     ExpressiveCard("响应日志", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(log) }
 }
 
@@ -824,47 +951,50 @@ fun PingChart(points: List<PingPoint>) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(206.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .height(186.dp)
+            .clip(RoundedCornerShape(24.dp))
             .background(
                 Brush.linearGradient(
                     listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = .10f),
-                        Color(0xFF06B6D4).copy(alpha = .09f),
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .42f)
+                        Color(0xFFEFF7FF),
+                        Color(0xFFEAFBFA),
+                        MaterialTheme.colorScheme.primary.copy(alpha = .06f)
                     )
                 )
             )
             .padding(8.dp)
     ) {
-        Canvas(Modifier.fillMaxSize().padding(start = 38.dp, end = 14.dp, top = 12.dp, bottom = 30.dp)) {
+        if (points.isEmpty()) {
+            Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.45f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+        Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 16.dp, top = 10.dp, bottom = 26.dp)) {
             val w = size.width
             val h = size.height
-            val axis = Color(0xFF64748B).copy(alpha = 0.34f)
-            val grid = Color(0xFF64748B).copy(alpha = 0.14f)
+            val axis = Color(0xFF64748B).copy(alpha = 0.26f)
+            val grid = Color(0xFF64748B).copy(alpha = 0.12f)
             val textPaint = Paint().apply {
-                color = android.graphics.Color.argb(145, 31, 41, 55)
-                textSize = 10.sp.toPx()
+                color = android.graphics.Color.argb(150, 75, 85, 99)
+                textSize = 9.sp.toPx()
                 isAntiAlias = true
                 textAlign = Paint.Align.RIGHT
             }
             yTicks.forEach { tick ->
                 val y = h - (tick.toFloat() / yMax.toFloat() * h)
                 drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1.1f)
-                drawContext.canvas.nativeCanvas.drawText(if (tick == 0) "0" else tick.toString(), -8f, y + 4f, textPaint)
+                drawContext.canvas.nativeCanvas.drawText(tick.toString(), -8f, y + 3.5f, textPaint)
             }
-            drawLine(axis, Offset(0f, h), Offset(w, h), strokeWidth = 2f)
-            drawLine(axis, Offset(0f, 0f), Offset(0f, h), strokeWidth = 2f)
+            drawLine(axis, Offset(0f, h), Offset(w, h), strokeWidth = 1.5f)
+            drawLine(axis, Offset(0f, 0f), Offset(0f, h), strokeWidth = 1.5f)
             val xPaint = Paint().apply {
-                color = android.graphics.Color.argb(145, 31, 41, 55)
-                textSize = 10.sp.toPx()
+                color = android.graphics.Color.argb(150, 75, 85, 99)
+                textSize = 9.sp.toPx()
                 isAntiAlias = true
                 textAlign = Paint.Align.CENTER
             }
             xMarks.forEach { mark ->
                 val x = if (xCount <= 1) 0f else w * mark / (xCount - 1)
-                drawLine(grid.copy(alpha = .09f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
-                drawContext.canvas.nativeCanvas.drawText("${mark}s", x, h + 22f, xPaint)
+                drawLine(grid.copy(alpha = .08f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
+                drawContext.canvas.nativeCanvas.drawText("${mark}s", x, h + 20f, xPaint)
             }
             if (points.size >= 2) {
                 val path = Path()
@@ -874,21 +1004,15 @@ fun PingChart(points: List<PingPoint>) {
                         val x = w * idx / (points.size - 1).coerceAtLeast(1)
                         val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
                         if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
-                        drawCircle(Color.White.copy(alpha = .90f), radius = 4.2f, center = Offset(x, y))
-                        drawCircle(Color(0xFF2563EB), radius = 2.5f, center = Offset(x, y))
-                    } else {
-                        started = false
-                    }
+                        drawCircle(Color.White.copy(alpha = .92f), radius = 3.8f, center = Offset(x, y))
+                        drawCircle(Color(0xFF2563EB), radius = 2.2f, center = Offset(x, y))
+                    } else started = false
                 }
-                drawPath(path, Color(0xFF2563EB), style = Stroke(width = 4.2f, cap = StrokeCap.Round))
+                drawPath(path, Color(0xFF2563EB), style = Stroke(width = 3.6f, cap = StrokeCap.Round))
             }
         }
-        Row(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("ms", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
-        }
-        Row(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("s", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
-        }
+        Text("ms", modifier = Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 6.dp), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
+        Text("s", modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
     }
 }
 
@@ -897,13 +1021,17 @@ fun PingStats(points: List<PingPoint>) {
     val ok = points.mapNotNull { it.ms }
     val sent = points.size
     val loss = if (sent == 0) 0 else ((sent - ok.size) * 100 / sent)
-    val avg = if (ok.isEmpty()) "-" else "${ok.average().roundToInt()}ms"
-    val min = ok.minOrNull()?.let { "${it}ms" } ?: "-"
-    val max = ok.maxOrNull()?.let { "${it}ms" } ?: "-"
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { StatChip("平均", avg); StatChip("丢包", "$loss%"); StatChip("最短", min); StatChip("最长", max) }
+    val avg = if (ok.isEmpty()) "--" else "${ok.average().roundToInt()}ms"
+    val min = ok.minOrNull()?.let { "${it}ms" } ?: "--"
+    val max = ok.maxOrNull()?.let { "${it}ms" } ?: "--"
+    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha=.72f), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            StatChip("平均", avg); StatChip("丢包", "$loss%"); StatChip("最短", min); StatChip("最长", max)
+        }
+    }
 }
 
-@Composable fun StatChip(label: String, value: String) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(label, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f)); Text(value, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, maxLines = 1) } }
+@Composable fun StatChip(label: String, value: String) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(label, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f)); Text(value, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, maxLines = 1) } }
 
 @Composable
 fun DnsTool(prefs: AppPrefs) {
@@ -912,6 +1040,7 @@ fun DnsTool(prefs: AppPrefs) {
     var dns2 by remember { mutableStateOf(prefs.dns2) }
     var type by remember { mutableStateOf(prefs.dnsRecord) }
     var result by remember { mutableStateOf<List<DnsRecord>>(emptyList()) }
+    var history by remember { mutableStateOf(prefs.dnsQueryHistory()) }
     var msg by remember { mutableStateOf("等待解析") }
     val scope = rememberCoroutineScope(); val ctx = LocalContext.current
     ExpressiveCard("查询配置", "DNS1 失败自动尝试 DNS2，仅显示运营商。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
@@ -919,9 +1048,31 @@ fun DnsTool(prefs: AppPrefs) {
         LabeledHistoryInput("DNS1", "system / 223.5.5.5 / 2400:3200::1", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs)
         LabeledHistoryInput("DNS2", "8.8.8.8 / dns.google / system", dns2, { dns2 = it; prefs.dns2 = it }, "dns2", prefs)
         SelectInput("记录", type, listOf("A", "AAAA", "ALL")) { type = it; prefs.dnsRecord = it }
-        PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) { scope.launch { msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2); val records = dnsLookup(domain, dns1, dns2, type, prefs); result = records; msg = "完成：${records.size} 条" } }
+        PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) { scope.launch { msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2); val records = dnsLookup(domain, dns1, dns2, type, prefs); result = records; prefs.addDnsQueryHistory(domain, records); history = prefs.dnsQueryHistory(); msg = "完成：${records.size} 条" } }
     }
     ExpressiveCard("查询结果", msg, Icons.Rounded.TravelExplore, Color(0xFF06B6D4)) { if (result.isEmpty()) Text("暂无结果", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f)); result.forEach { r -> DnsResultRow(r) { copy(ctx, r.value) } } }
+    if (history.isNotEmpty()) {
+        ExpressiveCard("查询记录", "最多保存 10 条，结果相同自动丢弃。", Icons.Rounded.History, Color(0xFF7C3AED)) {
+            history.forEach { h -> DnsHistoryRow(h) { copy(ctx, h.summary) } }
+            TextButton(onClick = { prefs.clearDnsQueryHistory(); history = emptyList() }) { Text("清空查询记录", fontSize = 12.sp) }
+        }
+    }
+}
+
+@Composable
+fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
+    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .92f), tonalElevation = 1.dp, shadowElevation = 0.dp, modifier = Modifier.fillMaxWidth().clickable { onCopy() }) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(h.time, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
+                Spacer(Modifier.weight(1f))
+                Text(h.domain, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 190.dp))
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                Text(h.summary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .82f))
+            }
+        }
+    }
 }
 
 @Composable
@@ -989,7 +1140,6 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit) 
     state.events.forEach { e -> EventCompactCard(e) { scope.launch { state.deleteEvent(e) } } }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
     val isOnline = e.type == "device_online"
@@ -997,75 +1147,102 @@ fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
     val accent = when {
         isOnline -> Color(0xFF16A34A)
         isOffline -> Color(0xFF7C3AED)
-        e.type.contains("stun") || e.type.contains("wireguard") -> Color(0xFF0EA5E9)
+        e.type.contains("stun") || e.type.contains("wireguard") || e.type.contains("vpn") -> Color(0xFF0EA5E9)
         e.type.contains("ddns") -> Color(0xFFF59E0B)
         else -> Color(0xFF64748B)
     }
     val icon = when {
         isOnline -> Icons.Rounded.PhoneAndroid
         isOffline -> Icons.Rounded.Bedtime
-        e.type.contains("stun") || e.type.contains("wireguard") -> Icons.Rounded.SyncAlt
+        e.type.contains("stun") || e.type.contains("wireguard") || e.type.contains("vpn") -> Icons.Rounded.SyncAlt
         e.type.contains("ddns") -> Icons.Rounded.Public
-        else -> Icons.Rounded.Bolt
+        else -> Icons.Rounded.Notifications
     }
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                onDelete()
-                true
-            } else false
-        }
-    )
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).background(Color(0xFFEF4444)),
-                contentAlignment = Alignment.CenterEnd
-            ) {
-                Row(Modifier.padding(end = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp)
-                }
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 92.dp.toPx() }
+    var offsetPx by remember { mutableStateOf(0f) }
+    Box(Modifier.fillMaxWidth().heightIn(min = 78.dp)) {
+        Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { onDelete() }, contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
             }
         }
-    ) {
-        Surface(modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(20.dp), clip = false), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .97f)) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
-                    Spacer(Modifier.width(9.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(e.title.ifBlank { e.name }, fontSize = 15.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(e.time, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), maxLines = 1)
-                    }
-                    Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha=.12f)) { Text(eventLabel(e.type), Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1) }
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetPx.roundToInt(), 0) }
+                .pointerInput(e.id) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = { offsetPx = if (offsetPx < -deleteWidthPx / 2f) -deleteWidthPx else 0f },
+                        onDragCancel = { offsetPx = 0f },
+                        onHorizontalDrag = { _, dragAmount -> offsetPx = (offsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
+                    )
                 }
-                when {
-                    isOnline -> {
-                        val ip = e.ip.takeIf { looksLikeIp(it) }.orEmpty()
-                        val signal = listOf(e.rssi.takeIf { it.isNotBlank() }?.let { "$it dBm" } ?: "", e.band, e.rxrate).filter { it.isNotBlank() }.joinToString(" ")
-                        TwoColsVisible("IP", ip, "信号", signal)
-                        TwoColsVisible("SSID", e.ssid, "在线", e.onlineDurationText)
-                        if (ip.isBlank() && signal.isBlank() && e.ssid.isBlank()) InfoRow("状态", "已连接")
+                .shadow(4.dp, RoundedCornerShape(24.dp), clip = false),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
+        ) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(eventTitle(e), Modifier.weight(1f), fontSize = 14.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(shortTime(e.time), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.SemiBold, maxLines = 1)
                     }
-                    isOffline -> {
-                        val ip = e.ip.takeIf { looksLikeIp(it) }.orEmpty()
-                        val signal = listOf(e.rssi.takeIf { it.isNotBlank() }?.let { "$it dBm" } ?: "", e.band, e.rxrate).filter { it.isNotBlank() }.joinToString(" ")
-                        TwoColsVisible("状态", "已断开", "设备", e.name)
-                        TwoColsVisible("最后IP", ip, "最后信号", signal)
-                        TwoColsVisible("在线时长", e.onlineDurationText, "下线", e.offlineAt.takeIf { it.isNotBlank() }?.takeLast(8).orEmpty())
-                    }
-                    else -> {
-                        InfoRow("名称", e.name)
-                        InfoRow("新值", e.newValue, true)
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                        Text(eventLine(e), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.76f), maxLines = 1)
                     }
                 }
             }
         }
     }
 }
+
+fun eventTitle(e: EventItem): String {
+    val n = e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }.ifBlank { "事件" }
+    return when (e.type) {
+        "device_online" -> "$n 上线"
+        "device_offline" -> "$n 离线"
+        else -> e.title.ifBlank { n }
+    }
+}
+
+fun eventLine(e: EventItem): String {
+    fun clean(v: String) = v.takeIf { it.isNotBlank() && it.lowercase(Locale.getDefault()) != "null" && it != "-" } ?: ""
+    val ip = clean(e.ip).takeIf { looksLikeIp(it) } ?: ""
+    val rssi = clean(e.rssi).let { if (it.isNotBlank() && !it.endsWith("dBm")) "$it dBm" else it }
+    val bandRate = listOf(clean(e.band), clean(e.rxrate)).filter { it.isNotBlank() }.joinToString(" ")
+    return when (e.type) {
+        "device_online" -> listOf(ip, rssi, bandRate, clean(e.ssid)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "已连接" }
+        "device_offline" -> listOf(clean(formatDurationText(e.onlineDurationText)).takeIf { it.isNotBlank() }?.let { "在线 $it" } ?: "", rssi.takeIf { it.isNotBlank() }?.let { "最后 $it" } ?: "", ip, bandRate).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "已断开" }
+        else -> listOf(clean(e.name), clean(e.newValue)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { e.type }
+    }
+}
+
+fun shortTime(t: String): String = if (t.length >= 19) t.substring(11, 19) else t
+
+fun formatDurationText(raw: String): String {
+    val s = raw.trim()
+    if (s.isBlank() || s == "-" || s.lowercase(Locale.getDefault()) == "null") return ""
+    if ("小时" in s || "天" in s) return s
+    Regex("^(\\d+)分(\\d+)秒$").find(s)?.let {
+        val totalMin = it.groupValues[1].toIntOrNull() ?: 0
+        val sec = it.groupValues[2].toIntOrNull() ?: 0
+        val h = totalMin / 60
+        val m = totalMin % 60
+        return buildString { if (h > 0) append(h).append("小时"); if (m > 0 || h == 0) append(m).append("分"); append(sec).append("秒") }
+    }
+    Regex("^(\\d+)分$").find(s)?.let {
+        val totalMin = it.groupValues[1].toIntOrNull() ?: 0
+        val h = totalMin / 60
+        val m = totalMin % 60
+        return if (h > 0) "${h}小时${m}分" else "${m}分"
+    }
+    return s.replace("时", "小时")
+}
+
 
 fun looksLikeIp(v: String): Boolean = v.contains(".") || v.contains(":")
 
@@ -1112,23 +1289,31 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     var selected by remember { mutableStateOf(localDates.first()) }
     var data by remember { mutableStateOf<JSONObject?>(null) }
     var expanded by remember { mutableStateOf(false) }
-    fun loadDate(d: String) { scope.launch { runCatching { HubApi(prefs).getDaily(d) }.onSuccess { data = it.optJSONObject("daily") ?: it } } }
+    var noteEdit by remember { mutableStateOf(false) }
+    var noteText by remember { mutableStateOf("") }
+    fun loadDate(d: String) { scope.launch { runCatching { HubApi(prefs).getDaily(d) }.onSuccess { val v = it.optJSONObject("daily") ?: it; data = v; noteText = v.optString("note") } } }
     LaunchedEffect(Unit) {
-        runCatching { HubApi(prefs).getDailyList() }.onSuccess { root ->
-            val arr = root.optJSONArray("dates") ?: JSONArray()
-            val remote = (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
-            dates = if (remote.isNotEmpty()) remote.take(7) else localDates
-            selected = dates.firstOrNull().orEmpty().ifBlank { localDates.first() }
-        }.onFailure { dates = localDates; selected = localDates.first() }
-        runCatching { HubApi(prefs).getDaily(selected) }.onSuccess { data = it.optJSONObject("daily") ?: it }
+        dates = localDates
+        selected = localDates.first()
+        loadDate(selected)
+    }
+    if (noteEdit) {
+        AlertDialog(
+            onDismissRequest = { noteEdit = false },
+            title = { Text("编辑今日备注", fontWeight = FontWeight.Black) },
+            text = { OutlinedTextField(value = noteText, onValueChange = { noteText = it }, minLines = 4, maxLines = 7, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), placeholder = { Text("写下今天网络情况、异常判断或处理记录") }) },
+            confirmButton = { TextButton(onClick = { scope.launch { runCatching { HubApi(prefs).putDailyNote(selected, noteText) }.onSuccess { loadDate(selected); noteEdit = false } } }) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { noteEdit = false }) { Text("取消") } },
+            shape = RoundedCornerShape(28.dp)
+        )
     }
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface)) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
                 dates.take(7).forEachIndexed { idx, d ->
                     val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
-                    DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) })
+                    DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)
                 }
             }
         }
@@ -1149,11 +1334,13 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         listOf("devices" to "终端情况", "vpn" to "VPN / STUN", "network" to "网络变化", "ddns" to "DDNS 状态").forEach { (key,title) ->
             val a = arr(key)
             if (a.length() > 0) ExpressiveCard(title, "${a.length()} 条", Icons.Rounded.Notes, Color(0xFF64748B)) {
-                for (i in 0 until a.length()) { val o=a.optJSONObject(i) ?: continue; Text(o.optString("text", o.toString()), fontSize=12.sp, fontWeight=FontWeight.SemiBold, maxLines=2, overflow=TextOverflow.Ellipsis) }
+                for (i in 0 until a.length()) { val o=a.optJSONObject(i) ?: continue; Text(o.optString("text", o.toString()), fontSize=12.5.sp, fontWeight=FontWeight.SemiBold, maxLines=2, overflow=TextOverflow.Ellipsis) }
             }
         }
-        val note = d.optString("note")
-        if (note.isNotBlank()) ExpressiveCard("备注", null, Icons.Rounded.Info, Color(0xFF64748B)) { Text(note, fontSize=12.sp) }
+        ExpressiveCard("今日备注", if (noteText.isBlank()) "未填写" else "已保存", Icons.Rounded.EditNote, Color(0xFF64748B)) {
+            if (noteText.isBlank()) Text("暂无备注。可记录今天的网络异常、处理动作或观察结果。", fontSize=12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f)) else Text(noteText, fontSize=12.5.sp, fontWeight = FontWeight.SemiBold)
+            PillButton(if (noteText.isBlank()) "添加备注" else "编辑备注", Icons.Rounded.Edit, accent = Color(0xFF64748B)) { noteEdit = true }
+        }
     }
 }
 
@@ -1185,7 +1372,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.7.3\n修复事件字段、左滑删除和每日总结聚合。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.0\n统一 UI、事件卡片、左滑删除、备注和 Ping 图表。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
@@ -1211,6 +1398,7 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun deleteEvent(id: Int): String = withContext(Dispatchers.IO) { deleteText("/api/events/$id") }
     suspend fun getDaily(date: String? = null): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText(if (date.isNullOrBlank()) "/api/daily/latest" else "/api/daily?date=$date", true)) }
     suspend fun getDailyList(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/daily/list", true)) }
+    suspend fun putDailyNote(date: String, note: String): JSONObject = withContext(Dispatchers.IO) { JSONObject(putJson("/api/daily/note?date=$date", JSONObject().put("note", note).toString())) }
 
     private fun retryText(path: String, auth: Boolean, attempts: Int): String {
         var last: Exception? = null
@@ -1232,6 +1420,17 @@ class HubApi(private val prefs: AppPrefs) {
         if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
         return text
     }
+
+    private fun putJson(path: String, json: String): String {
+        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val req = Request.Builder().url(joinUrl(prefs.hub, path)).put(body).apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
+        val res = client.newCall(req).execute()
+        val text = res.body?.string().orEmpty()
+        if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
+        return text
+    }
+
     private fun deleteText(path: String): String {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         val req = Request.Builder().url(joinUrl(prefs.hub, path)).delete().apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
@@ -1391,10 +1590,10 @@ fun parseEvents(json: String): List<EventItem> {
             newValue = maskSensitive(nv.ifBlank { o.optString("value", "") }),
             time = o.optString("createdAt", o.optString("time")),
             ip = field("ip").ifBlank { field("lastIp") },
-            rssi = field("rssi"),
-            band = field("band"),
-            rxrate = field("rxrate"),
-            ssid = field("ssid"),
+            rssi = field("rssi").ifBlank { field("lastRssi") },
+            band = field("band").ifBlank { field("lastBand") },
+            rxrate = field("rxrate").ifBlank { field("lastRxrate") },
+            ssid = field("ssid").ifBlank { field("lastSsid") },
             onlineSince = field("onlineSince"),
             offlineAt = field("offlineAt"),
             onlineDurationText = field("onlineDurationText")
