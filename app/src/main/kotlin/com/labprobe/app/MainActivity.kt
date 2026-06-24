@@ -161,11 +161,21 @@ class AppPrefs(context: Context) {
         if (d.isBlank() || records.isEmpty()) return
         val valid = records.filter { it.value.isNotBlank() && !it.value.startsWith("无记录") }
         if (valid.isEmpty()) return
-        val signature = d + "|" + valid.map { it.type + ":" + it.value }.distinct().sorted().joinToString(",")
+        val signature = d + "|" + valid.map { it.type + ":" + it.value + ":" + it.operator }.distinct().sorted().joinToString(",")
         val old = dnsQueryHistory()
         if (old.any { it.signature == signature }) return
         val now = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-        val summary = valid.joinToString(" · ") { it.type + " " + it.value + if (it.operator.isNotBlank()) " " + it.operator else "" }
+        fun operatorText(op: String): String = op.replace(" · ", " ").trim()
+        fun line(type: String): String? {
+            val items = valid.filter { it.type == type }
+            if (items.isEmpty()) return null
+            return type + " " + items.joinToString(" / ") { r ->
+                r.value + if (r.operator.isNotBlank()) " " + operatorText(r.operator) else ""
+            }
+        }
+        val summary = listOfNotNull(line("A"), line("AAAA")).joinToString("
+")
+        if (summary.isBlank()) return
         val arr = JSONArray()
         (listOf(DnsQueryHistory(d, now, summary, signature)) + old).take(10).forEach { h ->
             arr.put(JSONObject().put("domain", h.domain).put("time", h.time).put("summary", h.summary).put("signature", h.signature))
@@ -641,17 +651,17 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 
 @Composable
 fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             shape = RoundedCornerShape(20.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+            textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.fillMaxWidth().height(58.dp)
+            modifier = Modifier.fillMaxWidth().height(62.dp)
         )
     }
 }
@@ -660,8 +670,8 @@ fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit
 @Composable
 fun TinyParamSelect(label: String, value: String, options: List<String>, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
             OutlinedTextField(
                 value = value + "ms",
@@ -669,10 +679,10 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                 readOnly = true,
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(16.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+                shape = RoundedCornerShape(20.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
                 colors = labOutlinedColors(),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(50.dp)
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(62.dp)
             )
             ExposedDropdownMenu(
                 expanded = expanded,
@@ -928,9 +938,9 @@ fun PingTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     ExpressiveCard("参数", "默认 20 次；采样 30/100/200/500/1000ms。", Icons.Rounded.Tune, Color(0xFF7C3AED)) {
         CompactHistoryInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it }, "ping_host", prefs)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInput("次数", count, { count = it; prefs.pingCount = it }, KeyboardType.Number, Modifier.weight(.82f))
-            TinyParamSelect("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Modifier.weight(1.1f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInput("次数", count, { count = it; prefs.pingCount = it }, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamSelect("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Modifier.weight(1f))
             TinyParamInput("超时", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -949,96 +959,113 @@ fun PingTool(prefs: AppPrefs) {
                         val ms = pingOnce(host, to)
                         buffer += PingPoint(i, ms, if (ms == null) "#$i timeout" else "#$i ${ms}ms")
                         val now = System.currentTimeMillis()
-                        if (now - lastUi >= 1000L || i == c) { points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }; lastUi = now }
+                        if (now - lastUi >= 1000L || i == c) {
+                            points = buffer.toList()
+                            log = buffer.takeLast(8).joinToString("\n") { it.text }
+                            lastUi = now
+                        }
                         delay(inter)
                     }
-                    points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }
+                    points = buffer.toList()
+                    log = buffer.takeLast(8).joinToString("\n") { it.text }
                     running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
+            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+                Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新")
+            }
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
+                Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止")
+            }
         }
     }
-    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingStats(points); PingChart(points) }
+    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) {
+        PingChart(points, interval.toLongOrNull() ?: 500L)
+        PingStats(points)
+    }
     ExpressiveCard("响应日志", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(log) }
 }
 
+private fun pingNiceYMax(raw: Int): Int = when {
+    raw <= 50 -> 50
+    raw <= 100 -> 100
+    raw <= 200 -> 200
+    raw <= 500 -> 500
+    raw <= 1000 -> 1000
+    else -> ((raw + 249) / 250) * 250
+}
+
+private fun formatSecondsLabel(sec: Float): String {
+    return if (sec < 3f && sec != sec.roundToInt().toFloat()) String.format(Locale.US, "%.1fs", sec) else "${sec.roundToInt()}s"
+}
+
 @Composable
-fun PingChart(points: List<PingPoint>) {
+fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     val ok = points.filter { it.ms != null }
     val rawMax = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
-    val yMax = when {
-        rawMax <= 50 -> 50
-        rawMax <= 100 -> 100
-        rawMax <= 200 -> 200
-        rawMax <= 500 -> 500
-        else -> ((rawMax + 99) / 100) * 100
-    }
+    val yMax = pingNiceYMax(rawMax)
     val yTicks = listOf(0, yMax / 4, yMax / 2, yMax * 3 / 4, yMax).distinct()
-    val xCount = points.size.coerceAtLeast(1)
-    val xStep = (xCount / 7).coerceAtLeast(1)
-    val xMarks = (0 until xCount step xStep).take(8).toList().ifEmpty { listOf(0) }
+    val pointCount = points.size.coerceAtLeast(1)
+    val totalSec = ((pointCount - 1).coerceAtLeast(1) * intervalMs / 1000f).coerceAtLeast(1f)
+    val xTickCount = when {
+        totalSec <= 3f -> 4
+        totalSec <= 10f -> 5
+        else -> 6
+    }
+    val xSecs = (0 until xTickCount).map { idx ->
+        if (xTickCount <= 1) 0f else totalSec * idx / (xTickCount - 1)
+    }
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = Color(0xFFEAF6FF),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .08f)),
-        modifier = Modifier.fillMaxWidth().height(240.dp)
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .07f)),
+        modifier = Modifier.fillMaxWidth().height(228.dp)
     ) {
-        Box(Modifier.fillMaxSize().padding(12.dp)) {
+        Box(Modifier.fillMaxSize().padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 6.dp)) {
             if (points.isEmpty()) {
                 Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.42f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
-            Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 12.dp, top = 12.dp, bottom = 30.dp)) {
+            Canvas(Modifier.fillMaxSize().padding(start = 38.dp, end = 8.dp, top = 10.dp, bottom = 30.dp)) {
                 val w = size.width
                 val h = size.height
-                val axis = Color(0xFF64748B).copy(alpha = 0.38f)
-                val grid = Color(0xFF64748B).copy(alpha = 0.13f)
-                val textPaint = Paint().apply {
-                    color = android.graphics.Color.argb(165, 75, 85, 99)
-                    textSize = 10.sp.toPx()
+                val grid = Color(0xFF64748B).copy(alpha = 0.115f)
+                val faintGrid = Color(0xFF64748B).copy(alpha = 0.055f)
+                val yPaint = Paint().apply {
+                    color = android.graphics.Color.argb(168, 75, 85, 99)
+                    textSize = 10.5.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.RIGHT
                 }
                 yTicks.forEach { tick ->
                     val y = h - (tick.toFloat() / yMax.toFloat() * h)
-                    drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1.05f)
-                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), -10f, y + 4f, textPaint)
+                    drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
+                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), -10f, y + 4f, yPaint)
                 }
-                drawLine(axis, Offset(0f, h), Offset(w, h), strokeWidth = 1.4f)
-                drawLine(axis, Offset(0f, 0f), Offset(0f, h), strokeWidth = 1.4f)
                 val xPaint = Paint().apply {
-                    color = android.graphics.Color.argb(165, 75, 85, 99)
-                    textSize = 10.sp.toPx()
+                    color = android.graphics.Color.argb(168, 75, 85, 99)
+                    textSize = 10.5.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.CENTER
                 }
-                xMarks.forEach { mark ->
-                    val x = if (xCount <= 1) 0f else w * mark / (xCount - 1)
-                    drawLine(grid.copy(alpha = .09f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
-                    drawContext.canvas.nativeCanvas.drawText("${mark}s", x, h + 22f, xPaint)
+                xSecs.forEach { sec ->
+                    val x = if (totalSec <= 0f) 0f else (sec / totalSec) * w
+                    drawLine(faintGrid, Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
+                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), x.coerceIn(0f, w), h + 23f, xPaint)
                 }
                 if (points.size >= 2) {
                     val path = Path()
                     var started = false
                     points.forEachIndexed { idx, p ->
                         if (p.ms != null) {
-                            val x = w * idx / (points.size - 1).coerceAtLeast(1)
+                            val x = if (points.size <= 1) 0f else w * idx / (points.size - 1)
                             val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
                             if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
-                        } else started = false
-                    }
-                    drawPath(path, Color(0xFF2563EB), style = Stroke(width = 3.2f, cap = StrokeCap.Round))
-                    points.forEachIndexed { idx, p ->
-                        if (p.ms != null) {
-                            val x = w * idx / (points.size - 1).coerceAtLeast(1)
-                            val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
-                            drawCircle(Color(0xFF2563EB), radius = 2.3f, center = Offset(x, y))
+                        } else {
+                            started = false
                         }
                     }
+                    drawPath(path, Color(0xFF2563EB), style = Stroke(width = 2.2f, cap = StrokeCap.Round))
                 }
             }
-            Text("ms", modifier = Modifier.align(Alignment.TopStart).padding(start = 2.dp, top = 4.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), fontWeight = FontWeight.Bold)
-            Text("s", modifier = Modifier.align(Alignment.BottomEnd), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -1048,29 +1075,34 @@ fun PingStats(points: List<PingPoint>) {
     val ok = points.mapNotNull { it.ms }
     val sent = points.size
     val loss = if (sent == 0) 0 else ((sent - ok.size) * 100 / sent)
-    val avg = if (ok.isEmpty()) "--" else "${ok.average().roundToInt()}ms"
-    val min = ok.minOrNull()?.let { "${it}ms" } ?: "--"
-    val max = ok.maxOrNull()?.let { "${it}ms" } ?: "--"
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        StatChip("当前", ok.lastOrNull()?.let { "${it}ms" } ?: "--", Color(0xFF2563EB), Modifier.weight(1f))
-        StatChip("平均", avg, Color(0xFF1E3A8A), Modifier.weight(1f))
-        StatChip("最高", max, Color(0xFFF97316), Modifier.weight(1f))
-        StatChip("最低", min, Color(0xFF16A34A), Modifier.weight(1f))
-        StatChip("丢包", "$loss%", Color(0xFF64748B), Modifier.weight(1f))
+    val current = ok.lastOrNull()?.let { "当前 ${it}ms" } ?: "当前 --"
+    val avg = if (ok.isEmpty()) "平均 --" else "平均 ${ok.average().roundToInt()}ms"
+    val max = ok.maxOrNull()?.let { "最高 ${it}ms" } ?: "最高 --"
+    val min = ok.minOrNull()?.let { "最低 ${it}ms" } ?: "最低 --"
+    val text = listOf(current, avg, max, min, "丢包 $loss%").joinToString("  ·  ")
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = .055f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, fontSize = 12.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .74f), maxLines = 1)
+        }
     }
 }
 
 @Composable
 fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.height(56.dp),
+        modifier = modifier.height(50.dp),
         shape = RoundedCornerShape(18.dp),
-        color = color.copy(alpha = .075f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))
+        color = color.copy(alpha = .06f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 7.dp), verticalArrangement = Arrangement.Center) {
-            Text(label, fontSize = 10.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.Center) {
+            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1103,7 +1135,20 @@ fun DnsTool(prefs: AppPrefs) {
 
 @Composable
 fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
-    val parts = h.summary.split(" · ").filter { it.isNotBlank() }
+    fun legacyLines(summary: String): List<String> {
+        val clean = summary.replace(" · ", " ").trim()
+        if (clean.contains("\n")) return clean.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        val aaaaAt = clean.indexOf("AAAA ")
+        val lines = mutableListOf<String>()
+        if (clean.startsWith("A ")) {
+            val a = if (aaaaAt > 0) clean.substring(0, aaaaAt).trim() else clean
+            if (a.isNotBlank()) lines += a
+        }
+        if (aaaaAt >= 0) lines += clean.substring(aaaaAt).trim()
+        if (lines.isEmpty()) lines += clean
+        return lines
+    }
+    val lines = legacyLines(h.summary).take(2)
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -1117,7 +1162,6 @@ fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
                 Spacer(Modifier.weight(1f))
                 Text(h.domain, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
             }
-            val lines = if (parts.isEmpty()) listOf(h.summary) else parts.take(3)
             lines.forEach { line ->
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                     Text(line, fontSize = 12.3.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .82f), maxLines = 1)
@@ -1424,7 +1468,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.2\n收敛修复：去重叠色块，重做 Ping 图表，优化输入框与 DNS 查询记录。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.4\n修复：Ping 图表去掉实线坐标轴与大统计卡；X/Y 动态刻度不拥挤；DNS 查询记录最多三行且长内容横滑。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
