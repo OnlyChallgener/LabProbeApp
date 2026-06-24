@@ -72,6 +72,7 @@ import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.net.URLEncoder
 import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -189,6 +190,9 @@ data class EventItem(
     val rssi: String = "",
     val band: String = "",
     val rxrate: String = "",
+    val ssid: String = "",
+    val onlineSince: String = "",
+    val offlineAt: String = "",
     val onlineDurationText: String = ""
 )
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
@@ -441,7 +445,7 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
         IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty()) {
             Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(22.dp))
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface)) {
             if (items.isEmpty()) DropdownMenuItem(text = { Text("暂无历史") }, onClick = { expanded = false })
             items.forEach { item ->
                 DropdownMenuItem(
@@ -827,11 +831,11 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit) 
     state.events.forEach { e -> EventCompactCard(e) { scope.launch { state.deleteEvent(e) } } }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
-    val ctx = LocalContext.current
-    val isOnline = e.type.contains("online")
-    val isOffline = e.type.contains("offline")
+    val isOnline = e.type == "device_online"
+    val isOffline = e.type == "device_offline"
     val accent = when {
         isOnline -> Color(0xFF16A34A)
         isOffline -> Color(0xFF7C3AED)
@@ -846,32 +850,73 @@ fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
         e.type.contains("ddns") -> Icons.Rounded.Public
         else -> Icons.Rounded.Bolt
     }
-    Surface(modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(20.dp), clip = false), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .97f)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
-                Spacer(Modifier.width(9.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(e.title.ifBlank { e.name }, fontSize = 15.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(e.time, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), maxLines = 1)
-                }
-                Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha=.12f)) { Text(eventLabel(e.type), Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1) }
-                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp)) }
-            }
-            when {
-                isOnline -> {
-                    TwoCols("IP", e.ip.ifBlank { e.newValue.takeIf { it.contains(".") || it.contains(":") } ?: "在线" }, "信号", listOf(e.rssi, e.band, e.rxrate).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "-" })
-                }
-                isOffline -> {
-                    TwoCols("状态", "已断开", "设备", e.name)
-                    if (e.oldValue.isNotBlank()) InfoRow("在线时长", e.onlineDurationText.ifBlank { e.oldValue.takeIf { it.contains("时") || it.contains("分") } ?: "-" })
-                }
-                else -> {
-                    InfoRow("名称", e.name)
-                    InfoRow("新值", e.newValue, true)
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else false
+        }
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Box(
+                Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).background(Color(0xFFEF4444)),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Row(Modifier.padding(end = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp)
                 }
             }
         }
+    ) {
+        Surface(modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(20.dp), clip = false), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .97f)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(e.title.ifBlank { e.name }, fontSize = 15.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(e.time, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), maxLines = 1)
+                    }
+                    Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha=.12f)) { Text(eventLabel(e.type), Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1) }
+                }
+                when {
+                    isOnline -> {
+                        val ip = e.ip.takeIf { looksLikeIp(it) }.orEmpty()
+                        val signal = listOf(e.rssi.takeIf { it.isNotBlank() }?.let { "$it dBm" } ?: "", e.band, e.rxrate).filter { it.isNotBlank() }.joinToString(" ")
+                        TwoColsVisible("IP", ip, "信号", signal)
+                        TwoColsVisible("SSID", e.ssid, "在线", e.onlineDurationText)
+                        if (ip.isBlank() && signal.isBlank() && e.ssid.isBlank()) InfoRow("状态", "已连接")
+                    }
+                    isOffline -> {
+                        val ip = e.ip.takeIf { looksLikeIp(it) }.orEmpty()
+                        val signal = listOf(e.rssi.takeIf { it.isNotBlank() }?.let { "$it dBm" } ?: "", e.band, e.rxrate).filter { it.isNotBlank() }.joinToString(" ")
+                        TwoColsVisible("状态", "已断开", "设备", e.name)
+                        TwoColsVisible("最后IP", ip, "最后信号", signal)
+                        TwoColsVisible("在线时长", e.onlineDurationText, "下线", e.offlineAt.takeIf { it.isNotBlank() }?.takeLast(8).orEmpty())
+                    }
+                    else -> {
+                        InfoRow("名称", e.name)
+                        InfoRow("新值", e.newValue, true)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun looksLikeIp(v: String): Boolean = v.contains(".") || v.contains(":")
+
+@Composable
+fun TwoColsVisible(l1: String, v1: String, l2: String, v2: String) {
+    if (v1.isBlank() && v2.isBlank()) return
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (v1.isNotBlank()) MiniField(l1, v1, Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+        if (v2.isNotBlank()) MiniField(l2, v2, Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
     }
 }
 
@@ -904,19 +949,29 @@ fun eventLabel(type: String): String = when {
 @Composable
 fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结", "实时聚合，最近 7 天", onBack) {
     val scope = rememberCoroutineScope()
-    var dates by remember { mutableStateOf<List<String>>(emptyList()) }
-    var selected by remember { mutableStateOf("") }
+    val localDates = remember { recentSevenDates() }
+    var dates by remember { mutableStateOf(localDates) }
+    var selected by remember { mutableStateOf(localDates.first()) }
     var data by remember { mutableStateOf<JSONObject?>(null) }
     var expanded by remember { mutableStateOf(false) }
+    fun loadDate(d: String) { scope.launch { runCatching { HubApi(prefs).getDaily(d) }.onSuccess { data = it.optJSONObject("daily") ?: it } } }
     LaunchedEffect(Unit) {
-        runCatching { HubApi(prefs).getDailyList() }.onSuccess { root -> dates = (root.optJSONArray("dates") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) } }; selected = dates.firstOrNull().orEmpty() }
-        runCatching { HubApi(prefs).getDaily(null) }.onSuccess { data = it.optJSONObject("daily") ?: it }
+        runCatching { HubApi(prefs).getDailyList() }.onSuccess { root ->
+            val arr = root.optJSONArray("dates") ?: JSONArray()
+            val remote = (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
+            dates = if (remote.isNotEmpty()) remote.take(7) else localDates
+            selected = dates.firstOrNull().orEmpty().ifBlank { localDates.first() }
+        }.onFailure { dates = localDates; selected = localDates.first() }
+        runCatching { HubApi(prefs).getDaily(selected) }.onSuccess { data = it.optJSONObject("daily") ?: it }
     }
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                dates.take(7).forEach { d -> DropdownMenuItem(text = { Text(d) }, onClick = { selected = d; expanded = false; scope.launch { runCatching { HubApi(prefs).getDaily(d) }.onSuccess { data = it.optJSONObject("daily") ?: it } } }) }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface)) {
+                dates.take(7).forEachIndexed { idx, d ->
+                    val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
+                    DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) })
+                }
             }
         }
     }
@@ -927,6 +982,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatusPill("终端", summary.optInt("deviceChanges",0).toString()+"次", Color(0xFF16A34A))
                 if (summary.optInt("vpnChanges",0)>0) StatusPill("VPN", summary.optInt("vpnChanges",0).toString()+"次", Color(0xFF0EA5E9))
+                if (summary.optInt("networkChanges",0)>0) StatusPill("网络", summary.optInt("networkChanges",0).toString()+"次", Color(0xFF64748B))
                 if (summary.optInt("ddnsChanges",0)>0) StatusPill("DDNS", summary.optInt("ddnsChanges",0).toString()+"次", Color(0xFFF59E0B))
             }
         }
@@ -941,6 +997,17 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         val note = d.optString("note")
         if (note.isNotBlank()) ExpressiveCard("备注", null, Icons.Rounded.Info, Color(0xFF64748B)) { Text(note, fontSize=12.sp) }
     }
+}
+
+fun recentSevenDates(): List<String> {
+    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    val cal = Calendar.getInstance()
+    val out = mutableListOf<String>()
+    repeat(7) {
+        out += fmt.format(cal.time)
+        cal.add(Calendar.DATE, -1)
+    }
+    return out
 }
 
 @Composable
@@ -960,7 +1027,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.7.2\n运营商识别；Hub 已连接后直接刷新；失败后再重连。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.7.3\n修复事件字段、左滑删除和每日总结聚合。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
@@ -1145,10 +1212,46 @@ suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: St
 }
 
 fun parseDeviceArray(json: String): List<DeviceItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; return (0 until arr.length()).mapNotNull { parseDevice(arr.optJSONObject(it)) } }
-fun parseEvents(json: String): List<EventItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; val out= mutableListOf<EventItem>(); for(i in 0 until arr.length()){ val o=arr.optJSONObject(i) ?: continue; if (o.optBoolean("deleted", false)) continue; val type=o.optString("type"); val nv=o.optString("newValue"); if(type=="lucky_webhook"&&(nv.contains("token",true)||nv.length<10)) continue; out+=EventItem(o.optInt("id",0), o.optString("title", type.ifBlank{"事件"}), type, o.optString("name"), o.optString("oldValue","-"), maskSensitive(nv.ifBlank{o.optString("value","-")}), o.optString("createdAt", o.optString("time")), o.optString("ip"), o.optString("rssi"), o.optString("band"), o.optString("rxrate"), o.optString("onlineDurationText")) }; return out }
+fun parseEvents(json: String): List<EventItem> {
+    if (json.isBlank()) return emptyList()
+    val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }
+    val out = mutableListOf<EventItem>()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        if (o.optBoolean("deleted", false)) continue
+        val type = o.optString("type")
+        val nv = o.optString("newValue")
+        if (type == "lucky_webhook" && (nv.contains("token", true) || nv.length < 10)) continue
+        val dev = o.optJSONObject("device") ?: JSONObject()
+        fun field(name: String): String = o.optString(name).ifBlank { dev.optString(name) }
+        out += EventItem(
+            id = o.optInt("id", 0),
+            title = o.optString("title", type.ifBlank { "事件" }),
+            type = type,
+            name = o.optString("name").ifBlank { dev.optString("name") },
+            oldValue = o.optString("oldValue", ""),
+            newValue = maskSensitive(nv.ifBlank { o.optString("value", "") }),
+            time = o.optString("createdAt", o.optString("time")),
+            ip = field("ip").ifBlank { field("lastIp") },
+            rssi = field("rssi"),
+            band = field("band"),
+            rxrate = field("rxrate"),
+            ssid = field("ssid"),
+            onlineSince = field("onlineSince"),
+            offlineAt = field("offlineAt"),
+            onlineDurationText = field("onlineDurationText")
+        )
+    }
+    return out
+}
 fun parseDevice(o: JSONObject?): DeviceItem? { if (o==null) return null; val mac=o.optString("mac"); val name=o.optString("name").ifBlank{o.optString("devRecommend")}.ifBlank{o.optString("hostName")}.ifBlank{mac}; return DeviceItem(name, mac, o.optBoolean("online", true), o.optString("ip").ifBlank{o.optString("userIp")}, o.optString("ssid"), o.optString("band"), o.optString("rssi"), o.optString("rxrate"), o.optString("onlineSince").ifBlank{o.optString("onlinetime")}, o.optString("offlineAt"), o.optString("onlineDurationText"), o.optString("lastSeenAt")) }
 fun DeviceItem.toJson(): JSONObject = JSONObject().put("name",name).put("mac",mac).put("online",online).put("ip",ip).put("ssid",ssid).put("band",band).put("rssi",rssi).put("rxrate",rxrate).put("onlineSince",onlineSince).put("offlineAt",offlineAt).put("onlineDurationText",onlineDurationText).put("lastSeenAt",lastSeenAt)
-fun EventItem.toJson(): JSONObject = JSONObject().put("id",id).put("title",title).put("type",type).put("name",name).put("oldValue",oldValue).put("newValue",newValue).put("createdAt",time).put("ip",ip).put("rssi",rssi).put("band",band).put("rxrate",rxrate).put("onlineDurationText",onlineDurationText)
+fun EventItem.toJson(): JSONObject = JSONObject()
+    .put("id", id).put("title", title).put("type", type).put("name", name)
+    .put("oldValue", oldValue).put("newValue", newValue).put("createdAt", time)
+    .put("ip", ip).put("rssi", rssi).put("band", band).put("rxrate", rxrate)
+    .put("ssid", ssid).put("onlineSince", onlineSince).put("offlineAt", offlineAt)
+    .put("onlineDurationText", onlineDurationText)
 fun joinUrl(base: String, path: String): String { val b=base.trim().trimEnd('/'); return if(path.startsWith("/")) b+path else "$b/$path" }
 fun maskSensitive(s: String): String = s.replace(Regex("(?i)(token|password|secret)[^,}]*"), "$1:***")
 fun nowClock(): String = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
