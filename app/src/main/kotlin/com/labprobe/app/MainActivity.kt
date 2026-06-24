@@ -1062,48 +1062,68 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     }
     Surface(
         shape = RoundedCornerShape(24.dp),
-        color = Color(0xFFEAF6FF),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .07f)),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
         modifier = Modifier.fillMaxWidth().height(228.dp)
     ) {
-        Box(Modifier.fillMaxSize().padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 6.dp)) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 6.dp)) {
             if (points.isEmpty()) {
-                Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.42f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.40f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
-            Canvas(Modifier.fillMaxSize().padding(start = 38.dp, end = 8.dp, top = 10.dp, bottom = 30.dp)) {
-                val w = size.width
-                val h = size.height
-                val grid = Color(0xFF64748B).copy(alpha = 0.115f)
-                val faintGrid = Color(0xFF64748B).copy(alpha = 0.055f)
+            Canvas(Modifier.fillMaxSize().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)) {
+                val fullW = size.width
+                val fullH = size.height
+                val labelW = 28.dp.toPx()
+                val bottomH = 30.dp.toPx()
+                val topH = 6.dp.toPx()
+                val rightPad = 2.dp.toPx()
+                val plotLeft = labelW
+                val plotTop = topH
+                val plotRight = fullW - rightPad
+                val plotBottom = fullH - bottomH
+                val plotW = (plotRight - plotLeft).coerceAtLeast(1f)
+                val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
+                val grid = Color(0xFF64748B).copy(alpha = 0.095f)
+                val faintGrid = Color(0xFF64748B).copy(alpha = 0.040f)
                 val yPaint = Paint().apply {
-                    color = android.graphics.Color.argb(168, 75, 85, 99)
+                    color = android.graphics.Color.argb(170, 75, 85, 99)
                     textSize = 10.5.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.RIGHT
                 }
                 yTicks.forEach { tick ->
-                    val y = h - (tick.toFloat() / yMax.toFloat() * h)
-                    drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
-                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), -10f, y + 4f, yPaint)
+                    val y = plotBottom - (tick.toFloat() / yMax.toFloat() * plotH)
+                    drawLine(grid, Offset(plotLeft, y), Offset(plotRight, y), strokeWidth = 1f)
+                    // 0 与 X 轴的 0s 共用，不重复显示 Y 轴 0。
+                    if (tick != 0) {
+                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 7.dp.toPx(), y + 4f, yPaint)
+                    }
                 }
                 val xPaint = Paint().apply {
-                    color = android.graphics.Color.argb(168, 75, 85, 99)
+                    color = android.graphics.Color.argb(170, 75, 85, 99)
                     textSize = 10.5.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.CENTER
                 }
-                xSecs.forEach { sec ->
-                    val x = if (totalSec <= 0f) 0f else (sec / totalSec) * w
-                    drawLine(faintGrid, Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
-                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), x.coerceIn(0f, w), h + 23f, xPaint)
+                xSecs.forEachIndexed { idx, sec ->
+                    val x = plotLeft + if (totalSec <= 0f) 0f else (sec / totalSec) * plotW
+                    drawLine(faintGrid, Offset(x, plotTop), Offset(x, plotBottom), strokeWidth = 1f)
+                    val labelX = when (idx) {
+                        0 -> (x + 8.dp.toPx()).coerceAtMost(plotRight)
+                        xSecs.lastIndex -> (x - 8.dp.toPx()).coerceAtLeast(plotLeft)
+                        else -> x
+                    }
+                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 22.dp.toPx(), xPaint)
                 }
                 if (points.size >= 2) {
                     val path = Path()
                     var started = false
                     points.forEachIndexed { idx, p ->
                         if (p.ms != null) {
-                            val x = if (points.size <= 1) 0f else w * idx / (points.size - 1)
-                            val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
+                            val x = plotLeft + if (points.size <= 1) 0f else plotW * idx / (points.size - 1)
+                            val y = plotBottom - (p.ms.toFloat() / yMax.toFloat() * plotH)
                             if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
                         } else {
                             started = false
@@ -1442,11 +1462,33 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     if (noteEdit) {
         AlertDialog(
             onDismissRequest = { noteEdit = false },
-            title = { Text("编辑今日备注", fontWeight = FontWeight.Black) },
-            text = { OutlinedTextField(value = noteText, onValueChange = { noteText = it }, minLines = 4, maxLines = 7, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = labOutlinedColors(), placeholder = { Text("写下今天网络情况、异常判断或处理记录") }) },
-            confirmButton = { TextButton(onClick = { scope.launch { runCatching { HubApi(prefs).putDailyNote(selected, noteText) }.onSuccess { loadDate(selected); noteEdit = false } } }) { Text("保存") } },
-            dismissButton = { TextButton(onClick = { noteEdit = false }) { Text("取消") } },
-            shape = RoundedCornerShape(28.dp)
+            title = {
+                Text(
+                    "编辑今日备注",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 20.sp,
+                    lineHeight = 24.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    minLines = 5,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = labOutlinedColors(),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+                    placeholder = { Text("写下今天网络情况、异常判断或处理记录", fontSize = 13.sp) }
+                )
+            },
+            confirmButton = { TextButton(onClick = { scope.launch { runCatching { HubApi(prefs).putDailyNote(selected, noteText) }.onSuccess { loadDate(selected); noteEdit = false } } }) { Text("保存", fontWeight = FontWeight.Bold) } },
+            dismissButton = { TextButton(onClick = { noteEdit = false }) { Text("取消", fontWeight = FontWeight.Bold) } },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
         )
     }
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
@@ -1514,7 +1556,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.6\n修复：包含 v0.8.4 的 Ping 图表与 DNS 记录改动；统一次数/间隔/超时数字框高度、圆角、边框和文字垂直居中；修复 DNS 查询记录换行导致的 Kotlin 编译错误。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.7\n修复：Ping 图表改为白色单层卡片，去掉蓝色底；X/Y 轴不画实线，零点不重复；刻度更贴边且不压线；每日备注弹窗改为白色 OneUI + Material 3 风格。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
