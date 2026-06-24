@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -60,6 +61,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import android.graphics.Paint
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.net.DatagramPacket
@@ -445,14 +447,92 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
         IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty()) {
             Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(22.dp))
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface)) {
-            if (items.isEmpty()) DropdownMenuItem(text = { Text("暂无历史") }, onClick = { expanded = false })
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 220.dp, max = 330.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface)
+        ) {
+            if (items.isEmpty()) DropdownMenuItem(text = { Text("暂无历史", fontSize = 12.sp) }, onClick = { expanded = false })
             items.forEach { item ->
                 DropdownMenuItem(
-                    text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
                     onClick = { onPick(item); expanded = false },
-                    trailingIcon = { Icon(Icons.Rounded.Close, null, Modifier.size(17.dp).clickable { prefs.removeHistory(keyName, item); tick++ }) }
+                    trailingIcon = {
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary.copy(alpha = .10f)) {
+                            Icon(Icons.Rounded.Close, null, Modifier.size(25.dp).padding(5.dp).clickable { prefs.removeHistory(keyName, item); tick++ }, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 )
+            }
+        }
+    }
+}
+
+
+@Composable
+fun CompactHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, keyboardType: KeyboardType = KeyboardType.Text) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(48.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.5.sp, maxLines = 1)
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(hint, fontSize = 11.5.sp, maxLines = 1) },
+            singleLine = true,
+            trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            shape = RoundedCornerShape(16.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
+            modifier = Modifier.weight(1f).height(50.dp)
+        )
+    }
+}
+
+@Composable
+fun CompactLabeledInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Text) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(48.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.5.sp, maxLines = 1)
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(hint, fontSize = 11.5.sp, maxLines = 1) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            shape = RoundedCornerShape(16.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
+            modifier = Modifier.weight(1f).height(50.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CompactSelectInput(label: String, value: String, options: List<String>, onChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(48.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.5.sp, maxLines = 1)
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                shape = RoundedCornerShape(16.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(50.dp)
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = .98f))
+            ) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
+                        onClick = { onChange(option); expanded = false },
+                        leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
+                    )
+                }
             }
         }
     }
@@ -493,7 +573,9 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
             OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp), modifier = Modifier.menuAnchor().fillMaxWidth())
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) { options.forEach { DropdownMenuItem(text = { Text(it) }, onClick = { onChange(it); expanded = false }) } }
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface)) {
+                options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
+            }
         }
     }
 }
@@ -508,18 +590,42 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = nas?.optString("exitIpv6").orEmpty()
-    val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress")
-    val stun = data?.optJSONObject("stun")?.optString("publicAddress")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        AssistChip(onClick = { edit = !edit }, label = { Text(if (edit) "完成排序" else "排序", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.DragIndicator, null, Modifier.size(16.dp)) })
-        Text("长按/点击排序后用箭头调整首页卡片顺序", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.46f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val vpnRows = remember(data?.toString(), nasV6) {
+        val rows = mutableListOf<Pair<String, String>>()
+        val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
+        if (wg.isNotBlank()) rows += "WireGuard" to wg
+        val vpnObj = data?.optJSONObject("vpn")
+        if (vpnObj != null) {
+            val keys = vpnObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val obj = vpnObj.optJSONObject(key)
+                val addr = obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: ""
+                val label = vpnServiceLabel(key)
+                if (addr.isNotBlank() && rows.none { it.second == addr }) rows += label to addr
+            }
+        }
+        val stun = data?.optJSONObject("stun")?.optString("publicAddress").orEmpty()
+        if (stun.isNotBlank() && rows.none { it.second == stun }) rows += "OpenVPN" to stun
+        rows
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        FilterChip(
+            selected = edit,
+            onClick = { edit = !edit },
+            label = { Text(if (edit) "完成" else "排序", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+            leadingIcon = { Icon(Icons.Rounded.DragIndicator, null, Modifier.size(15.dp)) },
+            shape = RoundedCornerShape(15.dp),
+            modifier = Modifier.height(34.dp)
+        )
+        Text(if (edit) "用卡片右上角箭头调整顺序" else "点击排序可调整首页卡片", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.46f), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     val cards = order.distinct().filter { it in listOf("status","exit","vpn","devices") } + listOf("status","exit","vpn","devices").filter { it !in order }
     cards.forEach { key ->
         val content: @Composable () -> Unit = when (key) {
             "status" -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { StatusCard(prefs, state, autoRefresh, onAuto) } } }
             "exit" -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { ExitCard(nas, router) } } }
-            "vpn" -> { { if (!wg.isNullOrBlank() || !stun.isNullOrBlank()) HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { VpnCard(wg, stun) } } }
+            "vpn" -> { { if (vpnRows.isNotEmpty()) HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { VpnCard(vpnRows) } } }
             else -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { DevicesHomeCard(state) } } }
         }
         content()
@@ -545,7 +651,7 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             StatusPill("终端", "${state.onlineDevices.size} 在线", Color(0xFFF59E0B))
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(1f)) { SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S"), onAuto) }
+            Box(Modifier.weight(0.95f)) { CompactSelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S"), onAuto) }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
         }
     }
@@ -561,11 +667,17 @@ fun ExitCard(nas: JSONObject?, router: JSONObject?) {
 }
 
 @Composable
-fun VpnCard(wg: String?, stun: String?) {
-    ExpressiveCard("VPN / STUN", "仅显示已获取的 WireGuard / OpenVPN / EasyTier 地址。", Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
-        InfoRowVisible("WG", wg, true)
-        InfoRowVisible("STUN", stun, true)
+fun VpnCard(rows: List<Pair<String, String>>) {
+    ExpressiveCard("VPN 地址", null, Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
+        rows.forEach { (label, value) -> InfoRowVisible(label, value, true) }
     }
+}
+
+fun vpnServiceLabel(key: String): String = when (key.lowercase(Locale.getDefault())) {
+    "wg", "wireguard" -> "WireGuard"
+    "openvpn", "open_vpn" -> "OpenVPN"
+    "easytier", "easy_tier" -> "EasyTier"
+    else -> key.replace('_', ' ').replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 }
 
 @Composable
@@ -658,12 +770,12 @@ fun PingTool(prefs: AppPrefs) {
     var log by remember { mutableStateOf("等待测试") }
     val scope = rememberCoroutineScope()
     ExpressiveCard("参数", "默认 20 次；采样可 30/100/200/500/1000ms。", Icons.Rounded.Tune, Color(0xFF7C3AED)) {
-        LabeledHistoryInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it }, "ping_host", prefs)
+        CompactHistoryInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it }, "ping_host", prefs)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f)) { LabeledInput("次数", "20", count, { count = it; prefs.pingCount = it }, KeyboardType.Number) }
-            Box(Modifier.weight(1f)) { SelectInput("间隔", interval, listOf("30", "100", "200", "500", "1000")) { interval = it; prefs.pingInterval = it } }
+            Box(Modifier.weight(1f)) { CompactLabeledInput("次数", "20", count, { count = it; prefs.pingCount = it }, KeyboardType.Number) }
+            Box(Modifier.weight(1f)) { CompactSelectInput("间隔", interval, listOf("30", "100", "200", "500", "1000")) { interval = it; prefs.pingInterval = it } }
         }
-        LabeledInput("超时", "1000", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number)
+        CompactLabeledInput("超时", "1000", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 prefs.addHistory("ping_host", host)
@@ -696,40 +808,86 @@ fun PingTool(prefs: AppPrefs) {
 
 @Composable
 fun PingChart(points: List<PingPoint>) {
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f), modifier = Modifier.fillMaxWidth().height(190.dp)) {
-        Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 12.dp, top = 16.dp, bottom = 26.dp)) {
-            val ok = points.filter { it.ms != null }
-            val rawMax = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
-            val yMax = when { rawMax <= 50 -> 50; rawMax <= 100 -> 100; rawMax <= 200 -> 200; rawMax <= 500 -> 500; else -> ((rawMax + 99) / 100) * 100 }
-            val w = size.width; val h = size.height
-            val axis = Color.Gray.copy(alpha = 0.30f)
-            drawLine(axis, Offset(0f,h), Offset(w,h), strokeWidth=2f)
-            drawLine(axis, Offset(0f,0f), Offset(0f,h), strokeWidth=2f)
-            val yTicks = 5
-            for (i in 0..yTicks) {
-                val y = h * i / yTicks
-                drawLine(Color.Gray.copy(alpha = 0.15f), Offset(0f, y), Offset(w, y), strokeWidth = 1f)
+    val ok = points.filter { it.ms != null }
+    val rawMax = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
+    val yMax = when {
+        rawMax <= 50 -> 50
+        rawMax <= 100 -> 100
+        rawMax <= 200 -> 200
+        rawMax <= 500 -> 500
+        else -> ((rawMax + 99) / 100) * 100
+    }
+    val yTicks = listOf(0, yMax / 5, yMax * 2 / 5, yMax * 3 / 5, yMax * 4 / 5, yMax).distinct()
+    val xCount = points.size.coerceAtLeast(1)
+    val xStep = (xCount / 7).coerceAtLeast(1)
+    val xMarks = (0 until xCount step xStep).take(8).toList().ifEmpty { listOf(0) }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(206.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = .10f),
+                        Color(0xFF06B6D4).copy(alpha = .09f),
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .42f)
+                    )
+                )
+            )
+            .padding(8.dp)
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(start = 38.dp, end = 14.dp, top = 12.dp, bottom = 30.dp)) {
+            val w = size.width
+            val h = size.height
+            val axis = Color(0xFF64748B).copy(alpha = 0.34f)
+            val grid = Color(0xFF64748B).copy(alpha = 0.14f)
+            val textPaint = Paint().apply {
+                color = android.graphics.Color.argb(145, 31, 41, 55)
+                textSize = 10.sp.toPx()
+                isAntiAlias = true
+                textAlign = Paint.Align.RIGHT
+            }
+            yTicks.forEach { tick ->
+                val y = h - (tick.toFloat() / yMax.toFloat() * h)
+                drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1.1f)
+                drawContext.canvas.nativeCanvas.drawText(if (tick == 0) "0" else tick.toString(), -8f, y + 4f, textPaint)
+            }
+            drawLine(axis, Offset(0f, h), Offset(w, h), strokeWidth = 2f)
+            drawLine(axis, Offset(0f, 0f), Offset(0f, h), strokeWidth = 2f)
+            val xPaint = Paint().apply {
+                color = android.graphics.Color.argb(145, 31, 41, 55)
+                textSize = 10.sp.toPx()
+                isAntiAlias = true
+                textAlign = Paint.Align.CENTER
+            }
+            xMarks.forEach { mark ->
+                val x = if (xCount <= 1) 0f else w * mark / (xCount - 1)
+                drawLine(grid.copy(alpha = .09f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
+                drawContext.canvas.nativeCanvas.drawText("${mark}s", x, h + 22f, xPaint)
             }
             if (points.size >= 2) {
-                val path = Path(); var started = false
+                val path = Path()
+                var started = false
                 points.forEachIndexed { idx, p ->
                     if (p.ms != null) {
                         val x = w * idx / (points.size - 1).coerceAtLeast(1)
                         val y = h - (p.ms.toFloat() / yMax.toFloat() * h)
                         if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
-                    } else started = false
+                        drawCircle(Color.White.copy(alpha = .90f), radius = 4.2f, center = Offset(x, y))
+                        drawCircle(Color(0xFF2563EB), radius = 2.5f, center = Offset(x, y))
+                    } else {
+                        started = false
+                    }
                 }
-                drawPath(path, Color(0xFF38BDF8), style = Stroke(width = 5f, cap = StrokeCap.Round))
+                drawPath(path, Color(0xFF2563EB), style = Stroke(width = 4.2f, cap = StrokeCap.Round))
             }
         }
-        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp)) {
-            Text("ms", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f))
-            Spacer(Modifier.weight(1f))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                val maxIdx = points.size.coerceAtLeast(1)
-                val marks = (0 until maxIdx).filterIndexed { index, _ -> index % ((maxIdx / 7).coerceAtLeast(1)) == 0 }.take(8)
-                if (marks.isEmpty()) Text("0s", fontSize = 10.sp) else marks.forEach { Text("${it}s", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f)) }
-            }
+        Row(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("ms", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
+        }
+        Row(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("s", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.Bold)
         }
     }
 }
