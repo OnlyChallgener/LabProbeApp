@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -22,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
@@ -452,24 +454,47 @@ fun ExpressiveNav(titles: List<String>, icons: List<ImageVector>, selected: Int,
 
 @Composable
 fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? = null, accent: Color = MaterialTheme.colorScheme.primary, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(28.dp)
+    val bg = Brush.linearGradient(
+        listOf(
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
+            accent.copy(alpha = 0.045f),
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.985f)
+        )
+    )
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(26.dp), clip = false),
-        shape = RoundedCornerShape(26.dp),
-        tonalElevation = 2.dp,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.965f)
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(5.dp, shape, clip = false),
+        shape = shape,
+        color = Color.Transparent,
+        tonalElevation = 0.dp
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) {
-                    Box(Modifier.size(32.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
-                    Spacer(Modifier.width(9.dp))
+        Box(
+            Modifier
+                .clip(shape)
+                .background(bg)
+                .border(1.dp, accent.copy(alpha = 0.08f), shape)
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (icon != null) {
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.18f), accent.copy(alpha = 0.08f)))),
+                            contentAlignment = Alignment.Center
+                        ) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
+                        Spacer(Modifier.width(9.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.54f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
+                    }
                 }
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
-                }
+                content()
             }
-            content()
         }
     }
 }
@@ -540,6 +565,18 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
 }
 
 @Composable
+fun labOutlinedColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
+    unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+    disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),
+    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f),
+    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+    cursorColor = MaterialTheme.colorScheme.primary
+)
+
+@Composable
 fun CompactHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, keyboardType: KeyboardType = KeyboardType.Text) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(48.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.5.sp, maxLines = 1)
@@ -551,8 +588,9 @@ fun CompactHistoryInput(label: String, hint: String, value: String, onValueChang
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             shape = RoundedCornerShape(18.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
-            modifier = Modifier.weight(1f).height(46.dp)
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
+            colors = labOutlinedColors(),
+            modifier = Modifier.weight(1f).height(52.dp)
         )
     }
 }
@@ -568,8 +606,9 @@ fun CompactLabeledInput(label: String, hint: String, value: String, onValueChang
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             shape = RoundedCornerShape(18.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
-            modifier = Modifier.weight(1f).height(46.dp)
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
+            colors = labOutlinedColors(),
+            modifier = Modifier.weight(1f).height(52.dp)
         )
     }
 }
@@ -588,8 +627,9 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                 shape = RoundedCornerShape(18.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(46.dp)
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
+                colors = labOutlinedColors(),
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
             )
             ExposedDropdownMenu(
                 expanded = expanded,
@@ -622,8 +662,9 @@ fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             shape = RoundedCornerShape(16.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
-            modifier = Modifier.fillMaxWidth().height(42.dp)
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+            colors = labOutlinedColors(),
+            modifier = Modifier.fillMaxWidth().height(50.dp)
         )
     }
 }
@@ -642,8 +683,9 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                 shape = RoundedCornerShape(16.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(42.dp)
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+                colors = labOutlinedColors(),
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(50.dp)
             )
             ExposedDropdownMenu(
                 expanded = expanded,
@@ -678,7 +720,8 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
             visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             shape = RoundedCornerShape(18.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+            colors = labOutlinedColors(),
             modifier = Modifier.weight(1f)
         )
     }
@@ -688,7 +731,7 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
 fun LabeledInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Text, password: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp), modifier = Modifier.weight(1f))
+        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f))
     }
 }
 
@@ -699,7 +742,7 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
-            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp), modifier = Modifier.menuAnchor().fillMaxWidth())
+            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(18.dp), textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth())
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
                 options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
             }
@@ -925,11 +968,11 @@ fun PingTool(prefs: AppPrefs) {
                     points = buffer.toList(); log = buffer.takeLast(8).joinToString("\n") { it.text }
                     running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
+            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新") }
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) { Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止") }
         }
     }
-    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingChart(points); PingStats(points) }
+    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) { PingStats(points); PingChart(points) }
     ExpressiveCard("响应日志", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(log) }
 }
 
@@ -1024,14 +1067,29 @@ fun PingStats(points: List<PingPoint>) {
     val avg = if (ok.isEmpty()) "--" else "${ok.average().roundToInt()}ms"
     val min = ok.minOrNull()?.let { "${it}ms" } ?: "--"
     val max = ok.maxOrNull()?.let { "${it}ms" } ?: "--"
-    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha=.72f), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            StatChip("平均", avg); StatChip("丢包", "$loss%"); StatChip("最短", min); StatChip("最长", max)
-        }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        StatChip("当前", ok.lastOrNull()?.let { "${it}ms" } ?: "--", Color(0xFF2563EB), Modifier.weight(1f))
+        StatChip("平均", avg, Color(0xFF1E3A8A), Modifier.weight(1f))
+        StatChip("最高", max, Color(0xFFF97316), Modifier.weight(1f))
+        StatChip("最低", min, Color(0xFF16A34A), Modifier.weight(1f))
+        StatChip("丢包", "$loss%", Color(0xFF64748B), Modifier.weight(1f))
     }
 }
 
-@Composable fun StatChip(label: String, value: String) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(label, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f)); Text(value, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, maxLines = 1) } }
+@Composable
+fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.height(50.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = color.copy(alpha = .08f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
+    ) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.Center) {
+            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 12.8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
 
 @Composable
 fun DnsTool(prefs: AppPrefs) {
@@ -1061,16 +1119,27 @@ fun DnsTool(prefs: AppPrefs) {
 
 @Composable
 fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
-    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .92f), tonalElevation = 1.dp, shadowElevation = 0.dp, modifier = Modifier.fillMaxWidth().clickable { onCopy() }) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = .045f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .08f)),
+        modifier = Modifier.fillMaxWidth().clickable { onCopy() }
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(h.time, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
+                Text(h.time, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f), maxLines = 1)
                 Spacer(Modifier.weight(1f))
-                Text(h.domain, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 190.dp))
+                Text(h.domain, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
             }
-            Row(Modifier.horizontalScroll(rememberScrollState())) {
-                Text(h.summary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .82f))
-            }
+            Text(
+                h.summary,
+                fontSize = 12.2.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 16.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .80f)
+            )
         }
     }
 }
@@ -1301,7 +1370,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         AlertDialog(
             onDismissRequest = { noteEdit = false },
             title = { Text("编辑今日备注", fontWeight = FontWeight.Black) },
-            text = { OutlinedTextField(value = noteText, onValueChange = { noteText = it }, minLines = 4, maxLines = 7, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), placeholder = { Text("写下今天网络情况、异常判断或处理记录") }) },
+            text = { OutlinedTextField(value = noteText, onValueChange = { noteText = it }, minLines = 4, maxLines = 7, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = labOutlinedColors(), placeholder = { Text("写下今天网络情况、异常判断或处理记录") }) },
             confirmButton = { TextButton(onClick = { scope.launch { runCatching { HubApi(prefs).putDailyNote(selected, noteText) }.onSuccess { loadDate(selected); noteEdit = false } } }) { Text("保存") } },
             dismissButton = { TextButton(onClick = { noteEdit = false }) { Text("取消") } },
             shape = RoundedCornerShape(28.dp)
@@ -1321,9 +1390,9 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
-        ExpressiveCard("概览", d.optString("date"), Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
+        ExpressiveCard("概览", "上下线、VPN、网络与 DDNS 汇总", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusPill("终端", summary.optInt("deviceChanges",0).toString()+"次", Color(0xFF16A34A))
+                StatusPill("上下线", summary.optInt("deviceChanges",0).toString()+"次", Color(0xFF16A34A))
                 if (summary.optInt("vpnChanges",0)>0) StatusPill("VPN", summary.optInt("vpnChanges",0).toString()+"次", Color(0xFF0EA5E9))
                 if (summary.optInt("networkChanges",0)>0) StatusPill("网络", summary.optInt("networkChanges",0).toString()+"次", Color(0xFF64748B))
                 if (summary.optInt("ddnsChanges",0)>0) StatusPill("DDNS", summary.optInt("ddnsChanges",0).toString()+"次", Color(0xFFF59E0B))
@@ -1372,7 +1441,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.0\n统一 UI、事件卡片、左滑删除、备注和 Ping 图表。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.1\n统一 OneUI + Material 3 质感，修复 Ping 参数、图表、查询记录与每日总结。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
