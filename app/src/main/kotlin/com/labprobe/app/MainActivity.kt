@@ -326,11 +326,14 @@ class AppState(private val prefs: AppPrefs) {
         val devOnline = api.getDevices(true)
         val evs = api.getEvents()
         status = stRoot
-        devices = mergeDeviceCache(devices, devWatched)
+        val mergedDevices = mergeDeviceCache(devices, devWatched)
+        devices = mergedDevices
         onlineDevices = devOnline
         events = evs
         prefs.cacheStatus = stRoot.toString()
-        prefs.cacheDevices = JSONArray(devWatched.map { it.toJson() }).toString()
+        // 保存合并后的关注终端缓存，而不是只保存 Hub 本次返回值。
+        // 这样离线设备在 Hub 短时间字段缺失、APP 重启后，仍能保留最后 IP / SSID / 频段 / 速率 / 信号。
+        prefs.cacheDevices = JSONArray(mergedDevices.map { it.toJson() }).toString()
         prefs.cacheOnlineDevices = JSONArray(devOnline.map { it.toJson() }).toString()
         prefs.cacheEvents = JSONArray(evs.map { it.toJson() }).toString()
         prefs.lastRefresh = nowClock()
@@ -909,10 +912,10 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
 
 @Composable
 fun ExitCard(nas: JSONObject?, router: JSONObject?) {
-    ExpressiveCard("出口与路由", "NAS 出口、路由 WAN IPv6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9)) {
+    ExpressiveCard("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9)) {
         InfoRowVisible("NAS IPv4", nas?.optString("exitIpv4"), true)
         InfoRowVisible("NAS IPv6", nas?.optString("exitIpv6"), true)
-        InfoRowVisible("路由 WAN", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"), true)
+        InfoRowVisible("路由 WAN6", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"), true)
     }
 }
 
@@ -968,10 +971,21 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
         Column(Modifier.weight(1f)) {
             Text(d.name.ifBlank { d.mac }, fontWeight = FontWeight.Black, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val mainInfo = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
-            Text(mainInfo.ifBlank { if (d.online) "在线信息待刷新" else "离线信息已保留" }, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val mainFallback = if (d.online) "在线信息待刷新" else "离线 · 暂无历史详情"
+            Text(mainInfo.ifBlank { mainFallback }, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (details) {
-                val lastSignal = cleanApiText(d.rssi).ifBlank { "-" }
-                val stateText = if (d.online) "在线 ${d.onlineDurationText.ifBlank { "-" }} · 上线 ${d.onlineSince.ifBlank { "-" }}" else "离线 ${d.offlineAt.ifBlank { "-" }} · 最后信号 $lastSignal"
+                val parts = if (d.online) {
+                    listOfNotNull(
+                        cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                        cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
+                    )
+                } else {
+                    listOfNotNull(
+                        cleanApiText(d.offlineAt).takeIf { it.isNotBlank() }?.let { "离线 $it" },
+                        cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { "最后信号 ${if (it.endsWith("dBm")) it else it + "dBm"}" }
+                    )
+                }
+                val stateText = parts.joinToString(" · ").ifBlank { if (d.online) "在线" else "离线 · 暂无历史详情" }
                 Text(stateText, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.50f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -1623,27 +1637,109 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
-        ExpressiveCard("概览", "上下线、VPN、网络与 DDNS 汇总", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusPill("上下线", summary.optInt("deviceChanges",0).toString()+"次", Color(0xFF16A34A))
-                if (summary.optInt("vpnChanges",0)>0) StatusPill("VPN", summary.optInt("vpnChanges",0).toString()+"次", Color(0xFF0EA5E9))
-                if (summary.optInt("networkChanges",0)>0) StatusPill("网络", summary.optInt("networkChanges",0).toString()+"次", Color(0xFF64748B))
-                if (summary.optInt("ddnsChanges",0)>0) StatusPill("DDNS", summary.optInt("ddnsChanges",0).toString()+"次", Color(0xFFF59E0B))
+        ExpressiveCard("概览", "上线 / 下线 / VPN-STUN / DDNS / 备注", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                StatusPill("上线", summary.optInt("deviceOnline", 0).toString()+"次", Color(0xFF16A34A))
+                StatusPill("下线", summary.optInt("deviceOffline", 0).toString()+"次", Color(0xFFEF4444))
+                StatusPill("VPN-STUN", summary.optInt("vpnChanges", 0).toString()+"次", Color(0xFF0EA5E9))
+                StatusPill("DDNS", summary.optInt("ddnsChanges", 0).toString()+"次", Color(0xFFF59E0B))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                StatusPill("备注", if (noteText.isBlank()) "0条" else "1条", Color(0xFF64748B))
             }
         }
         val sections = d.optJSONObject("sections") ?: JSONObject()
         fun arr(name:String) = sections.optJSONArray(name) ?: JSONArray()
-        listOf("devices" to "终端情况", "vpn" to "VPN / STUN", "network" to "网络变化", "ddns" to "DDNS 状态").forEach { (key,title) ->
-            val a = arr(key)
-            if (a.length() > 0) ExpressiveCard(title, "${a.length()} 条", Icons.Rounded.Notes, Color(0xFF64748B)) {
-                for (i in 0 until a.length()) { val o=a.optJSONObject(i) ?: continue; Text(o.optString("text", o.toString()), fontSize=12.5.sp, fontWeight=FontWeight.SemiBold, maxLines=2, overflow=TextOverflow.Ellipsis) }
-            }
-        }
+        DailySection("终端情况", arr("devices"), Icons.Rounded.Devices, Color(0xFFF59E0B), kind = "devices")
+        DailySection("VPN / STUN", arr("vpn"), Icons.Rounded.VpnKey, Color(0xFF7C3AED), kind = "address")
+        DailySection("网络变化", arr("network"), Icons.Rounded.Public, Color(0xFF0EA5E9), kind = "address")
+        DailySection("DDNS 状态", arr("ddns"), Icons.Rounded.Dns, Color(0xFF2563EB), kind = "normal")
         ExpressiveCard("今日备注", if (noteText.isBlank()) "未填写" else "已保存", Icons.Rounded.EditNote, Color(0xFF64748B)) {
             if (noteText.isBlank()) Text("暂无备注。可记录今天的网络异常、处理动作或观察结果。", fontSize=12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f)) else Text(noteText, fontSize=12.5.sp, fontWeight = FontWeight.SemiBold)
             PillButton(if (noteText.isBlank()) "添加备注" else "编辑备注", Icons.Rounded.Edit, accent = Color(0xFF64748B)) { noteEdit = true }
         }
     }
+}
+
+
+@Composable
+fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Color, kind: String) {
+    if (items.length() <= 0) return
+    ExpressiveCard(title, "${items.length()} 条", icon, accent) {
+        for (i in 0 until items.length()) {
+            val o = items.optJSONObject(i) ?: continue
+            when (kind) {
+                "devices" -> DailyDeviceSummaryRow(o)
+                "address" -> DailyAddressSummaryRow(o)
+                else -> DailyTextSummaryRow(o)
+            }
+            if (i < items.length() - 1) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.10f))
+        }
+    }
+}
+
+@Composable
+fun DailyDeviceSummaryRow(o: JSONObject) {
+    val text = o.optString("text", o.toString()).replace("\r", "").trim()
+    val lines = text.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+    val name = cleanApiText(o.optString("name")).ifBlank { lines.firstOrNull().orEmpty() }
+    val detailParts = mutableListOf<String>()
+    if (o.has("online")) detailParts += "上线 ${o.optInt("online", 0)} 次"
+    if (o.has("offline")) detailParts += "下线 ${o.optInt("offline", 0)} 次"
+    cleanApiText(o.optString("onlineDurationText")).takeIf { it.isNotBlank() }?.let { detailParts += "在线 $it" }
+    cleanApiText(o.optString("lastIp")).takeIf { it.isNotBlank() }?.let { detailParts += it }
+    cleanApiText(o.optString("lastSignal")).takeIf { it.isNotBlank() }?.let { detailParts += it }
+    val fallbackDetail = lines.drop(1).joinToString(" · ")
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(name.ifBlank { "未知终端" }, fontSize = 12.6.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            detailParts.joinToString(" · ").ifBlank { fallbackDetail.ifBlank { "暂无详情" } },
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f),
+            maxLines = 2
+        )
+    }
+}
+
+@Composable
+fun DailyAddressSummaryRow(o: JSONObject) {
+    val ctx = LocalContext.current
+    val rawText = o.optString("text", o.toString()).replace("\r", "").trim()
+    val time = cleanApiText(o.optString("time"))
+    val name = cleanApiText(o.optString("name")).ifBlank {
+        cleanApiText(o.optString("service")).ifBlank {
+            val beforeDot = rawText.substringBefore(" · ").trim()
+            beforeDot.ifBlank { "网络变化" }
+        }
+    }
+    val address = cleanApiText(o.optString("address")).ifBlank {
+        cleanApiText(o.optString("newValue")).ifBlank {
+            if (rawText.contains(" · ")) rawText.substringAfterLast(" · ").trim() else ""
+        }
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(name, Modifier.weight(1f), fontSize = 12.6.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (time.isNotBlank()) Text(time, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f))
+        }
+        if (address.isNotBlank()) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).clickable { copy(ctx, address) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(address, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+            }
+        } else {
+            Text(rawText.ifBlank { "暂无地址详情" }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), maxLines = 2)
+        }
+    }
+}
+
+@Composable
+fun DailyTextSummaryRow(o: JSONObject) {
+    val text = o.optString("text", o.toString()).replace("\r", "").trim()
+    Text(text, fontSize=12.sp, fontWeight=FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f), maxLines=3)
 }
 
 fun recentSevenDates(): List<String> {
@@ -1674,7 +1770,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("极客网探\n版本 0.9.3\n修复：VPN / STUN 地址按 Webhook 文本前缀显示；APP 名称改为中文；保留 Ping 高频采样与图表聚合优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("极客网探\n版本 0.9.5\n修复：路由 WAN6 文案、离线长期缓存、每日总结信息表达优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
