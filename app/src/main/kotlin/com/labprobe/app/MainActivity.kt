@@ -12,6 +12,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.using
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -97,10 +103,16 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.10"
-    const val CODE = 39
+    const val NAME = "0.9.11"
+    const val CODE = 40
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.11 · One UI 全页面统一与轻动画" to listOf(
+            "终端、工具、记录、我的、每日总结统一使用浅色渐变背景与白色大圆角卡片",
+            "页面切换改为 120ms 轻淡入淡出，取消大幅滑动和弹跳",
+            "工具入口、事件流、设置与关于卡片统一 One UI 质感",
+            "保留顶部胶囊导航在标题下方，不遮挡状态栏"
+        ),
         "v0.9.10 · 顶部导航与刷新菜单修复" to listOf(
             "顶部图标导航回到标题下方，不再遮挡系统状态栏",
             "刷新按钮改为 One UI 圆角下拉菜单：立即刷新 / 手动 / 3S / 10S / 20S",
@@ -442,7 +454,15 @@ fun LabProbeApp(prefs: AppPrefs) {
             containerColor = MaterialTheme.colorScheme.background
         ) { pad ->
             Box(Modifier.fillMaxSize().padding(pad).appBackground()) {
-                AnimatedContent(route, label = "route") { r ->
+                AnimatedContent(
+                    targetState = route,
+                    label = "route",
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(120)) togetherWith
+                            fadeOut(animationSpec = tween(90)) using
+                            SizeTransform(clip = false)
+                    }
+                ) { r ->
                     when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
                         "devices" -> DevicesScreen(state, topNav)
@@ -463,17 +483,63 @@ fun LabProbeApp(prefs: AppPrefs) {
 }
 
 @Composable
-fun Modifier.appBackground(): Modifier = background(
-    Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.primary.copy(alpha = 0.045f), MaterialTheme.colorScheme.background))
-)
+fun Modifier.appBackground(): Modifier {
+    val isDark = MaterialTheme.colorScheme.background.red < 0.1f
+    val brush = if (isDark) {
+        Brush.verticalGradient(
+            listOf(
+                Color(0xFF0B1020),
+                Color(0xFF111827),
+                Color(0xFF1A1628),
+                Color(0xFF0B1020)
+            )
+        )
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                Color(0xFFDDEBFF),
+                Color(0xFFF4F8FF),
+                Color(0xFFFFF2D2),
+                Color(0xFFF6F8FC)
+            )
+        )
+    }
+    return background(brush)
+}
 
 @Composable
-fun ScreenShell(title: String, subtitle: String, action: (@Composable RowScope.() -> Unit)? = null, topNav: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+fun ScreenShell(
+    title: String,
+    subtitle: String,
+    action: (@Composable RowScope.() -> Unit)? = null,
+    topNav: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 23.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    title,
+                    fontSize = 25.sp,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    subtitle,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             action?.invoke(this)
         }
@@ -484,12 +550,25 @@ fun ScreenShell(title: String, subtitle: String, action: (@Composable RowScope.(
 
 @Composable
 fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.ArrowBack, null) }
+            Surface(
+                onClick = onBack,
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                shadowElevation = 2.dp,
+                modifier = Modifier.size(40.dp)
+            ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ArrowBack, null, modifier = Modifier.size(20.dp)) } }
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 10.8.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 23.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         content()
@@ -499,11 +578,11 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
 @Composable
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
         shape = RoundedCornerShape(32.dp),
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        shadowElevation = 1.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.76f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -513,21 +592,21 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
         ) {
             titles.forEachIndexed { i, t ->
                 val active = i == selected
-                Box(
-                    Modifier
-                        .height(40.dp)
-                        .weight(1f)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
-                        .clickable { onSelect(i) },
-                    contentAlignment = Alignment.Center
+                Surface(
+                    onClick = { onSelect(i) },
+                    shape = RoundedCornerShape(24.dp),
+                    color = if (active) MaterialTheme.colorScheme.surface.copy(alpha = 0.98f) else Color.Transparent,
+                    shadowElevation = if (active) 2.dp else 0.dp,
+                    modifier = Modifier.height(40.dp).weight(1f)
                 ) {
-                    Icon(
-                        icons[i],
-                        contentDescription = t,
-                        tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            icons[i],
+                            contentDescription = t,
+                            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -543,31 +622,32 @@ fun ExpressiveCard(
     headerAction: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(30.dp)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, shape, clip = false),
+            .shadow(5.dp, shape, clip = false),
         shape = shape,
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.10f))
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.82f))
     ) {
-        Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
                     Box(
                         Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(16.dp))
                             .background(accent.copy(alpha = 0.13f)),
                         contentAlignment = Alignment.Center
-                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp)) }
+                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp)) }
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 14.2.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.2.sp)
+                    Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
                 }
                 if (headerAction != null) {
                     Spacer(Modifier.width(8.dp))
@@ -1502,15 +1582,18 @@ fun ToolsHomeScreen(topNav: @Composable () -> Unit, open: (String) -> Unit) = Sc
 
 @Composable
 fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, onClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(22.dp), clip = false).clickable { onClick() }, shape = RoundedCornerShape(22.dp), tonalElevation = 2.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)) {
-        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(color.copy(alpha = 0.13f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = color, modifier = Modifier.size(19.dp)) }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 10.8.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Rounded.ChevronRight, null, tint = color)
+    ExpressiveCard(title, subtitle, icon, color, headerAction = {
+        Icon(Icons.Rounded.ChevronRight, null, tint = color, modifier = Modifier.size(22.dp))
+    }) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable { onClick() }
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("点击进入", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
         }
     }
 }
@@ -1922,7 +2005,7 @@ fun SshTool(prefs: AppPrefs) {
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
 
 @Composable
-fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) = ScreenShell("记录", "紧凑事件流 · 左滑删除 · 每日总结", action = {
+fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) = ScreenShell("记录", "事件流 · 左滑删除 · 每日总结", action = {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
         AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
@@ -2291,7 +2374,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME}\nOne UI 大统一版：顶部图标导航、版本弹窗、首页卡片联动跳转、全页面白卡风格统一。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME}\nOne UI 全页面统一版：轻切换动画、顶部图标导航、统一白色大圆角卡片、版本信息与页面风格修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
