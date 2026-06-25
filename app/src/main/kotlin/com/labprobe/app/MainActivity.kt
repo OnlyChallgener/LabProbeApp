@@ -12,11 +12,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.using
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
@@ -103,10 +101,15 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.11"
+    const val NAME = "0.9.12"
     const val CODE = 40
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.12 · 编译修复与分体刷新按钮" to listOf(
+            "修复 Kotlin 编译失败：移除不兼容的 using 动画扩展",
+            "右上角刷新按钮改为分体按钮：左侧立即刷新，右侧小三角打开刷新间隔",
+            "刷新下拉保留手动 / 3S / 10S / 20S，白底圆角菜单风格统一"
+        ),
         "v0.9.11 · One UI 全页面统一与轻动画" to listOf(
             "终端、工具、记录、我的、每日总结统一使用浅色渐变背景与白色大圆角卡片",
             "页面切换改为 120ms 轻淡入淡出，取消大幅滑动和弹跳",
@@ -459,8 +462,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                     label = "route",
                     transitionSpec = {
                         fadeIn(animationSpec = tween(120)) togetherWith
-                            fadeOut(animationSpec = tween(90)) using
-                            SizeTransform(clip = false)
+                            fadeOut(animationSpec = tween(90))
                     }
                 ) { r ->
                     when (r) {
@@ -1013,19 +1015,43 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
     var expanded by remember { mutableStateOf(false) }
     Box {
         Surface(
-            modifier = Modifier.clickable(enabled = !loading) { expanded = true },
             shape = RoundedCornerShape(28.dp),
             color = Color.White.copy(alpha = 0.94f),
             shadowElevation = 4.dp,
             tonalElevation = 0.dp,
             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
         ) {
-            Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
-                Spacer(Modifier.width(6.dp))
-                Text(if (loading) "刷新中" else if (autoRefresh == "手动") "刷新" else autoRefresh, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                Spacer(Modifier.width(3.dp))
-                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(16.dp), tint = Color(0xFF64748B))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp))
+                        .clickable(enabled = !loading) { onRefresh() }
+                        .padding(start = 13.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                }
+                Box(
+                    Modifier
+                        .height(24.dp)
+                        .width(1.dp)
+                        .background(Color(0xFFE2E8F0))
+                )
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp))
+                        .clickable { expanded = true }
+                        .padding(start = if (autoRefresh == "手动") 9.dp else 8.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (autoRefresh != "手动") {
+                        Text(autoRefresh, fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
+                        Spacer(Modifier.width(2.dp))
+                    }
+                    Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(16.dp), tint = Color(0xFF64748B))
+                }
             }
         }
         DropdownMenu(
@@ -1035,13 +1061,8 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
             containerColor = Color.White.copy(alpha = 0.995f),
             tonalElevation = 6.dp,
             shadowElevation = 10.dp,
-            modifier = Modifier.widthIn(min = 176.dp).padding(vertical = 6.dp)
+            modifier = Modifier.widthIn(min = 156.dp).padding(vertical = 6.dp)
         ) {
-            DropdownMenuItem(
-                text = { Text("立即刷新", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A)) },
-                onClick = { expanded = false; onRefresh() },
-                leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB)) }
-            )
             DropdownMenuItem(
                 text = { Text("手动", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
                 onClick = { onAuto("手动"); expanded = false },
