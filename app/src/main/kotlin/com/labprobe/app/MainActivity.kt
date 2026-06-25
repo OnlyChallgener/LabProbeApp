@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -93,6 +95,34 @@ private const val DEFAULT_HUB = ""
 private const val DEFAULT_DNS1 = "223.5.5.5"
 private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
+
+object AppVersion {
+    const val NAME = "0.9.9"
+    const val CODE = 38
+    const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
+    val CHANGELOG = listOf(
+        "v0.9.9 · One UI 大统一版" to listOf(
+            "顶部图标胶囊导航替代底部栏",
+            "首页卡片联动跳转：终端、Hub、出口 Ping",
+            "版本号弹窗显示最近版本，并支持跳转 GitHub",
+            "关于页统一读取当前版本，避免版本号错乱",
+            "全页面收敛为白色大圆角卡片，减少色块重叠"
+        ),
+        "v0.9.8 · One UI 首页预览" to listOf(
+            "首页改成浅色渐变背景与仪表盘卡片",
+            "新增网络健康得分、终端在线、VPN/STUN 小卡",
+            "保留 OpenVPN / Lucky 首页兜底显示逻辑"
+        ),
+        "v0.9.7 · 地址状态修复" to listOf(
+            "修复记录和总结有 OpenVPN / Lucky，但首页不显示",
+            "从 Hub 当前状态和最近事件补齐 VPN/STUN 地址"
+        ),
+        "v0.9.6 · 事件与左滑修复" to listOf(
+            "修复记录页左滑删除状态继承，避免误删",
+            "Webhook 地址按服务名显示，不再固定 Lucky"
+        )
+    )
+}
 
 private val LabTypography: Typography = run {
     val t = Typography()
@@ -387,18 +417,29 @@ fun LabProbeApp(prefs: AppPrefs) {
 
     MaterialTheme(colorScheme = if (dark) darkScheme else light, typography = LabTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "events", "settings")
-        val navTitles = listOf("首页", "终端", "工具", "记录", "我的")
-        val navIcons = listOf(Icons.Rounded.Home, Icons.Rounded.Devices, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
-        val selected = mainRoutes.indexOf(if (route.startsWith("tool_")) "tools" else if (route == "daily") "events" else route).let { if (it < 0) 0 else it }
+        val navTitles = listOf("总览", "终端", "工具", "记录", "我的")
+        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Devices, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
+        val normalized = when {
+            route.startsWith("tool_") -> "tools"
+            route == "daily" -> "events"
+            else -> route
+        }
+        val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
+        val navigate: (String) -> Unit = { target -> route = target }
         BackHandler(route.startsWith("tool_") || route == "daily") { route = if (route == "daily") "events" else "tools" }
+
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
-            bottomBar = { ExpressiveNav(navTitles, navIcons, selected) { route = mainRoutes[it] } }
+            topBar = {
+                Box(Modifier.fillMaxWidth().appBackground().padding(horizontal = 14.dp, vertical = 7.dp)) {
+                    OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
+                }
+            }
         ) { pad ->
             Box(Modifier.fillMaxSize().padding(pad).appBackground()) {
                 AnimatedContent(route, label = "route") { r ->
                     when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { scope.launch { state.refreshAll() } }
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate)
                         "devices" -> DevicesScreen(state)
                         "tools" -> ToolsHomeScreen { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" })
@@ -408,7 +449,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
-                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { scope.launch { state.refreshAll() } }
+                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate)
                     }
                 }
             }
@@ -450,16 +491,37 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
 }
 
 @Composable
-fun ExpressiveNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
-    Surface(tonalElevation = 8.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        shape = RoundedCornerShape(32.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(5.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             titles.forEachIndexed { i, t ->
                 val active = i == selected
-                val bg by animateColorAsState(if (active) MaterialTheme.colorScheme.primary else Color.Transparent, label = "nav")
-                val fg = if (active) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.64f)
-                Column(Modifier.clip(RoundedCornerShape(20.dp)).background(bg).clickable { onSelect(i) }.padding(horizontal = if (active) 15.dp else 6.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(icons[i], null, tint = fg, modifier = Modifier.size(19.dp))
-                    Text(t, color = fg, fontSize = 11.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+                Box(
+                    Modifier
+                        .height(40.dp)
+                        .weight(1f)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
+                        .clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        icons[i],
+                        contentDescription = t,
+                        tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
@@ -810,7 +872,58 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) {
+fun VersionBadge(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable { onClick() },
+        shape = RoundedCornerShape(50),
+        color = Color.White.copy(alpha = 0.72f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.90f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Text(
+            "v${AppVersion.NAME}",
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Black,
+            color = Color(0xFF2563EB),
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+fun VersionInfoDialog(onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(AppVersion.GITHUB))) }
+                onDismiss()
+            }) { Text("GitHub", fontWeight = FontWeight.Black) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Bold) } },
+        title = { Text("极客网探 v${AppVersion.NAME}", fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppVersion.CHANGELOG.forEach { (title, items) ->
+                    Text(title, fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                    items.take(5).forEach { item ->
+                        Text("• $item", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), lineHeight = 17.sp)
+                    }
+                }
+            }
+        },
+        shape = RoundedCornerShape(30.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp
+    )
+}
+
+@Composable
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit) {
+    var showVersion by remember { mutableStateOf(false) }
     val data = (state.status?.optJSONObject("data") ?: state.status)
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
@@ -844,7 +957,11 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                    Spacer(Modifier.width(8.dp))
+                    VersionBadge { showVersion = true }
+                }
                 Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
             }
             Surface(
@@ -863,7 +980,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             }
         }
 
-        OneUiSegmentBar()
+        if (showVersion) VersionInfoDialog { showVersion = false }
 
         HealthScoreCard(
             score = score,
@@ -872,7 +989,8 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             vpnOk = vpnOk,
             onlineCount = onlineCount,
             lastRefresh = prefs.lastRefresh,
-            message = state.message
+            message = state.message,
+            onNavigate = onNavigate
         )
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -883,7 +1001,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                 icon = Icons.Rounded.Devices,
                 accent = Color(0xFF22C55E),
                 subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步",
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f).clickable { onNavigate("devices") }
             )
             HealthMiniCard(
                 title = "VPN / STUN",
@@ -892,7 +1010,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                 icon = Icons.Rounded.VpnKey,
                 accent = Color(0xFF7C3AED),
                 subtitle = vpnRows.firstOrNull()?.first ?: "暂无地址",
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f).clickable { onNavigate("events") }
             )
         }
 
@@ -1029,7 +1147,7 @@ fun HealthCard(
 }
 
 @Composable
-fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String) {
+fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
     HealthCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -1045,9 +1163,9 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f))
-            HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f))
-            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f))
+            HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f).clickable { onNavigate("settings") })
+            HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("tool_ping") })
+            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("events") })
         }
     }
 }
@@ -1074,7 +1192,7 @@ fun WeeklyMiniBars(score: Int) {
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .10f), tonalElevation = 0.dp, shadowElevation = 0.dp) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), maxLines = 1)
+            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(value, fontSize = 12.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -1206,9 +1324,9 @@ fun HealthTodayCard(state: AppState, lastRefresh: String) {
         HealthSectionTitle("今日概览", "最近事件聚合，详细信息进记录页。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HealthStatusBadge("上线", "${up} 次", Color(0xFF16A34A), Modifier.weight(1f))
-            HealthStatusBadge("下线", "${down} 次", Color(0xFFEF4444), Modifier.weight(1f))
-            HealthStatusBadge("VPN-STUN", "${net} 次", Color(0xFF7C3AED), Modifier.weight(1f))
+            HealthStatusBadge("设备上线", "${up} 次", Color(0xFF16A34A), Modifier.weight(1f))
+            HealthStatusBadge("设备下线", "${down} 次", Color(0xFFEF4444), Modifier.weight(1f))
+            HealthStatusBadge("STUN地址变化", "${net} 次", Color(0xFF7C3AED), Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
         Text("最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2121,7 +2239,9 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("极客网探\n版本 0.9.5\n修复：路由 WAN6 文案、离线长期缓存、每日总结信息表达优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
+        Text("极客网探\n版本 ${AppVersion.NAME}\nOne UI 大统一版：顶部图标导航、版本弹窗、首页卡片联动跳转、全页面白卡风格统一。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+    }
 }
 
 class HubApi(private val prefs: AppPrefs) {
