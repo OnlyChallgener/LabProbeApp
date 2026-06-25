@@ -810,108 +810,408 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) = ScreenShell("极客网探", "家庭网络仪表盘", action = {
-    AssistChip(onClick = onRefresh, label = { Text(if (state.loading) "刷新中" else "刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
-}) {
-    var edit by remember { mutableStateOf(false) }
-    var order by remember { mutableStateOf(prefs.homeOrder.split(',').filter { it.isNotBlank() }.ifEmpty { listOf("status","exit","vpn","devices") }) }
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) {
     val data = (state.status?.optJSONObject("data") ?: state.status)
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = nas?.optString("exitIpv6").orEmpty()
     val vpnRows = remember(data?.toString(), nasV6, state.events) {
-        val rows = mutableListOf<Pair<String, String>>()
-        fun addVpnRow(labelRaw: String?, addrRaw: String?) {
-            val addr = cleanApiText(addrRaw)
-            if (addr.isBlank()) return
-            val label = vpnServiceLabel(cleanApiText(labelRaw).ifBlank { "STUN" })
-            val sameLabelIndex = rows.indexOfFirst { it.first.equals(label, ignoreCase = true) }
-            if (sameLabelIndex >= 0) {
-                rows[sameLabelIndex] = label to addr
-                return
-            }
-            if (rows.none { it.second == addr }) rows += label to addr
-        }
-
-        // WireGuard 仍由 NAS IPv6 派生，固定放第一行。
-        val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
-        addVpnRow("WireGuard", wg)
-
-        // Hub v0.7.1+：统一动态列表。Webhook 文本前缀就是 name，例如 OpenVPN：公网地址:端口。
-        val list = data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses")
-        if (list != null) {
-            for (i in 0 until list.length()) {
-                val o = list.optJSONObject(i) ?: continue
-                addVpnRow(o.optString("name", o.optString("service")), o.optString("address", o.optString("stun")))
-            }
-        }
-
-        // 兼容 Hub 的 vpn map。注意只作为补充，不能覆盖动态列表里的同名服务。
-        val vpnObj = data?.optJSONObject("vpn")
-        if (vpnObj != null) {
-            val keys = vpnObj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val obj = vpnObj.optJSONObject(key)
-                val label = cleanApiText(obj?.optString("name")).ifBlank { key }
-                val addr = cleanApiText(obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: "")
-                addVpnRow(label, addr)
-            }
-        }
-
-        // 兼容旧 luckyStun/stun 字段。
-        val luckyObj = data?.optJSONObject("luckyStun")
-        val luckyDirect = when (val raw = data?.opt("luckyStun")) {
-            is String -> cleanApiText(raw)
-            else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
-        }
-        val luckyLabel = cleanApiText(luckyObj?.optString("name")).ifBlank { "Lucky" }
-        addVpnRow(luckyLabel, luckyDirect)
-
-        val stunObj = data?.optJSONObject("stun")
-        addVpnRow(cleanApiText(stunObj?.optString("name")).ifBlank { "STUN" }, stunObj?.optString("publicAddress") ?: stunObj?.optString("address"))
-
-        // v0.9.7 兜底：记录页/每日总结有 OpenVPN/Lucky，但首页没有时，说明 Hub 旧状态缺当前列表。
-        // 这里从最近事件补显示，避免“事件有、首页空”的割裂；Hub v0.7.2 也会在 /api/status 侧修复。
-        if (rows.size <= 1) {
-            state.events.asSequence()
-                .filter { e ->
-                    val n = (e.name + " " + e.title + " " + e.type).lowercase(Locale.getDefault())
-                    n.contains("openvpn") || n.contains("lucky") || n.contains("easytier") || n.contains("wireguard") || n.contains("stun")
-                }
-                .forEach { e ->
-                    val rawName = cleanApiText(e.name).ifBlank {
-                        cleanApiText(e.title)
-                            .replace("STUN 地址变化", "")
-                            .replace("地址变化", "")
-                            .trim()
-                    }
-                    val addr = cleanApiText(e.newValue).ifBlank { cleanApiText(e.ip) }
-                    addVpnRow(rawName.ifBlank { "STUN" }, addr)
-                }
-        }
-        rows
+        buildVpnRowsForHome(data, nasV6, state.events)
     }
-    Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        FilterChip(
-            selected = edit,
-            onClick = { edit = !edit },
-            label = { Text(if (edit) "完成" else "排序", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
-            leadingIcon = { Icon(Icons.Rounded.DragIndicator, null, Modifier.size(15.dp)) },
-            shape = RoundedCornerShape(15.dp),
-            modifier = Modifier.height(34.dp)
+    val onlineCount = state.onlineDevices.size
+    val watchedCount = state.devices.size
+    val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
+    val vpnOk = vpnRows.isNotEmpty()
+    val hubOk = prefs.hub.isNotBlank() && state.hubConnected
+    val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFDDEBFF),
+                        Color(0xFFF4F8FF),
+                        Color(0xFFFFF2D2),
+                        Color(0xFFF6F8FC)
+                    )
+                )
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
+            }
+            Surface(
+                modifier = Modifier.clickable(enabled = !state.loading) { onRefresh() },
+                shape = RoundedCornerShape(28.dp),
+                color = Color.White.copy(alpha = 0.94f),
+                shadowElevation = 4.dp,
+                tonalElevation = 0.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+            ) {
+                Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (state.loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                }
+            }
+        }
+
+        OneUiSegmentBar()
+
+        HealthScoreCard(
+            score = score,
+            hubOk = hubOk,
+            exitOk = exitOk,
+            vpnOk = vpnOk,
+            onlineCount = onlineCount,
+            lastRefresh = prefs.lastRefresh,
+            message = state.message
         )
-        Text(if (edit) "用卡片右上角箭头调整顺序" else "点击排序可调整首页卡片", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.46f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-    val cards = order.distinct().filter { it in listOf("status","exit","vpn","devices") } + listOf("status","exit","vpn","devices").filter { it !in order }
-    cards.forEach { key ->
-        val content: @Composable () -> Unit = when (key) {
-            "status" -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { StatusCard(prefs, state, autoRefresh, onAuto) } } }
-            "exit" -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { ExitCard(nas, router) } } }
-            "vpn" -> { { if (vpnRows.isNotEmpty()) HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { VpnCard(vpnRows) } } }
-            else -> { { HomeSortWrap(edit, key, cards, { order = it; prefs.homeOrder = it.joinToString(",") }) { DevicesHomeCard(state) } } }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            HealthMiniCard(
+                title = "终端在线",
+                value = "${onlineCount}",
+                unit = "台",
+                icon = Icons.Rounded.Devices,
+                accent = Color(0xFF22C55E),
+                subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步",
+                modifier = Modifier.weight(1f)
+            )
+            HealthMiniCard(
+                title = "VPN / STUN",
+                value = "${vpnRows.size}",
+                unit = "条",
+                icon = Icons.Rounded.VpnKey,
+                accent = Color(0xFF7C3AED),
+                subtitle = vpnRows.firstOrNull()?.first ?: "暂无地址",
+                modifier = Modifier.weight(1f)
+            )
         }
-        content()
+
+        HealthExitCard(nas, router)
+        if (vpnRows.isNotEmpty()) HealthVpnCard(vpnRows)
+        HealthDevicesCard(state)
+        HealthTodayCard(state, prefs.lastRefresh)
+    }
+}
+
+fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem>): List<Pair<String, String>> {
+    val rows = mutableListOf<Pair<String, String>>()
+    fun addVpnRow(labelRaw: String?, addrRaw: String?) {
+        val addr = cleanApiText(addrRaw)
+        if (addr.isBlank()) return
+        val label = vpnServiceLabel(cleanApiText(labelRaw).ifBlank { "STUN" })
+        val sameLabelIndex = rows.indexOfFirst { it.first.equals(label, ignoreCase = true) }
+        if (sameLabelIndex >= 0) {
+            rows[sameLabelIndex] = label to addr
+            return
+        }
+        if (rows.none { it.second == addr }) rows += label to addr
+    }
+
+    val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
+    addVpnRow("WireGuard", wg)
+
+    val list = data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses")
+    if (list != null) {
+        for (i in 0 until list.length()) {
+            val o = list.optJSONObject(i) ?: continue
+            addVpnRow(o.optString("name", o.optString("service")), o.optString("address", o.optString("stun")))
+        }
+    }
+
+    val vpnObj = data?.optJSONObject("vpn")
+    if (vpnObj != null) {
+        val keys = vpnObj.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val obj = vpnObj.optJSONObject(key)
+            val label = cleanApiText(obj?.optString("name")).ifBlank { key }
+            val addr = cleanApiText(obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: "")
+            addVpnRow(label, addr)
+        }
+    }
+
+    val luckyObj = data?.optJSONObject("luckyStun")
+    val luckyDirect = when (val raw = data?.opt("luckyStun")) {
+        is String -> cleanApiText(raw)
+        else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
+    }
+    val luckyLabel = cleanApiText(luckyObj?.optString("name")).ifBlank { "Lucky" }
+    addVpnRow(luckyLabel, luckyDirect)
+
+    val stunObj = data?.optJSONObject("stun")
+    addVpnRow(cleanApiText(stunObj?.optString("name")).ifBlank { "STUN" }, stunObj?.optString("publicAddress") ?: stunObj?.optString("address"))
+
+    if (rows.size <= 1) {
+        events.asSequence()
+            .filter { e ->
+                val n = (e.name + " " + e.title + " " + e.type).lowercase(Locale.getDefault())
+                n.contains("openvpn") || n.contains("lucky") || n.contains("easytier") || n.contains("wireguard") || n.contains("stun")
+            }
+            .forEach { e ->
+                val rawName = cleanApiText(e.name).ifBlank {
+                    cleanApiText(e.title)
+                        .replace("STUN 地址变化", "")
+                        .replace("地址变化", "")
+                        .trim()
+                }
+                val addr = cleanApiText(e.newValue).ifBlank { cleanApiText(e.ip) }
+                addVpnRow(rawName.ifBlank { "STUN" }, addr)
+            }
+    }
+    return rows
+}
+
+fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, events: List<EventItem>): Int {
+    var score = 64
+    if (hubOk) score += 12
+    if (exitOk) score += 10
+    if (vpnOk) score += 7
+    if (onlineCount > 0) score += 5
+    val recentBad = events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }
+    score -= recentBad.coerceAtMost(4) * 2
+    return score.coerceIn(0, 99)
+}
+
+@Composable
+fun OneUiSegmentBar() {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = Color.White.copy(alpha = 0.58f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.75f)),
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+            val items = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.VpnKey, Icons.Rounded.Devices, Icons.Rounded.History)
+            items.forEachIndexed { idx, icon ->
+                val selected = idx == 0
+                Box(
+                    Modifier
+                        .height(40.dp)
+                        .weight(1f)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(if (selected) Color.White else Color.Transparent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, null, tint = if (selected) Color(0xFF0F172A) else Color(0xFF64748B), modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HealthCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(30.dp), clip = false),
+        shape = RoundedCornerShape(30.dp),
+        color = Color.White.copy(alpha = 0.96f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.95f))
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), content = content)
+    }
+}
+
+@Composable
+fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String) {
+    HealthCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("网络健康得分", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(score.toString(), fontSize = 48.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 52.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化", fontSize = 14.sp, fontWeight = FontWeight.Black, color = if (score >= 85) Color(0xFF16A34A) else Color(0xFFF59E0B), modifier = Modifier.padding(bottom = 8.dp))
+                }
+                Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { "等待刷新" }, fontSize = 11.5.sp, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            WeeklyMiniBars(score)
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f))
+            HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f))
+            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+fun WeeklyMiniBars(score: Int) {
+    Canvas(Modifier.width(112.dp).height(76.dp)) {
+        val barW = 9.dp.toPx()
+        val gap = 8.dp.toPx()
+        val base = size.height - 14.dp.toPx()
+        val maxH = 52.dp.toPx()
+        val values = listOf(score - 11, score - 7, score - 4, score - 2, score - 5, score, score - 1).map { it.coerceIn(35, 98) }
+        values.forEachIndexed { i, v ->
+            val x = i * (barW + gap)
+            val h = maxH * (v / 100f)
+            drawLine(Color(0xFFE8EEF7), Offset(x + barW / 2, base), Offset(x + barW / 2, base - maxH), strokeWidth = barW, cap = StrokeCap.Round)
+            drawLine(if (i >= 5) Color(0xFF22C55E) else Color(0xFF93C5FD), Offset(x + barW / 2, base), Offset(x + barW / 2, base - h), strokeWidth = barW, cap = StrokeCap.Round)
+        }
+        drawCircle(Color(0xFF3B82F6), radius = 5.dp.toPx(), center = Offset(6 * (barW + gap) + barW / 2, base - maxH * (values.last() / 100f)))
+    }
+}
+
+@Composable
+fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .10f), tonalElevation = 0.dp, shadowElevation = 0.dp) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), maxLines = 1)
+            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color, subtitle: String, modifier: Modifier = Modifier) {
+    HealthCard(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
+            }
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 30.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), modifier = Modifier.padding(bottom = 4.dp))
+                }
+                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+fun HealthDataRow(label: String, value: String?, accent: Color = Color(0xFF0F172A)) {
+    val ctx = LocalContext.current
+    val v = cleanApiText(value)
+    if (v.isBlank()) return
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(86.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable { copy(ctx, v) }, verticalAlignment = Alignment.CenterVertically) {
+            Text(v, color = accent, fontWeight = FontWeight.Black, fontSize = 13.2.sp, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+fun HealthExitCard(nas: JSONObject?, router: JSONObject?) {
+    HealthCard {
+        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9))
+        Spacer(Modifier.height(13.dp))
+        HealthDataRow("NAS IPv4", nas?.optString("exitIpv4"))
+        Spacer(Modifier.height(9.dp))
+        HealthDataRow("NAS IPv6", nas?.optString("exitIpv6"))
+        Spacer(Modifier.height(9.dp))
+        HealthDataRow("路由 WAN6", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"))
+    }
+}
+
+@Composable
+fun HealthVpnCard(rows: List<Pair<String, String>>) {
+    HealthCard {
+        HealthSectionTitle("VPN / STUN 地址", "按服务名显示，长按或点击地址复制。", Icons.Rounded.VpnKey, Color(0xFF7C3AED))
+        Spacer(Modifier.height(13.dp))
+        rows.forEachIndexed { idx, row ->
+            HealthDataRow(row.first, row.second, Color(0xFF0F172A))
+            if (idx != rows.lastIndex) Spacer(Modifier.height(9.dp))
+        }
+    }
+}
+
+@Composable
+fun HealthDevicesCard(state: AppState) {
+    HealthCard {
+        HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
+        Spacer(Modifier.height(12.dp))
+        if (state.devices.isEmpty()) {
+            Text("暂无缓存，点击刷新。", color = Color(0xFF64748B), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+        state.devices.take(4).forEachIndexed { idx, d ->
+            HealthDeviceLine(d)
+            if (idx != state.devices.take(4).lastIndex) Spacer(Modifier.height(11.dp))
+        }
+    }
+}
+
+@Composable
+fun HealthDeviceLine(d: DeviceItem) {
+    val accent = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
+            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val third = if (d.online) {
+                listOfNotNull(
+                    cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                    cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
+                ).joinToString(" · ")
+            } else {
+                listOfNotNull(
+                    cleanApiText(d.offlineAt).takeIf { it.isNotBlank() }?.let { "离线 $it" },
+                    cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { "最后信号 ${if (it.endsWith("dBm")) it else it + "dBm"}" }
+                ).joinToString(" · ")
+            }
+            if (third.isNotBlank()) Text(third, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .10f), tonalElevation = 0.dp) {
+            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+fun HealthTodayCard(state: AppState, lastRefresh: String) {
+    val up = state.events.count { it.type == "device_online" }
+    val down = state.events.count { it.type == "device_offline" }
+    val net = state.events.count { val t = it.type.lowercase(Locale.getDefault()); t.contains("vpn") || t.contains("stun") || t.contains("wireguard") }
+    HealthCard {
+        HealthSectionTitle("今日概览", "最近事件聚合，详细信息进记录页。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            HealthStatusBadge("上线", "${up} 次", Color(0xFF16A34A), Modifier.weight(1f))
+            HealthStatusBadge("下线", "${down} 次", Color(0xFFEF4444), Modifier.weight(1f))
+            HealthStatusBadge("VPN-STUN", "${net} 次", Color(0xFF7C3AED), Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
