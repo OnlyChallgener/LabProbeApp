@@ -830,13 +830,23 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                 rows[sameLabelIndex] = label to addr
                 return
             }
-            if (rows.none { it.first.equals(label, ignoreCase = true) && it.second == addr }) rows += label to addr
+            if (rows.none { it.second == addr }) rows += label to addr
         }
 
+        // WireGuard 仍由 NAS IPv6 派生，固定放第一行。
         val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
-        if (wg.isNotBlank()) rows += "WireGuard" to wg
+        addVpnRow("WireGuard", wg)
 
-        // 优先使用 Hub v0.6.8+ 的 vpn map。Webhook 文本前缀会作为 name 返回，例如 OpenVPN：地址。
+        // Hub v0.7.1+：统一动态列表。Webhook 文本前缀就是 name，例如 OpenVPN：公网地址:端口。
+        val list = data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses")
+        if (list != null) {
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                addVpnRow(o.optString("name", o.optString("service")), o.optString("address", o.optString("stun")))
+            }
+        }
+
+        // 兼容 Hub 的 vpn map。注意只作为补充，不能覆盖动态列表里的同名服务。
         val vpnObj = data?.optJSONObject("vpn")
         if (vpnObj != null) {
             val keys = vpnObj.keys()
@@ -849,17 +859,17 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             }
         }
 
-        // 兼容旧 Hub 字段：只在 vpn map 没有同地址时补充，不再固定把所有内容写成 Lucky。
+        // 兼容旧 luckyStun/stun 字段。
         val luckyObj = data?.optJSONObject("luckyStun")
         val luckyDirect = when (val raw = data?.opt("luckyStun")) {
             is String -> cleanApiText(raw)
             else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
         }
         val luckyLabel = cleanApiText(luckyObj?.optString("name")).ifBlank { "Lucky" }
-        if (luckyDirect.isNotBlank() && rows.none { it.second == luckyDirect }) addVpnRow(luckyLabel, luckyDirect)
+        addVpnRow(luckyLabel, luckyDirect)
 
-        val stun = cleanApiText(data?.optJSONObject("stun")?.optString("publicAddress"))
-        if (stun.isNotBlank() && rows.none { it.second == stun }) addVpnRow("STUN", stun)
+        val stunObj = data?.optJSONObject("stun")
+        addVpnRow(cleanApiText(stunObj?.optString("name")).ifBlank { "STUN" }, stunObj?.optString("publicAddress") ?: stunObj?.optString("address"))
         rows
     }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1430,12 +1440,26 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit) 
     }
 }) {
     val scope = rememberCoroutineScope()
+    var openedSwipeId by remember { mutableStateOf<Int?>(null) }
     ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-    state.events.forEach { e -> EventCompactCard(e) { scope.launch { state.deleteEvent(e) } } }
+    state.events.forEach { e ->
+        key(e.id) {
+            EventCompactCard(
+                e = e,
+                openedSwipeId = openedSwipeId,
+                onSwipeOpen = { openedSwipeId = it },
+                onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
+                onDelete = {
+                    openedSwipeId = null
+                    scope.launch { state.deleteEvent(e) }
+                }
+            )
+        }
+    }
 }
 
 @Composable
-fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
+fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Unit, onSwipeClose: () -> Unit, onDelete: () -> Unit) {
     val isOnline = e.type == "device_online"
     val isOffline = e.type == "device_offline"
     val accent = when {
@@ -1454,9 +1478,11 @@ fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
     }
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 92.dp.toPx() }
-    var offsetPx by remember { mutableStateOf(0f) }
+    var offsetPx by remember(e.id) { mutableStateOf(0f) }
+    LaunchedEffect(e.id) { offsetPx = 0f }
+    LaunchedEffect(openedSwipeId) { if (openedSwipeId != e.id && offsetPx != 0f) offsetPx = 0f }
     Box(Modifier.fillMaxWidth().heightIn(min = 78.dp)) {
-        Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { onDelete() }, contentAlignment = Alignment.Center) {
+        Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { offsetPx = 0f; onSwipeClose(); onDelete() }, contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
                 Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
@@ -1468,9 +1494,14 @@ fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
                 .offset { IntOffset(offsetPx.roundToInt(), 0) }
                 .pointerInput(e.id) {
                     detectHorizontalDragGestures(
-                        onDragEnd = { offsetPx = if (offsetPx < -deleteWidthPx / 2f) -deleteWidthPx else 0f },
-                        onDragCancel = { offsetPx = 0f },
-                        onHorizontalDrag = { _, dragAmount -> offsetPx = (offsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
+                        onDragEnd = {
+                            offsetPx = if (offsetPx < -deleteWidthPx / 2f) { onSwipeOpen(e.id); -deleteWidthPx } else { onSwipeClose(); 0f }
+                        },
+                        onDragCancel = { offsetPx = 0f; onSwipeClose() },
+                        onHorizontalDrag = { _, dragAmount ->
+                            if (dragAmount < 0) onSwipeOpen(e.id)
+                            offsetPx = (offsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                        }
                     )
                 }
                 .shadow(4.dp, RoundedCornerShape(24.dp), clip = false),
