@@ -272,6 +272,7 @@ data class EventItem(
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
 data class PingPoint(val index: Int, val ms: Int?, val text: String)
+data class PingBucket(val startMs: Long, val avgMs: Int?, val peakMs: Int?, val hasLoss: Boolean, val sampleCount: Int)
 
 class AppState(private val prefs: AppPrefs) {
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
@@ -955,7 +956,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 
 @Composable
 fun ToolsHomeScreen(open: (String) -> Unit) = ScreenShell("工具", "二级页面，返回仍在 APP 内") {
-    ToolEntry("Ping 延迟", "实时采样 · 1 秒刷新曲线", Icons.Rounded.Speed, Color(0xFF7C3AED)) { open("tool_ping") }
+    ToolEntry("Ping 延迟", "高频采样 · 自适应聚合曲线", Icons.Rounded.Speed, Color(0xFF7C3AED)) { open("tool_ping") }
     ToolEntry("DNS 解析", "双 DNS · A/AAAA · 运营商", Icons.Rounded.Dns, Color(0xFF2563EB)) { open("tool_dns") }
     ToolEntry("端口探测", "TCP / UDP · 域名优先 AAAA", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) { open("tool_port") }
     ToolEntry("SSH 命令", "锐捷 / NAS 单条命令", Icons.Rounded.Terminal, Color(0xFF64748B)) { open("tool_ssh") }
@@ -977,7 +978,7 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
 }
 
 @Composable
-fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("Ping 测试", "采样间隔可变，界面固定 1 秒刷新", onBack) { PingTool(prefs) }
+fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("Ping 测试", "高频采样，界面固定 1 秒刷新", onBack) { PingTool(prefs) }
 @Composable
 fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
 @Composable
@@ -1064,6 +1065,32 @@ private fun formatSecondsLabel(sec: Float): String {
     return if (sec < 3f && sec != sec.roundToInt().toFloat()) String.format(Locale.US, "%.1fs", sec) else "${sec.roundToInt()}s"
 }
 
+private fun pingVisualBucketMs(intervalMs: Long): Long = when {
+    intervalMs <= 50L -> 250L
+    intervalMs <= 100L -> 400L
+    intervalMs <= 250L -> 500L
+    intervalMs <= 700L -> 1000L
+    else -> intervalMs.coerceAtMost(1500L)
+}
+
+private fun buildPingBuckets(points: List<PingPoint>, intervalMs: Long): List<PingBucket> {
+    if (points.isEmpty()) return emptyList()
+    val bucketMs = pingVisualBucketMs(intervalMs)
+    return points
+        .groupBy { (((it.index - 1).coerceAtLeast(0) * intervalMs) / bucketMs) }
+        .toSortedMap()
+        .map { (bucket, list) ->
+            val ok = list.mapNotNull { it.ms }
+            PingBucket(
+                startMs = bucket * bucketMs,
+                avgMs = if (ok.isEmpty()) null else ok.average().roundToInt(),
+                peakMs = ok.maxOrNull(),
+                hasLoss = list.any { it.ms == null },
+                sampleCount = list.size
+            )
+        }
+}
+
 @Composable
 fun PingLossPill(points: List<PingPoint>) {
     val sent = points.size
@@ -1084,22 +1111,19 @@ fun PingLossPill(points: List<PingPoint>) {
 
 @Composable
 fun PingChart(points: List<PingPoint>, intervalMs: Long) {
-    val buckets = points
-        .groupBy { (((it.index - 1).coerceAtLeast(0) * intervalMs) / 1000L).toInt() }
-        .toSortedMap()
-        .map { (sec, list) ->
-            val ok = list.mapNotNull { it.ms }
-            Triple(sec, if (ok.isEmpty()) null else ok.average().roundToInt(), list.any { it.ms == null })
-        }
-    val okMs = buckets.mapNotNull { it.second }
-    val rawMax = (okMs.maxOrNull() ?: 50).coerceAtLeast(50)
+    val buckets = buildPingBuckets(points, intervalMs)
+    val okAvg = buckets.mapNotNull { it.avgMs }
+    val okPeak = buckets.mapNotNull { it.peakMs }
+    val rawMax = (okPeak.maxOrNull() ?: okAvg.maxOrNull() ?: 50).coerceAtLeast(50)
     val yMax = pingNiceYMax(rawMax)
     val yTicks = listOf(0, yMax / 4, yMax / 2, yMax * 3 / 4, yMax).distinct()
-    val totalSec = maxOf(
-        1f,
-        ((points.size - 1).coerceAtLeast(1) * intervalMs / 1000f),
-        (buckets.lastOrNull()?.first ?: 1).toFloat()
+    val bucketMs = pingVisualBucketMs(intervalMs)
+    val totalMs = maxOf(
+        bucketMs,
+        ((points.size - 1).coerceAtLeast(1) * intervalMs),
+        (buckets.lastOrNull()?.startMs ?: bucketMs) + bucketMs
     )
+    val totalSec = totalMs / 1000f
     val xTickCount = when {
         totalSec <= 3f -> 4
         totalSec <= 10f -> 5
@@ -1124,9 +1148,9 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                 val fullW = size.width
                 val fullH = size.height
                 val labelW = 31.dp.toPx()
-                val bottomH = 33.dp.toPx()
-                val topH = 15.dp.toPx()
-                val rightPad = 6.dp.toPx()
+                val bottomH = 34.dp.toPx()
+                val topH = 18.dp.toPx()
+                val rightPad = 7.dp.toPx()
                 val plotLeft = labelW
                 val plotTop = topH
                 val plotRight = fullW - rightPad
@@ -1165,27 +1189,42 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                         xSecs.lastIndex -> (x - 7.dp.toPx()).coerceAtLeast(plotLeft)
                         else -> x
                     }
-                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 23.dp.toPx(), xPaint)
+                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 24.dp.toPx(), xPaint)
                 }
-                if (buckets.size >= 2) {
-                    val path = Path()
-                    var started = false
-                    buckets.forEach { sample ->
-                        val sec = sample.first.toFloat()
-                        val ms = sample.second
-                        val hasLoss = sample.third
-                        val x = plotLeft + (sec / totalSec).coerceIn(0f, 1f) * plotW
-                        if (ms != null) {
-                            val y = plotBottom - (ms.toFloat() / yMax.toFloat() * plotH).coerceIn(0f, plotH)
-                            if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
-                        } else {
-                            started = false
+                val linePoints = buckets.mapNotNull { bucket ->
+                    val ms = bucket.avgMs ?: return@mapNotNull null
+                    val x = plotLeft + (bucket.startMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f) * plotW
+                    val y = plotBottom - (ms.toFloat() / yMax.toFloat() * plotH).coerceIn(0f, plotH)
+                    Offset(x, y)
+                }
+                if (linePoints.size >= 2) {
+                    val path = Path().apply {
+                        moveTo(linePoints.first().x, linePoints.first().y)
+                        for (i in 1 until linePoints.size) {
+                            val prev = linePoints[i - 1]
+                            val cur = linePoints[i]
+                            val midX = (prev.x + cur.x) / 2f
+                            val midY = (prev.y + cur.y) / 2f
+                            quadraticBezierTo(prev.x, prev.y, midX, midY)
                         }
-                        if (hasLoss) {
-                            drawCircle(Color(0xFFEF4444), radius = 2.1.dp.toPx(), center = Offset(x, plotBottom - 4.dp.toPx()))
-                        }
+                        val last = linePoints.last()
+                        lineTo(last.x, last.y)
                     }
                     drawPath(path, Color(0xFF2563EB), style = Stroke(width = 2.05f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                } else if (linePoints.size == 1) {
+                    drawCircle(Color(0xFF2563EB), radius = 2.0.dp.toPx(), center = linePoints.first())
+                }
+                buckets.forEach { bucket ->
+                    val x = plotLeft + (bucket.startMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f) * plotW
+                    val avg = bucket.avgMs
+                    val peak = bucket.peakMs
+                    if (avg != null && peak != null && peak >= maxOf(avg + 80, (avg * 1.8f).roundToInt())) {
+                        val peakY = plotBottom - (peak.toFloat() / yMax.toFloat() * plotH).coerceIn(0f, plotH)
+                        drawCircle(Color(0xFFF97316), radius = 2.0.dp.toPx(), center = Offset(x, peakY))
+                    }
+                    if (bucket.hasLoss) {
+                        drawCircle(Color(0xFFEF4444), radius = 1.65.dp.toPx(), center = Offset(x, plotBottom - 4.dp.toPx()))
+                    }
                 }
             }
         }
@@ -1610,7 +1649,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.9.0\n修复：Ping 曲线按 1 秒聚合；丢包与标题同行；丢包点缩小且不串线；参数区继续收敛；离线信息保留到下次上线。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.9.1\n修复：Ping 高频采样、自适应聚合曲线、平滑显示；峰值橙点、丢包红点不串线。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
