@@ -11,8 +11,8 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.8.7"
+        versionCode = 28
+        versionName = "0.8.8"
     }
 
     buildFeatures {

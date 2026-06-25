@@ -473,21 +473,21 @@ fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? =
         tonalElevation = 1.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.10f))
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
                     Box(
                         Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(13.dp))
                             .background(accent.copy(alpha = 0.13f)),
                         contentAlignment = Alignment.Center
-                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp)) }
+                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
+                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.5.sp)
                 }
             }
             content()
@@ -931,7 +931,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
             Text(d.name.ifBlank { d.mac }, fontWeight = FontWeight.Black, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOf(d.ip, d.ssid, d.band, d.rxrate).filter { it.isNotBlank() }.joinToString(" · "), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (details) {
-                val stateText = if (d.online) "在线 ${d.onlineDurationText.ifBlank { "-" }} · 上线 ${d.onlineSince.ifBlank { "-" }}" else "离线 ${d.offlineAt.ifBlank { "-" }} · 最后 ${d.lastSeenAt.ifBlank { "-" }}"
+                val stateText = if (d.online) "在线 ${d.onlineDurationText.ifBlank { "-" }} · 上线 ${d.onlineSince.ifBlank { "-" }}" else "离线 ${d.offlineAt.ifBlank { "-" }} · 最后信号 ${d.rssi.ifBlank { "-" }}"
                 Text(stateText, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.50f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -1024,7 +1024,7 @@ fun PingTool(prefs: AppPrefs) {
             }
         }
     }
-    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF06B6D4)) {
+    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF7C3AED)) {
         PingChart(points, interval.toLongOrNull() ?: 500L)
         PingStats(points)
     }
@@ -1047,6 +1047,8 @@ private fun formatSecondsLabel(sec: Float): String {
 @Composable
 fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     val ok = points.filter { it.ms != null }
+    val sent = points.size
+    val loss = if (sent == 0) 0 else ((sent - ok.size) * 100 / sent)
     val rawMax = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
     val yMax = pingNiceYMax(rawMax)
     val yTicks = listOf(0, yMax / 4, yMax / 2, yMax * 3 / 4, yMax).distinct()
@@ -1068,17 +1070,29 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
         tonalElevation = 0.dp,
         modifier = Modifier.fillMaxWidth().height(228.dp)
     ) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 6.dp)) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd),
+                shape = RoundedCornerShape(50),
+                color = Color(0xFF7C3AED).copy(alpha = .10f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = .12f))
+            ) {
+                Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFEF4444)))
+                    Spacer(Modifier.width(5.dp))
+                    Text("丢包 $loss%", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF7C3AED), maxLines = 1)
+                }
+            }
             if (points.isEmpty()) {
                 Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.40f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
-            Canvas(Modifier.fillMaxSize().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)) {
+            Canvas(Modifier.fillMaxSize().padding(start = 0.dp, end = 0.dp, top = 8.dp, bottom = 0.dp)) {
                 val fullW = size.width
                 val fullH = size.height
-                val labelW = 28.dp.toPx()
-                val bottomH = 30.dp.toPx()
-                val topH = 6.dp.toPx()
-                val rightPad = 2.dp.toPx()
+                val labelW = 34.dp.toPx()
+                val bottomH = 38.dp.toPx()
+                val topH = 20.dp.toPx()
+                val rightPad = 4.dp.toPx()
                 val plotLeft = labelW
                 val plotTop = topH
                 val plotRight = fullW - rightPad
@@ -1086,24 +1100,22 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                 val plotW = (plotRight - plotLeft).coerceAtLeast(1f)
                 val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
                 val grid = Color(0xFF64748B).copy(alpha = 0.095f)
-                val faintGrid = Color(0xFF64748B).copy(alpha = 0.040f)
+                val faintGrid = Color(0xFF64748B).copy(alpha = 0.038f)
                 val yPaint = Paint().apply {
-                    color = android.graphics.Color.argb(170, 75, 85, 99)
-                    textSize = 10.5.sp.toPx()
+                    color = android.graphics.Color.argb(165, 75, 85, 99)
+                    textSize = 10.2.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.RIGHT
                 }
                 yTicks.forEach { tick ->
                     val y = plotBottom - (tick.toFloat() / yMax.toFloat() * plotH)
                     drawLine(grid, Offset(plotLeft, y), Offset(plotRight, y), strokeWidth = 1f)
-                    // 0 与 X 轴的 0s 共用，不重复显示 Y 轴 0。
-                    if (tick != 0) {
-                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 7.dp.toPx(), y + 4f, yPaint)
-                    }
+                    val yText = if (tick == 0) y - 4.dp.toPx() else y + 3.5f
+                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 6.dp.toPx(), yText, yPaint)
                 }
                 val xPaint = Paint().apply {
-                    color = android.graphics.Color.argb(170, 75, 85, 99)
-                    textSize = 10.5.sp.toPx()
+                    color = android.graphics.Color.argb(165, 75, 85, 99)
+                    textSize = 10.2.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.CENTER
                 }
@@ -1111,21 +1123,22 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                     val x = plotLeft + if (totalSec <= 0f) 0f else (sec / totalSec) * plotW
                     drawLine(faintGrid, Offset(x, plotTop), Offset(x, plotBottom), strokeWidth = 1f)
                     val labelX = when (idx) {
-                        0 -> (x + 8.dp.toPx()).coerceAtMost(plotRight)
-                        xSecs.lastIndex -> (x - 8.dp.toPx()).coerceAtLeast(plotLeft)
+                        0 -> (x + 9.dp.toPx()).coerceAtMost(plotRight)
+                        xSecs.lastIndex -> (x - 7.dp.toPx()).coerceAtLeast(plotLeft)
                         else -> x
                     }
-                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 22.dp.toPx(), xPaint)
+                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 25.dp.toPx(), xPaint)
                 }
                 if (points.size >= 2) {
                     val path = Path()
                     var started = false
                     points.forEachIndexed { idx, p ->
+                        val x = plotLeft + if (points.size <= 1) 0f else plotW * idx / (points.size - 1)
                         if (p.ms != null) {
-                            val x = plotLeft + if (points.size <= 1) 0f else plotW * idx / (points.size - 1)
                             val y = plotBottom - (p.ms.toFloat() / yMax.toFloat() * plotH)
                             if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
                         } else {
+                            drawCircle(Color(0xFFEF4444), radius = 3.6.dp.toPx(), center = Offset(x, plotBottom - 5.dp.toPx()))
                             started = false
                         }
                     }
@@ -1139,17 +1152,15 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
 @Composable
 fun PingStats(points: List<PingPoint>) {
     val ok = points.mapNotNull { it.ms }
-    val sent = points.size
-    val loss = if (sent == 0) 0 else ((sent - ok.size) * 100 / sent)
     val current = ok.lastOrNull()?.let { "当前 ${it}ms" } ?: "当前 --"
     val avg = if (ok.isEmpty()) "平均 --" else "平均 ${ok.average().roundToInt()}ms"
     val max = ok.maxOrNull()?.let { "最高 ${it}ms" } ?: "最高 --"
     val min = ok.minOrNull()?.let { "最低 ${it}ms" } ?: "最低 --"
-    val text = listOf(current, avg, max, min, "丢包 $loss%").joinToString("  ·  ")
+    val text = listOf(current, avg, max, min).joinToString("  ·  ")
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = .055f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .08f)),
+        color = Color(0xFF7C3AED).copy(alpha = .055f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = .08f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1556,7 +1567,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.7\n修复：Ping 图表改为白色单层卡片，去掉蓝色底；X/Y 轴不画实线，零点不重复；刻度更贴边且不压线；每日备注弹窗改为白色 OneUI + Material 3 风格。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.8\n修复：Ping 图表 Y 轴位置、0 点观感、右上角丢包、丢包红点；参数卡片标题和图标收敛；关注终端离线项改为显示最后信号。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
