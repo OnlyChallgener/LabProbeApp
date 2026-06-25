@@ -807,7 +807,7 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) = ScreenShell("LabProbe", "家庭网络仪表盘", action = {
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit) = ScreenShell("极客网探", "家庭网络仪表盘", action = {
     AssistChip(onClick = onRefresh, label = { Text(if (state.loading) "刷新中" else "刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
 }) {
     var edit by remember { mutableStateOf(false) }
@@ -818,27 +818,45 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nasV6 = nas?.optString("exitIpv6").orEmpty()
     val vpnRows = remember(data?.toString(), nasV6) {
         val rows = mutableListOf<Pair<String, String>>()
+        fun addVpnRow(labelRaw: String?, addrRaw: String?) {
+            val addr = cleanApiText(addrRaw)
+            if (addr.isBlank()) return
+            val label = vpnServiceLabel(cleanApiText(labelRaw).ifBlank { "STUN" })
+            val sameLabelIndex = rows.indexOfFirst { it.first.equals(label, ignoreCase = true) }
+            if (sameLabelIndex >= 0) {
+                rows[sameLabelIndex] = label to addr
+                return
+            }
+            if (rows.none { it.first.equals(label, ignoreCase = true) && it.second == addr }) rows += label to addr
+        }
+
         val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
         if (wg.isNotBlank()) rows += "WireGuard" to wg
-        val luckyObj = data?.optJSONObject("luckyStun")
-        val luckyDirect = when (val raw = data?.opt("luckyStun")) {
-            is String -> cleanApiText(raw)
-            else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
-        }
-        if (luckyDirect.isNotBlank() && rows.none { it.second == luckyDirect }) rows += "Lucky" to luckyDirect
+
+        // 优先使用 Hub v0.6.8+ 的 vpn map。Webhook 文本前缀会作为 name 返回，例如 OpenVPN：地址。
         val vpnObj = data?.optJSONObject("vpn")
         if (vpnObj != null) {
             val keys = vpnObj.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
                 val obj = vpnObj.optJSONObject(key)
+                val label = cleanApiText(obj?.optString("name")).ifBlank { key }
                 val addr = cleanApiText(obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: "")
-                val label = vpnServiceLabel(key)
-                if (addr.isNotBlank() && rows.none { it.second == addr }) rows += label to addr
+                addVpnRow(label, addr)
             }
         }
+
+        // 兼容旧 Hub 字段：只在 vpn map 没有同地址时补充，不再固定把所有内容写成 Lucky。
+        val luckyObj = data?.optJSONObject("luckyStun")
+        val luckyDirect = when (val raw = data?.opt("luckyStun")) {
+            is String -> cleanApiText(raw)
+            else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
+        }
+        val luckyLabel = cleanApiText(luckyObj?.optString("name")).ifBlank { "Lucky" }
+        if (luckyDirect.isNotBlank() && rows.none { it.second == luckyDirect }) addVpnRow(luckyLabel, luckyDirect)
+
         val stun = cleanApiText(data?.optJSONObject("stun")?.optString("publicAddress"))
-        if (stun.isNotBlank() && rows.none { it.second == stun }) rows += "Lucky" to stun
+        if (stun.isNotBlank() && rows.none { it.second == stun }) addVpnRow("STUN", stun)
         rows
     }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1656,7 +1674,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.9.1\n修复：Ping 高频采样、自适应聚合曲线、平滑显示；峰值橙点、丢包红点不串线。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("极客网探\n版本 0.9.3\n修复：VPN / STUN 地址按 Webhook 文本前缀显示；APP 名称改为中文；保留 Ping 高频采样与图表聚合优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
@@ -1944,4 +1962,4 @@ fun joinUrl(base: String, path: String): String { val b=base.trim().trimEnd('/')
 fun maskSensitive(s: String): String = s.replace(Regex("(?i)(token|password|secret)[^,}]*"), "$1:***")
 fun nowClock(): String = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
 fun toast(ctx: Context, text: String) = Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show()
-fun copy(ctx: Context, text: String) { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("LabProbe", text)); toast(ctx, "已复制") }
+fun copy(ctx: Context, text: String) { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("极客网探", text)); toast(ctx, "已复制") }
