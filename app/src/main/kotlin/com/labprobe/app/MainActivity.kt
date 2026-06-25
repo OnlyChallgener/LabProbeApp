@@ -97,10 +97,16 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.9"
-    const val CODE = 38
+    const val NAME = "0.9.10"
+    const val CODE = 39
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.10 · 顶部导航与刷新菜单修复" to listOf(
+            "顶部图标导航回到标题下方，不再遮挡系统状态栏",
+            "刷新按钮改为 One UI 圆角下拉菜单：立即刷新 / 手动 / 3S / 10S / 20S",
+            "顶部导航第二个图标改为路由器图标",
+            "主页面导航统一放在页面标题和内容卡片之间，保持 Samsung Health 式结构"
+        ),
         "v0.9.9 · One UI 大统一版" to listOf(
             "顶部图标胶囊导航替代底部栏",
             "首页卡片联动跳转：终端、Hub、出口 Ping",
@@ -418,7 +424,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     MaterialTheme(colorScheme = if (dark) darkScheme else light, typography = LabTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "events", "settings")
         val navTitles = listOf("总览", "终端", "工具", "记录", "我的")
-        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Devices, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
+        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
         val normalized = when {
             route.startsWith("tool_") -> "tools"
             route == "daily" -> "events"
@@ -428,28 +434,27 @@ fun LabProbeApp(prefs: AppPrefs) {
         val navigate: (String) -> Unit = { target -> route = target }
         BackHandler(route.startsWith("tool_") || route == "daily") { route = if (route == "daily") "events" else "tools" }
 
+        val topNav: @Composable () -> Unit = {
+            OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
+        }
+
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = {
-                Box(Modifier.fillMaxWidth().appBackground().padding(horizontal = 14.dp, vertical = 7.dp)) {
-                    OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
-                }
-            }
+            containerColor = MaterialTheme.colorScheme.background
         ) { pad ->
             Box(Modifier.fillMaxSize().padding(pad).appBackground()) {
                 AnimatedContent(route, label = "route") { r ->
                     when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate)
-                        "devices" -> DevicesScreen(state)
-                        "tools" -> ToolsHomeScreen { route = it }
-                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" })
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
+                        "devices" -> DevicesScreen(state, topNav)
+                        "tools" -> ToolsHomeScreen(topNav) { route = it }
+                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
-                        "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it })
+                        "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it }, topNav)
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
-                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate)
+                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
                     }
                 }
             }
@@ -463,7 +468,7 @@ fun Modifier.appBackground(): Modifier = background(
 )
 
 @Composable
-fun ScreenShell(title: String, subtitle: String, action: (@Composable RowScope.() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+fun ScreenShell(title: String, subtitle: String, action: (@Composable RowScope.() -> Unit)? = null, topNav: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -472,6 +477,7 @@ fun ScreenShell(title: String, subtitle: String, action: (@Composable RowScope.(
             }
             action?.invoke(this)
         }
+        topNav?.invoke()
         content()
     }
 }
@@ -919,10 +925,61 @@ fun VersionInfoDialog(onDismiss: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp
     )
+
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit) {
+fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -> Unit, onAuto: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Surface(
+            modifier = Modifier.clickable(enabled = !loading) { expanded = true },
+            shape = RoundedCornerShape(28.dp),
+            color = Color.White.copy(alpha = 0.94f),
+            shadowElevation = 4.dp,
+            tonalElevation = 0.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+        ) {
+            Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
+                Spacer(Modifier.width(6.dp))
+                Text(if (loading) "刷新中" else if (autoRefresh == "手动") "刷新" else autoRefresh, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                Spacer(Modifier.width(3.dp))
+                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(16.dp), tint = Color(0xFF64748B))
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White.copy(alpha = 0.995f),
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp,
+            modifier = Modifier.widthIn(min = 176.dp).padding(vertical = 6.dp)
+        ) {
+            DropdownMenuItem(
+                text = { Text("立即刷新", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A)) },
+                onClick = { expanded = false; onRefresh() },
+                leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB)) }
+            )
+            DropdownMenuItem(
+                text = { Text("手动", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
+                onClick = { onAuto("手动"); expanded = false },
+                leadingIcon = { if (autoRefresh == "手动") Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }
+            )
+            listOf("3S", "10S", "20S").forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
+                    onClick = { onAuto(option); expanded = false },
+                    leadingIcon = { if (autoRefresh == option) Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit) {
     var showVersion by remember { mutableStateOf(false) }
     val data = (state.status?.optJSONObject("data") ?: state.status)
     val nas = data?.optJSONObject("nas")
@@ -964,21 +1021,15 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                 }
                 Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
             }
-            Surface(
-                modifier = Modifier.clickable(enabled = !state.loading) { onRefresh() },
-                shape = RoundedCornerShape(28.dp),
-                color = Color.White.copy(alpha = 0.94f),
-                shadowElevation = 4.dp,
-                tonalElevation = 0.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
-            ) {
-                Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (state.loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                }
-            }
+            HomeRefreshMenuButton(
+                autoRefresh = autoRefresh,
+                loading = state.loading,
+                onRefresh = onRefresh,
+                onAuto = onAuto
+            )
         }
+
+        topNav()
 
         if (showVersion) VersionInfoDialog { showVersion = false }
 
@@ -1398,7 +1449,7 @@ fun StatusPill(label: String, value: String, color: Color) {
 }
 
 @Composable
-fun DevicesScreen(state: AppState) = ScreenShell("终端", "关注设备与全部在线设备") {
+fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell("终端", "关注设备与全部在线设备", topNav = topNav) {
     var onlineMode by remember { mutableStateOf(false) }
     val list = if (onlineMode) state.onlineDevices else state.devices
     ExpressiveCard("终端同步", "${if (onlineMode) "全部在线" else "关注设备"} · ${list.size} 台", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
@@ -1442,7 +1493,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 }
 
 @Composable
-fun ToolsHomeScreen(open: (String) -> Unit) = ScreenShell("工具", "二级页面，返回仍在 APP 内") {
+fun ToolsHomeScreen(topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "二级页面，返回仍在 APP 内", topNav = topNav) {
     ToolEntry("Ping 延迟", "高频采样 · 自适应聚合曲线", Icons.Rounded.Speed, Color(0xFF7C3AED)) { open("tool_ping") }
     ToolEntry("DNS 解析", "双 DNS · A/AAAA · 运营商", Icons.Rounded.Dns, Color(0xFF2563EB)) { open("tool_dns") }
     ToolEntry("端口探测", "TCP / UDP · 域名优先 AAAA", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) { open("tool_port") }
@@ -1871,12 +1922,12 @@ fun SshTool(prefs: AppPrefs) {
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
 
 @Composable
-fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit) = ScreenShell("记录", "紧凑事件流 · 左滑删除 · 每日总结", action = {
+fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) = ScreenShell("记录", "紧凑事件流 · 左滑删除 · 每日总结", action = {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
         AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
     }
-}) {
+}, topNav = topNav) {
     val scope = rememberCoroutineScope()
     var openedSwipeId by remember { mutableStateOf<Int?>(null) }
     ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
@@ -2223,7 +2274,7 @@ fun recentSevenDates(): List<String> {
 }
 
 @Composable
-fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh: String, onDark: (Boolean) -> Unit, onAuto: (String) -> Unit) = ScreenShell("我的", "Hub · 自动刷新 · 主题") {
+fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh: String, onDark: (Boolean) -> Unit, onAuto: (String) -> Unit, topNav: @Composable () -> Unit) = ScreenShell("我的", "Hub · 自动刷新 · 主题", topNav = topNav) {
     var hub by remember { mutableStateOf(prefs.hub) }
     var token by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
