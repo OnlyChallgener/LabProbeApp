@@ -324,7 +324,7 @@ class AppState(private val prefs: AppPrefs) {
         val devOnline = api.getDevices(true)
         val evs = api.getEvents()
         status = stRoot
-        devices = devWatched
+        devices = mergeDeviceCache(devices, devWatched)
         onlineDevices = devOnline
         events = evs
         prefs.cacheStatus = stRoot.toString()
@@ -436,8 +436,8 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.ArrowBack, null) }
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 22.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.8.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         content()
@@ -478,16 +478,16 @@ fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? =
                 if (icon != null) {
                     Box(
                         Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(13.dp))
+                            .size(31.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(accent.copy(alpha = 0.13f)),
                         contentAlignment = Alignment.Center
-                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
+                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(17.dp)) }
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.5.sp)
+                    Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.5.sp)
                 }
             }
             content()
@@ -586,7 +586,7 @@ fun CompactHistoryInput(label: String, hint: String, value: String, onValueChang
             shape = RoundedCornerShape(22.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(60.dp)
+            modifier = Modifier.weight(1f).height(56.dp)
         )
     }
 }
@@ -604,7 +604,7 @@ fun CompactLabeledInput(label: String, hint: String, value: String, onValueChang
             shape = RoundedCornerShape(22.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(60.dp)
+            modifier = Modifier.weight(1f).height(56.dp)
         )
     }
 }
@@ -648,8 +648,8 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 56.dp
-private val ParamFieldRadius = 18.dp
+private val ParamFieldHeight = 52.dp
+private val ParamFieldRadius = 17.dp
 
 @Composable
 fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
@@ -688,7 +688,7 @@ fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 textStyle = LocalTextStyle.current.copy(
-                    fontSize = 14.5.sp,
+                    fontSize = 13.8.sp,
                     fontFamily = FontFamily.SansSerif,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -706,7 +706,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
                 label,
-                fontSize = 11.sp,
+                fontSize = 10.6.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f),
                 maxLines = 1,
@@ -715,7 +715,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
             ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
                 Text(
                     value + "ms",
-                    fontSize = 14.5.sp,
+                    fontSize = 13.8.sp,
                     fontFamily = FontFamily.SansSerif,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -765,7 +765,7 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
             shape = RoundedCornerShape(22.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(60.dp)
+            modifier = Modifier.weight(1f).height(56.dp)
         )
     }
 }
@@ -774,7 +774,7 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
 fun LabeledInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Text, password: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f).height(60.dp))
+        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f).height(56.dp))
     }
 }
 
@@ -929,9 +929,11 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
             Text(d.name.ifBlank { d.mac }, fontWeight = FontWeight.Black, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOf(d.ip, d.ssid, d.band, d.rxrate).filter { it.isNotBlank() }.joinToString(" · "), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val mainInfo = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
+            Text(mainInfo.ifBlank { if (d.online) "在线信息待刷新" else "离线信息已保留" }, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (details) {
-                val stateText = if (d.online) "在线 ${d.onlineDurationText.ifBlank { "-" }} · 上线 ${d.onlineSince.ifBlank { "-" }}" else "离线 ${d.offlineAt.ifBlank { "-" }} · 最后信号 ${d.rssi.ifBlank { "-" }}"
+                val lastSignal = cleanApiText(d.rssi).ifBlank { "-" }
+                val stateText = if (d.online) "在线 ${d.onlineDurationText.ifBlank { "-" }} · 上线 ${d.onlineSince.ifBlank { "-" }}" else "离线 ${d.offlineAt.ifBlank { "-" }} · 最后信号 $lastSignal"
                 Text(stateText, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.50f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -954,8 +956,8 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
             Box(Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(color.copy(alpha = 0.13f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = color, modifier = Modifier.size(19.dp)) }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.8.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = color)
         }
@@ -1016,15 +1018,18 @@ fun PingTool(prefs: AppPrefs) {
                     log = buffer.takeLast(8).joinToString("\n") { it.text }
                     running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+            }, enabled = !running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
                 Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新")
             }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
                 Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止")
             }
         }
     }
     ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF7C3AED)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            PingLossPill(points)
+        }
         PingChart(points, interval.toLongOrNull() ?: 500L)
         PingStats(points)
     }
@@ -1042,6 +1047,24 @@ private fun pingNiceYMax(raw: Int): Int = when {
 
 private fun formatSecondsLabel(sec: Float): String {
     return if (sec < 3f && sec != sec.roundToInt().toFloat()) String.format(Locale.US, "%.1fs", sec) else "${sec.roundToInt()}s"
+}
+
+@Composable
+fun PingLossPill(points: List<PingPoint>) {
+    val sent = points.size
+    val okCount = points.count { it.ms != null }
+    val loss = if (sent == 0) 0 else ((sent - okCount) * 100 / sent)
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = Color(0xFF7C3AED).copy(alpha = .10f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = .14f))
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFEF4444)))
+            Spacer(Modifier.width(5.dp))
+            Text("丢包 $loss%", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF7C3AED), maxLines = 1)
+        }
+    }
 }
 
 @Composable
@@ -1071,18 +1094,6 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
         modifier = Modifier.fillMaxWidth().height(228.dp)
     ) {
         Box(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
-            Surface(
-                modifier = Modifier.align(Alignment.TopEnd),
-                shape = RoundedCornerShape(50),
-                color = Color(0xFF7C3AED).copy(alpha = .10f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = .12f))
-            ) {
-                Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFEF4444)))
-                    Spacer(Modifier.width(5.dp))
-                    Text("丢包 $loss%", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF7C3AED), maxLines = 1)
-                }
-            }
             if (points.isEmpty()) {
                 Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.40f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
@@ -1357,7 +1368,7 @@ fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
             color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
         ) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp)) }
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(17.dp)) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1567,7 +1578,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.8\n修复：Ping 图表 Y 轴位置、0 点观感、右上角丢包、丢包红点；参数卡片标题和图标收敛；关注终端离线项改为显示最后信号。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.9\n修复：参数卡小框和按钮轻量收敛；Ping/延迟曲线标题缩小；丢包移到图表外；离线设备信息保留到下一次上线。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
@@ -1763,6 +1774,34 @@ suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: St
     session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { val hasOut = out.isNotBlank(); val title = when { exit == 0 -> "执行成功"; exit == -1 && hasOut -> "执行完成 · 未获取退出码"; exit != 0 && hasOut -> "执行完成 · exit $exit"; else -> "执行失败 · exit $exit" }; append(title); append("\n"); append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); if (exit != 0 && !hasOut) append("\n返回码：").append(exit) }
 }
 
+fun cleanApiText(v: String?): String {
+    val t = v?.trim().orEmpty()
+    return if (t.equals("null", true) || t == "-" || t.equals("None", true)) "" else t
+}
+
+fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<DeviceItem> {
+    val oldByMac = old.associateBy { it.mac.lowercase(Locale.getDefault()) }
+    val freshKeys = fresh.map { it.mac.lowercase(Locale.getDefault()) }.toSet()
+    val merged = fresh.map { n ->
+        val o = oldByMac[n.mac.lowercase(Locale.getDefault())]
+        if (!n.online && o != null) {
+            n.copy(
+                ip = n.ip.ifBlank { o.ip },
+                ssid = n.ssid.ifBlank { o.ssid },
+                band = n.band.ifBlank { o.band },
+                rssi = n.rssi.ifBlank { o.rssi },
+                rxrate = n.rxrate.ifBlank { o.rxrate },
+                onlineSince = n.onlineSince.ifBlank { o.onlineSince },
+                offlineAt = n.offlineAt.ifBlank { o.offlineAt },
+                onlineDurationText = n.onlineDurationText.ifBlank { o.onlineDurationText },
+                lastSeenAt = n.lastSeenAt.ifBlank { o.lastSeenAt }
+            )
+        } else n
+    }.toMutableList()
+    old.filter { !it.online && it.mac.lowercase(Locale.getDefault()) !in freshKeys }.forEach { merged += it }
+    return merged
+}
+
 fun parseDeviceArray(json: String): List<DeviceItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; return (0 until arr.length()).mapNotNull { parseDevice(arr.optJSONObject(it)) } }
 fun parseEvents(json: String): List<EventItem> {
     if (json.isBlank()) return emptyList()
@@ -1775,7 +1814,7 @@ fun parseEvents(json: String): List<EventItem> {
         val nv = o.optString("newValue")
         if (type == "lucky_webhook" && (nv.contains("token", true) || nv.length < 10)) continue
         val dev = o.optJSONObject("device") ?: JSONObject()
-        fun field(name: String): String = o.optString(name).ifBlank { dev.optString(name) }
+        fun field(name: String): String = cleanApiText(o.optString(name)).ifBlank { cleanApiText(dev.optString(name)) }
         out += EventItem(
             id = o.optInt("id", 0),
             title = o.optString("title", type.ifBlank { "事件" }),
@@ -1796,7 +1835,26 @@ fun parseEvents(json: String): List<EventItem> {
     }
     return out
 }
-fun parseDevice(o: JSONObject?): DeviceItem? { if (o==null) return null; val mac=o.optString("mac"); val name=o.optString("name").ifBlank{o.optString("devRecommend")}.ifBlank{o.optString("hostName")}.ifBlank{mac}; return DeviceItem(name, mac, o.optBoolean("online", true), o.optString("ip").ifBlank{o.optString("userIp")}, o.optString("ssid"), o.optString("band"), o.optString("rssi"), o.optString("rxrate"), o.optString("onlineSince").ifBlank{o.optString("onlinetime")}, o.optString("offlineAt"), o.optString("onlineDurationText"), o.optString("lastSeenAt")) }
+fun parseDevice(o: JSONObject?): DeviceItem? {
+    if (o == null) return null
+    fun f(k: String): String = cleanApiText(o.optString(k, ""))
+    val mac = f("mac")
+    val name = f("name").ifBlank { f("devRecommend") }.ifBlank { f("hostName") }.ifBlank { mac }
+    return DeviceItem(
+        name = name,
+        mac = mac,
+        online = o.optBoolean("online", true),
+        ip = f("ip").ifBlank { f("userIp") }.ifBlank { f("lastIp") },
+        ssid = f("ssid").ifBlank { f("lastSsid") },
+        band = f("band").ifBlank { f("lastBand") },
+        rssi = f("rssi").ifBlank { f("lastRssi") },
+        rxrate = f("rxrate").ifBlank { f("lastRxrate") },
+        onlineSince = f("onlineSince").ifBlank { f("onlinetime") },
+        offlineAt = f("offlineAt"),
+        onlineDurationText = f("onlineDurationText"),
+        lastSeenAt = f("lastSeenAt")
+    )
+}
 fun DeviceItem.toJson(): JSONObject = JSONObject().put("name",name).put("mac",mac).put("online",online).put("ip",ip).put("ssid",ssid).put("band",band).put("rssi",rssi).put("rxrate",rxrate).put("onlineSince",onlineSince).put("offlineAt",offlineAt).put("onlineDurationText",onlineDurationText).put("lastSeenAt",lastSeenAt)
 fun EventItem.toJson(): JSONObject = JSONObject()
     .put("id", id).put("title", title).put("type", type).put("name", name)
