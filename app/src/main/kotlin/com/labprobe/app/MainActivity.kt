@@ -820,19 +820,25 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         val rows = mutableListOf<Pair<String, String>>()
         val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
         if (wg.isNotBlank()) rows += "WireGuard" to wg
+        val luckyObj = data?.optJSONObject("luckyStun")
+        val luckyDirect = when (val raw = data?.opt("luckyStun")) {
+            is String -> cleanApiText(raw)
+            else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
+        }
+        if (luckyDirect.isNotBlank() && rows.none { it.second == luckyDirect }) rows += "Lucky" to luckyDirect
         val vpnObj = data?.optJSONObject("vpn")
         if (vpnObj != null) {
             val keys = vpnObj.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
                 val obj = vpnObj.optJSONObject(key)
-                val addr = obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: ""
+                val addr = cleanApiText(obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: "")
                 val label = vpnServiceLabel(key)
                 if (addr.isNotBlank() && rows.none { it.second == addr }) rows += label to addr
             }
         }
-        val stun = data?.optJSONObject("stun")?.optString("publicAddress").orEmpty()
-        if (stun.isNotBlank() && rows.none { it.second == stun }) rows += "OpenVPN" to stun
+        val stun = cleanApiText(data?.optJSONObject("stun")?.optString("publicAddress"))
+        if (stun.isNotBlank() && rows.none { it.second == stun }) rows += "Lucky" to stun
         rows
     }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -894,12 +900,13 @@ fun ExitCard(nas: JSONObject?, router: JSONObject?) {
 
 @Composable
 fun VpnCard(rows: List<Pair<String, String>>) {
-    ExpressiveCard("VPN 地址", null, Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
+    ExpressiveCard("VPN / STUN 地址", null, Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
         rows.forEach { (label, value) -> InfoRowVisible(label, value, true) }
     }
 }
 
 fun vpnServiceLabel(key: String): String = when (key.lowercase(Locale.getDefault())) {
+    "lucky", "lucky_stun" -> "Lucky"
     "wg", "wireguard" -> "WireGuard"
     "openvpn", "open_vpn" -> "OpenVPN"
     "easytier", "easy_tier" -> "EasyTier"
