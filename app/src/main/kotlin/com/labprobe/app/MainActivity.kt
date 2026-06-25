@@ -819,7 +819,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = nas?.optString("exitIpv6").orEmpty()
-    val vpnRows = remember(data?.toString(), nasV6) {
+    val vpnRows = remember(data?.toString(), nasV6, state.events) {
         val rows = mutableListOf<Pair<String, String>>()
         fun addVpnRow(labelRaw: String?, addrRaw: String?) {
             val addr = cleanApiText(addrRaw)
@@ -870,6 +870,26 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
 
         val stunObj = data?.optJSONObject("stun")
         addVpnRow(cleanApiText(stunObj?.optString("name")).ifBlank { "STUN" }, stunObj?.optString("publicAddress") ?: stunObj?.optString("address"))
+
+        // v0.9.7 兜底：记录页/每日总结有 OpenVPN/Lucky，但首页没有时，说明 Hub 旧状态缺当前列表。
+        // 这里从最近事件补显示，避免“事件有、首页空”的割裂；Hub v0.7.2 也会在 /api/status 侧修复。
+        if (rows.size <= 1) {
+            state.events.asSequence()
+                .filter { e ->
+                    val n = (e.name + " " + e.title + " " + e.type).lowercase(Locale.getDefault())
+                    n.contains("openvpn") || n.contains("lucky") || n.contains("easytier") || n.contains("wireguard") || n.contains("stun")
+                }
+                .forEach { e ->
+                    val rawName = cleanApiText(e.name).ifBlank {
+                        cleanApiText(e.title)
+                            .replace("STUN 地址变化", "")
+                            .replace("地址变化", "")
+                            .trim()
+                    }
+                    val addr = cleanApiText(e.newValue).ifBlank { cleanApiText(e.ip) }
+                    addVpnRow(rawName.ifBlank { "STUN" }, addr)
+                }
+        }
         rows
     }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

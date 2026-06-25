@@ -1,4 +1,4 @@
-# 极客网探 v0.9.6
+# 极客网探 v0.9.7
 
 Kotlin + Jetpack Compose + Material 3。
 
@@ -10,6 +10,11 @@ Kotlin + Jetpack Compose + Material 3。
 - 每日总结网络变化展示服务名和地址，长地址可横向滑动并点击复制。
 
 
-## v0.9.6
+## v0.9.7
 - 关注终端离线信息改为长期缓存：最后 IP、SSID、频段、速率、信号不再因离线时间变长而丢失。
 - APP 本地缓存保存合并后的关注终端信息。
+
+
+## v0.9.7
+- 首页 VPN / STUN 地址增加事件兜底：/api/status 没有当前地址时，从最近 OpenVPN / Lucky / EasyTier 事件补显示。
+- 记录页删除后继续保持单卡片左滑状态隔离，避免误删。
