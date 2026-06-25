@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
@@ -462,7 +463,14 @@ fun ExpressiveNav(titles: List<String>, icons: List<ImageVector>, selected: Int,
 }
 
 @Composable
-fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? = null, accent: Color = MaterialTheme.colorScheme.primary, content: @Composable ColumnScope.() -> Unit) {
+fun ExpressiveCard(
+    title: String,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+    accent: Color = MaterialTheme.colorScheme.primary,
+    headerAction: (@Composable RowScope.() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     val shape = RoundedCornerShape(28.dp)
     Surface(
         modifier = Modifier
@@ -478,16 +486,20 @@ fun ExpressiveCard(title: String, subtitle: String? = null, icon: ImageVector? =
                 if (icon != null) {
                     Box(
                         Modifier
-                            .size(31.dp)
+                            .size(30.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(accent.copy(alpha = 0.13f)),
                         contentAlignment = Alignment.Center
-                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(17.dp)) }
+                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp)) }
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.5.sp)
+                    Text(title, fontSize = 14.2.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.2.sp)
+                }
+                if (headerAction != null) {
+                    Spacer(Modifier.width(8.dp))
+                    headerAction.invoke(this)
                 }
             }
             content()
@@ -586,7 +598,7 @@ fun CompactHistoryInput(label: String, hint: String, value: String, onValueChang
             shape = RoundedCornerShape(22.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(56.dp)
+            modifier = Modifier.weight(1f).height(52.dp)
         )
     }
 }
@@ -648,8 +660,8 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 52.dp
-private val ParamFieldRadius = 17.dp
+private val ParamFieldHeight = 50.dp
+private val ParamFieldRadius = 16.dp
 
 @Composable
 fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
@@ -1018,18 +1030,21 @@ fun PingTool(prefs: AppPrefs) {
                     log = buffer.takeLast(8).joinToString("\n") { it.text }
                     running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+            }, enabled = !running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
                 Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新")
             }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
                 Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止")
             }
         }
     }
-    ExpressiveCard("延迟曲线", "X 轴时间 s，Y 轴延迟 ms。", Icons.Rounded.ShowChart, Color(0xFF7C3AED)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            PingLossPill(points)
-        }
+    ExpressiveCard(
+        "延迟曲线",
+        "X 轴时间 s，Y 轴延迟 ms。",
+        Icons.Rounded.ShowChart,
+        Color(0xFF7C3AED),
+        headerAction = { PingLossPill(points) }
+    ) {
         PingChart(points, interval.toLongOrNull() ?: 500L)
         PingStats(points)
     }
@@ -1069,14 +1084,22 @@ fun PingLossPill(points: List<PingPoint>) {
 
 @Composable
 fun PingChart(points: List<PingPoint>, intervalMs: Long) {
-    val ok = points.filter { it.ms != null }
-    val sent = points.size
-    val loss = if (sent == 0) 0 else ((sent - ok.size) * 100 / sent)
-    val rawMax = (ok.maxOfOrNull { it.ms ?: 1 } ?: 50).coerceAtLeast(50)
+    val buckets = points
+        .groupBy { (((it.index - 1).coerceAtLeast(0) * intervalMs) / 1000L).toInt() }
+        .toSortedMap()
+        .map { (sec, list) ->
+            val ok = list.mapNotNull { it.ms }
+            Triple(sec, if (ok.isEmpty()) null else ok.average().roundToInt(), list.any { it.ms == null })
+        }
+    val okMs = buckets.mapNotNull { it.second }
+    val rawMax = (okMs.maxOrNull() ?: 50).coerceAtLeast(50)
     val yMax = pingNiceYMax(rawMax)
     val yTicks = listOf(0, yMax / 4, yMax / 2, yMax * 3 / 4, yMax).distinct()
-    val pointCount = points.size.coerceAtLeast(1)
-    val totalSec = ((pointCount - 1).coerceAtLeast(1) * intervalMs / 1000f).coerceAtLeast(1f)
+    val totalSec = maxOf(
+        1f,
+        ((points.size - 1).coerceAtLeast(1) * intervalMs / 1000f),
+        (buckets.lastOrNull()?.first ?: 1).toFloat()
+    )
     val xTickCount = when {
         totalSec <= 3f -> 4
         totalSec <= 10f -> 5
@@ -1091,42 +1114,46 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
         shadowElevation = 0.dp,
         tonalElevation = 0.dp,
-        modifier = Modifier.fillMaxWidth().height(228.dp)
+        modifier = Modifier.fillMaxWidth().height(218.dp)
     ) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 7.dp)) {
             if (points.isEmpty()) {
-                Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.40f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("等待测试", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurface.copy(alpha=.40f), fontWeight = FontWeight.Bold, fontSize = 12.8.sp)
             }
-            Canvas(Modifier.fillMaxSize().padding(start = 0.dp, end = 0.dp, top = 8.dp, bottom = 0.dp)) {
+            Canvas(Modifier.fillMaxSize().padding(start = 0.dp, end = 0.dp, top = 6.dp, bottom = 0.dp)) {
                 val fullW = size.width
                 val fullH = size.height
-                val labelW = 34.dp.toPx()
-                val bottomH = 38.dp.toPx()
-                val topH = 20.dp.toPx()
-                val rightPad = 4.dp.toPx()
+                val labelW = 31.dp.toPx()
+                val bottomH = 33.dp.toPx()
+                val topH = 15.dp.toPx()
+                val rightPad = 6.dp.toPx()
                 val plotLeft = labelW
                 val plotTop = topH
                 val plotRight = fullW - rightPad
                 val plotBottom = fullH - bottomH
                 val plotW = (plotRight - plotLeft).coerceAtLeast(1f)
                 val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
-                val grid = Color(0xFF64748B).copy(alpha = 0.095f)
-                val faintGrid = Color(0xFF64748B).copy(alpha = 0.038f)
+                val grid = Color(0xFF64748B).copy(alpha = 0.085f)
+                val faintGrid = Color(0xFF64748B).copy(alpha = 0.030f)
                 val yPaint = Paint().apply {
                     color = android.graphics.Color.argb(165, 75, 85, 99)
-                    textSize = 10.2.sp.toPx()
+                    textSize = 9.8.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.RIGHT
                 }
                 yTicks.forEach { tick ->
                     val y = plotBottom - (tick.toFloat() / yMax.toFloat() * plotH)
                     drawLine(grid, Offset(plotLeft, y), Offset(plotRight, y), strokeWidth = 1f)
-                    val yText = if (tick == 0) y - 4.dp.toPx() else y + 3.5f
-                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 6.dp.toPx(), yText, yPaint)
+                    val yText = when (tick) {
+                        0 -> y - 4.dp.toPx()
+                        yMax -> y + 9.dp.toPx()
+                        else -> y + 3.5f
+                    }
+                    drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 5.dp.toPx(), yText, yPaint)
                 }
                 val xPaint = Paint().apply {
                     color = android.graphics.Color.argb(165, 75, 85, 99)
-                    textSize = 10.2.sp.toPx()
+                    textSize = 9.8.sp.toPx()
                     isAntiAlias = true
                     textAlign = Paint.Align.CENTER
                 }
@@ -1138,22 +1165,27 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                         xSecs.lastIndex -> (x - 7.dp.toPx()).coerceAtLeast(plotLeft)
                         else -> x
                     }
-                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 25.dp.toPx(), xPaint)
+                    drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(sec), labelX, plotBottom + 23.dp.toPx(), xPaint)
                 }
-                if (points.size >= 2) {
+                if (buckets.size >= 2) {
                     val path = Path()
                     var started = false
-                    points.forEachIndexed { idx, p ->
-                        val x = plotLeft + if (points.size <= 1) 0f else plotW * idx / (points.size - 1)
-                        if (p.ms != null) {
-                            val y = plotBottom - (p.ms.toFloat() / yMax.toFloat() * plotH)
+                    buckets.forEach { sample ->
+                        val sec = sample.first.toFloat()
+                        val ms = sample.second
+                        val hasLoss = sample.third
+                        val x = plotLeft + (sec / totalSec).coerceIn(0f, 1f) * plotW
+                        if (ms != null) {
+                            val y = plotBottom - (ms.toFloat() / yMax.toFloat() * plotH).coerceIn(0f, plotH)
                             if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
                         } else {
-                            drawCircle(Color(0xFFEF4444), radius = 3.6.dp.toPx(), center = Offset(x, plotBottom - 5.dp.toPx()))
                             started = false
                         }
+                        if (hasLoss) {
+                            drawCircle(Color(0xFFEF4444), radius = 2.1.dp.toPx(), center = Offset(x, plotBottom - 4.dp.toPx()))
+                        }
                     }
-                    drawPath(path, Color(0xFF2563EB), style = Stroke(width = 2.2f, cap = StrokeCap.Round))
+                    drawPath(path, Color(0xFF2563EB), style = Stroke(width = 2.05f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
             }
         }
@@ -1368,7 +1400,7 @@ fun EventCompactCard(e: EventItem, onDelete: () -> Unit) {
             color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
         ) {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(17.dp)) }
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp)) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1578,7 +1610,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
-    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.8.9\n修复：参数卡小框和按钮轻量收敛；Ping/延迟曲线标题缩小；丢包移到图表外；离线设备信息保留到下一次上线。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+    ExpressiveCard("关于", "Kotlin + Compose + Material 3 Expressive", Icons.Rounded.Info, Color(0xFF64748B)) { Text("LabProbe / 极客网探\n版本 0.9.0\n修复：Ping 曲线按 1 秒聚合；丢包与标题同行；丢包点缩小且不串线；参数区继续收敛；离线信息保留到下次上线。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
 }
 
 class HubApi(private val prefs: AppPrefs) {
