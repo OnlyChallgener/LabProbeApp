@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,6 +42,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -61,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.UIKeyboardInteractive
@@ -101,10 +105,17 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.12"
-    const val CODE = 40
+    const val NAME = "0.9.13"
+    const val CODE = 41
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.13 · One UI 精修与隐私模式" to listOf(
+            "顶部导航白底化，设置与下拉框继续统一 One UI 质感",
+            "VPN/STUN 钥匙图标可切换隐私模式，截图时隐藏公网地址",
+            "首页今日概览只统计当天事件，避免继续显示昨天数据",
+            "首页卡片支持长按浮起拖动排序，松手后自动保存顺序",
+            "二级页面继续收敛为白卡、轻阴影、小色块点缀"
+        ),
         "v0.9.12 · 编译修复与分体刷新按钮" to listOf(
             "修复 Kotlin 编译失败：移除不兼容的 using 动画扩展",
             "右上角刷新按钮改为分体按钮：左侧立即刷新，右侧小三角打开刷新间隔",
@@ -186,8 +197,10 @@ class AppPrefs(context: Context) {
     var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
 
-    var homeOrder: String get() = sp.getString("home_order", "status,exit,vpn,devices") ?: "status,exit,vpn,devices"
+    var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"
         set(v) = sp.edit().putString("home_order", v).apply()
+    var privacyMode: Boolean get() = sp.getBoolean("privacy_mode", false)
+        set(v) = sp.edit().putBoolean("privacy_mode", v).apply()
 
     private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(3)
     private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(3).joinToString("\n")).apply() }
@@ -580,7 +593,7 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
 @Composable
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.70f),
+        color = Color.White.copy(alpha = 0.92f),
         shape = RoundedCornerShape(32.dp),
         tonalElevation = 0.dp,
         shadowElevation = 1.dp,
@@ -1082,6 +1095,13 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
 @Composable
 fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit) {
     var showVersion by remember { mutableStateOf(false) }
+    var privacyMode by remember { mutableStateOf(prefs.privacyMode) }
+    var homeOrder by remember { mutableStateOf(normalizeHomeOrder(prefs.homeOrder)) }
+    fun saveHomeOrder(newOrder: List<String>) {
+        val n = normalizeHomeOrder(newOrder.joinToString(","))
+        homeOrder = n
+        prefs.homeOrder = n.joinToString(",")
+    }
     val data = (state.status?.optJSONObject("data") ?: state.status)
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
@@ -1134,42 +1154,57 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
 
         if (showVersion) VersionInfoDialog { showVersion = false }
 
-        HealthScoreCard(
-            score = score,
-            hubOk = hubOk,
-            exitOk = exitOk,
-            vpnOk = vpnOk,
-            onlineCount = onlineCount,
-            lastRefresh = prefs.lastRefresh,
-            message = state.message,
-            onNavigate = onNavigate
-        )
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HealthMiniCard(
-                title = "终端在线",
-                value = "${onlineCount}",
-                unit = "台",
-                icon = Icons.Rounded.Devices,
-                accent = Color(0xFF22C55E),
-                subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步",
-                modifier = Modifier.weight(1f).clickable { onNavigate("devices") }
-            )
-            HealthMiniCard(
-                title = "VPN / STUN",
-                value = "${vpnRows.size}",
-                unit = "条",
-                icon = Icons.Rounded.VpnKey,
-                accent = Color(0xFF7C3AED),
-                subtitle = vpnRows.firstOrNull()?.first ?: "暂无地址",
-                modifier = Modifier.weight(1f).clickable { onNavigate("events") }
-            )
+        homeOrder.forEach { cardKey ->
+            HomeReorderableCard(
+                cardKey = cardKey,
+                order = homeOrder,
+                onOrder = { saveHomeOrder(it) }
+            ) {
+                when (cardKey) {
+                    "score" -> HealthScoreCard(
+                        score = score,
+                        hubOk = hubOk,
+                        exitOk = exitOk,
+                        vpnOk = vpnOk,
+                        onlineCount = onlineCount,
+                        lastRefresh = prefs.lastRefresh,
+                        message = state.message,
+                        onNavigate = onNavigate
+                    )
+                    "mini" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        HealthMiniCard(
+                            title = "终端在线",
+                            value = "${onlineCount}",
+                            unit = "台",
+                            icon = Icons.Rounded.Devices,
+                            accent = Color(0xFF22C55E),
+                            subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步",
+                            modifier = Modifier.weight(1f).clickable { onNavigate("devices") }
+                        )
+                        HealthMiniCard(
+                            title = "VPN / STUN",
+                            value = "${vpnRows.size}",
+                            unit = "条",
+                            icon = Icons.Rounded.VpnKey,
+                            accent = Color(0xFF7C3AED),
+                            subtitle = vpnRows.firstOrNull()?.first ?: "暂无地址",
+                            modifier = Modifier.weight(1f).clickable { onNavigate("events") }
+                        )
+                    }
+                    "exit" -> HealthExitCard(nas, router, privacyMode)
+                    "vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(
+                        rows = vpnRows,
+                        privacyMode = privacyMode,
+                        onTogglePrivacy = {
+                            privacyMode = !privacyMode
+                            prefs.privacyMode = privacyMode
+                        }
+                    )
+                    "devices" -> HealthDevicesCard(state)
+                    "today" -> HealthTodayCard(state, prefs.lastRefresh)
+                }
+            }
         }
-
-        HealthExitCard(nas, router)
-        if (vpnRows.isNotEmpty()) HealthVpnCard(vpnRows)
-        HealthDevicesCard(state)
-        HealthTodayCard(state, prefs.lastRefresh)
     }
 }
 
@@ -1387,37 +1422,60 @@ fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, acce
 
 @Composable
 fun HealthDataRow(label: String, value: String?, accent: Color = Color(0xFF0F172A)) {
+    HealthDataRowDisplay(label, value, value, accent)
+}
+
+@Composable
+fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String?, accent: Color = Color(0xFF0F172A)) {
     val ctx = LocalContext.current
-    val v = cleanApiText(value)
-    if (v.isBlank()) return
+    val real = cleanApiText(realValue)
+    val display = cleanApiText(displayValue)
+    if (real.isBlank() && display.isBlank()) return
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(86.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable { copy(ctx, v) }, verticalAlignment = Alignment.CenterVertically) {
-            Text(v, color = accent, fontWeight = FontWeight.Black, fontSize = 13.2.sp, maxLines = 1)
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable(enabled = real.isNotBlank()) { copy(ctx, real) }, verticalAlignment = Alignment.CenterVertically) {
+            Text(display.ifBlank { real }, color = accent, fontWeight = FontWeight.Black, fontSize = 13.2.sp, maxLines = 1)
         }
     }
 }
 
 @Composable
-fun HealthExitCard(nas: JSONObject?, router: JSONObject?) {
+fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean) {
     HealthCard {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9))
         Spacer(Modifier.height(13.dp))
-        HealthDataRow("NAS IPv4", nas?.optString("exitIpv4"))
+        HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
         Spacer(Modifier.height(9.dp))
-        HealthDataRow("NAS IPv6", nas?.optString("exitIpv6"))
+        HealthDataRowDisplay("NAS IPv6", nas?.optString("exitIpv6"), maskAddressForUi(nas?.optString("exitIpv6"), privacyMode))
         Spacer(Modifier.height(9.dp))
-        HealthDataRow("路由 WAN6", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"))
+        val wan6 = router?.optString("wanIpv6") ?: router?.optString("exitIpv6")
+        HealthDataRowDisplay("路由 WAN6", wan6, maskAddressForUi(wan6, privacyMode))
     }
 }
 
 @Composable
-fun HealthVpnCard(rows: List<Pair<String, String>>) {
+fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit) {
     HealthCard {
-        HealthSectionTitle("VPN / STUN 地址", "按服务名显示，长按或点击地址复制。", Icons.Rounded.VpnKey, Color(0xFF7C3AED))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF7C3AED).copy(alpha = .12f))
+                    .clickable { onTogglePrivacy() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(if (privacyMode) Icons.Rounded.VisibilityOff else Icons.Rounded.VpnKey, null, tint = Color(0xFF7C3AED), modifier = Modifier.size(19.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
         Spacer(Modifier.height(13.dp))
         rows.forEachIndexed { idx, row ->
-            HealthDataRow(row.first, row.second, Color(0xFF0F172A))
+            HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
             if (idx != rows.lastIndex) Spacer(Modifier.height(9.dp))
         }
     }
@@ -1469,9 +1527,11 @@ fun HealthDeviceLine(d: DeviceItem) {
 
 @Composable
 fun HealthTodayCard(state: AppState, lastRefresh: String) {
-    val up = state.events.count { it.type == "device_online" }
-    val down = state.events.count { it.type == "device_offline" }
-    val net = state.events.count { val t = it.type.lowercase(Locale.getDefault()); t.contains("vpn") || t.contains("stun") || t.contains("wireguard") }
+    val today = todayDateString()
+    val todayEvents = state.events.filter { it.time.startsWith(today) }
+    val up = todayEvents.count { it.type == "device_online" }
+    val down = todayEvents.count { it.type == "device_offline" }
+    val net = todayEvents.count { val t = it.type.lowercase(Locale.getDefault()); t.contains("vpn") || t.contains("stun") || t.contains("wireguard") || t.contains("openvpn") || t.contains("lucky") }
     HealthCard {
         HealthSectionTitle("今日概览", "最近事件聚合，详细信息进记录页。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
         Spacer(Modifier.height(12.dp))
@@ -1486,12 +1546,58 @@ fun HealthTodayCard(state: AppState, lastRefresh: String) {
 }
 
 @Composable
-fun HomeSortWrap(edit: Boolean, key: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
-    Box {
+fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
+    var dragging by remember(cardKey) { mutableStateOf(false) }
+    var dragY by remember(cardKey) { mutableStateOf(0f) }
+    val scale by animateFloatAsState(if (dragging) 1.018f else 1f, label = "home-card-scale")
+    val thresholdPx = with(LocalDensity.current) { 92.dp.toPx() }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .zIndex(if (dragging) 5f else 0f)
+            .graphicsLayer {
+                translationY = if (dragging) dragY else 0f
+                scaleX = scale
+                scaleY = scale
+            }
+            .pointerInput(cardKey, order) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { dragging = true; dragY = 0f },
+                    onDragEnd = { dragging = false; dragY = 0f },
+                    onDragCancel = { dragging = false; dragY = 0f },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        dragY += dragAmount.y
+                        val current = order.indexOf(cardKey)
+                        if (current >= 0 && dragY > thresholdPx && current < order.lastIndex) {
+                            val next = order.toMutableList()
+                            java.util.Collections.swap(next, current, current + 1)
+                            onOrder(next)
+                            dragY = 0f
+                        } else if (current > 0 && dragY < -thresholdPx) {
+                            val next = order.toMutableList()
+                            java.util.Collections.swap(next, current, current - 1)
+                            onOrder(next)
+                            dragY = 0f
+                        }
+                    }
+                )
+            }
+    ) {
         content()
-        if (edit) Row(Modifier.align(Alignment.TopEnd).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            IconButton(onClick = { val i=order.indexOf(key); if(i>0) onOrder(order.toMutableList().also { java.util.Collections.swap(it, i, i-1) }) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.KeyboardArrowUp, null) }
-            IconButton(onClick = { val i=order.indexOf(key); if(i>=0 && i<order.size-1) onOrder(order.toMutableList().also { java.util.Collections.swap(it, i, i+1) }) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.KeyboardArrowDown, null) }
+        if (dragging) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                shape = RoundedCornerShape(50),
+                color = Color.White.copy(alpha = 0.92f),
+                shadowElevation = 4.dp
+            ) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.OpenWith, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
+                    Spacer(Modifier.width(5.dp))
+                    Text("拖动排序", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB))
+                }
+            }
         }
     }
 }
@@ -1504,7 +1610,7 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             StatusPill("终端", "${state.onlineDevices.size} 在线", Color(0xFFF59E0B))
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(0.95f)) { CompactSelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S"), onAuto) }
+            Box(Modifier.weight(0.95f)) { CompactSelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "20S"), onAuto) }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
         }
     }
@@ -2366,6 +2472,31 @@ fun DailyTextSummaryRow(o: JSONObject) {
     Text(text, fontSize=12.sp, fontWeight=FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f), maxLines=3)
 }
 
+fun todayDateString(): String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+fun normalizeHomeOrder(raw: String): List<String> {
+    val all = listOf("score", "mini", "exit", "vpn", "devices", "today")
+    val parsed = raw.split(",").map { it.trim() }.filter { it in all }.distinct()
+    return (parsed + all.filter { it !in parsed }).take(all.size)
+}
+
+fun maskAddressForUi(value: String?, privacyMode: Boolean): String {
+    val v = cleanApiText(value)
+    if (!privacyMode || v.isBlank()) return v
+    return v
+        .replace(Regex("""(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?::\d+)?""")) { m ->
+            val parts = m.value.split(":", limit = 2)
+            val ip = parts[0].split(".")
+            val masked = if (ip.size == 4) "${ip[0]}.${ip[1]}.***.***" else "***.***.***.***"
+            if (parts.size > 1) "$masked:*****" else masked
+        }
+        .replace(Regex("""\[([0-9a-fA-F:]{8,})\](?::\d+)?""")) { m ->
+            val port = m.value.substringAfter("]:", "")
+            if (port.isNotBlank() && port != m.value) "[****:****:****::****]:$port" else "[****:****:****::****]"
+        }
+        .replace(Regex("""(?i)([0-9a-f]{1,4}:){2,}[0-9a-f:]{1,}"""), "****:****:****::****")
+}
+
 fun recentSevenDates(): List<String> {
     val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     val cal = Calendar.getInstance()
@@ -2388,14 +2519,21 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("Token", "APP_TOKEN", token, { token = it })
         LabeledInput("DNS", "223.5.5.5 / system", dns, { dns = it })
-        SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "30S")) { onAuto(it); prefs.autoRefresh = it }
+        SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "20S")) { onAuto(it); prefs.autoRefresh = it }
         Text(msg, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         PillButton("保存设置", Icons.Rounded.Save, accent = Color(0xFF2563EB)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
     ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
+    var privacy by remember { mutableStateOf(prefs.privacyMode) }
+    ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, Color(0xFF7C3AED)) {
+        PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = Color(0xFF7C3AED)) {
+            privacy = !privacy
+            prefs.privacyMode = privacy
+        }
+    }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME}\nOne UI 全页面统一版：轻切换动画、顶部图标导航、统一白色大圆角卡片、版本信息与页面风格修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME}\nOne UI 精修版：白底导航、隐私模式、首页当天概览同步、长按拖动排序与二级页面质感优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
