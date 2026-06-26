@@ -42,7 +42,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.graphicsLayer
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -105,10 +105,15 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.13"
+    const val NAME = "0.9.14"
     const val CODE = 41
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.14 · 编译修复" to listOf(
+            "修复 graphicsLayer 导入错误导致的 Kotlin 编译失败",
+            "保留 v0.9.13 的顶部白色导航、隐私模式和首页拖拽排序",
+            "Hub 仍继续使用 v0.7.2"
+        ),
         "v0.9.13 · One UI 精修与隐私模式" to listOf(
             "顶部导航白底化，设置与下拉框继续统一 One UI 质感",
             "VPN/STUN 钥匙图标可切换隐私模式，截图时隐藏公网地址",
