@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.os.SystemClock
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -76,6 +77,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -108,9 +111,22 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 43
+    const val CODE = 45
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 延迟测试 One UI 强化" to listOf(
+            "Ping 页面升级为延迟测试：支持 ICMP / TCP Connect / HTTP HEAD / HTTP GET",
+            "新增 IPv6 优先、IPv4 优先、仅 IPv6、仅 IPv4 与 DNS A/AAAA 策略",
+            "所有参数框加入科技蓝小图标，页面标题与卡片高度继续收敛",
+            "历史记录弹窗保存最近 10 次测试汇总，支持折叠查看与空间占用显示",
+            "图表固定 1 秒聚合展示，原始数据实时采集，X 轴继续使用真实耗时"
+        ),
+        "v0.9.15 · Ping 真实耗时热修" to listOf(
+            "Ping 曲线 X 轴改为真实墙钟耗时，不再按 次数 × 设定间隔 假算 9 秒",
+            "30ms 高频采样优先使用单进程 ping -i 连续采样，避免每次启动 ping 进程造成 50 秒级拖慢",
+            "设备不支持 ping -i 高频参数时自动回退逐次 ping，但仍按真实耗时绘制与统计",
+            "日志增加 @实际秒数，底部统计增加耗时，方便和系统秒表核对"
+        ),
         "v0.9.15 · 交互顺滑与每日同步" to listOf(
             "首页今日概览改为优先读取每日总结接口，和记录页每日总结保持同一天数据",
             "首页卡片改为整张卡可点：终端 / VPN / 出口 / 今日概览无需再点小按钮",
@@ -282,6 +298,70 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("ping_interval", v).apply()
     var pingTimeout: String get() = sp.getString("ping_timeout", "1000") ?: "1000"
         set(v) = sp.edit().putString("ping_timeout", v).apply()
+    var pingProtocol: String get() = sp.getString("ping_protocol", "ICMP") ?: "ICMP"
+        set(v) = sp.edit().putString("ping_protocol", v).apply()
+    var pingIpMode: String get() = sp.getString("ping_ip_mode", "IPv6优先") ?: "IPv6优先"
+        set(v) = sp.edit().putString("ping_ip_mode", v).apply()
+    var pingDnsMode: String get() = sp.getString("ping_dns_mode", "优先AAAA") ?: "优先AAAA"
+        set(v) = sp.edit().putString("ping_dns_mode", v).apply()
+    var pingPort: String get() = sp.getString("ping_port", "80") ?: "80"
+        set(v) = sp.edit().putString("ping_port", v).apply()
+
+    fun pingHistory(): List<PingHistoryEntry> {
+        val raw = sp.getString("ping_history_v2", "[]") ?: "[]"
+        val arr = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            PingHistoryEntry(
+                id = o.optLong("id"),
+                time = o.optString("time"),
+                target = o.optString("target"),
+                protocol = o.optString("protocol"),
+                ipMode = o.optString("ipMode"),
+                dnsMode = o.optString("dnsMode"),
+                resolvedIp = o.optString("resolvedIp"),
+                count = o.optInt("count"),
+                sent = o.optInt("sent"),
+                ok = o.optInt("ok"),
+                loss = o.optInt("loss"),
+                avg = if (o.has("avg") && !o.isNull("avg")) o.optInt("avg") else null,
+                max = if (o.has("max") && !o.isNull("max")) o.optInt("max") else null,
+                min = if (o.has("min") && !o.isNull("min")) o.optInt("min") else null,
+                elapsedMs = o.optLong("elapsedMs"),
+                rate = o.optDouble("rate"),
+                bytes = raw.toByteArray().size
+            )
+        }.filter { it.target.isNotBlank() }.take(10)
+    }
+
+    fun pingHistoryBytes(): Int = (sp.getString("ping_history_v2", "[]") ?: "[]").toByteArray().size
+
+    fun addPingHistory(entry: PingHistoryEntry) {
+        val arr = JSONArray()
+        (listOf(entry) + pingHistory()).take(10).forEach { h ->
+            arr.put(JSONObject()
+                .put("id", h.id)
+                .put("time", h.time)
+                .put("target", h.target)
+                .put("protocol", h.protocol)
+                .put("ipMode", h.ipMode)
+                .put("dnsMode", h.dnsMode)
+                .put("resolvedIp", h.resolvedIp)
+                .put("count", h.count)
+                .put("sent", h.sent)
+                .put("ok", h.ok)
+                .put("loss", h.loss)
+                .put("avg", h.avg ?: JSONObject.NULL)
+                .put("max", h.max ?: JSONObject.NULL)
+                .put("min", h.min ?: JSONObject.NULL)
+                .put("elapsedMs", h.elapsedMs)
+                .put("rate", h.rate)
+            )
+        }
+        sp.edit().putString("ping_history_v2", arr.toString()).apply()
+    }
+
+    fun clearPingHistory() { sp.edit().putString("ping_history_v2", "[]").apply() }
 
     var dnsDomain: String get() = sp.getString("dns_domain", "net86.dynv6.net") ?: "net86.dynv6.net"
         set(v) = sp.edit().putString("dns_domain", v).apply()
@@ -349,8 +429,28 @@ data class EventItem(
 )
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
-data class PingPoint(val index: Int, val ms: Int?, val text: String)
+data class PingPoint(val index: Int, val ms: Int?, val text: String, val elapsedMs: Long)
+data class PingRunResult(val points: List<PingPoint>, val elapsedMs: Long, val mode: String, val protocol: String = "ICMP", val resolvedIp: String = "")
 data class PingBucket(val startMs: Long, val avgMs: Int?, val peakMs: Int?, val hasLoss: Boolean, val sampleCount: Int)
+data class PingHistoryEntry(
+    val id: Long,
+    val time: String,
+    val target: String,
+    val protocol: String,
+    val ipMode: String,
+    val dnsMode: String,
+    val resolvedIp: String,
+    val count: Int,
+    val sent: Int,
+    val ok: Int,
+    val loss: Int,
+    val avg: Int?,
+    val max: Int?,
+    val min: Int?,
+    val elapsedMs: Long,
+    val rate: Double,
+    val bytes: Int = 0
+)
 
 class AppState(private val prefs: AppPrefs) {
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
@@ -596,7 +696,7 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
             ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ArrowBack, null, modifier = Modifier.size(20.dp)) } }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 23.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 21.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -649,11 +749,12 @@ fun ExpressiveCard(
     icon: ImageVector? = null,
     accent: Color = MaterialTheme.colorScheme.primary,
     headerAction: (@Composable RowScope.() -> Unit)? = null,
+    modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(30.dp)
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .shadow(5.dp, shape, clip = false),
         shape = shape,
@@ -662,7 +763,7 @@ fun ExpressiveCard(
         shadowElevation = 0.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.82f))
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(horizontal = 15.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
                     Box(
@@ -841,7 +942,7 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 50.dp
+private val ParamFieldHeight = 48.dp
 private val ParamFieldRadius = 16.dp
 
 @Composable
@@ -937,6 +1038,86 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                     text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
                     onClick = { onChange(option); expanded = false },
                     leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
+                )
+            }
+        }
+    }
+}
+
+
+@Composable
+fun FieldIconBox(icon: ImageVector, accent: Color = Color(0xFF2563EB)) {
+    Box(
+        Modifier.size(25.dp).clip(RoundedCornerShape(9.dp)).background(accent.copy(alpha = .11f)),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, null, Modifier.size(15.dp), tint = accent) }
+}
+
+@Composable
+fun CompactIconHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Text) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(48.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.4.sp, maxLines = 1)
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(hint, fontSize = 11.3.sp, maxLines = 1) },
+            singleLine = true,
+            leadingIcon = { FieldIconBox(icon) },
+            trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            shape = RoundedCornerShape(20.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.4.sp, fontWeight = FontWeight.SemiBold),
+            colors = labOutlinedColors(),
+            modifier = Modifier.weight(1f).height(50.dp)
+        )
+    }
+}
+
+@Composable
+fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> Unit, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
+        ParamFrame(Modifier.fillMaxWidth()) {
+            FieldIconBox(icon)
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.2.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onChange: (String) -> Unit, icon: ImageVector, modifier: Modifier = Modifier, suffix: String = "") {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
+            ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
+                FieldIconBox(icon)
+                Text(
+                    value + suffix,
+                    fontSize = 13.0.sp,
+                    fontFamily = FontFamily.SansSerif,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
+                    onClick = { onChange(option); expanded = false },
+                    leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }) else null
                 )
             }
         }
@@ -1779,7 +1960,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 
 @Composable
 fun ToolsHomeScreen(topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "二级页面，返回仍在 APP 内", topNav = topNav) {
-    ToolEntry("Ping 延迟", "高频采样 · 自适应聚合曲线", Icons.Rounded.Speed, Color(0xFF7C3AED)) { open("tool_ping") }
+    ToolEntry("延迟测试", "ICMP / TCP / HTTP · 真实时间轴", Icons.Rounded.Speed, Color(0xFF2563EB)) { open("tool_ping") }
     ToolEntry("DNS 解析", "双 DNS · A/AAAA · 运营商", Icons.Rounded.Dns, Color(0xFF2563EB)) { open("tool_dns") }
     ToolEntry("端口探测", "TCP / UDP · 域名优先 AAAA", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) { open("tool_port") }
     ToolEntry("SSH 命令", "锐捷 / NAS 单条命令", Icons.Rounded.Terminal, Color(0xFF64748B)) { open("tool_ssh") }
@@ -1787,24 +1968,20 @@ fun ToolsHomeScreen(topNav: @Composable () -> Unit, open: (String) -> Unit) = Sc
 
 @Composable
 fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, onClick: () -> Unit) {
-    ExpressiveCard(title, subtitle, icon, color, headerAction = {
-        Icon(Icons.Rounded.ChevronRight, null, tint = color, modifier = Modifier.size(22.dp))
-    }) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .clickable { onClick() }
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("点击进入", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
-        }
+    ExpressiveCard(
+        title = title,
+        subtitle = subtitle,
+        icon = icon,
+        accent = color,
+        headerAction = { Icon(Icons.Rounded.ChevronRight, null, tint = color, modifier = Modifier.size(22.dp)) },
+        modifier = Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }
+    ) {
+        Text("整张卡片可直接进入", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f))
     }
 }
 
 @Composable
-fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("Ping 测试", "高频采样，界面固定 1 秒刷新", onBack) { PingTool(prefs) }
+fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("延迟测试", "ICMP / TCP / HTTP · IPv4 / IPv6 · 真实时间轴", onBack) { PingTool(prefs) }
 @Composable
 fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
 @Composable
@@ -1818,92 +1995,219 @@ fun PingTool(prefs: AppPrefs) {
     var count by remember { mutableStateOf(prefs.pingCount) }
     var interval by remember { mutableStateOf(prefs.pingInterval) }
     var timeout by remember { mutableStateOf(prefs.pingTimeout) }
+    var protocol by remember { mutableStateOf(prefs.pingProtocol) }
+    var ipMode by remember { mutableStateOf(prefs.pingIpMode) }
+    var dnsMode by remember { mutableStateOf(prefs.pingDnsMode) }
+    var port by remember { mutableStateOf(prefs.pingPort) }
     var running by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
     var points by remember { mutableStateOf<List<PingPoint>>(emptyList()) }
     var log by remember { mutableStateOf("等待测试") }
+    var runMode by remember { mutableStateOf("原始数据实时采集，曲线按 1 秒聚合显示。") }
+    var history by remember { mutableStateOf(prefs.pingHistory()) }
+    var showHistory by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("参数", "默认 20 次；采样 30/100/200/500/1000ms。", Icons.Rounded.Tune, Color(0xFF7C3AED)) {
-        CompactHistoryInput("目标", "223.5.5.5", host, { host = it; prefs.pingHost = it }, "ping_host", prefs)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInput("次数", count, { count = it; prefs.pingCount = it }, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamSelect("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Modifier.weight(1f))
-            TinyParamInput("超时", timeout, { timeout = it; prefs.pingTimeout = it }, KeyboardType.Number, Modifier.weight(1f))
+    val blue = Color(0xFF2563EB)
+    val showPort = protocol.startsWith("TCP") || protocol.startsWith("HTTP")
+
+    if (showHistory) {
+        PingHistoryDialog(
+            history = history,
+            bytes = prefs.pingHistoryBytes(),
+            onClear = { prefs.clearPingHistory(); history = emptyList() },
+            onDismiss = { showHistory = false }
+        )
+    }
+
+    ExpressiveCard("参数", runMode, Icons.Rounded.Tune, blue) {
+        CompactIconHistoryInput("目标", "net86.dynv6.net / 192.168.0.1", host, { host = it; prefs.pingHost = it }, "ping_host", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("协议", protocol, listOf("ICMP", "TCP", "HTTP HEAD", "HTTP GET"), { protocol = it; prefs.pingProtocol = it }, Icons.Rounded.SettingsEthernet, Modifier.weight(1f))
+            TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.pingIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("DNS", dnsMode, listOf("自动DNS", "优先AAAA", "优先A", "系统默认"), { dnsMode = it; prefs.pingDnsMode = it }, Icons.Rounded.Public, Modifier.weight(1f))
+            if (showPort) {
+                TinyParamInputIcon("端口", port, { port = it; prefs.pingPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
+            } else {
+                TinyParamSelectIcon("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("次数", count, { count = it; prefs.pingCount = it }, Icons.Rounded.Repeat, KeyboardType.Number, Modifier.weight(1f))
+            if (showPort) {
+                TinyParamSelectIcon("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+            }
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.pingTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = {
                 prefs.addHistory("ping_host", host)
-                running = true; points = emptyList(); log = "开始测试..."
+                running = true
+                points = emptyList()
+                log = "开始测试..."
+                runMode = "正在解析 DNS 与启动采样，X 轴按真实耗时绘制。"
                 job?.cancel()
                 job = scope.launch {
-                    val c = count.toIntOrNull() ?: 20
-                    val inter = interval.toLongOrNull() ?: 500L
-                    val to = timeout.toIntOrNull() ?: 1000
+                    val c = (count.toIntOrNull() ?: 20).coerceIn(1, 5000)
+                    val inter = (interval.toLongOrNull() ?: 500L).coerceIn(10L, 10_000L)
+                    val to = (timeout.toIntOrNull() ?: 1000).coerceIn(100, 30_000)
+                    val pt = (port.toIntOrNull() ?: defaultPortFor(host, protocol)).coerceIn(1, 65535)
                     val buffer = mutableListOf<PingPoint>()
-                    var lastUi = System.currentTimeMillis()
-                    for (i in 1..c) {
-                        if (!running) break
-                        val ms = pingOnce(host, to)
-                        buffer += PingPoint(i, ms, if (ms == null) "#$i timeout" else "#$i ${ms}ms")
-                        val now = System.currentTimeMillis()
-                        if (now - lastUi >= 1000L || i == c) {
-                            points = buffer.toList()
-                            log = buffer.takeLast(8).joinToString("\n") { it.text }
-                            lastUi = now
+                    var lastUi = 0L
+                    try {
+                        val result = runLatencySeries(host, protocol, ipMode, dnsMode, pt, c, inter, to) { p ->
+                            buffer += p
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastUi >= 1000L || p.index >= c) {
+                                points = buffer.toList()
+                                log = buffer.takeLast(9).joinToString("\n") { it.text }
+                                lastUi = now
+                            }
                         }
-                        delay(inter)
+                        points = result.points
+                        val entry = buildPingHistoryEntry(host, protocol, ipMode, dnsMode, result, c)
+                        prefs.addPingHistory(entry)
+                        history = prefs.pingHistory()
+                        log = result.points.takeLast(9).joinToString("\n") { it.text }
+                            .ifBlank { "没有收到有效响应" } + "\n${result.mode} · 实际耗时 ${formatElapsedMs(result.elapsedMs)}"
+                        runMode = result.mode + "；真实 ${formatRate(result.points)} 次/s。"
+                    } finally {
+                        running = false
                     }
-                    points = buffer.toList()
-                    log = buffer.takeLast(8).joinToString("\n") { it.text }
-                    running = false
                 }
-            }, enabled = !running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+            }, enabled = !running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = blue)) {
                 Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新")
             }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
                 Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止")
             }
         }
     }
     ExpressiveCard(
         "延迟曲线",
-        "X 轴时间 s，Y 轴延迟 ms。",
+        "X 轴真实时间，Y 轴延迟 ms；1 秒聚合显示，尖峰单独标注。",
         Icons.Rounded.ShowChart,
-        Color(0xFF7C3AED),
-        headerAction = { PingLossPill(points) }
+        blue,
+        headerAction = {
+            PingRatePill(points)
+            Spacer(Modifier.width(6.dp))
+            PingLossPill(points)
+            Spacer(Modifier.width(6.dp))
+            Surface(onClick = { showHistory = true }, shape = CircleShape, color = blue.copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, blue.copy(alpha = .16f))) {
+                Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, Modifier.size(17.dp), tint = blue) }
+            }
+        }
     ) {
-        PingChart(points, interval.toLongOrNull() ?: 500L)
+        PingChart(points, 1000L)
         PingStats(points)
     }
     ExpressiveCard("响应日志", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(log) }
 }
 
+@Composable
+fun PingRatePill(points: List<PingPoint>) {
+    val rate = formatRate(points)
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
+        Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Speed, null, Modifier.size(13.dp), tint = Color(0xFF2563EB))
+            Spacer(Modifier.width(4.dp))
+            Text("真实 $rate次/s", fontSize = 10.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
+        }
+    }
+}
+
+@Composable
+fun PingHistoryDialog(history: List<PingHistoryEntry>, bytes: Int, onClear: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Black) } },
+        dismissButton = { TextButton(onClick = onClear, enabled = history.isNotEmpty()) { Text("清空", fontWeight = FontWeight.Bold) } },
+        shape = RoundedCornerShape(30.dp),
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
+        title = { Text("延迟测试历史", fontWeight = FontWeight.Black, fontSize = 19.sp) },
+        text = {
+            Column(Modifier.heightIn(max = 470.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                if (history.isEmpty()) {
+                    Text("暂无历史。完成一次测试后自动保存最近 10 条汇总。", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
+                }
+                history.forEach { item -> PingHistoryItem(item) }
+                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF2563EB).copy(alpha = .07f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .10f))) {
+                    Text("历史记录占用：约 ${formatBytes(bytes)} · 最多 10 条", Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB))
+                }
+            }
+        }
+    )
+}
+
+@Composable
+fun PingHistoryItem(item: PingHistoryEntry) {
+    var expanded by remember(item.id) { mutableStateOf(false) }
+    val avg = item.avg?.let { "${it}ms" } ?: "--"
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable { expanded = !expanded },
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .13f)),
+        shadowElevation = 1.dp
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FieldIconBox(Icons.Rounded.History)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("${item.protocol} · ${item.target}", fontSize = 12.7.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${item.sent}/${item.count} 次 · 平均 $avg · 丢包 ${item.loss}% · ${String.format(Locale.US, "%.1f", item.rate)}次/s", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f))
+            }
+            AnimatedVisibility(expanded, enter = fadeIn(), exit = fadeOut()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("时间：${item.time}", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+                    Text("解析：${item.resolvedIp.ifBlank { "未解析" }} · ${item.ipMode} · ${item.dnsMode}", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+                    Text("最低 ${item.min?.let { "${it}ms" } ?: "--"} · 最高 ${item.max?.let { "${it}ms" } ?: "--"} · 耗时 ${formatElapsedMs(item.elapsedMs)}", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+                }
+            }
+        }
+    }
+}
+
 private fun pingNiceYMax(raw: Int): Int = when {
-    raw <= 50 -> 50
-    raw <= 100 -> 100
-    raw <= 200 -> 200
-    raw <= 500 -> 500
+    raw <= 30 -> 30
+    raw <= 60 -> 60
+    raw <= 90 -> 90
+    raw <= 120 -> 120
+    raw <= 150 -> 150
+    raw <= 300 -> 300
+    raw <= 600 -> 600
     raw <= 1000 -> 1000
-    else -> ((raw + 249) / 250) * 250
+    else -> ((raw + 499) / 500) * 500
+}
+
+private fun pingYTicks(yMax: Int): List<Int> {
+    val step = when {
+        yMax <= 150 -> 30
+        yMax <= 300 -> 60
+        yMax <= 600 -> 150
+        yMax <= 1000 -> 250
+        else -> 500
+    }
+    val ticks = (0..yMax step step).toMutableList()
+    if (ticks.lastOrNull() != yMax) ticks += yMax
+    return ticks.distinct()
 }
 
 private fun formatSecondsLabel(sec: Float): String {
     return if (sec < 3f && sec != sec.roundToInt().toFloat()) String.format(Locale.US, "%.1fs", sec) else "${sec.roundToInt()}s"
 }
 
-private fun pingVisualBucketMs(intervalMs: Long): Long = when {
-    intervalMs <= 50L -> 250L
-    intervalMs <= 100L -> 400L
-    intervalMs <= 250L -> 500L
-    intervalMs <= 700L -> 1000L
-    else -> intervalMs.coerceAtMost(1500L)
-}
+private fun pingVisualBucketMs(intervalMs: Long): Long = 1000L
 
 private fun buildPingBuckets(points: List<PingPoint>, intervalMs: Long): List<PingBucket> {
     if (points.isEmpty()) return emptyList()
-    val bucketMs = pingVisualBucketMs(intervalMs)
+    val bucketMs = 1000L
     return points
-        .groupBy { (((it.index - 1).coerceAtLeast(0) * intervalMs) / bucketMs) }
+        .groupBy { (it.elapsedMs.coerceAtLeast(0L) / bucketMs) }
         .toSortedMap()
         .map { (bucket, list) ->
             val ok = list.mapNotNull { it.ms }
@@ -1924,13 +2228,13 @@ fun PingLossPill(points: List<PingPoint>) {
     val loss = if (sent == 0) 0 else ((sent - okCount) * 100 / sent)
     Surface(
         shape = RoundedCornerShape(50),
-        color = Color(0xFF7C3AED).copy(alpha = .10f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = .14f))
+        color = Color(0xFF2563EB).copy(alpha = .08f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .12f))
     ) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFEF4444)))
             Spacer(Modifier.width(5.dp))
-            Text("丢包 $loss%", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF7C3AED), maxLines = 1)
+            Text("丢包 $loss%", fontSize = 10.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
         }
     }
 }
@@ -1940,13 +2244,14 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     val buckets = buildPingBuckets(points, intervalMs)
     val okAvg = buckets.mapNotNull { it.avgMs }
     val okPeak = buckets.mapNotNull { it.peakMs }
-    val rawMax = (okPeak.maxOrNull() ?: okAvg.maxOrNull() ?: 50).coerceAtLeast(50)
+    val rawMax = (okPeak.maxOrNull() ?: okAvg.maxOrNull() ?: 30).coerceAtLeast(30)
     val yMax = pingNiceYMax(rawMax)
-    val yTicks = listOf(0, yMax / 4, yMax / 2, yMax * 3 / 4, yMax).distinct()
+    val yTicks = pingYTicks(yMax)
     val bucketMs = pingVisualBucketMs(intervalMs)
+    val lastElapsedMs = points.maxOfOrNull { it.elapsedMs } ?: bucketMs
     val totalMs = maxOf(
         bucketMs,
-        ((points.size - 1).coerceAtLeast(1) * intervalMs),
+        lastElapsedMs,
         (buckets.lastOrNull()?.startMs ?: bucketMs) + bucketMs
     )
     val totalSec = totalMs / 1000f
@@ -1964,7 +2269,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
         shadowElevation = 0.dp,
         tonalElevation = 0.dp,
-        modifier = Modifier.fillMaxWidth().height(218.dp)
+        modifier = Modifier.fillMaxWidth().height(204.dp)
     ) {
         Box(Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 7.dp)) {
             if (points.isEmpty()) {
@@ -1973,7 +2278,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
             Canvas(Modifier.fillMaxSize().padding(start = 0.dp, end = 0.dp, top = 6.dp, bottom = 0.dp)) {
                 val fullW = size.width
                 val fullH = size.height
-                val labelW = 31.dp.toPx()
+                val labelW = 34.dp.toPx()
                 val bottomH = 34.dp.toPx()
                 val topH = 18.dp.toPx()
                 val rightPad = 7.dp.toPx()
@@ -2064,11 +2369,13 @@ fun PingStats(points: List<PingPoint>) {
     val avg = if (ok.isEmpty()) "平均 --" else "平均 ${ok.average().roundToInt()}ms"
     val max = ok.maxOrNull()?.let { "最高 ${it}ms" } ?: "最高 --"
     val min = ok.minOrNull()?.let { "最低 ${it}ms" } ?: "最低 --"
-    val text = listOf(current, avg, max, min).joinToString("  ·  ")
+    val elapsed = points.maxOfOrNull { it.elapsedMs } ?: 0L
+    val spent = if (points.isEmpty()) "耗时 --" else "耗时 ${formatElapsedMs(elapsed)}"
+    val text = listOf(current, avg, max, min, spent).joinToString("  ·  ")
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = Color(0xFF7C3AED).copy(alpha = .055f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = .08f)),
+        color = Color(0xFF2563EB).copy(alpha = .055f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .08f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2795,7 +3102,311 @@ fun operatorLookup(ip: String, prefs: AppPrefs): String {
     return "运营商未知"
 }
 
-suspend fun pingOnce(host: String, timeoutMs: Int): Int? = withContext(Dispatchers.IO) { runCatching { val timeoutSec = (timeoutMs / 1000).coerceAtLeast(1); val p = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", timeoutSec.toString(), host).redirectErrorStream(true).start(); val text = p.inputStream.bufferedReader().readText(); p.waitFor((timeoutSec+2).toLong(), TimeUnit.SECONDS); Regex("time[=<]([0-9.]+)").find(text)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.roundToInt() }.getOrNull() }
+private fun formatElapsedMs(ms: Long): String = String.format(Locale.US, "%.2fs", ms.coerceAtLeast(0L) / 1000.0)
+
+private fun formatRate(points: List<PingPoint>): String {
+    val elapsed = (points.maxOfOrNull { it.elapsedMs } ?: 0L).coerceAtLeast(1L)
+    val rate = if (points.isEmpty()) 0.0 else points.size * 1000.0 / elapsed
+    return String.format(Locale.US, "%.1f", rate)
+}
+
+private fun formatBytes(bytes: Int): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
+    else -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+}
+
+private fun defaultPortFor(host: String, protocol: String): Int = when {
+    protocol.startsWith("HTTP") && host.trim().startsWith("https://", ignoreCase = true) -> 443
+    protocol.startsWith("HTTP") -> 80
+    protocol.startsWith("TCP") -> 80
+    else -> 0
+}
+
+private fun buildPingHistoryEntry(target: String, protocol: String, ipMode: String, dnsMode: String, result: PingRunResult, requestedCount: Int): PingHistoryEntry {
+    val ok = result.points.mapNotNull { it.ms }
+    val sent = result.points.size
+    val elapsed = result.elapsedMs.coerceAtLeast(result.points.maxOfOrNull { it.elapsedMs } ?: 0L)
+    val rate = if (elapsed <= 0L) 0.0 else sent * 1000.0 / elapsed
+    val loss = if (sent == 0) 0 else ((sent - ok.size) * 100 / sent)
+    return PingHistoryEntry(
+        id = System.currentTimeMillis(),
+        time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+        target = target.trim(),
+        protocol = protocol,
+        ipMode = ipMode,
+        dnsMode = dnsMode,
+        resolvedIp = result.resolvedIp,
+        count = requestedCount,
+        sent = sent,
+        ok = ok.size,
+        loss = loss,
+        avg = if (ok.isEmpty()) null else ok.average().roundToInt(),
+        max = ok.maxOrNull(),
+        min = ok.minOrNull(),
+        elapsedMs = elapsed,
+        rate = rate
+    )
+}
+
+suspend fun runLatencySeries(
+    host: String,
+    protocol: String,
+    ipMode: String,
+    dnsMode: String,
+    port: Int,
+    count: Int,
+    intervalMs: Long,
+    timeoutMs: Int,
+    onPoint: suspend (PingPoint) -> Unit
+): PingRunResult {
+    val safeCount = count.coerceIn(1, 5000)
+    val safeInterval = intervalMs.coerceIn(10L, 10_000L)
+    val safeTimeout = timeoutMs.coerceIn(100, 30_000)
+    val start = SystemClock.elapsedRealtime()
+    val targetHost = extractLatencyHost(host)
+    val targets = resolveLatencyTargets(targetHost, ipMode, dnsMode)
+    if (targets.isEmpty()) {
+        val points = (1..safeCount).map { i ->
+            PingPoint(i, null, "#$i DNS失败 @${formatElapsedMs(SystemClock.elapsedRealtime() - start)}", SystemClock.elapsedRealtime() - start)
+        }
+        points.forEach { onPoint(it) }
+        val elapsed = SystemClock.elapsedRealtime() - start
+        return PingRunResult(points, elapsed, "DNS 解析失败：$targetHost", protocol, "")
+    }
+    val target = targets.first()
+    val resolvedIp = target.hostAddress ?: targetHost
+    return when {
+        protocol == "ICMP" -> runIcmpSeries(target, safeCount, safeInterval, safeTimeout, start, onPoint)
+        protocol == "TCP" -> runConnectSeries(target, protocol, port, safeCount, safeInterval, safeTimeout, start, onPoint)
+        protocol.startsWith("HTTP") -> runHttpSeries(host, targetHost, target, protocol, port, safeCount, safeInterval, safeTimeout, start, onPoint)
+        else -> runIcmpSeries(target, safeCount, safeInterval, safeTimeout, start, onPoint)
+    }.let { it.copy(protocol = protocol, resolvedIp = resolvedIp) }
+}
+
+suspend fun runIcmpSeries(
+    address: InetAddress,
+    count: Int,
+    intervalMs: Long,
+    timeoutMs: Int,
+    start: Long,
+    onPoint: suspend (PingPoint) -> Unit
+): PingRunResult {
+    val host = address.hostAddress ?: address.hostName
+    val is6 = address is Inet6Address
+    val fastPoints = mutableListOf<PingPoint>()
+    val fastWorked = withContext(Dispatchers.IO) {
+        var process: Process? = null
+        runCatching {
+            val timeoutSec = ((timeoutMs + 999) / 1000).coerceAtLeast(1)
+            val intervalSec = String.format(Locale.US, "%.3f", intervalMs / 1000.0)
+            val cmd = if (is6) listOf("/system/bin/ping6", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host)
+                else listOf("/system/bin/ping", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host)
+            process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val timeRegex = Regex("time[=<]([0-9.]+)")
+            var unsupported = false
+            val reader = process!!.inputStream.bufferedReader()
+            try {
+                while (currentCoroutineContext().isActive) {
+                    val line = reader.readLine() ?: break
+                    val lower = line.lowercase(Locale.US)
+                    if (lower.contains("invalid") || lower.contains("permission") || lower.contains("not permitted") || lower.contains("bad") || lower.contains("no such")) unsupported = true
+                    val match = timeRegex.find(line) ?: continue
+                    val ms = match.groupValues.getOrNull(1)?.toFloatOrNull()?.roundToInt() ?: continue
+                    val idx = fastPoints.size + 1
+                    val elapsed = SystemClock.elapsedRealtime() - start
+                    val point = PingPoint(idx, ms, "#$idx ${ms}ms @${formatElapsedMs(elapsed)} · $host", elapsed)
+                    fastPoints += point
+                    withContext(Dispatchers.Main) { onPoint(point) }
+                    if (idx >= count) break
+                }
+            } finally {
+                runCatching { reader.close() }
+            }
+            process?.waitFor(1, TimeUnit.SECONDS)
+            if (process?.isAlive == true) process?.destroy()
+            !unsupported && fastPoints.isNotEmpty()
+        }.getOrElse {
+            if (process?.isAlive == true) process?.destroy()
+            false
+        }
+    }
+    if (fastWorked) {
+        val finalElapsed = (SystemClock.elapsedRealtime() - start).coerceAtLeast(0L)
+        while (fastPoints.size < count) {
+            val idx = fastPoints.size + 1
+            val point = PingPoint(idx, null, "#$idx timeout @${formatElapsedMs(finalElapsed)} · $host", finalElapsed)
+            fastPoints += point
+            onPoint(point)
+        }
+        val elapsed = (fastPoints.maxOfOrNull { it.elapsedMs } ?: finalElapsed).coerceAtLeast(0L)
+        return PingRunResult(fastPoints.toList(), elapsed, "ICMP 单进程采样：1秒聚合显示，真实时间轴", "ICMP", host)
+    }
+    val fallbackPoints = mutableListOf<PingPoint>()
+    var nextAt = SystemClock.elapsedRealtime()
+    for (i in 1..count) {
+        if (!currentCoroutineContext().isActive) break
+        val ms = pingOnceAddress(address, timeoutMs)
+        val elapsed = SystemClock.elapsedRealtime() - start
+        val point = PingPoint(i, ms, if (ms == null) "#$i timeout @${formatElapsedMs(elapsed)} · $host" else "#$i ${ms}ms @${formatElapsedMs(elapsed)} · $host", elapsed)
+        fallbackPoints += point
+        onPoint(point)
+        nextAt += intervalMs
+        val sleepMs = nextAt - SystemClock.elapsedRealtime()
+        if (sleepMs > 0L) delay(sleepMs)
+    }
+    val elapsed = (fallbackPoints.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
+    return PingRunResult(fallbackPoints.toList(), elapsed, "ICMP 兼容采样：设备不支持高速参数，已按真实耗时绘制", "ICMP", host)
+}
+
+suspend fun runConnectSeries(
+    address: InetAddress,
+    protocol: String,
+    port: Int,
+    count: Int,
+    intervalMs: Long,
+    timeoutMs: Int,
+    start: Long,
+    onPoint: suspend (PingPoint) -> Unit
+): PingRunResult {
+    val points = mutableListOf<PingPoint>()
+    val host = address.hostAddress ?: address.hostName
+    var nextAt = SystemClock.elapsedRealtime()
+    for (i in 1..count) {
+        if (!currentCoroutineContext().isActive) break
+        val ms = tcpConnectOnce(address, port, timeoutMs)
+        val elapsed = SystemClock.elapsedRealtime() - start
+        val point = PingPoint(i, ms, if (ms == null) "#$i TCP超时 @${formatElapsedMs(elapsed)} · $host:$port" else "#$i TCP ${ms}ms @${formatElapsedMs(elapsed)} · $host:$port", elapsed)
+        points += point
+        onPoint(point)
+        nextAt += intervalMs
+        val sleepMs = nextAt - SystemClock.elapsedRealtime()
+        if (sleepMs > 0L) delay(sleepMs)
+    }
+    val elapsed = (points.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
+    return PingRunResult(points.toList(), elapsed, "TCP Connect：端口握手延迟，X轴真实时间", protocol, host)
+}
+
+suspend fun runHttpSeries(
+    rawInput: String,
+    hostOnly: String,
+    address: InetAddress,
+    protocol: String,
+    port: Int,
+    count: Int,
+    intervalMs: Long,
+    timeoutMs: Int,
+    start: Long,
+    onPoint: suspend (PingPoint) -> Unit
+): PingRunResult {
+    val points = mutableListOf<PingPoint>()
+    val host = address.hostAddress ?: address.hostName
+    var nextAt = SystemClock.elapsedRealtime()
+    for (i in 1..count) {
+        if (!currentCoroutineContext().isActive) break
+        val result = httpOnce(rawInput, hostOnly, address, protocol, port, timeoutMs)
+        val elapsed = SystemClock.elapsedRealtime() - start
+        val point = PingPoint(i, result.first, if (result.first == null) "#$i HTTP失败 @${formatElapsedMs(elapsed)} · ${result.second}" else "#$i HTTP ${result.first}ms @${formatElapsedMs(elapsed)} · ${result.second}", elapsed)
+        points += point
+        onPoint(point)
+        nextAt += intervalMs
+        val sleepMs = nextAt - SystemClock.elapsedRealtime()
+        if (sleepMs > 0L) delay(sleepMs)
+    }
+    val elapsed = (points.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
+    return PingRunResult(points.toList(), elapsed, "$protocol：包含 DNS策略、TCP/TLS 与服务器响应", protocol, host)
+}
+
+suspend fun pingOnceAddress(address: InetAddress, timeoutMs: Int): Int? = withContext(Dispatchers.IO) {
+    val host = address.hostAddress ?: address.hostName
+    val timeoutSec = ((timeoutMs + 999) / 1000).coerceAtLeast(1)
+    val commands = if (address is Inet6Address) {
+        listOf(listOf("/system/bin/ping6", "-c", "1", "-W", timeoutSec.toString(), host), listOf("/system/bin/ping", "-6", "-c", "1", "-W", timeoutSec.toString(), host))
+    } else {
+        listOf(listOf("/system/bin/ping", "-c", "1", "-W", timeoutSec.toString(), host))
+    }
+    for (cmd in commands) {
+        val ms = runCatching {
+            val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val text = p.inputStream.bufferedReader().readText()
+            p.waitFor((timeoutSec + 2).toLong(), TimeUnit.SECONDS)
+            Regex("time[=<]([0-9.]+)").find(text)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.roundToInt()
+        }.getOrNull()
+        if (ms != null) return@withContext ms
+    }
+    null
+}
+
+suspend fun tcpConnectOnce(address: InetAddress, port: Int, timeoutMs: Int): Int? = withContext(Dispatchers.IO) {
+    runCatching {
+        val start = SystemClock.elapsedRealtime()
+        Socket().use { socket -> socket.connect(InetSocketAddress(address, port), timeoutMs) }
+        (SystemClock.elapsedRealtime() - start).toInt().coerceAtLeast(0)
+    }.getOrNull()
+}
+
+suspend fun httpOnce(rawInput: String, hostOnly: String, address: InetAddress, protocol: String, port: Int, timeoutMs: Int): Pair<Int?, String> = withContext(Dispatchers.IO) {
+    runCatching {
+        val url = buildHttpUrl(rawInput, hostOnly, port)
+        val client = OkHttpClient.Builder()
+            .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .callTimeout((timeoutMs + 1000).toLong(), TimeUnit.MILLISECONDS)
+            .dns(Dns { listOf(address) })
+            .build()
+        val reqBuilder = Request.Builder().url(url).header("User-Agent", "Labprobe/${AppVersion.NAME}")
+        val req = if (protocol == "HTTP HEAD") reqBuilder.head().build() else reqBuilder.get().build()
+        val start = SystemClock.elapsedRealtime()
+        client.newCall(req).execute().use { response ->
+            val ms = (SystemClock.elapsedRealtime() - start).toInt().coerceAtLeast(0)
+            ms to "HTTP ${response.code} · ${address.hostAddress ?: hostOnly}"
+        }
+    }.getOrElse { null to (it.javaClass.simpleName.ifBlank { "HTTP错误" }) }
+}
+
+private fun buildHttpUrl(rawInput: String, hostOnly: String, port: Int): String {
+    val raw = rawInput.trim()
+    if (raw.startsWith("http://", true) || raw.startsWith("https://", true)) return raw
+    val host = if (hostOnly.contains(":") && !hostOnly.startsWith("[")) "[$hostOnly]" else hostOnly
+    return "http://$host:${port.coerceIn(1, 65535)}/"
+}
+
+private fun extractLatencyHost(input: String): String {
+    val raw = input.trim().ifBlank { "223.5.5.5" }
+    if (raw.startsWith("http://", true) || raw.startsWith("https://", true)) {
+        val uri = Uri.parse(raw)
+        return (uri.host ?: raw).trim('[', ']')
+    }
+    val noPathRaw = raw.substringBefore('/').trim()
+    if (noPathRaw.startsWith("[") && noPathRaw.contains("]")) return noPathRaw.substringAfter("[").substringBefore("]")
+    val noPath = noPathRaw.trim('[', ']')
+    val colonCount = noPath.count { it == ':' }
+    return if (colonCount == 1 && noPath.substringAfterLast(':').all { it.isDigit() }) noPath.substringBeforeLast(':') else noPath
+}
+
+private suspend fun resolveLatencyTargets(host: String, ipMode: String, dnsMode: String): List<InetAddress> = withContext(Dispatchers.IO) {
+    runCatching {
+        val all = if (isIpLiteral(host)) listOf(InetAddress.getByName(host)) else InetAddress.getAllByName(host).toList()
+        val filtered = all.filter { addr ->
+            when (ipMode) {
+                "仅IPv6" -> addr is Inet6Address
+                "仅IPv4" -> addr !is Inet6Address
+                else -> true
+            }
+        }
+        val prefer6 = ipMode == "IPv6优先" || dnsMode == "优先AAAA" || dnsMode == "自动DNS" || (ipMode == "自动" && dnsMode != "优先A" && dnsMode != "系统默认")
+        val prefer4 = ipMode == "IPv4优先" || dnsMode == "优先A"
+        when {
+            prefer6 -> filtered.sortedBy { if (it is Inet6Address) 0 else 1 }
+            prefer4 -> filtered.sortedBy { if (it is Inet6Address) 1 else 0 }
+            else -> filtered
+        }.distinctBy { it.hostAddress }
+    }.getOrElse { emptyList() }
+}
+
+suspend fun pingOnce(host: String, timeoutMs: Int): Int? = withContext(Dispatchers.IO) {
+    runCatching { pingOnceAddress(InetAddress.getByName(host), timeoutMs) }.getOrNull()
+}
 
 suspend fun tcpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String): String = withContext(Dispatchers.IO) {
     val targets = if (isIpLiteral(host)) listOf(host) else (DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 28) + DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 28) + DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 1) + DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 1)).distinct().filter { it != "127.0.0.1" }
