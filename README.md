@@ -30,4 +30,10 @@ app/build/outputs/apk/debug/app-debug.apk
 ## 版本
 
 - versionName: 0.9.15
-- versionCode: 45
+- versionCode: 46
+
+
+## v0.9.15-hotfix1
+- 修复 Kotlin 字符串插值：真实采样率文本使用 `${rate}`，避免 `rate次` 被识别为变量。
+- 修复 OkHttp Dns 固定地址解析：改为 `object : Dns`，避免接口构造错误。
+- versionCode 更新至 46，便于 GitHub Actions 重新打包。

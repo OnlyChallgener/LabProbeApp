@@ -2112,7 +2112,7 @@ fun PingRatePill(points: List<PingPoint>) {
         Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Speed, null, Modifier.size(13.dp), tint = Color(0xFF2563EB))
             Spacer(Modifier.width(4.dp))
-            Text("真实 $rate次/s", fontSize = 10.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
+            Text("真实 ${rate}次/s", fontSize = 10.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
         }
     }
 }
@@ -3352,7 +3352,9 @@ suspend fun httpOnce(rawInput: String, hostOnly: String, address: InetAddress, p
             .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .callTimeout((timeoutMs + 1000).toLong(), TimeUnit.MILLISECONDS)
-            .dns(Dns { listOf(address) })
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> = listOf(address)
+            })
             .build()
         val reqBuilder = Request.Builder().url(url).header("User-Agent", "Labprobe/${AppVersion.NAME}")
         val req = if (protocol == "HTTP HEAD") reqBuilder.head().build() else reqBuilder.get().build()
