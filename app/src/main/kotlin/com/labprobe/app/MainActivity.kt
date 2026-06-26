@@ -12,8 +12,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
@@ -105,10 +107,17 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.14"
-    const val CODE = 41
+    const val NAME = "0.9.15"
+    const val CODE = 43
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 交互顺滑与每日同步" to listOf(
+            "首页今日概览改为优先读取每日总结接口，和记录页每日总结保持同一天数据",
+            "首页卡片改为整张卡可点：终端 / VPN / 出口 / 今日概览无需再点小按钮",
+            "长按拖动改为先浮起、跟手移动，松手后再排序，避免中途突然跳位",
+            "记录页左滑删除加入回弹和收起动画，删除前有短暂消隐过渡",
+            "设置与输入框继续白底化，减少灰底感"
+        ),
         "v0.9.14 · 编译修复" to listOf(
             "修复 graphicsLayer 导入错误导致的 Kotlin 编译失败",
             "保留 v0.9.13 的顶部白色导航、隐私模式和首页拖拽排序",
@@ -748,7 +757,7 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
 fun labOutlinedColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = MaterialTheme.colorScheme.surface,
     unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+    disabledContainerColor = MaterialTheme.colorScheme.surface,
     focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.58f),
     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.32f),
     focusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -1160,12 +1169,13 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         if (showVersion) VersionInfoDialog { showVersion = false }
 
         homeOrder.forEach { cardKey ->
-            HomeReorderableCard(
-                cardKey = cardKey,
-                order = homeOrder,
-                onOrder = { saveHomeOrder(it) }
-            ) {
-                when (cardKey) {
+            key(cardKey) {
+                HomeReorderableCard(
+                    cardKey = cardKey,
+                    order = homeOrder,
+                    onOrder = { saveHomeOrder(it) }
+                ) {
+                    when (cardKey) {
                     "score" -> HealthScoreCard(
                         score = score,
                         hubOk = hubOk,
@@ -1196,17 +1206,19 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             modifier = Modifier.weight(1f).clickable { onNavigate("events") }
                         )
                     }
-                    "exit" -> HealthExitCard(nas, router, privacyMode)
+                    "exit" -> HealthExitCard(nas, router, privacyMode) { onNavigate("tool_ping") }
                     "vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(
                         rows = vpnRows,
                         privacyMode = privacyMode,
                         onTogglePrivacy = {
                             privacyMode = !privacyMode
                             prefs.privacyMode = privacyMode
-                        }
+                        },
+                        onClick = { onNavigate("events") }
                     )
-                    "devices" -> HealthDevicesCard(state)
-                    "today" -> HealthTodayCard(state, prefs.lastRefresh)
+                    "devices" -> HealthDevicesCard(state) { onNavigate("devices") }
+                    "today" -> HealthTodayCard(prefs, state, prefs.lastRefresh) { onNavigate("daily") }
+                    }
                 }
             }
         }
@@ -1340,7 +1352,7 @@ fun HealthCard(
 
 @Composable
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
-    HealthCard {
+    HealthCard(Modifier.clickable { onNavigate("settings") }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("网络健康得分", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
@@ -1445,8 +1457,8 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 }
 
 @Composable
-fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean) {
-    HealthCard {
+fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}) {
+    HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9))
         Spacer(Modifier.height(13.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
@@ -1459,8 +1471,8 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean) 
 }
 
 @Composable
-fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit) {
-    HealthCard {
+fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
+    HealthCard(Modifier.clickable { onClick() }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -1487,8 +1499,8 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 }
 
 @Composable
-fun HealthDevicesCard(state: AppState) {
-    HealthCard {
+fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
+    HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
         if (state.devices.isEmpty()) {
@@ -1530,23 +1542,76 @@ fun HealthDeviceLine(d: DeviceItem) {
     }
 }
 
-@Composable
-fun HealthTodayCard(state: AppState, lastRefresh: String) {
-    val today = todayDateString()
-    val todayEvents = state.events.filter { it.time.startsWith(today) }
+data class HomeDailySnapshot(
+    val up: Int,
+    val down: Int,
+    val vpn: Int,
+    val ddns: Int,
+    val hasNote: Boolean,
+    val source: String
+)
+
+fun eventMatchesDate(time: String, date: String): Boolean {
+    val t = cleanApiText(time)
+    return t.startsWith(date) || t.contains(date)
+}
+
+fun homeDailyFromEvents(events: List<EventItem>, date: String, source: String = "本地事件缓存"): HomeDailySnapshot {
+    val todayEvents = events.filter { eventMatchesDate(it.time, date) }
     val up = todayEvents.count { it.type == "device_online" }
     val down = todayEvents.count { it.type == "device_offline" }
-    val net = todayEvents.count { val t = it.type.lowercase(Locale.getDefault()); t.contains("vpn") || t.contains("stun") || t.contains("wireguard") || t.contains("openvpn") || t.contains("lucky") }
-    HealthCard {
-        HealthSectionTitle("今日概览", "最近事件聚合，详细信息进记录页。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
+    val vpn = todayEvents.count {
+        val t = (it.type + " " + it.title + " " + it.name).lowercase(Locale.getDefault())
+        t.contains("vpn") || t.contains("stun") || t.contains("wireguard") || t.contains("openvpn") || t.contains("lucky")
+    }
+    val ddns = todayEvents.count { it.type.contains("ddns", ignoreCase = true) || it.title.contains("DDNS", ignoreCase = true) }
+    return HomeDailySnapshot(up, down, vpn, ddns, false, source)
+}
+
+fun homeDailyFromApi(root: JSONObject, date: String, fallback: HomeDailySnapshot): HomeDailySnapshot {
+    val daily = root.optJSONObject("daily") ?: root
+    val summary = daily.optJSONObject("summary") ?: JSONObject()
+    val note = cleanApiText(daily.optString("note"))
+    return HomeDailySnapshot(
+        up = summary.optInt("deviceOnline", fallback.up),
+        down = summary.optInt("deviceOffline", fallback.down),
+        vpn = summary.optInt("vpnChanges", fallback.vpn),
+        ddns = summary.optInt("ddnsChanges", fallback.ddns),
+        hasNote = note.isNotBlank(),
+        source = "已同步每日总结 $date"
+    )
+}
+
+@Composable
+fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onClick: () -> Unit = {}) {
+    val today = todayDateString()
+    val fallback = remember(state.events, today) { homeDailyFromEvents(state.events, today) }
+    var snapshot by remember(today, prefs.hub, prefs.token) { mutableStateOf(fallback) }
+
+    LaunchedEffect(today, prefs.hub, prefs.token, lastRefresh, state.events.size) {
+        snapshot = fallback
+        if (prefs.hub.isNotBlank()) {
+            runCatching { HubApi(prefs).getDaily(today) }
+                .onSuccess { snapshot = homeDailyFromApi(it, today, fallback) }
+                .onFailure { snapshot = fallback.copy(source = "每日总结暂不可用，已用本地事件兜底") }
+        }
+    }
+
+    HealthCard(Modifier.clickable { onClick() }) {
+        HealthSectionTitle("今日概览", "和记录页每日总结同步，点卡片查看详情。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            HealthStatusBadge("设备上线", "${up} 次", Color(0xFF16A34A), Modifier.weight(1f))
-            HealthStatusBadge("设备下线", "${down} 次", Color(0xFFEF4444), Modifier.weight(1f))
-            HealthStatusBadge("STUN地址变化", "${net} 次", Color(0xFF7C3AED), Modifier.weight(1f))
+            HealthStatusBadge("设备上线", "${snapshot.up} 次", Color(0xFF16A34A), Modifier.weight(1f))
+            HealthStatusBadge("设备下线", "${snapshot.down} 次", Color(0xFFEF4444), Modifier.weight(1f))
+            HealthStatusBadge("VPN-STUN", "${snapshot.vpn} 次", Color(0xFF7C3AED), Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            HealthStatusBadge("DDNS", "${snapshot.ddns} 次", Color(0xFF0EA5E9), Modifier.weight(1f))
+            HealthStatusBadge("备注", if (snapshot.hasNote) "1 条" else "0 条", Color(0xFF64748B), Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
-        Text("最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1554,8 +1619,21 @@ fun HealthTodayCard(state: AppState, lastRefresh: String) {
 fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
     var dragging by remember(cardKey) { mutableStateOf(false) }
     var dragY by remember(cardKey) { mutableStateOf(0f) }
-    val scale by animateFloatAsState(if (dragging) 1.018f else 1f, label = "home-card-scale")
+    val scale by animateFloatAsState(if (dragging) 1.025f else 1f, animationSpec = tween(140), label = "home-card-scale")
+    val shadowLift by animateFloatAsState(if (dragging) 1f else 0f, animationSpec = tween(140), label = "home-card-lift")
     val thresholdPx = with(LocalDensity.current) { 92.dp.toPx() }
+
+    fun commitOrder() {
+        val current = order.indexOf(cardKey)
+        if (current < 0) return
+        val steps = (dragY / thresholdPx).roundToInt().coerceIn(-current, order.lastIndex - current)
+        if (steps == 0) return
+        val next = order.toMutableList()
+        val item = next.removeAt(current)
+        next.add((current + steps).coerceIn(0, next.size), item)
+        onOrder(next)
+    }
+
     Box(
         Modifier
             .fillMaxWidth()
@@ -1564,27 +1642,21 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
                 translationY = if (dragging) dragY else 0f
                 scaleX = scale
                 scaleY = scale
+                alpha = if (dragging) 0.985f else 1f
+                shadowElevation = 18f * shadowLift
             }
             .pointerInput(cardKey, order) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { dragging = true; dragY = 0f },
-                    onDragEnd = { dragging = false; dragY = 0f },
+                    onDragEnd = {
+                        commitOrder()
+                        dragging = false
+                        dragY = 0f
+                    },
                     onDragCancel = { dragging = false; dragY = 0f },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         dragY += dragAmount.y
-                        val current = order.indexOf(cardKey)
-                        if (current >= 0 && dragY > thresholdPx && current < order.lastIndex) {
-                            val next = order.toMutableList()
-                            java.util.Collections.swap(next, current, current + 1)
-                            onOrder(next)
-                            dragY = 0f
-                        } else if (current > 0 && dragY < -thresholdPx) {
-                            val next = order.toMutableList()
-                            java.util.Collections.swap(next, current, current - 1)
-                            onOrder(next)
-                            dragY = 0f
-                        }
                     }
                 )
             }
@@ -1594,8 +1666,8 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
             Surface(
                 modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                 shape = RoundedCornerShape(50),
-                color = Color.White.copy(alpha = 0.92f),
-                shadowElevation = 4.dp
+                color = Color.White.copy(alpha = 0.94f),
+                shadowElevation = 6.dp
             ) {
                 Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.OpenWith, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
@@ -1606,6 +1678,7 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
         }
     }
 }
+
 
 @Composable
 fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit) {
@@ -2182,52 +2255,91 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
     }
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 92.dp.toPx() }
-    var offsetPx by remember(e.id) { mutableStateOf(0f) }
-    LaunchedEffect(e.id) { offsetPx = 0f }
-    LaunchedEffect(openedSwipeId) { if (openedSwipeId != e.id && offsetPx != 0f) offsetPx = 0f }
-    Box(Modifier.fillMaxWidth().heightIn(min = 78.dp)) {
-        Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { offsetPx = 0f; onSwipeClose(); onDelete() }, contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
-            }
+    var targetOffsetPx by remember(e.id) { mutableStateOf(0f) }
+    var dragging by remember(e.id) { mutableStateOf(false) }
+    var pendingDelete by remember(e.id) { mutableStateOf(false) }
+    val animatedOffsetPx by animateFloatAsState(targetOffsetPx, animationSpec = tween(if (dragging) 0 else 180), label = "event-swipe-offset")
+
+    LaunchedEffect(e.id) { targetOffsetPx = 0f }
+    LaunchedEffect(openedSwipeId) { if (openedSwipeId != e.id && targetOffsetPx != 0f) targetOffsetPx = 0f }
+    LaunchedEffect(pendingDelete) {
+        if (pendingDelete) {
+            delay(170)
+            onDelete()
         }
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset { IntOffset(offsetPx.roundToInt(), 0) }
-                .pointerInput(e.id) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            offsetPx = if (offsetPx < -deleteWidthPx / 2f) { onSwipeOpen(e.id); -deleteWidthPx } else { onSwipeClose(); 0f }
-                        },
-                        onDragCancel = { offsetPx = 0f; onSwipeClose() },
-                        onHorizontalDrag = { _, dragAmount ->
-                            if (dragAmount < 0) onSwipeOpen(e.id)
-                            offsetPx = (offsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
-                        }
-                    )
+    }
+
+    AnimatedVisibility(
+        visible = !pendingDelete,
+        exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 78.dp)) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(92.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                    .clickable {
+                        targetOffsetPx = 0f
+                        onSwipeClose()
+                        pendingDelete = true
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
                 }
-                .shadow(4.dp, RoundedCornerShape(24.dp), clip = false),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
-        ) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp)) }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(eventTitle(e), Modifier.weight(1f), fontSize = 14.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(shortTime(e.time), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.SemiBold, maxLines = 1)
+            }
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset { IntOffset(animatedOffsetPx.roundToInt(), 0) }
+                    .pointerInput(e.id) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragging = true },
+                            onDragEnd = {
+                                dragging = false
+                                targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) {
+                                    onSwipeOpen(e.id)
+                                    -deleteWidthPx
+                                } else {
+                                    onSwipeClose()
+                                    0f
+                                }
+                            },
+                            onDragCancel = { dragging = false; targetOffsetPx = 0f; onSwipeClose() },
+                            onHorizontalDrag = { _, dragAmount ->
+                                if (dragAmount < 0) onSwipeOpen(e.id)
+                                targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                            }
+                        )
                     }
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                        Text(eventLine(e), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.76f), maxLines = 1)
+                    .shadow(4.dp, RoundedCornerShape(24.dp), clip = false),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(13.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp)) }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(eventTitle(e), Modifier.weight(1f), fontSize = 14.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(shortTime(e.time), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        }
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                            Text(eventLine(e), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.76f), maxLines = 1)
+                        }
                     }
                 }
             }
         }
     }
 }
+
 
 fun eventTitle(e: EventItem): String {
     val n = e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }.ifBlank { "事件" }
@@ -2538,7 +2650,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME}\nOne UI 精修版：白底导航、隐私模式、首页当天概览同步、长按拖动排序与二级页面质感优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME}\nv0.9.15：白底导航、隐私模式、首页每日总结同步、整卡点击、拖拽缓冲和删除动画。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
