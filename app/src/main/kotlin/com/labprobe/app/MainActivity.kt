@@ -111,9 +111,15 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 45
+    const val CODE = 47
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 延迟测试视觉与稳定性热修" to listOf(
+            "延迟测试页面标题再缩小，图表卡片标题改为 延迟，减少拥挤和省略号",
+            "停止按钮统一科技蓝，参数与图表视觉继续贴近 One UI 卡片风格",
+            "Y 轴固定最多 5 个点位，低延迟场景按 0/30/60/90/120 展示，X 轴继续使用真实时间",
+            "ICMP 高频采样增加进程取消回收与 IPv6 ping 命令回退，提升测试稳定性"
+        ),
         "v0.9.15 · 延迟测试 One UI 强化" to listOf(
             "Ping 页面升级为延迟测试：支持 ICMP / TCP Connect / HTTP HEAD / HTTP GET",
             "新增 IPv6 优先、IPv4 优先、仅 IPv6、仅 IPv4 与 DNS A/AAAA 策略",
@@ -696,8 +702,8 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
             ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ArrowBack, null, modifier = Modifier.size(20.dp)) } }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 21.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         content()
@@ -776,8 +782,8 @@ fun ExpressiveCard(
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
+                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.sp)
                 }
                 if (headerAction != null) {
                     Spacer(Modifier.width(8.dp))
@@ -2003,7 +2009,7 @@ fun PingTool(prefs: AppPrefs) {
     var job by remember { mutableStateOf<Job?>(null) }
     var points by remember { mutableStateOf<List<PingPoint>>(emptyList()) }
     var log by remember { mutableStateOf("等待测试") }
-    var runMode by remember { mutableStateOf("原始数据实时采集，曲线按 1 秒聚合显示。") }
+    var runMode by remember { mutableStateOf("实时采集，1 秒聚合，真实时间轴。") }
     var history by remember { mutableStateOf(prefs.pingHistory()) }
     var showHistory by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -2046,7 +2052,7 @@ fun PingTool(prefs: AppPrefs) {
                 running = true
                 points = emptyList()
                 log = "开始测试..."
-                runMode = "正在解析 DNS 与启动采样，X 轴按真实耗时绘制。"
+                runMode = "正在解析 DNS 与启动稳定采样。"
                 job?.cancel()
                 job = scope.launch {
                     val c = (count.toIntOrNull() ?: 20).coerceIn(1, 5000)
@@ -2071,7 +2077,7 @@ fun PingTool(prefs: AppPrefs) {
                         history = prefs.pingHistory()
                         log = result.points.takeLast(9).joinToString("\n") { it.text }
                             .ifBlank { "没有收到有效响应" } + "\n${result.mode} · 实际耗时 ${formatElapsedMs(result.elapsedMs)}"
-                        runMode = result.mode + "；真实 ${formatRate(result.points)} 次/s。"
+                        runMode = result.mode + " · ${formatRate(result.points)} 次/s"
                     } finally {
                         running = false
                     }
@@ -2079,14 +2085,14 @@ fun PingTool(prefs: AppPrefs) {
             }, enabled = !running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = blue)) {
                 Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (points.isEmpty()) "开始" else "重新")
             }
-            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E), disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f))) {
+            Button(onClick = { running = false; job?.cancel(); log = if (points.isEmpty()) "已停止" else log + "\n已停止" }, enabled = running, shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = blue, disabledContainerColor = blue.copy(alpha=.11f), disabledContentColor = blue.copy(alpha=.34f))) {
                 Icon(Icons.Rounded.Stop, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("停止")
             }
         }
     }
     ExpressiveCard(
-        "延迟曲线",
-        "X 轴真实时间，Y 轴延迟 ms；1 秒聚合显示，尖峰单独标注。",
+        "延迟",
+        null,
         Icons.Rounded.ShowChart,
         blue,
         headerAction = {
@@ -2173,28 +2179,18 @@ fun PingHistoryItem(item: PingHistoryEntry) {
 }
 
 private fun pingNiceYMax(raw: Int): Int = when {
-    raw <= 30 -> 30
-    raw <= 60 -> 60
-    raw <= 90 -> 90
     raw <= 120 -> 120
-    raw <= 150 -> 150
-    raw <= 300 -> 300
+    raw <= 240 -> 240
+    raw <= 360 -> 360
     raw <= 600 -> 600
     raw <= 1000 -> 1000
     else -> ((raw + 499) / 500) * 500
 }
 
 private fun pingYTicks(yMax: Int): List<Int> {
-    val step = when {
-        yMax <= 150 -> 30
-        yMax <= 300 -> 60
-        yMax <= 600 -> 150
-        yMax <= 1000 -> 250
-        else -> 500
-    }
-    val ticks = (0..yMax step step).toMutableList()
-    if (ticks.lastOrNull() != yMax) ticks += yMax
-    return ticks.distinct()
+    val safeMax = yMax.coerceAtLeast(120)
+    val step = (safeMax / 4).coerceAtLeast(30)
+    return listOf(0, step, step * 2, step * 3, safeMax).distinct().take(5)
 }
 
 private fun formatSecondsLabel(sec: Float): String {
@@ -2269,7 +2265,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
         shadowElevation = 0.dp,
         tonalElevation = 0.dp,
-        modifier = Modifier.fillMaxWidth().height(204.dp)
+        modifier = Modifier.fillMaxWidth().height(222.dp)
     ) {
         Box(Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 7.dp)) {
             if (points.isEmpty()) {
@@ -2280,7 +2276,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                 val fullH = size.height
                 val labelW = 34.dp.toPx()
                 val bottomH = 34.dp.toPx()
-                val topH = 18.dp.toPx()
+                val topH = 12.dp.toPx()
                 val rightPad = 7.dp.toPx()
                 val plotLeft = labelW
                 val plotTop = topH
@@ -2301,7 +2297,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                     drawLine(grid, Offset(plotLeft, y), Offset(plotRight, y), strokeWidth = 1f)
                     val yText = when (tick) {
                         0 -> y - 4.dp.toPx()
-                        yMax -> y + 9.dp.toPx()
+                        yMax -> y + 4.dp.toPx()
                         else -> y + 3.5f
                     }
                     drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 5.dp.toPx(), yText, yPaint)
@@ -3200,32 +3196,58 @@ suspend fun runIcmpSeries(
         runCatching {
             val timeoutSec = ((timeoutMs + 999) / 1000).coerceAtLeast(1)
             val intervalSec = String.format(Locale.US, "%.3f", intervalMs / 1000.0)
-            val cmd = if (is6) listOf("/system/bin/ping6", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host)
-                else listOf("/system/bin/ping", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host)
-            process = ProcessBuilder(cmd).redirectErrorStream(true).start()
-            val timeRegex = Regex("time[=<]([0-9.]+)")
-            var unsupported = false
-            val reader = process!!.inputStream.bufferedReader()
-            try {
-                while (currentCoroutineContext().isActive) {
-                    val line = reader.readLine() ?: break
-                    val lower = line.lowercase(Locale.US)
-                    if (lower.contains("invalid") || lower.contains("permission") || lower.contains("not permitted") || lower.contains("bad") || lower.contains("no such")) unsupported = true
-                    val match = timeRegex.find(line) ?: continue
-                    val ms = match.groupValues.getOrNull(1)?.toFloatOrNull()?.roundToInt() ?: continue
-                    val idx = fastPoints.size + 1
-                    val elapsed = SystemClock.elapsedRealtime() - start
-                    val point = PingPoint(idx, ms, "#$idx ${ms}ms @${formatElapsedMs(elapsed)} · $host", elapsed)
-                    fastPoints += point
-                    withContext(Dispatchers.Main) { onPoint(point) }
-                    if (idx >= count) break
-                }
-            } finally {
-                runCatching { reader.close() }
+            val commands = if (is6) {
+                listOf(
+                    listOf("/system/bin/ping6", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host),
+                    listOf("/system/bin/ping", "-6", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host)
+                )
+            } else {
+                listOf(listOf("/system/bin/ping", "-c", count.toString(), "-i", intervalSec, "-W", timeoutSec.toString(), host))
             }
-            process?.waitFor(1, TimeUnit.SECONDS)
-            if (process?.isAlive == true) process?.destroy()
-            !unsupported && fastPoints.isNotEmpty()
+            val timeRegex = Regex("time[=<]([0-9.]+)")
+            for (cmd in commands) {
+                val before = fastPoints.size
+                var unsupported = false
+                val ok = runCatching {
+                    process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+                    val cancelHook = currentCoroutineContext()[Job]?.invokeOnCompletion {
+                        runCatching { if (process?.isAlive == true) process?.destroyForcibly() }
+                    }
+                    val reader = process!!.inputStream.bufferedReader()
+                    try {
+                        while (currentCoroutineContext().isActive) {
+                            val line = reader.readLine() ?: break
+                            val lower = line.lowercase(Locale.US)
+                            if (lower.contains("invalid") || lower.contains("permission") || lower.contains("not permitted") || lower.contains("bad") || lower.contains("no such") || lower.contains("unknown option")) unsupported = true
+                            val match = timeRegex.find(line) ?: continue
+                            val ms = match.groupValues.getOrNull(1)?.toFloatOrNull()?.roundToInt() ?: continue
+                            val idx = fastPoints.size + 1
+                            val elapsed = SystemClock.elapsedRealtime() - start
+                            val point = PingPoint(idx, ms, "#$idx ${ms}ms @${formatElapsedMs(elapsed)} · $host", elapsed)
+                            fastPoints += point
+                            withContext(Dispatchers.Main) { onPoint(point) }
+                            if (idx >= count) break
+                        }
+                    } finally {
+                        cancelHook?.dispose()
+                        runCatching { reader.close() }
+                        if (process?.isAlive == true) {
+                            runCatching { process?.destroy() }
+                            runCatching { process?.waitFor(250, TimeUnit.MILLISECONDS) }
+                            runCatching { if (process?.isAlive == true) process?.destroyForcibly() }
+                        }
+                    }
+                    process?.waitFor(1, TimeUnit.SECONDS)
+                    !unsupported && fastPoints.size > before
+                }.getOrElse {
+                    if (fastPoints.size > before) fastPoints.subList(before, fastPoints.size).clear()
+                    if (process?.isAlive == true) runCatching { process?.destroyForcibly() }
+                    false
+                }
+                if (ok) return@withContext true
+                if (fastPoints.size > before) fastPoints.subList(before, fastPoints.size).clear()
+            }
+            false
         }.getOrElse {
             if (process?.isAlive == true) process?.destroy()
             false
@@ -3240,7 +3262,7 @@ suspend fun runIcmpSeries(
             onPoint(point)
         }
         val elapsed = (fastPoints.maxOfOrNull { it.elapsedMs } ?: finalElapsed).coerceAtLeast(0L)
-        return PingRunResult(fastPoints.toList(), elapsed, "ICMP 单进程采样：1秒聚合显示，真实时间轴", "ICMP", host)
+        return PingRunResult(fastPoints.toList(), elapsed, "ICMP 稳定单进程采样：真实时间轴", "ICMP", host)
     }
     val fallbackPoints = mutableListOf<PingPoint>()
     var nextAt = SystemClock.elapsedRealtime()
@@ -3256,7 +3278,7 @@ suspend fun runIcmpSeries(
         if (sleepMs > 0L) delay(sleepMs)
     }
     val elapsed = (fallbackPoints.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
-    return PingRunResult(fallbackPoints.toList(), elapsed, "ICMP 兼容采样：设备不支持高速参数，已按真实耗时绘制", "ICMP", host)
+    return PingRunResult(fallbackPoints.toList(), elapsed, "ICMP 兼容稳定采样：真实时间轴", "ICMP", host)
 }
 
 suspend fun runConnectSeries(
