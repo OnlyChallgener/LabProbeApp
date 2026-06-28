@@ -113,9 +113,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 52
+    const val CODE = 53
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · DNS/UDP/SSH 体验热修" to listOf(
+            "DNS 解析运营商识别改为统一快速判断，IPv6 前缀会立即显示电信/联通/移动",
+            "UDP 模板切换自动填入默认目标和端口，右上角新增恢复默认按钮",
+            "SSH 执行结果最多保留 6 条，支持左滑单条删除、长按复制、点击查看完整输出"
+        ),
         "v0.9.15 · Traceroute 与 SSH 记录热修" to listOf(
             "新增路由追踪功能，支持追踪域名解析后的 IPv4 / IPv6 路径",
             "SSH 命令下拉保存最近 6 条，执行结果最多保留 5 条并支持点击复制真实输出",
@@ -564,12 +569,25 @@ class AppPrefs(context: Context) {
                     output = o.optString("output")
                 )
             }
-        }.getOrDefault(emptyList()).take(5)
+        }.getOrDefault(emptyList()).take(6)
     }
 
     fun addSshResult(entry: SshResultEntry) {
         val arr = JSONArray()
-        (listOf(entry) + sshResults()).distinctBy { it.id }.take(5).forEach { r ->
+        (listOf(entry) + sshResults()).distinctBy { it.id }.take(6).forEach { r ->
+            arr.put(JSONObject()
+                .put("id", r.id)
+                .put("time", r.time)
+                .put("host", r.host)
+                .put("command", r.command)
+                .put("output", r.output))
+        }
+        sp.edit().putString("ssh_results_v1", arr.toString()).apply()
+    }
+
+    fun deleteSshResult(id: Long) {
+        val arr = JSONArray()
+        sshResults().filterNot { it.id == id }.forEach { r ->
             arr.put(JSONObject()
                 .put("id", r.id)
                 .put("time", r.time)
@@ -2963,6 +2981,15 @@ fun TcpTool(prefs: AppPrefs) {
     ExpressiveCard("TCP 结果", "连接成功 / 拒绝 / 超时", Icons.Rounded.Route, Color(0xFF2563EB)) { ResultText(result) }
 }
 
+data class UdpTemplateSpec(val name: String, val host: String, val port: String, val note: String)
+
+fun udpTemplateSpec(name: String): UdpTemplateSpec = when (name) {
+    "DNS 查询" -> UdpTemplateSpec("DNS 查询", "223.5.5.5", "53", "发送标准 DNS Query，适合测试 UDP 53。")
+    "NTP 请求" -> UdpTemplateSpec("NTP 请求", "ntp.aliyun.com", "123", "发送 NTP 请求，适合测试时间服务器 UDP。")
+    "UDP 空包" -> UdpTemplateSpec("UDP 空包", "1.1.1.1", "443", "只发送空 UDP 包；无响应不代表关闭。")
+    else -> UdpTemplateSpec("STUN Binding", "stun.voip.aebc.com", "3478", "发送 STUN Binding Request，适合测试 STUN/UDP 映射。")
+}
+
 @Composable
 fun UdpTool(prefs: AppPrefs) {
     var host by remember { mutableStateOf(prefs.udpHost) }
@@ -2972,12 +2999,32 @@ fun UdpTool(prefs: AppPrefs) {
     var ipMode by remember { mutableStateOf(prefs.udpIpMode) }
     var result by remember { mutableStateOf("等待探测") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("UDP 配置", "STUN / DNS / NTP / 空包；无响应不代表关闭。", Icons.Rounded.SyncAlt, Color(0xFF06B6D4)) {
-        CompactIconHistoryInput("目标", "stun.voip.aebc.com", host, { host = it; prefs.udpHost = it }, "udp_host", prefs, Icons.Rounded.Dns)
+    fun applyUdpTemplate(name: String) {
+        val spec = udpTemplateSpec(name)
+        template = spec.name
+        host = spec.host
+        port = spec.port
+        prefs.udpTemplate = spec.name
+        prefs.udpHost = spec.host
+        prefs.udpPort = spec.port
+    }
+    ExpressiveCard(
+        "UDP 配置",
+        "切换模板会自动填入默认目标与端口。",
+        Icons.Rounded.SyncAlt,
+        Color(0xFF06B6D4),
+        headerAction = {
+            IconButton(onClick = { applyUdpTemplate(template) }, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Rounded.Restore, null, tint = Color(0xFF06B6D4), modifier = Modifier.size(19.dp))
+            }
+        }
+    ) {
+        CompactIconHistoryInput("目标", udpTemplateSpec(template).host, host, { host = it; prefs.udpHost = it }, "udp_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamSelectIcon("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "UDP 空包"), { template = it; prefs.udpTemplate = it }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
+            TinyParamSelectIcon("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "UDP 空包"), { applyUdpTemplate(it) }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.udpIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
         }
+        Text(udpTemplateSpec(template).note, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), lineHeight = 15.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.udpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
             TinyParamInputIcon("超时", timeout, { timeout = it; prefs.udpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
@@ -3312,36 +3359,94 @@ fun SshTool(prefs: AppPrefs) {
             }
         }
     }
-    ExpressiveCard("执行结果", "最多保留 5 条，点击卡片复制真实输出。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
+    ExpressiveCard("执行结果", "最多保留 6 条；点击查看完整输出，长按复制，左滑删除。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
         if (results.isEmpty()) {
             Text("等待连接", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontWeight = FontWeight.SemiBold)
         } else {
             results.forEach { item ->
-                SshResultCard(item) { copy(ctx, item.output) }
+                SshResultCard(
+                    item = item,
+                    onCopy = { copy(ctx, item.output.ifBlank { "无输出" }) },
+                    onDelete = { prefs.deleteSshResult(item.id); results = prefs.sshResults() }
+                )
             }
             TextButton(onClick = { prefs.clearSshResults(); results = emptyList() }) { Text("清空执行记录", fontSize = 12.sp) }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SshResultCard(item: SshResultEntry, onCopy: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = .055f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
-        modifier = Modifier.fillMaxWidth().clickable { onCopy() }
-    ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(item.time, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
-                Spacer(Modifier.weight(1f))
-                Text(item.host, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+fun SshResultCard(item: SshResultEntry, onCopy: () -> Unit, onDelete: () -> Unit) {
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 92.dp.toPx() }
+    var targetOffsetPx by remember(item.id) { mutableStateOf(0f) }
+    var dragging by remember(item.id) { mutableStateOf(false) }
+    var pendingDelete by remember(item.id) { mutableStateOf(false) }
+    var showDetail by remember(item.id) { mutableStateOf(false) }
+    val animatedOffsetPx by animateFloatAsState(targetOffsetPx, animationSpec = tween(if (dragging) 0 else 180), label = "ssh-result-offset")
+    LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
+    AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 106.dp)) {
+            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { pendingDelete = true }, contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                }
             }
-            Text(item.command, fontSize = 12.4.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(item.output.ifBlank { "无输出" }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), lineHeight = 16.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = .055f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset { IntOffset(animatedOffsetPx.roundToInt(), 0) }
+                    .pointerInput(item.id) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragging = true },
+                            onDragEnd = { dragging = false; targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) -deleteWidthPx else 0f },
+                            onDragCancel = { dragging = false; targetOffsetPx = 0f },
+                            onHorizontalDrag = { _, dragAmount -> targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
+                        )
+                    }
+                    .combinedClickable(onClick = { showDetail = true }, onLongClick = onCopy)
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.time, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
+                        Spacer(Modifier.weight(1f))
+                        Text(item.host, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(item.command, fontSize = 12.4.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.output.ifBlank { "无输出" }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), lineHeight = 16.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
     }
+    if (showDetail) {
+        SshResultDetailDialog(item = item, onDismiss = { showDetail = false }, onCopy = onCopy)
+    }
+}
+
+@Composable
+fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onCopy) { Text("复制输出", fontWeight = FontWeight.Black) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Black) } },
+        title = { Text("执行结果", fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("主机：${item.host}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("时间：${item.time}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("命令：${item.command}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f))) {
+                    Text(item.output.ifBlank { "无输出" }, modifier = Modifier.padding(12.dp), fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        },
+        shape = RoundedCornerShape(28.dp)
+    )
 }
 
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
@@ -3903,6 +4008,8 @@ suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String, 
 }
 
 fun operatorLookup(ip: String, prefs: AppPrefs): String {
+    val fast = inferOperatorByIpOnly(ip)
+    if (fast.isNotBlank()) return fast
     val hub = prefs.hub.trim().trimEnd('/')
     val token = prefs.token.trim()
     if (hub.isNotBlank() && token.isNotBlank() && !ip.startsWith("无记录")) {
@@ -3930,6 +4037,17 @@ fun operatorLookup(ip: String, prefs: AppPrefs): String {
         }
     }
     return "运营商未知"
+}
+
+fun inferOperatorByIpOnly(ip: String): String {
+    val lower = ip.trim().removePrefix("[").removeSuffix("]").lowercase(Locale.getDefault())
+    return when {
+        lower.startsWith("240e:") -> "中国电信"
+        lower.startsWith("2408:") -> "中国联通"
+        lower.startsWith("2409:") -> "中国移动"
+        lower.startsWith("240a:") -> "中国移动"
+        else -> ""
+    }
 }
 
 private fun formatElapsedMs(ms: Long): String = String.format(Locale.US, "%.2fs", ms.coerceAtLeast(0L) / 1000.0)
@@ -4440,13 +4558,7 @@ fun detectNetworkProfile(ctx: Context, prefs: AppPrefs): NetworkProfile {
 
 fun inferOperatorFast(ip: String, transport: String): String {
     val lower = ip.lowercase(Locale.getDefault())
-    val op = when {
-        lower.startsWith("240e:") -> "中国电信"
-        lower.startsWith("2408:") -> "中国联通"
-        lower.startsWith("2409:") -> "中国移动"
-        lower.startsWith("240a:") -> "中国移动"
-        else -> ""
-    }
+    val op = inferOperatorByIpOnly(lower)
     return when {
         op.isNotBlank() && transport.isNotBlank() && transport != "未知" -> "$op · $transport"
         op.isNotBlank() -> op
