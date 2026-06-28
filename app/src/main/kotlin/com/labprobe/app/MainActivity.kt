@@ -114,9 +114,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 55
+    const val CODE = 56
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 左滑删除显示热修" to listOf(
+            "修复 SSH 执行结果和路由追踪历史未滑动也显示删除按钮的问题",
+            "删除背景仅在左滑展开时显示，默认状态不再透出红色删除按钮",
+            "保留 Ping 顶部工具栏紧凑化、SSH 局部复制和追踪历史功能"
+        ),
         "v0.9.15 · Ping/SSH/追踪体验热修" to listOf(
             "Ping 延迟图表顶部工具栏缩矮，标题、胶囊和历史按钮更紧凑",
             "SSH 完整输出弹窗支持局部选择复制，左滑删除状态自动回收",
@@ -3468,15 +3473,17 @@ fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen:
     LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 92.dp)) {
-            Box(
-                Modifier.align(Alignment.CenterEnd).width(88.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
-                    .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
-                    .clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(21.dp))
-                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+            if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
+                Box(
+                    Modifier.align(Alignment.CenterEnd).width(88.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+                        .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                        .clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(21.dp))
+                        Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                    }
                 }
             }
             Surface(
@@ -3600,10 +3607,12 @@ fun SshResultCard(item: SshResultEntry, openedSwipeId: Long?, onSwipeOpen: (Long
     LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 106.dp)) {
-            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { pendingDelete = true }, contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+            if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
+                Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true }, contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                        Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                    }
                 }
             }
             Surface(
@@ -3743,23 +3752,25 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
         modifier = Modifier.fillMaxWidth()
     ) {
         Box(Modifier.fillMaxWidth().heightIn(min = 78.dp)) {
-            Box(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(92.dp)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
-                    .clickable {
-                        targetOffsetPx = 0f
-                        onSwipeClose()
-                        pendingDelete = true
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+            if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(92.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                        .clickable {
+                            targetOffsetPx = 0f
+                            onSwipeClose()
+                            pendingDelete = true
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                        Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+                    }
                 }
             }
             Surface(

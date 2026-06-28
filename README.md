@@ -1,4 +1,10 @@
 # Labprobe
+## v0.9.15 buildfix11
+
+- versionCode = 56。
+- 修复 SSH 执行结果和路由追踪历史删除按钮默认透出的问题。
+- 删除背景仅在左滑过程中显示，默认卡片不再出现红色删除按钮。
+
 ## v0.9.15 buildfix9
 
 - versionCode = 54。
