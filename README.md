@@ -2,6 +2,14 @@
 
 极客网探 Labprobe Android 客户端，Kotlin + Jetpack Compose 单文件工程。
 
+## v0.9.15 hotfix6
+
+- versionCode = 51
+- 版本弹窗增加检测更新按钮。
+- 工具页 IPv4/IPv6 状态胶囊可跳转 DNS 解析。
+- 运营商状态增加 IPv6 前缀快速推断。
+- DNS / TCP端口 / UDP探测 / SSH 页面统一科技蓝紧凑布局。
+
 ## v0.9.15 本次重点
 
 - 延迟测试从单一 Ping 升级为 ICMP / TCP Connect / HTTP HEAD / HTTP GET。

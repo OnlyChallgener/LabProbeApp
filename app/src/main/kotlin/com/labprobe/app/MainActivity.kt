@@ -113,9 +113,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 50
+    const val CODE = 51
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 工具页与更新入口热修" to listOf(
+            "版本信息卡新增检测更新按钮，支持读取 GitHub Releases 最新版本",
+            "网络状态 IPv4/IPv6 胶囊可跳转 DNS 解析，运营商增加本地快速推断",
+            "DNS/端口/UDP/SSH 页面统一为科技蓝双列紧凑参数风格"
+        ),
         "v0.9.15 · 网络/NAT重构热修" to listOf(
             "工具页网络状态卡改为 6 项：IPv4 出口、IPv6、本地 IP、运营商、优先级、NAT 类型",
             "NAT 检测拆分 RFC5780 行为发现与 RFC3489 TEST 1-4，支持服务器列表和历史记录",
@@ -1145,8 +1150,8 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 48.dp
-private val ParamFieldRadius = 16.dp
+private val ParamFieldHeight = 44.dp
+private val ParamFieldRadius = 15.dp
 
 @Composable
 fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
@@ -1159,7 +1164,7 @@ fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -
         shadowElevation = 0.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             content = content
@@ -1251,9 +1256,9 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
 @Composable
 fun FieldIconBox(icon: ImageVector, accent: Color = Color(0xFF2563EB)) {
     Box(
-        Modifier.size(25.dp).clip(RoundedCornerShape(9.dp)).background(accent.copy(alpha = .11f)),
+        Modifier.size(22.dp).clip(RoundedCornerShape(8.dp)).background(accent.copy(alpha = .11f)),
         contentAlignment = Alignment.Center
-    ) { Icon(icon, null, Modifier.size(15.dp), tint = accent) }
+    ) { Icon(icon, null, Modifier.size(13.dp), tint = accent) }
 }
 
 @Composable
@@ -1271,7 +1276,7 @@ fun CompactIconHistoryInput(label: String, hint: String, value: String, onValueC
             shape = RoundedCornerShape(20.dp),
             textStyle = LocalTextStyle.current.copy(fontSize = 13.4.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(50.dp)
+            modifier = Modifier.weight(1f).height(46.dp)
         )
     }
 }
@@ -1391,9 +1396,52 @@ fun VersionBadge(onClick: () -> Unit) {
     }
 }
 
+suspend fun checkGithubLatestSummary(): String = withContext(Dispatchers.IO) {
+    runCatching {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(7, TimeUnit.SECONDS)
+            .build()
+        val req = Request.Builder()
+            .url("https://api.github.com/repos/OnlyChallgener/LabProbeApp/releases/latest")
+            .header("User-Agent", "Labprobe/${AppVersion.NAME}")
+            .build()
+        val resp = client.newCall(req).execute()
+        val body = resp.body?.string().orEmpty()
+        if (!resp.isSuccessful) {
+            if (resp.code == 404) return@withContext "未找到 GitHub Release。请先在仓库发布 Release 并上传 APK。"
+            return@withContext "检测失败：GitHub HTTP ${resp.code}"
+        }
+        val json = JSONObject(body)
+        val tag = json.optString("tag_name", "未知")
+        val name = json.optString("name", tag)
+        val assets = json.optJSONArray("assets") ?: JSONArray()
+        var apkName = "未找到 APK"
+        var apkSize = 0L
+        for (i in 0 until assets.length()) {
+            val a = assets.optJSONObject(i) ?: continue
+            val n = a.optString("name")
+            if (n.endsWith(".apk", ignoreCase = true)) {
+                apkName = n
+                apkSize = a.optLong("size", 0L)
+                break
+            }
+        }
+        val sizeText = if (apkSize > 0) String.format(Locale.US, "%.1f MB", apkSize / 1024.0 / 1024.0) else "未知大小"
+        val isSame = tag.removePrefix("v") == AppVersion.NAME
+        val state = if (isSame) "当前已是最新版本" else "发现新版本"
+        "$state：$name\n更新包：$apkName · $sizeText"
+    }.getOrElse { e ->
+        "检测失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+    }
+}
+
 @Composable
 fun VersionInfoDialog(onDismiss: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var updateText by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
@@ -1406,6 +1454,29 @@ fun VersionInfoDialog(onDismiss: () -> Unit) {
         title = { Text("极客网探 v${AppVersion.NAME}", fontWeight = FontWeight.Black) },
         text = {
             Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            checking = true
+                            updateText = "正在检测 GitHub Release..."
+                            updateText = checkGithubLatestSummary()
+                            checking = false
+                        }
+                    },
+                    enabled = !checking,
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    modifier = Modifier.fillMaxWidth().height(42.dp)
+                ) {
+                    Icon(Icons.Rounded.SystemUpdate, null, Modifier.size(17.dp), tint = Color.White)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (checking) "检测中..." else "检测更新", fontWeight = FontWeight.Black, color = Color.White)
+                }
+                if (updateText.isNotBlank()) {
+                    Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF2563EB).copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .12f))) {
+                        Text(updateText, Modifier.fillMaxWidth().padding(12.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .78f), lineHeight = 17.sp)
+                    }
+                }
                 AppVersion.CHANGELOG.forEach { (title, items) ->
                     Text(title, fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
                     items.take(5).forEach { item ->
@@ -2178,8 +2249,8 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
         }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NetworkStatusTile("IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f))
-                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.Language, Color(0xFF06B6D4), Modifier.weight(1f))
+                NetworkStatusTile("IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), clickable = true) { open("tool_dns") }
+                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.Language, Color(0xFF06B6D4), Modifier.weight(1f), clickable = true) { open("tool_dns") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkStatusTile("NAT类型", profile.natType, Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f), clickable = true) { open("tool_nat") }
@@ -2696,12 +2767,23 @@ fun DnsTool(prefs: AppPrefs) {
     var history by remember { mutableStateOf(prefs.dnsQueryHistory()) }
     var msg by remember { mutableStateOf("等待解析") }
     val scope = rememberCoroutineScope(); val ctx = LocalContext.current
-    ExpressiveCard("查询配置", "DNS1 失败自动尝试 DNS2，仅显示运营商。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
-        LabeledHistoryInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it }, "dns_domain", prefs)
-        LabeledHistoryInput("DNS1", "system / 223.5.5.5 / 2400:3200::1", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs)
-        LabeledHistoryInput("DNS2", "8.8.8.8 / dns.google / system", dns2, { dns2 = it; prefs.dns2 = it }, "dns2", prefs)
-        SelectInput("记录", type, listOf("A", "AAAA", "ALL")) { type = it; prefs.dnsRecord = it }
-        PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) { scope.launch { msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2); val records = dnsLookup(domain, dns1, dns2, type, prefs); result = records; prefs.addDnsQueryHistory(domain, records); history = prefs.dnsQueryHistory(); msg = "完成：${records.size} 条" } }
+    ExpressiveCard("查询配置", "双 DNS 备选，A / AAAA 解析与运营商识别。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
+        CompactIconHistoryInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it }, "dns_domain", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("记录", type, listOf("A", "AAAA", "ALL"), { type = it; prefs.dnsRecord = it }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
+            TinyParamSelectIcon("策略", if (type == "AAAA") "优先AAAA" else if (type == "A") "优先A" else "自动", listOf("自动", "优先AAAA", "优先A"), { v -> type = when(v){"优先AAAA" -> "AAAA"; "优先A" -> "A"; else -> "ALL"}; prefs.dnsRecord = type }, Icons.Rounded.Public, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) { CompactIconHistoryInput("DNS1", "223.5.5.5", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs, Icons.Rounded.Storage) }
+            Column(Modifier.weight(1f)) { CompactIconHistoryInput("DNS2", "8.8.8.8", dns2, { dns2 = it; prefs.dns2 = it }, "dns2", prefs, Icons.Rounded.Storage) }
+        }
+        PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) {
+            scope.launch {
+                msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2)
+                val records = dnsLookup(domain, dns1, dns2, type, prefs)
+                result = records; prefs.addDnsQueryHistory(domain, records); history = prefs.dnsQueryHistory(); msg = "完成：${records.size} 条"
+            }
+        }
     }
     ExpressiveCard("查询结果", msg, Icons.Rounded.TravelExplore, Color(0xFF06B6D4)) { if (result.isEmpty()) Text("暂无结果", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f)); result.forEach { r -> DnsResultRow(r) { copy(ctx, r.value) } } }
     if (history.isNotEmpty()) {
@@ -2768,13 +2850,16 @@ fun TcpTool(prefs: AppPrefs) {
     var ipMode by remember { mutableStateOf("自动") }
     var result by remember { mutableStateOf("等待检测") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("TCP 配置", "等同 telnet / nc 连接测试，可明确成功、拒绝或超时。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
-        LabeledHistoryInput("主机", "net86.dynv6.net / 240e::1", host, { host = it; prefs.tcpHost = it }, "port_host", prefs)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Column(Modifier.weight(1f)) { LabeledHistoryInput("端口", "443", port, { port = it; prefs.tcpPort = it }, "port_port", prefs, KeyboardType.Number) }
-            Column(Modifier.weight(1f)) { LabeledInput("超时", "1000", timeout, { timeout = it; prefs.tcpTimeout = it }, KeyboardType.Number) }
+    ExpressiveCard("TCP 配置", "TCP Connect，等同 telnet / nc 端口可达性。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
+        CompactIconHistoryInput("主机", "net86.dynv6.net / 240e::1", host, { host = it; prefs.tcpHost = it }, "port_host", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("端口", port, { port = it; prefs.tcpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.tcpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
         }
-        SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
+            Surface(Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(15.dp), color = Color(0xFF0EA5E9).copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0EA5E9).copy(alpha = .12f))) { Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) { FieldIconBox(Icons.Rounded.Info, Color(0xFF0EA5E9)); Spacer(Modifier.width(7.dp)); Text("成功/拒绝/超时", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f), maxLines = 1) } }
+        }
         PillButton("开始 TCP 测试", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) {
             scope.launch {
                 prefs.addHistory("port_host", host); prefs.addHistory("port_port", port)
@@ -2782,7 +2867,7 @@ fun TcpTool(prefs: AppPrefs) {
             }
         }
     }
-    ExpressiveCard("TCP 结果", "连接成功 / 拒绝 / 超时", Icons.Rounded.Route, Color(0xFF64748B)) { ResultText(result) }
+    ExpressiveCard("TCP 结果", "连接成功 / 拒绝 / 超时", Icons.Rounded.Route, Color(0xFF2563EB)) { ResultText(result) }
 }
 
 @Composable
@@ -2794,14 +2879,16 @@ fun UdpTool(prefs: AppPrefs) {
     var ipMode by remember { mutableStateOf(prefs.udpIpMode) }
     var result by remember { mutableStateOf("等待探测") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("UDP 配置", "UDP 无握手；无响应不代表端口关闭。", Icons.Rounded.SyncAlt, Color(0xFF06B6D4)) {
-        SelectInput("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "UDP 空包")) { template = it; prefs.udpTemplate = it }
-        LabeledHistoryInput("目标", "stun.voip.aebc.com", host, { host = it; prefs.udpHost = it }, "udp_host", prefs)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Column(Modifier.weight(1f)) { LabeledHistoryInput("端口", "3478", port, { port = it; prefs.udpPort = it }, "udp_port", prefs, KeyboardType.Number) }
-            Column(Modifier.weight(1f)) { LabeledInput("超时", "1000", timeout, { timeout = it; prefs.udpTimeout = it }, KeyboardType.Number) }
+    ExpressiveCard("UDP 配置", "STUN / DNS / NTP / 空包；无响应不代表关闭。", Icons.Rounded.SyncAlt, Color(0xFF06B6D4)) {
+        CompactIconHistoryInput("目标", "stun.voip.aebc.com", host, { host = it; prefs.udpHost = it }, "udp_host", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "UDP 空包"), { template = it; prefs.udpTemplate = it }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
+            TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.udpIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
         }
-        SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it; prefs.udpIpMode = it }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("端口", port, { port = it; prefs.udpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.udpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+        }
         PillButton("开始 UDP 探测", Icons.Rounded.Waves, accent = Color(0xFF06B6D4)) {
             scope.launch {
                 prefs.addHistory("udp_host", host); prefs.addHistory("udp_port", port)
@@ -3054,17 +3141,19 @@ fun SshTool(prefs: AppPrefs) {
     var command by remember { mutableStateOf(prefs.sshCommand) }
     var result by remember { mutableStateOf("等待连接") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("连接与命令", "默认 ip -6 neigh show；支持保存密码开关。", Icons.Rounded.Terminal, Color(0xFF64748B)) {
-        LabeledHistoryInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs)
-        LabeledInput("端口", "54133", port, { port = it; prefs.sshPort = it }, KeyboardType.Number)
-        LabeledInput("用户", "root", user, { user = it; prefs.sshUser = it })
+    ExpressiveCard("连接与命令", "路由器 / NAS 单条命令执行，返回仍在 APP 内。", Icons.Rounded.Terminal, Color(0xFF2563EB)) {
+        CompactIconHistoryInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("端口", port, { port = it; prefs.sshPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("用户", user, { user = it; prefs.sshUser = it }, Icons.Rounded.Person, KeyboardType.Text, Modifier.weight(1f))
+        }
         LabeledInput("密码", "SSH 密码", password, { password = it; if (savePass) prefs.sshPassword = it }, password = true)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("保存", Modifier.width(58.dp), fontWeight = FontWeight.Black, fontSize = 12.sp); Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" }); Text("保存密码", fontSize = 12.sp) }
-        LabeledInput("命令", "ip -6 neigh show", command, { command = it; prefs.sshCommand = it })
-        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime", "内核" to "uname -a", "存储" to "df -h").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
-        PillButton("执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF64748B)) { scope.launch { prefs.addHistory("ssh_host", host); result = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" } } }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("保存", Modifier.width(48.dp), fontWeight = FontWeight.Black, fontSize = 11.5.sp); Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" }); Text("保存密码", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+        CompactIconHistoryInput("命令", "ip -6 neigh show", command, { command = it; prefs.sshCommand = it }, "ssh_cmd", prefs, Icons.Rounded.Terminal)
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime", "内核" to "uname -a", "存储" to "df -h").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
+        PillButton("执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF2563EB)) { scope.launch { prefs.addHistory("ssh_host", host); result = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" } } }
     }
-    ExpressiveCard("执行结果", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(result) }
+    ExpressiveCard("执行结果", null, Icons.Rounded.Notes, Color(0xFF2563EB)) { ResultText(result) }
 }
 
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
@@ -4148,13 +4237,8 @@ fun detectNetworkProfile(ctx: Context, prefs: AppPrefs): NetworkProfile {
         brief.hasV4 -> "仅IPv4"
         else -> "未知"
     }
-    val operator = when (brief.transport) {
-        "蜂窝" -> "移动网络"
-        "Wi‑Fi" -> "Wi‑Fi/路由"
-        "VPN" -> "VPN"
-        "以太网" -> "以太网"
-        else -> "未知"
-    }
+    val operator = lastNat?.operator?.takeIf { it.isNotBlank() && it != "未知" && !it.contains("未知") }
+        ?: inferOperatorFast(globalV6.ifBlank { ipv4Exit }, brief.transport)
     return NetworkProfile(
         ipv4Exit = ipv4Exit,
         ipv6Address = globalV6.ifBlank { "未见" },
@@ -4165,6 +4249,23 @@ fun detectNetworkProfile(ctx: Context, prefs: AppPrefs): NetworkProfile {
     )
 }
 
+
+fun inferOperatorFast(ip: String, transport: String): String {
+    val lower = ip.lowercase(Locale.getDefault())
+    val op = when {
+        lower.startsWith("240e:") -> "中国电信"
+        lower.startsWith("2408:") -> "中国联通"
+        lower.startsWith("2409:") -> "中国移动"
+        lower.startsWith("240a:") -> "中国移动"
+        else -> ""
+    }
+    return when {
+        op.isNotBlank() && transport.isNotBlank() && transport != "未知" -> "$op · $transport"
+        op.isNotBlank() -> op
+        transport.isNotBlank() && transport != "未知" -> transport
+        else -> "未知"
+    }
+}
 
 fun extractIpv4FromEndpoint(text: String): String? {
     val host = text.substringBeforeLast(':')
