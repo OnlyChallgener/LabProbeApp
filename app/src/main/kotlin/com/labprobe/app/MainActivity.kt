@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
@@ -113,9 +114,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 53
+    const val CODE = 55
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · Ping/SSH/追踪体验热修" to listOf(
+            "Ping 延迟图表顶部工具栏缩矮，标题、胶囊和历史按钮更紧凑",
+            "SSH 完整输出弹窗支持局部选择复制，左滑删除状态自动回收",
+            "路由追踪支持实时过程显示与 15 条历史记录，历史可展开、复制、左滑删除"
+        ),
         "v0.9.15 · DNS/UDP/SSH 体验热修" to listOf(
             "DNS 解析运营商识别改为统一快速判断，IPv6 前缀会立即显示电信/联通/移动",
             "UDP 模板切换自动填入默认目标和端口，右上角新增恢复默认按钮",
@@ -608,6 +614,57 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("trace_timeout", v.trim()).apply()
     var traceIpMode: String get() = sp.getString("trace_ip_mode", "IPv6优先") ?: "IPv6优先"
         set(v) = sp.edit().putString("trace_ip_mode", v).apply()
+
+    fun traceHistory(): List<TraceHistoryEntry> {
+        val raw = sp.getString("trace_history_v1", "[]") ?: "[]"
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                TraceHistoryEntry(
+                    id = o.optLong("id", i.toLong()),
+                    time = o.optString("time"),
+                    host = o.optString("host"),
+                    ipMode = o.optString("ipMode"),
+                    hops = o.optInt("hops", 0),
+                    status = o.optString("status"),
+                    output = o.optString("output")
+                )
+            }
+        }.getOrDefault(emptyList()).take(15)
+    }
+
+    fun addTraceHistory(entry: TraceHistoryEntry) {
+        val arr = JSONArray()
+        (listOf(entry) + traceHistory()).distinctBy { it.id }.take(15).forEach { r ->
+            arr.put(JSONObject()
+                .put("id", r.id)
+                .put("time", r.time)
+                .put("host", r.host)
+                .put("ipMode", r.ipMode)
+                .put("hops", r.hops)
+                .put("status", r.status)
+                .put("output", r.output))
+        }
+        sp.edit().putString("trace_history_v1", arr.toString()).apply()
+    }
+
+    fun deleteTraceHistory(id: Long) {
+        val arr = JSONArray()
+        traceHistory().filterNot { it.id == id }.forEach { r ->
+            arr.put(JSONObject()
+                .put("id", r.id)
+                .put("time", r.time)
+                .put("host", r.host)
+                .put("ipMode", r.ipMode)
+                .put("hops", r.hops)
+                .put("status", r.status)
+                .put("output", r.output))
+        }
+        sp.edit().putString("trace_history_v1", arr.toString()).apply()
+    }
+
+    fun clearTraceHistory() { sp.edit().putString("trace_history_v1", "[]").apply() }
 }
 
 data class DeviceItem(
@@ -645,6 +702,7 @@ data class EventItem(
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
 data class SshResultEntry(val id: Long, val time: String, val host: String, val command: String, val output: String)
+data class TraceHistoryEntry(val id: Long, val time: String, val host: String, val ipMode: String, val hops: Int, val status: String, val output: String)
 data class PingPoint(val index: Int, val ms: Int?, val text: String, val elapsedMs: Long)
 data class PingRunResult(val points: List<PingPoint>, val elapsedMs: Long, val mode: String, val protocol: String = "ICMP", val resolvedIp: String = "")
 data class PingBucket(val startMs: Long, val avgMs: Int?, val peakMs: Int?, val hasLoss: Boolean, val sampleCount: Int)
@@ -2563,25 +2621,67 @@ fun PingTool(prefs: AppPrefs) {
             }
         }
     }
-    ExpressiveCard(
-        "延迟",
-        null,
-        Icons.Rounded.ShowChart,
-        blue,
-        headerAction = {
-            PingRatePill(points)
-            Spacer(Modifier.width(6.dp))
-            PingLossPill(points)
-            Spacer(Modifier.width(6.dp))
-            Surface(onClick = { showHistory = true }, shape = CircleShape, color = blue.copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, blue.copy(alpha = .16f))) {
-                Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, Modifier.size(17.dp), tint = blue) }
-            }
-        }
-    ) {
-        PingChart(points, 1000L)
-        PingStats(points)
-    }
+    PingLatencyCard(points = points, accent = blue, onHistory = { showHistory = true })
     ExpressiveCard("响应日志", null, Icons.Rounded.Notes, Color(0xFF64748B)) { ResultText(log) }
+}
+
+@Composable
+fun PingLatencyCard(points: List<PingPoint>, accent: Color, onHistory: () -> Unit) {
+    val shape = RoundedCornerShape(30.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.82f))
+    ) {
+        Column(Modifier.padding(horizontal = 15.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(32.dp).clip(RoundedCornerShape(14.dp)).background(accent.copy(alpha = 0.13f)),
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Rounded.ShowChart, null, tint = accent, modifier = Modifier.size(17.dp)) }
+                Spacer(Modifier.width(9.dp))
+                Text("延迟", Modifier.weight(1f), fontSize = 14.8.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                PingRatePillCompact(points)
+                Spacer(Modifier.width(5.dp))
+                PingLossPillCompact(points)
+                Spacer(Modifier.width(5.dp))
+                Surface(onClick = onHistory, shape = CircleShape, color = accent.copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .16f))) {
+                    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, Modifier.size(15.dp), tint = accent) }
+                }
+            }
+            PingChart(points, 1000L)
+            PingStats(points)
+        }
+    }
+}
+
+@Composable
+fun PingRatePillCompact(points: List<PingPoint>) {
+    val rate = formatRate(points)
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Speed, null, Modifier.size(12.dp), tint = Color(0xFF2563EB))
+            Spacer(Modifier.width(3.dp))
+            Text("真实 ${rate}次/s", fontSize = 9.8.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
+        }
+    }
+}
+
+@Composable
+fun PingLossPillCompact(points: List<PingPoint>) {
+    val sent = points.size
+    val okCount = points.count { it.ms != null }
+    val loss = if (sent == 0) 0 else ((sent - okCount) * 100 / sent)
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .12f))) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFEF4444)))
+            Spacer(Modifier.width(4.dp))
+            Text("丢包 $loss%", fontSize = 9.8.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
+        }
+    }
 }
 
 @Composable
@@ -3207,7 +3307,7 @@ fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Uni
     LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 92.dp)) {
-            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { pendingDelete = true }, contentAlignment = Alignment.Center) {
+            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { targetOffsetPx = 0f; pendingDelete = true }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp)); Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp) }
             }
             Surface(
@@ -3282,9 +3382,11 @@ fun TraceTool(prefs: AppPrefs) {
     var ipMode by remember { mutableStateOf(prefs.traceIpMode) }
     var result by remember { mutableStateOf("等待追踪") }
     var running by remember { mutableStateOf(false) }
+    var history by remember { mutableStateOf(prefs.traceHistory()) }
+    var openedSwipeId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
-    ExpressiveCard("追踪配置", "逐跳追踪域名经过的 IP；Android 设备能力不同，结果以系统 ping 支持为准。", Icons.Rounded.AltRoute, Color(0xFF2563EB)) {
+    ExpressiveCard("追踪配置", "逐跳追踪域名经过的 IP；结果实时追加显示。", Icons.Rounded.AltRoute, Color(0xFF2563EB)) {
         CompactIconHistoryInput("目标", "net86.dynv6.net / 223.5.5.5", host, { host = it; prefs.traceHost = it }, "trace_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.traceIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
@@ -3292,20 +3394,123 @@ fun TraceTool(prefs: AppPrefs) {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("超时", timeout, { timeout = it; prefs.traceTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
-            TinyInfoParam("说明", "显示经过IP", Icons.Rounded.Info, Color(0xFF2563EB), Modifier.weight(1f))
+            TinyInfoParam("说明", "实时过程", Icons.Rounded.Info, Color(0xFF2563EB), Modifier.weight(1f))
         }
         PillButton(if (running) "追踪中" else "开始追踪", Icons.Rounded.AltRoute, accent = Color(0xFF2563EB)) {
             if (!running) scope.launch {
                 running = true
                 prefs.addHistory("trace_host", host)
-                result = traceRouteSmart(host, maxHops.toIntOrNull() ?: 16, timeout.toIntOrNull() ?: 1200, prefs.dns1, prefs.dns2, ipMode)
+                result = "正在追踪：$host\n"
+                val started = SystemClock.elapsedRealtime()
+                val finalResult = traceRouteSmart(
+                    host,
+                    maxHops.toIntOrNull() ?: 16,
+                    timeout.toIntOrNull() ?: 1200,
+                    prefs.dns1,
+                    prefs.dns2,
+                    ipMode
+                ) { partial -> result = partial }
+                val elapsed = SystemClock.elapsedRealtime() - started
+                result = finalResult + "\n完成：${formatElapsedMs(elapsed)}"
+                prefs.addTraceHistory(TraceHistoryEntry(
+                    id = System.currentTimeMillis(),
+                    time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+                    host = host,
+                    ipMode = ipMode,
+                    hops = countTraceHops(finalResult),
+                    status = if (finalResult.contains("无法解析") || finalResult.contains("timeout", true)) "完成/部分超时" else "完成",
+                    output = finalResult
+                ))
+                history = prefs.traceHistory()
                 running = false
             }
         }
     }
-    ExpressiveCard("追踪结果", "点击结果可复制。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
+    ExpressiveCard("追踪结果", if (running) "正在追踪，逐跳追加。点击结果可复制。" else "点击结果可复制。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .045f), modifier = Modifier.fillMaxWidth().clickable { copy(ctx, result) }) {
-            ResultText(result)
+            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                Text(result, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 17.sp)
+            }
+        }
+    }
+    ExpressiveCard("追踪历史", "最多保存 15 条；点击展开，长按复制，左滑删除。", Icons.Rounded.History, Color(0xFF2563EB)) {
+        if (history.isEmpty()) {
+            Text("暂无追踪历史", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontWeight = FontWeight.SemiBold)
+        } else {
+            history.forEach { item ->
+                key(item.id) {
+                    TraceHistoryCard(
+                        item = item,
+                        openedSwipeId = openedSwipeId,
+                        onSwipeOpen = { openedSwipeId = it },
+                        onSwipeClose = { if (openedSwipeId == item.id) openedSwipeId = null },
+                        onCopy = { copy(ctx, item.output) },
+                        onDelete = { openedSwipeId = null; prefs.deleteTraceHistory(item.id); history = prefs.traceHistory() }
+                    )
+                }
+            }
+            TextButton(onClick = { prefs.clearTraceHistory(); history = emptyList() }) { Text("清空追踪历史", fontSize = 12.sp) }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen: (Long) -> Unit, onSwipeClose: () -> Unit, onCopy: () -> Unit, onDelete: () -> Unit) {
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 88.dp.toPx() }
+    var targetOffsetPx by remember(item.id) { mutableStateOf(0f) }
+    var dragging by remember(item.id) { mutableStateOf(false) }
+    var pendingDelete by remember(item.id) { mutableStateOf(false) }
+    var expanded by remember(item.id) { mutableStateOf(false) }
+    val animatedOffsetPx by animateFloatAsState(targetOffsetPx, animationSpec = tween(if (dragging) 0 else 180), label = "trace-history-offset")
+    LaunchedEffect(openedSwipeId) { if (openedSwipeId != item.id && targetOffsetPx != 0f) targetOffsetPx = 0f }
+    LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
+    AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 92.dp)) {
+            Box(
+                Modifier.align(Alignment.CenterEnd).width(88.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+                    .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                    .clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(21.dp))
+                    Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = .055f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
+                modifier = Modifier.fillMaxWidth().offset { IntOffset(animatedOffsetPx.roundToInt(), 0) }
+                    .pointerInput(item.id) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragging = true },
+                            onDragEnd = {
+                                dragging = false
+                                targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) { onSwipeOpen(item.id); -deleteWidthPx } else { onSwipeClose(); 0f }
+                            },
+                            onDragCancel = { dragging = false; targetOffsetPx = 0f; onSwipeClose() },
+                            onHorizontalDrag = { _, dragAmount ->
+                                if (dragAmount < 0) onSwipeOpen(item.id)
+                                targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                            }
+                        )
+                    }
+                    .combinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); expanded = !expanded }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.time, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
+                        Spacer(Modifier.weight(1f))
+                        Text("${item.hops}跳 · ${item.status}", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                    }
+                    Text(item.host, fontSize = 12.6.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (expanded) item.output else item.output.lines().take(4).joinToString("\n"), fontSize = 11.8.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), lineHeight = 16.sp, maxLines = if (expanded) 100 else 4, overflow = TextOverflow.Ellipsis)
+                    Text(if (expanded) "点击收起 · 长按复制" else "点击展开 · 长按复制", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary.copy(alpha = .80f))
+                }
+            }
         }
     }
 }
@@ -3319,6 +3524,7 @@ fun SshTool(prefs: AppPrefs) {
     var password by remember { mutableStateOf(if (prefs.sshSavePass) prefs.sshPassword else "") }
     var command by remember { mutableStateOf(prefs.sshCommand) }
     var results by remember { mutableStateOf(prefs.sshResults()) }
+    var openedSwipeId by remember { mutableStateOf<Long?>(null) }
     var running by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
@@ -3364,11 +3570,16 @@ fun SshTool(prefs: AppPrefs) {
             Text("等待连接", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontWeight = FontWeight.SemiBold)
         } else {
             results.forEach { item ->
-                SshResultCard(
-                    item = item,
-                    onCopy = { copy(ctx, item.output.ifBlank { "无输出" }) },
-                    onDelete = { prefs.deleteSshResult(item.id); results = prefs.sshResults() }
-                )
+                key(item.id) {
+                    SshResultCard(
+                        item = item,
+                        openedSwipeId = openedSwipeId,
+                        onSwipeOpen = { openedSwipeId = it },
+                        onSwipeClose = { if (openedSwipeId == item.id) openedSwipeId = null },
+                        onCopy = { copy(ctx, item.output.ifBlank { "无输出" }) },
+                        onDelete = { openedSwipeId = null; prefs.deleteSshResult(item.id); results = prefs.sshResults() }
+                    )
+                }
             }
             TextButton(onClick = { prefs.clearSshResults(); results = emptyList() }) { Text("清空执行记录", fontSize = 12.sp) }
         }
@@ -3377,7 +3588,7 @@ fun SshTool(prefs: AppPrefs) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SshResultCard(item: SshResultEntry, onCopy: () -> Unit, onDelete: () -> Unit) {
+fun SshResultCard(item: SshResultEntry, openedSwipeId: Long?, onSwipeOpen: (Long) -> Unit, onSwipeClose: () -> Unit, onCopy: () -> Unit, onDelete: () -> Unit) {
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 92.dp.toPx() }
     var targetOffsetPx by remember(item.id) { mutableStateOf(0f) }
@@ -3385,6 +3596,7 @@ fun SshResultCard(item: SshResultEntry, onCopy: () -> Unit, onDelete: () -> Unit
     var pendingDelete by remember(item.id) { mutableStateOf(false) }
     var showDetail by remember(item.id) { mutableStateOf(false) }
     val animatedOffsetPx by animateFloatAsState(targetOffsetPx, animationSpec = tween(if (dragging) 0 else 180), label = "ssh-result-offset")
+    LaunchedEffect(openedSwipeId) { if (openedSwipeId != item.id && targetOffsetPx != 0f) targetOffsetPx = 0f }
     LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 106.dp)) {
@@ -3404,12 +3616,24 @@ fun SshResultCard(item: SshResultEntry, onCopy: () -> Unit, onDelete: () -> Unit
                     .pointerInput(item.id) {
                         detectHorizontalDragGestures(
                             onDragStart = { dragging = true },
-                            onDragEnd = { dragging = false; targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) -deleteWidthPx else 0f },
-                            onDragCancel = { dragging = false; targetOffsetPx = 0f },
-                            onHorizontalDrag = { _, dragAmount -> targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
+                            onDragEnd = {
+                                dragging = false
+                                targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) {
+                                    onSwipeOpen(item.id)
+                                    -deleteWidthPx
+                                } else {
+                                    onSwipeClose()
+                                    0f
+                                }
+                            },
+                            onDragCancel = { dragging = false; targetOffsetPx = 0f; onSwipeClose() },
+                            onHorizontalDrag = { _, dragAmount ->
+                                if (dragAmount < 0) onSwipeOpen(item.id)
+                                targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                            }
                         )
                     }
-                    .combinedClickable(onClick = { showDetail = true }, onLongClick = onCopy)
+                    .combinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); showDetail = true }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3441,7 +3665,9 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
                 Text("时间：${item.time}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text("命令：${item.command}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f))) {
-                    Text(item.output.ifBlank { "无输出" }, modifier = Modifier.padding(12.dp), fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)
+                    SelectionContainer {
+                        Text(item.output.ifBlank { "无输出" }, modifier = Modifier.padding(12.dp), fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         },
@@ -4870,7 +5096,7 @@ fun sshRealOutput(raw: String): String {
     return useful.joinToString("\n").ifBlank { raw.lines().filterNot { it.startsWith("返回码：") }.joinToString("\n").trim().ifBlank { "无输出" } }
 }
 
-suspend fun traceRouteSmart(host: String, maxHops: Int, timeoutMs: Int, dns1: String, dns2: String, ipMode: String): String = withContext(Dispatchers.IO) {
+suspend fun traceRouteSmart(host: String, maxHops: Int, timeoutMs: Int, dns1: String, dns2: String, ipMode: String, onUpdate: suspend (String) -> Unit = {}): String = withContext(Dispatchers.IO) {
     val targetHost = extractLatencyHost(host)
     val targets = resolveProbeTargets(targetHost, dns1, dns2, ipMode)
     if (targets.isEmpty()) return@withContext "无法解析或当前 IP 策略无可用地址：$targetHost"
@@ -4883,6 +5109,7 @@ suspend fun traceRouteSmart(host: String, maxHops: Int, timeoutMs: Int, dns1: St
     val out = mutableListOf<String>()
     out += "目标 $targetHost → $target"
     out += "说明：Android 无原生 traceroute 权限时，用逐跳 TTL Ping 近似追踪。"
+    withContext(Dispatchers.Main) { onUpdate(out.joinToString("\n")) }
     for (ttl in 1..max) {
         val start = SystemClock.elapsedRealtime()
         val commands = if (is6) listOf(
@@ -4894,10 +5121,13 @@ suspend fun traceRouteSmart(host: String, maxHops: Int, timeoutMs: Int, dns1: St
         val hop = parseTraceHop(raw)
         val reached = raw.contains("bytes from", true) || raw.contains(" 0% packet loss", true) || hop == target
         out += ttl.toString().padStart(2, '0') + "  " + (hop ?: "*") + "  ${elapsed}ms"
+        withContext(Dispatchers.Main) { onUpdate(out.joinToString("\n")) }
         if (reached) break
     }
     out.joinToString("\n")
 }
+
+fun countTraceHops(output: String): Int = output.lines().count { line -> line.trimStart().take(2).trim().toIntOrNull() != null }
 
 private fun runTraceCommand(cmd: List<String>, waitMs: Int): String {
     val p = ProcessBuilder(cmd).redirectErrorStream(true).start()

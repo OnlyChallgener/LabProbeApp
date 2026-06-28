@@ -30,7 +30,7 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 53
+        versionCode = 55
         versionName = "0.9.15"
     }
 
@@ -68,6 +68,14 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    sourceSets {
+        getByName("main") {
+            // GitHub 网页上传覆盖文件时，旧的 app/src/main/java 可能不会被删除。
+            // 这里强制只编译当前工程使用的 Kotlin 源码目录，避免旧 TestForegroundService.kt 等遗留文件参与编译。
+            java.setSrcDirs(listOf("src/main/kotlin"))
+        }
     }
 
     compileOptions {

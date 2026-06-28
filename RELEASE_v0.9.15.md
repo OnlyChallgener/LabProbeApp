@@ -1,3 +1,17 @@
+# v0.9.15 buildfix10
+
+- versionCode: 55
+- 压缩 Ping 延迟卡片顶部工具栏，不再占用过多图表空间。
+- SSH 详情弹窗支持局部选择复制；复制输出按钮仍复制完整真实输出。
+- 修复 SSH 记录左滑删除按钮常驻问题。
+- 路由追踪新增实时过程显示与 15 条历史记录，历史支持展开、复制、左滑删除。
+
+# Labprobe v0.9.15 buildfix9
+
+- versionCode: 54
+- 修复 GitHub 仓库残留旧 `app/src/main/java/com/demonv/.../TestForegroundService.kt` 时仍被编译的问题。
+- Gradle 现在只编译 `app/src/main/kotlin` 当前源码目录，旧 Java 目录即使未被网页上传删除也不会影响构建。
+
 # Labprobe v0.9.15 / hotfix8
 
 - versionCode: 53

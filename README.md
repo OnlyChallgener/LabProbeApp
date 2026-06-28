@@ -1,4 +1,10 @@
-# Labprobe v0.9.15 hotfix7
+# Labprobe
+## v0.9.15 buildfix9
+
+- versionCode = 54。
+- 增加 Gradle sourceSets 保护：即使 GitHub 仓库里残留旧的 `app/src/main/java` 文件，也不会参与当前 Labprobe 构建。
+- 继续保留 Actions 构建前删除旧 Java 源码目录的步骤，避免 `TestForegroundService.kt` 遗留文件导致 Release 编译失败。
+ v0.9.15 hotfix7
 
 ## v0.9.15 hotfix8
 
@@ -97,4 +103,12 @@ app/build/outputs/apk/debug/app-debug.apk
 - NAT 记录最多保存 50 条，支持左滑删除。
 - 端口测试与 UDP 探测已拆成独立页面，避免两个入口共用同一逻辑。
 - versionCode = 50。
+
+
+## v0.9.15 buildfix10 / versionCode 55
+
+- Ping 延迟图表顶部工具栏缩矮：标题、图标、真实采样率/丢包胶囊和历史按钮更小，图表区域保持高度。
+- SSH 完整执行结果弹窗支持局部选择复制，右下角仍保留完整复制。
+- SSH 结果左滑删除状态自动回收，避免删除按钮常驻。
+- 路由追踪实时显示逐跳过程，新增最多 15 条追踪历史，支持展开/收起、复制、左滑删除。
 
