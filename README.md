@@ -30,7 +30,7 @@ app/build/outputs/apk/debug/app-debug.apk
 ## 版本
 
 - versionName: 0.9.15
-- versionCode: 47
+- versionCode: 49
 
 
 ## v0.9.15-hotfix1
@@ -53,4 +53,23 @@ app/build/outputs/apk/debug/app-debug.apk
 本版新增 NAT 行为检测：使用 STUN UDP 按 RFC3489 传统 TEST 1/2/3/4 展示基础映射、换地址回包、换端口回包和映射一致性。工具页同时改为 One UI 2 列磁贴布局，移除“整张卡片可直接进入”提示，并加入网络状态概览卡。
 
 注意：完整 NAT 分类需要 STUN 服务器支持 Changed/Other Address；普通公共 STUN 若只支持基础 Binding，APP 会只给出基础映射和低可信度结果，不会硬判。
+
+## v0.9.15 hotfix4 - 固定签名
+
+- `versionCode` 更新至 49。
+- `app/build.gradle.kts` 新增 `labprobeUpload` 签名配置。
+- GitHub Actions 支持从 Secrets 解码固定 keystore，`debug` 与 `release` 可使用同一签名。
+- 未配置 Secrets 时仍会构建 debug APK，但会在 Actions 中提示：默认 debug 签名可能导致后续无法覆盖安装。
+- 新增 `SIGNING_SETUP.md` 和 `signing.properties.example`，用于本地与 GitHub 固定签名配置。
+
+注意：如果手机里已安装旧随机签名 APK，第一次切换到固定签名版时可能仍需卸载一次；之后保留同一 keystore 并递增 `versionCode` 即可覆盖安装。
+
+## v0.9.15 hotfix5 · 网络状态 / NAT / UDP 重构
+
+- 工具页网络状态卡显示 IPv4 出口、IPv6 地址、NAT 类型、运营商、本地 IP、优先级。
+- NAT 检测支持 RFC5780 / STUN RFC8489 行为发现与 RFC3489 TEST 1-4 双模式。
+- NAT 服务器每类最多保存 10 个，失败按顺序重测。
+- NAT 记录最多保存 50 条，支持左滑删除。
+- 端口测试与 UDP 探测已拆成独立页面，避免两个入口共用同一逻辑。
+- versionCode = 50。
 

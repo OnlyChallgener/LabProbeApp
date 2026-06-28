@@ -113,9 +113,19 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 48
+    const val CODE = 50
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 网络/NAT重构热修" to listOf(
+            "工具页网络状态卡改为 6 项：IPv4 出口、IPv6、本地 IP、运营商、优先级、NAT 类型",
+            "NAT 检测拆分 RFC5780 行为发现与 RFC3489 TEST 1-4，支持服务器列表和历史记录",
+            "端口测试与 UDP 探测拆分独立页面，避免两个入口共用同一逻辑"
+        ),
+        "v0.9.15 · 固定签名热修" to listOf(
+            "GitHub Actions 支持固定 keystore 签名，避免每次构建签名变化导致无法覆盖安装",
+            "debug 与 release 构建可共用同一把 Labprobe 上传签名，只要 versionCode 递增即可直接升级",
+            "未配置签名密钥时继续 fallback 到默认 debug 签名，并在 Actions 中明确警告"
+        ),
         "v0.9.15 · NAT 行为检测与工具页重构" to listOf(
             "新增 NAT 行为检测页面，按 RFC3489 传统 TEST 1/2/3/4 展示基础映射、换地址回包、换端口回包和映射一致性",
             "STUN 解析支持 MAPPED-ADDRESS、XOR-MAPPED-ADDRESS、CHANGED-ADDRESS、OTHER-ADDRESS，结果同时显示映射行为、过滤行为与传统分类",
@@ -403,6 +413,118 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("nat_timeout", v.trim()).apply()
     var natIpMode: String get() = sp.getString("nat_ip_mode", "自动") ?: "自动"
         set(v) = sp.edit().putString("nat_ip_mode", v).apply()
+    var natMode: String get() = sp.getString("nat_mode", "RFC5780") ?: "RFC5780"
+        set(v) = sp.edit().putString("nat_mode", v).apply()
+
+    var udpHost: String get() = sp.getString("udp_host", "stun.voip.aebc.com") ?: "stun.voip.aebc.com"
+        set(v) = sp.edit().putString("udp_host", v.trim()).apply()
+    var udpPort: String get() = sp.getString("udp_port", "3478") ?: "3478"
+        set(v) = sp.edit().putString("udp_port", v.trim()).apply()
+    var udpTimeout: String get() = sp.getString("udp_timeout", "1000") ?: "1000"
+        set(v) = sp.edit().putString("udp_timeout", v.trim()).apply()
+    var udpTemplate: String get() = sp.getString("udp_template", "STUN Binding") ?: "STUN Binding"
+        set(v) = sp.edit().putString("udp_template", v).apply()
+    var udpIpMode: String get() = sp.getString("udp_ip_mode", "自动") ?: "自动"
+        set(v) = sp.edit().putString("udp_ip_mode", v).apply()
+
+    fun natServers(mode: String): List<StunServerItem> {
+        val key = if (mode == "RFC3489") "nat_servers_3489" else "nat_servers_5780"
+        val fallback = if (mode == "RFC3489") listOf(StunServerItem("stun.miwifi.com", 3478)) else listOf(StunServerItem("stun.voip.aebc.com", 3478))
+        val raw = sp.getString(key, null) ?: return fallback
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val h = o.optString("host").trim()
+                val p = o.optInt("port", 3478).coerceIn(1, 65535)
+                if (h.isBlank()) null else StunServerItem(h, p)
+            }.ifEmpty { fallback }
+        }.getOrDefault(fallback).take(10)
+    }
+
+    fun saveNatServers(mode: String, list: List<StunServerItem>) {
+        val key = if (mode == "RFC3489") "nat_servers_3489" else "nat_servers_5780"
+        val arr = JSONArray()
+        list.distinctBy { it.host.lowercase(Locale.getDefault()) + ":" + it.port }.take(10).forEach { s ->
+            arr.put(JSONObject().put("host", s.host).put("port", s.port))
+        }
+        sp.edit().putString(key, arr.toString()).apply()
+    }
+
+    fun addNatServer(mode: String, host: String, port: Int) {
+        val h = host.trim()
+        if (h.isBlank()) return
+        saveNatServers(mode, listOf(StunServerItem(h, port.coerceIn(1, 65535))) + natServers(mode).filterNot { it.host.equals(h, true) && it.port == port })
+    }
+
+    fun deleteNatServer(mode: String, item: StunServerItem) {
+        saveNatServers(mode, natServers(mode).filterNot { it.host.equals(item.host, true) && it.port == item.port })
+    }
+
+    fun resetNatServers(mode: String) {
+        val key = if (mode == "RFC3489") "nat_servers_3489" else "nat_servers_5780"
+        sp.edit().remove(key).apply()
+    }
+
+    fun natHistory(): List<NatHistoryEntry> {
+        val raw = sp.getString("nat_history_v2", "[]") ?: "[]"
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                NatHistoryEntry(
+                    id = o.optLong("id", i.toLong()),
+                    time = o.optString("time"),
+                    mode = o.optString("mode"),
+                    server = o.optString("server"),
+                    classicType = o.optString("classicType", "未知"),
+                    confidence = o.optString("confidence", "低"),
+                    mapped = o.optString("mapped"),
+                    local = o.optString("local"),
+                    ipv6 = o.optString("ipv6"),
+                    operator = o.optString("operator"),
+                    priority = o.optString("priority"),
+                    elapsedMs = o.optLong("elapsedMs", 0L),
+                    summary = o.optString("summary")
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun addNatHistory(entry: NatHistoryEntry) {
+        val arr = JSONArray()
+        (listOf(entry) + natHistory()).distinctBy { it.id }.take(50).forEach { h ->
+            arr.put(JSONObject()
+                .put("id", h.id)
+                .put("time", h.time)
+                .put("mode", h.mode)
+                .put("server", h.server)
+                .put("classicType", h.classicType)
+                .put("confidence", h.confidence)
+                .put("mapped", h.mapped)
+                .put("local", h.local)
+                .put("ipv6", h.ipv6)
+                .put("operator", h.operator)
+                .put("priority", h.priority)
+                .put("elapsedMs", h.elapsedMs)
+                .put("summary", h.summary))
+        }
+        sp.edit().putString("nat_history_v2", arr.toString()).apply()
+    }
+
+    fun deleteNatHistory(id: Long) {
+        val arr = JSONArray()
+        natHistory().filterNot { it.id == id }.forEach { h ->
+            arr.put(JSONObject()
+                .put("id", h.id).put("time", h.time).put("mode", h.mode).put("server", h.server)
+                .put("classicType", h.classicType).put("confidence", h.confidence).put("mapped", h.mapped)
+                .put("local", h.local).put("ipv6", h.ipv6).put("operator", h.operator).put("priority", h.priority)
+                .put("elapsedMs", h.elapsedMs).put("summary", h.summary))
+        }
+        sp.edit().putString("nat_history_v2", arr.toString()).apply()
+    }
+
+    fun clearNatHistory() { sp.edit().putString("nat_history_v2", "[]").apply() }
 
     var sshHost: String get() = sp.getString("ssh_host", "192.168.5.1") ?: "192.168.5.1"
         set(v) = sp.edit().putString("ssh_host", v).apply()
@@ -476,6 +598,30 @@ data class PingHistoryEntry(
 )
 
 data class NetworkBrief(val transport: String, val hasV4: Boolean, val hasV6: Boolean)
+data class NetworkProfile(
+    val ipv4Exit: String,
+    val ipv6Address: String,
+    val natType: String,
+    val operator: String,
+    val localIp: String,
+    val priority: String
+)
+data class StunServerItem(val host: String, val port: Int) { override fun toString(): String = "$host:$port" }
+data class NatHistoryEntry(
+    val id: Long,
+    val time: String,
+    val mode: String,
+    val server: String,
+    val classicType: String,
+    val confidence: String,
+    val mapped: String,
+    val local: String,
+    val ipv6: String,
+    val operator: String,
+    val priority: String,
+    val elapsedMs: Long,
+    val summary: String
+)
 data class StunEndpoint(val address: String, val port: Int) { override fun toString(): String = "$address:$port" }
 data class StunResponse(
     val mapped: StunEndpoint?,
@@ -496,7 +642,8 @@ data class NatRunResult(
     val classicType: String,
     val confidence: String,
     val steps: List<NatStep>,
-    val elapsedMs: Long
+    val elapsedMs: Long,
+    val serverUsed: String? = null
 )
 
 class AppState(private val prefs: AppPrefs) {
@@ -621,7 +768,13 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
         val navigate: (String) -> Unit = { target -> route = target }
-        BackHandler(route.startsWith("tool_") || route == "daily") { route = if (route == "daily") "events" else "tools" }
+        BackHandler(route.startsWith("tool_") || route == "daily") {
+            route = when (route) {
+                "daily" -> "events"
+                "tool_nat_history" -> "tool_nat"
+                else -> "tools"
+            }
+        }
 
         val topNav: @Composable () -> Unit = {
             OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
@@ -649,7 +802,9 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
-                        "tool_nat" -> NatScreen(prefs) { route = "tools" }
+                        "tool_udp" -> UdpProbeScreen(prefs) { route = "tools" }
+                        "tool_nat" -> NatScreen(prefs, { route = "tools" }) { route = "tool_nat_history" }
+                        "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
                         else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
                     }
@@ -2009,36 +2164,69 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 @Composable
 fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "网络诊断 · 本地系统", topNav = topNav) {
     val ctx = LocalContext.current
-    val brief = remember { detectNetworkBrief(ctx) }
-    val last = remember { prefs.pingHistory().firstOrNull() }
-    ExpressiveCard("网络状态", "本机接口 · 最近一次延迟结果", Icons.Rounded.Public, Color(0xFF2563EB)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusPill("网络", brief.transport, Color(0xFF2563EB))
-            StatusPill("IPv4", if (brief.hasV4) "可用" else "未见", Color(0xFF0EA5E9))
-            StatusPill("IPv6", if (brief.hasV6) "可用" else "未见", Color(0xFF06B6D4))
+    var profile by remember { mutableStateOf(detectNetworkProfile(ctx, prefs)) }
+    ExpressiveCard("网络状态", "本机接口 · 最近 NAT / 延迟结果", Icons.Rounded.Public, Color(0xFF2563EB)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("当前网络", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.weight(1f))
+            Surface(
+                onClick = { profile = detectNetworkProfile(ctx, prefs) },
+                shape = CircleShape,
+                color = Color(0xFF2563EB).copy(alpha = .10f),
+                modifier = Modifier.size(34.dp)
+            ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Refresh, null, tint = Color(0xFF2563EB), modifier = Modifier.size(18.dp)) } }
         }
-        val latency = last?.avg?.let { "${it}ms" } ?: "未测"
-        val loss = last?.loss?.let { "${it}%" } ?: "--"
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusPill("最近延迟", latency, Color(0xFF2563EB))
-            StatusPill("丢包", loss, Color(0xFFEF4444))
-            StatusPill("NAT", "行为检测", Color(0xFF7C3AED))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkStatusTile("IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f))
+                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.Language, Color(0xFF06B6D4), Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkStatusTile("NAT类型", profile.natType, Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f), clickable = true) { open("tool_nat") }
+                NetworkStatusTile("运营商", profile.operator, Icons.Rounded.CellTower, Color(0xFF0EA5E9), Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkStatusTile("本地IP", profile.localIp, Icons.Rounded.Devices, Color(0xFF64748B), Modifier.weight(1f))
+                NetworkStatusTile("优先级", profile.priority, Icons.Rounded.Timeline, Color(0xFFF59E0B), Modifier.weight(1f))
+            }
         }
     }
     ToolGroupLabel("网络测试")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
-        ToolHubTile("端口测试", "TCP/UDP", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
+        ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
     }
     ToolGroupLabel("解析与 NAT")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("DNS解析", "A/AAAA", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
-        ToolHubTile("NAT检测", "TEST 1-4", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
+        ToolHubTile("NAT检测", "RFC5780 / 3489", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
     }
     ToolGroupLabel("设备工具")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_port") }
+        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
         ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
+    }
+}
+
+@Composable
+fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, clickable: Boolean = false, onClick: () -> Unit = {}) {
+    val m = if (clickable) modifier.clickable { onClick() } else modifier
+    Surface(
+        modifier = m.height(62.dp),
+        shape = RoundedCornerShape(20.dp),
+        color = color.copy(alpha = .08f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(28.dp).clip(RoundedCornerShape(12.dp)).background(color.copy(alpha = .13f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+                Text(value.ifBlank { "未知" }, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
@@ -2086,9 +2274,15 @@ fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("延迟测试"
 @Composable
 fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
 @Composable
-fun PortProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("端口探测", "TCP / UDP，支持域名、IPv4、IPv6", onBack) { TcpTool(prefs) }
+fun PortProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("端口测试", "TCP Connect · Telnet 同类 · IPv4 / IPv6", onBack) { TcpTool(prefs) }
+
 @Composable
-fun NatScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 检测", "RFC3489 TEST 1/2/3/4 · STUN 行为发现", onBack) { NatTool(prefs) }
+fun UdpProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("UDP 探测", "STUN / DNS / NTP · 无响应不等于关闭", onBack) { UdpTool(prefs) }
+@Composable
+fun NatScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) = DetailShell("NAT 检测", "RFC5780 行为发现 · RFC3489 TEST 1-4", onBack) { NatTool(prefs, openHistory) }
+
+@Composable
+fun NatHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 记录", "最近 50 条 · 左滑删除", onBack) { NatHistoryTool(prefs) }
 @Composable
 fun SshScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack) { SshTool(prefs) }
 
@@ -2571,85 +2765,171 @@ fun TcpTool(prefs: AppPrefs) {
     var host by remember { mutableStateOf(prefs.tcpHost) }
     var port by remember { mutableStateOf(prefs.tcpPort) }
     var timeout by remember { mutableStateOf(prefs.tcpTimeout) }
-    var protocol by remember { mutableStateOf(prefs.portProtocol) }
+    var ipMode by remember { mutableStateOf("自动") }
     var result by remember { mutableStateOf("等待检测") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("探测配置", "TCP 可判断开放；UDP 无响应只能判定开放或过滤。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
-        SelectInput("协议", protocol, listOf("TCP", "UDP")) { protocol = it; prefs.portProtocol = it }
-        LabeledHistoryInput("主机", "lp.net86.dynv6.net / IPv6", host, { host = it; prefs.tcpHost = it }, "port_host", prefs)
-        LabeledHistoryInput("端口", "2186", port, { port = it; prefs.tcpPort = it }, "port_port", prefs, KeyboardType.Number)
-        LabeledInput("超时", "1000", timeout, { timeout = it; prefs.tcpTimeout = it }, KeyboardType.Number)
-        PillButton("开始探测", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) { scope.launch { prefs.addHistory("port_host", host); prefs.addHistory("port_port", port); result = if (protocol == "UDP") udpProbeSmart(host, port.toIntOrNull() ?: 53, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) else tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) } }
+    ExpressiveCard("TCP 配置", "等同 telnet / nc 连接测试，可明确成功、拒绝或超时。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
+        LabeledHistoryInput("主机", "net86.dynv6.net / 240e::1", host, { host = it; prefs.tcpHost = it }, "port_host", prefs)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(Modifier.weight(1f)) { LabeledHistoryInput("端口", "443", port, { port = it; prefs.tcpPort = it }, "port_port", prefs, KeyboardType.Number) }
+            Column(Modifier.weight(1f)) { LabeledInput("超时", "1000", timeout, { timeout = it; prefs.tcpTimeout = it }, KeyboardType.Number) }
+        }
+        SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it }
+        PillButton("开始 TCP 测试", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) {
+            scope.launch {
+                prefs.addHistory("port_host", host); prefs.addHistory("port_port", port)
+                result = tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, ipMode)
+            }
+        }
     }
-    ExpressiveCard("探测结果", protocol, Icons.Rounded.Route, Color(0xFF64748B)) { ResultText(result) }
+    ExpressiveCard("TCP 结果", "连接成功 / 拒绝 / 超时", Icons.Rounded.Route, Color(0xFF64748B)) { ResultText(result) }
 }
 
 @Composable
-fun NatTool(prefs: AppPrefs) {
-    var server by remember { mutableStateOf(prefs.natServer) }
-    var port by remember { mutableStateOf(prefs.natPort) }
+fun UdpTool(prefs: AppPrefs) {
+    var host by remember { mutableStateOf(prefs.udpHost) }
+    var port by remember { mutableStateOf(prefs.udpPort) }
+    var timeout by remember { mutableStateOf(prefs.udpTimeout) }
+    var template by remember { mutableStateOf(prefs.udpTemplate) }
+    var ipMode by remember { mutableStateOf(prefs.udpIpMode) }
+    var result by remember { mutableStateOf("等待探测") }
+    val scope = rememberCoroutineScope()
+    ExpressiveCard("UDP 配置", "UDP 无握手；无响应不代表端口关闭。", Icons.Rounded.SyncAlt, Color(0xFF06B6D4)) {
+        SelectInput("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "UDP 空包")) { template = it; prefs.udpTemplate = it }
+        LabeledHistoryInput("目标", "stun.voip.aebc.com", host, { host = it; prefs.udpHost = it }, "udp_host", prefs)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(Modifier.weight(1f)) { LabeledHistoryInput("端口", "3478", port, { port = it; prefs.udpPort = it }, "udp_port", prefs, KeyboardType.Number) }
+            Column(Modifier.weight(1f)) { LabeledInput("超时", "1000", timeout, { timeout = it; prefs.udpTimeout = it }, KeyboardType.Number) }
+        }
+        SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it; prefs.udpIpMode = it }
+        PillButton("开始 UDP 探测", Icons.Rounded.Waves, accent = Color(0xFF06B6D4)) {
+            scope.launch {
+                prefs.addHistory("udp_host", host); prefs.addHistory("udp_port", port)
+                result = udpProbeSmart(host, port.toIntOrNull() ?: 3478, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, ipMode, template)
+            }
+        }
+    }
+    ExpressiveCard("UDP 结果", template, Icons.Rounded.TravelExplore, Color(0xFF06B6D4)) {
+        ResultText(result)
+        Spacer(Modifier.height(6.dp))
+        Text("提示：UDP 只有收到协议响应或 ICMP Port Unreachable 才较明确；无响应通常应显示为未知/可能过滤。", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), lineHeight = 16.sp)
+    }
+}
+
+@Composable
+fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
+    var mode by remember { mutableStateOf(prefs.natMode) }
+    var servers by remember(mode) { mutableStateOf(prefs.natServers(mode)) }
+    var selected by remember(mode, servers) { mutableStateOf(servers.firstOrNull() ?: defaultNatServer(mode)) }
+    var host by remember(selected) { mutableStateOf(selected.host) }
+    var port by remember(selected) { mutableStateOf(selected.port.toString()) }
     var timeout by remember { mutableStateOf(prefs.natTimeout) }
     var ipMode by remember { mutableStateOf(prefs.natIpMode) }
     var running by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<NatRunResult?>(null) }
     var msg by remember { mutableStateOf("等待检测") }
+    var showServers by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    ExpressiveCard("检测配置", "完整 TEST 2/3/4 需要 STUN 服务器支持 Changed/Other Address。", Icons.Rounded.Router, Color(0xFF7C3AED)) {
-        LabeledHistoryInput("服务器", "stun.l.google.com", server, { server = it; prefs.natServer = it }, "nat_server", prefs)
+    val accent = if (mode == "RFC3489") Color(0xFF7C3AED) else Color(0xFF2563EB)
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = mode == "RFC5780", onClick = { mode = "RFC5780"; prefs.natMode = mode }, label = { Text("RFC5780 / 8489", fontSize = 12.sp, fontWeight = FontWeight.Black) })
+        FilterChip(selected = mode == "RFC3489", onClick = { mode = "RFC3489"; prefs.natMode = mode }, label = { Text("RFC3489 TEST", fontSize = 12.sp, fontWeight = FontWeight.Black) })
+        Spacer(Modifier.weight(1f))
+        Surface(onClick = openHistory, shape = CircleShape, color = Color(0xFF2563EB).copy(alpha = .10f), modifier = Modifier.size(38.dp)) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, tint = Color(0xFF2563EB), modifier = Modifier.size(19.dp)) }
+        }
+    }
+
+    ExpressiveCard("检测配置", if (mode == "RFC3489") "传统 TEST 1-4 · 默认 stun.miwifi.com" else "RFC5780 行为发现 · 默认 stun.voip.aebc.com", Icons.Rounded.Router, accent) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { showServers = !showServers }, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(46.dp)) {
+                Icon(Icons.Rounded.Storage, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("服务器列表", fontWeight = FontWeight.Black, fontSize = 12.sp)
+            }
+            OutlinedButton(onClick = { prefs.resetNatServers(mode); servers = prefs.natServers(mode); selected = servers.first(); host = selected.host; port = selected.port.toString() }, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(46.dp)) {
+                Icon(Icons.Rounded.RestartAlt, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("恢复默认", fontWeight = FontWeight.Black, fontSize = 12.sp)
+            }
+        }
+        AnimatedVisibility(showServers) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                servers.forEach { item ->
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (item.host == host && item.port.toString() == port) accent.copy(alpha = .10f) else MaterialTheme.colorScheme.onSurface.copy(alpha = .035f),
+                        modifier = Modifier.fillMaxWidth().clickable { selected = item; host = item.host; port = item.port.toString() }
+                    ) {
+                        Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Dns, null, tint = accent, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(item.toString(), Modifier.weight(1f), fontSize = 12.4.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            IconButton(onClick = { prefs.deleteNatServer(mode, item); servers = prefs.natServers(mode); if (servers.none { it.host == host && it.port.toString() == port }) { selected = servers.first(); host = selected.host; port = selected.port.toString() } }) { Icon(Icons.Rounded.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(17.dp)) }
+                        }
+                    }
+                }
+            }
+        }
+        LabeledHistoryInput("服务器", defaultNatServer(mode).host, host, { host = it }, "nat_server_$mode", prefs)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Column(Modifier.weight(1f)) { LabeledInput("端口", "19302", port, { port = it; prefs.natPort = it }, KeyboardType.Number) }
+            Column(Modifier.weight(1f)) { LabeledInput("端口", defaultNatServer(mode).port.toString(), port, { port = it }, KeyboardType.Number) }
             Column(Modifier.weight(1f)) { LabeledInput("超时", "1200", timeout, { timeout = it; prefs.natTimeout = it }, KeyboardType.Number) }
         }
         SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it; prefs.natIpMode = it }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             Button(
                 onClick = {
-                    val safePort = port.toIntOrNull()?.coerceIn(1, 65535) ?: 19302
+                    val safePort = port.toIntOrNull()?.coerceIn(1, 65535) ?: defaultNatServer(mode).port
                     val safeTimeout = timeout.toIntOrNull()?.coerceIn(300, 8000) ?: 1200
-                    prefs.addHistory("nat_server", server)
+                    prefs.addNatServer(mode, host, safePort)
+                    servers = prefs.natServers(mode)
                     scope.launch {
                         running = true
-                        msg = "检测中：TEST 1/2/3/4"
-                        result = runCatching { runNatBehaviorTest(server, safePort, safeTimeout, ipMode) }.getOrElse { e ->
-                            NatRunResult(
-                                title = "检测失败",
-                                summary = e.message ?: e.javaClass.simpleName,
-                                mapped = null,
-                                local = null,
-                                other = null,
-                                mappingBehavior = "未知",
-                                filteringBehavior = "未知",
-                                classicType = "无法判断",
-                                confidence = "低",
-                                steps = listOf(NatStep("执行异常", "失败", e.javaClass.simpleName + ": " + (e.message ?: ""), false)),
-                                elapsedMs = 0L
-                            )
+                        msg = "检测中：${if (mode == "RFC3489") "TEST 1/2/3/4" else "RFC5780 行为发现"}"
+                        val chain = (listOf(StunServerItem(host, safePort)) + servers).distinctBy { it.host.lowercase(Locale.getDefault()) + ":" + it.port }.take(10)
+                        result = runNatBehaviorTestChain(mode, chain, safeTimeout, ipMode)
+                        val r = result
+                        msg = r?.summary ?: "完成"
+                        if (r != null) {
+                            val profile = detectNetworkProfile(ctx, prefs)
+                            prefs.addNatHistory(NatHistoryEntry(
+                                id = System.currentTimeMillis(),
+                                time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+                                mode = mode,
+                                server = r.serverUsed ?: chain.first().toString(),
+                                classicType = r.classicType,
+                                confidence = r.confidence,
+                                mapped = r.mapped?.toString().orEmpty(),
+                                local = r.local?.toString().orEmpty(),
+                                ipv6 = profile.ipv6Address,
+                                operator = profile.operator,
+                                priority = profile.priority,
+                                elapsedMs = r.elapsedMs,
+                                summary = r.summary
+                            ))
                         }
-                        msg = result?.summary ?: "完成"
                         running = false
                     }
                 },
                 enabled = !running,
                 shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                colors = ButtonDefaults.buttonColors(containerColor = accent),
                 modifier = Modifier.weight(1f).height(48.dp)
             ) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (running) "检测中" else "开始检测", fontWeight = FontWeight.Black) }
-            OutlinedButton(
-                onClick = { server = "stun.l.google.com"; port = "19302"; timeout = "1200"; ipMode = "自动"; prefs.natServer = server; prefs.natPort = port; prefs.natTimeout = timeout; prefs.natIpMode = ipMode },
-                shape = RoundedCornerShape(22.dp),
-                modifier = Modifier.weight(1f).height(48.dp)
-            ) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("恢复默认", fontWeight = FontWeight.Bold) }
+            OutlinedButton(onClick = openHistory, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(48.dp)) {
+                Icon(Icons.Rounded.History, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("NAT记录", fontWeight = FontWeight.Bold)
+            }
         }
     }
     val r = result
     ExpressiveCard("结果", msg, Icons.Rounded.TravelExplore, Color(0xFF2563EB)) {
         if (r == null) {
-            ResultText("说明：NAT 行为检测使用 STUN UDP。公共 STUN 若只支持基础 Binding，只能得出公网映射，无法完整区分 Full Cone / Restricted / Port Restricted / Symmetric。")
+            ResultText("说明：RFC5780 用 STUN 行为发现描述映射/过滤行为；RFC3489 保留 TEST 1-4 传统分类。公共 STUN 服务器能力不一致，失败会按服务器列表顺序重测。")
         } else {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusPill("传统类型", r.classicType, Color(0xFF7C3AED))
+                StatusPill("类型", r.classicType, Color(0xFF7C3AED))
                 StatusPill("可信度", r.confidence, Color(0xFF2563EB))
             }
+            InfoRow("服务器", r.serverUsed, copyable = true)
             InfoRow("公网映射", r.mapped?.toString(), copyable = true)
             InfoRow("本地端点", r.local?.toString())
             InfoRow("备用地址", r.other?.toString(), copyable = true)
@@ -2658,7 +2938,7 @@ fun NatTool(prefs: AppPrefs) {
             InfoRow("耗时", formatElapsedMs(r.elapsedMs))
         }
     }
-    ExpressiveCard("TEST 1/2/3/4", "日志保留 RFC3489 传统编号，结果采用行为描述。", Icons.Rounded.Notes, Color(0xFF0EA5E9)) {
+    ExpressiveCard(if (mode == "RFC3489") "TEST 1/2/3/4" else "RFC5780 步骤", "日志保留传统编号，结论使用行为描述。", Icons.Rounded.Notes, Color(0xFF0EA5E9)) {
         val steps = r?.steps ?: listOf(
             NatStep("TEST 1 基础映射", "等待", "向 STUN 主地址发送 Binding Request，获取公网映射。", null),
             NatStep("TEST 2 换IP+端口回包", "等待", "要求服务器从备用 IP 与备用端口回包，用于判断过滤行为。", null),
@@ -2667,8 +2947,74 @@ fun NatTool(prefs: AppPrefs) {
         )
         steps.forEach { NatStepRow(it) }
     }
-    ExpressiveCard("判定口径", "避免 NAT1/NAT3 误导，显示行为和可信度。", Icons.Rounded.Info, Color(0xFF64748B)) {
-        ResultText("Full Cone / Restricted / Port Restricted / Symmetric 属于 RFC3489 传统分类；现代 STUN 更推荐描述映射行为与过滤行为。若服务器不支持 Changed/Other Address，本页会标记为增强测试不足，不会硬判。")
+}
+
+@Composable
+fun NatHistoryTool(prefs: AppPrefs) {
+    var list by remember { mutableStateOf(prefs.natHistory()) }
+    var opened by remember { mutableStateOf<Long?>(null) }
+    ExpressiveCard("记录概览", "${list.size}/50 条 · 保存日期时间、服务器、类型和映射", Icons.Rounded.History, Color(0xFF2563EB)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { prefs.clearNatHistory(); list = prefs.natHistory() }, shape = RoundedCornerShape(22.dp), modifier = Modifier.weight(1f).height(44.dp)) { Icon(Icons.Rounded.DeleteSweep, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("清空", fontWeight = FontWeight.Black) }
+        }
+    }
+    if (list.isEmpty()) {
+        ExpressiveCard("暂无记录", "完成 NAT 检测后自动保存。", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待检测", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f)) }
+    }
+    list.forEach { item ->
+        NatHistoryCard(item, opened == item.id, onToggle = { opened = if (opened == item.id) null else item.id }, onDelete = { prefs.deleteNatHistory(item.id); list = prefs.natHistory() })
+    }
+}
+
+@Composable
+fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Unit, onDelete: () -> Unit) {
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 92.dp.toPx() }
+    var targetOffsetPx by remember(item.id) { mutableStateOf(0f) }
+    var dragging by remember(item.id) { mutableStateOf(false) }
+    var pendingDelete by remember(item.id) { mutableStateOf(false) }
+    val animatedOffsetPx by animateFloatAsState(targetOffsetPx, animationSpec = tween(if (dragging) 0 else 180), label = "nat-history-offset")
+    LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
+    AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 92.dp)) {
+            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { pendingDelete = true }, contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp)); Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp) }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth().offset { IntOffset(animatedOffsetPx.roundToInt(), 0) }.pointerInput(item.id) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onDragEnd = { dragging = false; targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) -deleteWidthPx else 0f },
+                        onDragCancel = { dragging = false; targetOffsetPx = 0f },
+                        onHorizontalDrag = { _, dragAmount -> targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
+                    )
+                }.shadow(4.dp, RoundedCornerShape(24.dp), clip = false).clickable { onToggle() },
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
+            ) {
+                Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF7C3AED).copy(alpha=.12f)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Router, null, tint = Color(0xFF7C3AED), modifier = Modifier.size(18.dp)) }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(item.time, fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+                            Text(item.classicType.ifBlank { "未知" }, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        StatusPill(item.mode, item.confidence.ifBlank { "低" }, Color(0xFF2563EB))
+                    }
+                    Text(item.summary.ifBlank { item.server }, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), maxLines = if (expanded) 3 else 1, overflow = TextOverflow.Ellipsis)
+                    if (expanded) {
+                        InfoRow("服务器", item.server)
+                        InfoRow("公网映射", item.mapped.ifBlank { "--" }, copyable = true)
+                        InfoRow("本地IP", item.local.ifBlank { "--" })
+                        InfoRow("IPv6", item.ipv6.ifBlank { "--" })
+                        InfoRow("运营商", item.operator.ifBlank { "未知" })
+                        InfoRow("优先级", item.priority.ifBlank { "未知" })
+                        InfoRow("耗时", formatElapsedMs(item.elapsedMs))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3643,45 +3989,95 @@ suspend fun pingOnce(host: String, timeoutMs: Int): Int? = withContext(Dispatche
     runCatching { pingOnceAddress(InetAddress.getByName(host), timeoutMs) }.getOrNull()
 }
 
-suspend fun tcpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String): String = withContext(Dispatchers.IO) {
-    val targets = if (isIpLiteral(host)) listOf(host) else (DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 28) + DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 28) + DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 1) + DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 1)).distinct().filter { it != "127.0.0.1" }
-    if (targets.isEmpty()) return@withContext "FAILED\n无法解析：$host"
-    val logs = mutableListOf<String>()
-    for (ip in targets) {
-        val start = System.currentTimeMillis()
-        try { Socket().use { it.connect(InetSocketAddress(InetAddress.getByName(ip), port), timeout) }; return@withContext "OPEN\n$host → $ip:$port\n耗时 ${System.currentTimeMillis()-start}ms" } catch (e: Exception) { logs += "$ip 失败：${e.javaClass.simpleName}" }
-    }
-    "FAILED\n$host:$port\n" + logs.joinToString("\n")
+private fun resolveProbeTargets(host: String, dns1: String, dns2: String, ipMode: String): List<String> {
+    val raw = if (isIpLiteral(host)) listOf(host) else (
+        DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 28) +
+        DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 28) +
+        DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 1) +
+        DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 1) +
+        runCatching { InetAddress.getAllByName(host).mapNotNull { it.hostAddress } }.getOrDefault(emptyList())
+    ).distinct().filter { it != "127.0.0.1" }
+    return raw.filter { ip ->
+        val is6 = ip.contains(":")
+        when (ipMode) {
+            "仅IPv6" -> is6
+            "仅IPv4" -> !is6
+            else -> true
+        }
+    }.let { list ->
+        when (ipMode) {
+            "IPv6优先", "自动" -> list.sortedBy { if (it.contains(":")) 0 else 1 }
+            "IPv4优先" -> list.sortedBy { if (it.contains(":")) 1 else 0 }
+            else -> list
+        }
+    }.distinct()
 }
 
-
-suspend fun udpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String): String = withContext(Dispatchers.IO) {
-    val targets = if (isIpLiteral(host)) listOf(host) else (DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 28) + DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 28) + DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 1) + DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 1)).distinct().filter { it != "127.0.0.1" }
-    if (targets.isEmpty()) return@withContext "FAILED\n无法解析：$host"
-    val probe = byteArrayOf(0x4c, 0x61, 0x62, 0x50, 0x72, 0x6f, 0x62, 0x65)
+suspend fun tcpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String, ipMode: String = "自动"): String = withContext(Dispatchers.IO) {
+    val targets = resolveProbeTargets(host, dns1, dns2, ipMode)
+    if (targets.isEmpty()) return@withContext "FAILED\n无法解析或当前 IP 策略无可用地址：$host"
     val logs = mutableListOf<String>()
     for (ip in targets) {
         val start = System.currentTimeMillis()
         try {
-            DatagramSocket().use { socket ->
-                socket.soTimeout = timeout
-                val addr = InetAddress.getByName(ip)
-                socket.connect(addr, port)
-                socket.send(DatagramPacket(probe, probe.size, addr, port))
-                val buf = ByteArray(512)
-                val resp = DatagramPacket(buf, buf.size)
-                socket.receive(resp)
-                return@withContext "UDP RESPONSE\n$host → $ip:$port\n耗时 ${System.currentTimeMillis()-start}ms\n说明：收到 UDP 响应，端口大概率开放。"
-            }
-        } catch (e: java.net.PortUnreachableException) {
-            return@withContext "UDP CLOSED\n$host → $ip:$port\n收到 ICMP Port Unreachable"
+            Socket().use { it.connect(InetSocketAddress(InetAddress.getByName(ip), port), timeout.coerceIn(300, 8000)) }
+            return@withContext "OPEN\n$host → $ip:$port\n耗时 ${System.currentTimeMillis()-start}ms\n说明：TCP 三次握手成功，端口可达。"
+        } catch (e: java.net.ConnectException) {
+            logs += "$ip 连接拒绝：主机可达但端口未开放/拒绝连接"
         } catch (e: java.net.SocketTimeoutException) {
-            logs += "$ip 无响应：OPEN|FILTERED"
+            logs += "$ip 超时：可能被防火墙过滤或路由不可达"
         } catch (e: Exception) {
-            logs += "$ip 失败：${e.javaClass.simpleName}"
+            logs += "$ip 失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
         }
     }
-    "UDP NO RESPONSE\n$host:$port\n" + logs.joinToString("\n") + "\n说明：UDP 无响应不代表端口关闭，可能开放或被防火墙过滤。"
+    "FAILED\n$host:$port\n" + logs.joinToString("\n")
+}
+
+private fun udpPayload(template: String, host: String): ByteArray {
+    return when (template) {
+        "STUN Binding" -> buildStunRequest(false, false).first
+        "DNS 查询" -> {
+            val domain = host.takeIf { !isIpLiteral(it) } ?: "example.com"
+            val out = ByteArrayOutputStream()
+            val id = SecureRandom().nextInt(65535)
+            out.write(byteArrayOf((id ushr 8).toByte(), id.toByte(), 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
+            domain.split('.').filter { it.isNotBlank() }.forEach { label -> val b = label.toByteArray(); out.write(b.size); out.write(b) }
+            out.write(0); out.write(byteArrayOf(0x00, 0x01, 0x00, 0x01))
+            out.toByteArray()
+        }
+        "NTP 请求" -> ByteArray(48).also { it[0] = 0x1B }
+        else -> byteArrayOf(0x4c, 0x61, 0x62, 0x50, 0x72, 0x6f, 0x62, 0x65)
+    }
+}
+
+suspend fun udpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String, ipMode: String = "自动", template: String = "UDP 空包"): String = withContext(Dispatchers.IO) {
+    val targets = resolveProbeTargets(host, dns1, dns2, ipMode)
+    if (targets.isEmpty()) return@withContext "FAILED\n无法解析或当前 IP 策略无可用地址：$host"
+    val logs = mutableListOf<String>()
+    val payload = udpPayload(template, host)
+    for (ip in targets) {
+        val start = System.currentTimeMillis()
+        try {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = timeout.coerceIn(300, 8000)
+                val addr = InetAddress.getByName(ip)
+                socket.connect(addr, port)
+                socket.send(DatagramPacket(payload, payload.size, addr, port))
+                val buf = ByteArray(1500)
+                val resp = DatagramPacket(buf, buf.size)
+                socket.receive(resp)
+                val elapsed = System.currentTimeMillis()-start
+                return@withContext "UDP RESPONSE\n$template · $host → $ip:$port\n耗时 ${elapsed}ms\n收到 ${resp.length} bytes，来源 ${resp.address.hostAddress}:${resp.port}\n说明：收到 UDP 响应，目标协议可达。"
+            }
+        } catch (e: java.net.PortUnreachableException) {
+            return@withContext "UDP CLOSED\n$host → $ip:$port\n收到 ICMP Port Unreachable，端口大概率关闭。"
+        } catch (e: java.net.SocketTimeoutException) {
+            logs += "$ip 无响应：未知 / 可能过滤 / 服务不回复"
+        } catch (e: Exception) {
+            logs += "$ip 失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+        }
+    }
+    "UDP NO RESPONSE\n$template · $host:$port\n" + logs.joinToString("\n") + "\n说明：UDP 无响应不代表端口关闭。"
 }
 
 fun isIpLiteral(s: String): Boolean = s.contains(":") || Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$").matches(s)
@@ -3716,6 +4112,71 @@ fun detectNetworkBrief(ctx: Context): NetworkBrief {
     return NetworkBrief(transport, hasV4, hasV6)
 }
 
+fun detectNetworkProfile(ctx: Context, prefs: AppPrefs): NetworkProfile {
+    val brief = detectNetworkBrief(ctx)
+    var localV4 = ""
+    var globalV4 = ""
+    var globalV6 = ""
+    runCatching {
+        val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val ni = interfaces.nextElement()
+            if (!ni.isUp || ni.isLoopback) continue
+            val addrs = ni.inetAddresses
+            while (addrs.hasMoreElements()) {
+                val a = addrs.nextElement()
+                if (a.isLoopbackAddress || a.isLinkLocalAddress) continue
+                val ip = a.hostAddress?.substringBefore('%').orEmpty()
+                if (ip.isBlank()) continue
+                if (a is Inet6Address) {
+                    if (!a.isSiteLocalAddress && globalV6.isBlank()) globalV6 = ip
+                } else {
+                    if (isPrivateIpv4(ip) && localV4.isBlank()) localV4 = ip
+                    if (!isPrivateIpv4(ip) && globalV4.isBlank()) globalV4 = ip
+                }
+            }
+        }
+    }
+    val lastNat = prefs.natHistory().firstOrNull()
+    val mappedIp = extractIpv4FromEndpoint(lastNat?.mapped.orEmpty())
+    val ipv4Exit = mappedIp ?: globalV4.ifBlank { "未测" }
+    val natType = lastNat?.classicType?.takeIf { it.isNotBlank() } ?: "未测"
+    val local = localV4.ifBlank { globalV6.ifBlank { "未知" } }
+    val priority = when {
+        brief.hasV6 && brief.hasV4 -> "IPv6优先"
+        brief.hasV6 -> "仅IPv6"
+        brief.hasV4 -> "仅IPv4"
+        else -> "未知"
+    }
+    val operator = when (brief.transport) {
+        "蜂窝" -> "移动网络"
+        "Wi‑Fi" -> "Wi‑Fi/路由"
+        "VPN" -> "VPN"
+        "以太网" -> "以太网"
+        else -> "未知"
+    }
+    return NetworkProfile(
+        ipv4Exit = ipv4Exit,
+        ipv6Address = globalV6.ifBlank { "未见" },
+        natType = natType,
+        operator = operator,
+        localIp = local,
+        priority = priority
+    )
+}
+
+
+fun extractIpv4FromEndpoint(text: String): String? {
+    val host = text.substringBeforeLast(':')
+    return host.takeIf { Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$").matches(it) }
+}
+fun isPrivateIpv4(ip: String): Boolean {
+    val p = ip.split('.').mapNotNull { it.toIntOrNull() }
+    if (p.size != 4) return false
+    return p[0] == 10 || (p[0] == 172 && p[1] in 16..31) || (p[0] == 192 && p[1] == 168) || (p[0] == 100 && p[1] in 64..127) || p[0] == 169
+}
+
+
 private fun resolveNatTargets(host: String, ipMode: String): List<InetAddress> {
     val all = runCatching { if (isIpLiteral(host)) listOf(InetAddress.getByName(host)) else InetAddress.getAllByName(host).toList() }.getOrElse { emptyList() }
     val filtered = all.filter { addr ->
@@ -3732,6 +4193,46 @@ private fun resolveNatTargets(host: String, ipMode: String): List<InetAddress> {
         prefer4 -> filtered.sortedBy { if (it is Inet6Address) 1 else 0 }
         else -> filtered
     }.distinctBy { it.hostAddress }
+}
+
+fun defaultNatServer(mode: String): StunServerItem = if (mode == "RFC3489") StunServerItem("stun.miwifi.com", 3478) else StunServerItem("stun.voip.aebc.com", 3478)
+
+suspend fun runNatBehaviorTestChain(mode: String, servers: List<StunServerItem>, timeoutMs: Int, ipMode: String): NatRunResult = withContext(Dispatchers.IO) {
+    val ordered = servers.ifEmpty { listOf(defaultNatServer(mode)) }.take(10)
+    val failures = mutableListOf<NatStep>()
+    var best: NatRunResult? = null
+    for (server in ordered) {
+        val r = runCatching { runNatBehaviorTest(server.host, server.port, timeoutMs, ipMode) }.getOrElse { e ->
+            NatRunResult(
+                title = "检测异常",
+                summary = "${server} 执行异常：${e.message ?: e.javaClass.simpleName}",
+                mapped = null, local = null, other = null,
+                mappingBehavior = "未知", filteringBehavior = "未知", classicType = "无法判断", confidence = "低",
+                steps = listOf(NatStep("服务器 ${server}", "异常", e.javaClass.simpleName + ": " + (e.message ?: ""), false)),
+                elapsedMs = 0L, serverUsed = server.toString()
+            )
+        }.copy(serverUsed = server.toString())
+        val supportsEnhanced = r.other != null || r.steps.any { it.title.contains("TEST 2") && it.success == true }
+        val basicOk = r.mapped != null
+        if (basicOk && (mode == "RFC3489" || supportsEnhanced || best == null)) best = r
+        if (basicOk && supportsEnhanced) return@withContext r
+        failures += NatStep("服务器 ${server}", if (basicOk) "基础可用" else "失败", r.summary, basicOk)
+    }
+    best?.let { b ->
+        val merged = failures + b.steps
+        return@withContext b.copy(
+            summary = if (b.other == null) "基础 STUN 可用，但未找到支持增强行为发现的服务器" else b.summary,
+            steps = merged.take(12)
+        )
+    }
+    NatRunResult(
+        title = "全部失败",
+        summary = "服务器列表全部无可用 STUN 响应",
+        mapped = null, local = null, other = null,
+        mappingBehavior = "未知", filteringBehavior = "未知", classicType = "无法判断", confidence = "低",
+        steps = failures.ifEmpty { listOf(NatStep("服务器列表", "失败", "没有可用服务器", false)) },
+        elapsedMs = 0L, serverUsed = ordered.joinToString(", ")
+    )
 }
 
 suspend fun runNatBehaviorTest(server: String, port: Int, timeoutMs: Int, ipMode: String): NatRunResult = withContext(Dispatchers.IO) {

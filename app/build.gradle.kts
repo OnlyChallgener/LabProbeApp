@@ -1,7 +1,26 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val signingProperties = Properties().apply {
+    val file = rootProject.file("signing.properties")
+    if (file.exists()) {
+        FileInputStream(file).use { load(it) }
+    }
+}
+
+fun signingValue(name: String): String? {
+    return (System.getenv(name) ?: signingProperties.getProperty(name))
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+}
+
+val labprobeKeystorePath = signingValue("LABPROBE_KEYSTORE_PATH")
+val hasLabprobeSigning = labprobeKeystorePath != null
 
 android {
     namespace = "com.labprobe.app"
@@ -11,8 +30,40 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 48
+        versionCode = 50
         versionName = "0.9.15"
+    }
+
+    signingConfigs {
+        if (hasLabprobeSigning) {
+            create("labprobeUpload") {
+                storeFile = rootProject.file(labprobeKeystorePath!!)
+                storePassword = signingValue("LABPROBE_KEYSTORE_PASSWORD")
+                    ?: error("Missing LABPROBE_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("LABPROBE_KEY_ALIAS") ?: "labprobe"
+                keyPassword = signingValue("LABPROBE_KEY_PASSWORD")
+                    ?: signingValue("LABPROBE_KEYSTORE_PASSWORD")
+                    ?: error("Missing LABPROBE_KEY_PASSWORD")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            if (hasLabprobeSigning) {
+                signingConfig = signingConfigs.getByName("labprobeUpload")
+            }
+        }
+        getByName("release") {
+            isMinifyEnabled = false
+            if (hasLabprobeSigning) {
+                signingConfig = signingConfigs.getByName("labprobeUpload")
+            }
+        }
     }
 
     buildFeatures {
