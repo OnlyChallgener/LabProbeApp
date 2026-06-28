@@ -47,3 +47,10 @@ app/build/outputs/apk/debug/app-debug.apk
 - 停止按钮启用态改为科技蓝，不再使用墨绿色。
 - ICMP 高频采样增加取消时进程强回收，并为 IPv6 增加 ping6 到 ping -6 的回退。
 - versionCode 更新至 47，便于 GitHub Actions 重新打包。
+
+## v0.9.15 hotfix3
+
+本版新增 NAT 行为检测：使用 STUN UDP 按 RFC3489 传统 TEST 1/2/3/4 展示基础映射、换地址回包、换端口回包和映射一致性。工具页同时改为 One UI 2 列磁贴布局，移除“整张卡片可直接进入”提示，并加入网络状态概览卡。
+
+注意：完整 NAT 分类需要 STUN 服务器支持 Changed/Other Address；普通公共 STUN 若只支持基础 Binding，APP 会只给出基础映射和低可信度结果，不会硬判。
+

@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.content.Intent
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -111,9 +113,15 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 47
+    const val CODE = 48
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · NAT 行为检测与工具页重构" to listOf(
+            "新增 NAT 行为检测页面，按 RFC3489 传统 TEST 1/2/3/4 展示基础映射、换地址回包、换端口回包和映射一致性",
+            "STUN 解析支持 MAPPED-ADDRESS、XOR-MAPPED-ADDRESS、CHANGED-ADDRESS、OTHER-ADDRESS，结果同时显示映射行为、过滤行为与传统分类",
+            "工具页改为 One UI 2列磁贴布局，移除 整张卡片可直接进入 提示，并加入网络状态概览卡",
+            "NAT 结果明确区分基础 STUN 与增强 STUN，服务器不支持 Changed/Other Address 时不再误判完整 NAT 类型"
+        ),
         "v0.9.15 · 延迟测试视觉与稳定性热修" to listOf(
             "延迟测试页面标题再缩小，图表卡片标题改为 延迟，减少拥挤和省略号",
             "停止按钮统一科技蓝，参数与图表视觉继续贴近 One UI 卡片风格",
@@ -387,6 +395,15 @@ class AppPrefs(context: Context) {
     var portProtocol: String get() = sp.getString("port_protocol", "TCP") ?: "TCP"
         set(v) = sp.edit().putString("port_protocol", v).apply()
 
+    var natServer: String get() = sp.getString("nat_server", "stun.l.google.com") ?: "stun.l.google.com"
+        set(v) = sp.edit().putString("nat_server", v.trim()).apply()
+    var natPort: String get() = sp.getString("nat_port", "19302") ?: "19302"
+        set(v) = sp.edit().putString("nat_port", v.trim()).apply()
+    var natTimeout: String get() = sp.getString("nat_timeout", "1200") ?: "1200"
+        set(v) = sp.edit().putString("nat_timeout", v.trim()).apply()
+    var natIpMode: String get() = sp.getString("nat_ip_mode", "自动") ?: "自动"
+        set(v) = sp.edit().putString("nat_ip_mode", v).apply()
+
     var sshHost: String get() = sp.getString("ssh_host", "192.168.5.1") ?: "192.168.5.1"
         set(v) = sp.edit().putString("ssh_host", v).apply()
     var sshPort: String get() = sp.getString("ssh_port", "54133") ?: "54133"
@@ -456,6 +473,30 @@ data class PingHistoryEntry(
     val elapsedMs: Long,
     val rate: Double,
     val bytes: Int = 0
+)
+
+data class NetworkBrief(val transport: String, val hasV4: Boolean, val hasV6: Boolean)
+data class StunEndpoint(val address: String, val port: Int) { override fun toString(): String = "$address:$port" }
+data class StunResponse(
+    val mapped: StunEndpoint?,
+    val changed: StunEndpoint?,
+    val other: StunEndpoint?,
+    val source: StunEndpoint,
+    val elapsedMs: Long
+)
+data class NatStep(val title: String, val status: String, val detail: String, val success: Boolean?)
+data class NatRunResult(
+    val title: String,
+    val summary: String,
+    val mapped: StunEndpoint?,
+    val local: StunEndpoint?,
+    val other: StunEndpoint?,
+    val mappingBehavior: String,
+    val filteringBehavior: String,
+    val classicType: String,
+    val confidence: String,
+    val steps: List<NatStep>,
+    val elapsedMs: Long
 )
 
 class AppState(private val prefs: AppPrefs) {
@@ -601,13 +642,14 @@ fun LabProbeApp(prefs: AppPrefs) {
                     when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
                         "devices" -> DevicesScreen(state, topNav)
-                        "tools" -> ToolsHomeScreen(topNav) { route = it }
+                        "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
                         "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it }, topNav)
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
+                        "tool_nat" -> NatScreen(prefs) { route = "tools" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
                         else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
                     }
@@ -1965,11 +2007,66 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 }
 
 @Composable
-fun ToolsHomeScreen(topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "二级页面，返回仍在 APP 内", topNav = topNav) {
-    ToolEntry("延迟测试", "ICMP / TCP / HTTP · 真实时间轴", Icons.Rounded.Speed, Color(0xFF2563EB)) { open("tool_ping") }
-    ToolEntry("DNS 解析", "双 DNS · A/AAAA · 运营商", Icons.Rounded.Dns, Color(0xFF2563EB)) { open("tool_dns") }
-    ToolEntry("端口探测", "TCP / UDP · 域名优先 AAAA", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) { open("tool_port") }
-    ToolEntry("SSH 命令", "锐捷 / NAS 单条命令", Icons.Rounded.Terminal, Color(0xFF64748B)) { open("tool_ssh") }
+fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "网络诊断 · 本地系统", topNav = topNav) {
+    val ctx = LocalContext.current
+    val brief = remember { detectNetworkBrief(ctx) }
+    val last = remember { prefs.pingHistory().firstOrNull() }
+    ExpressiveCard("网络状态", "本机接口 · 最近一次延迟结果", Icons.Rounded.Public, Color(0xFF2563EB)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusPill("网络", brief.transport, Color(0xFF2563EB))
+            StatusPill("IPv4", if (brief.hasV4) "可用" else "未见", Color(0xFF0EA5E9))
+            StatusPill("IPv6", if (brief.hasV6) "可用" else "未见", Color(0xFF06B6D4))
+        }
+        val latency = last?.avg?.let { "${it}ms" } ?: "未测"
+        val loss = last?.loss?.let { "${it}%" } ?: "--"
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusPill("最近延迟", latency, Color(0xFF2563EB))
+            StatusPill("丢包", loss, Color(0xFFEF4444))
+            StatusPill("NAT", "行为检测", Color(0xFF7C3AED))
+        }
+    }
+    ToolGroupLabel("网络测试")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
+        ToolHubTile("端口测试", "TCP/UDP", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
+    }
+    ToolGroupLabel("解析与 NAT")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("DNS解析", "A/AAAA", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
+        ToolHubTile("NAT检测", "TEST 1-4", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
+    }
+    ToolGroupLabel("设备工具")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_port") }
+        ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
+    }
+}
+
+@Composable
+fun ToolGroupLabel(text: String) {
+    Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 0.dp))
+}
+
+@Composable
+fun ToolHubTile(title: String, subtitle: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        modifier = modifier.height(122.dp).shadow(4.dp, RoundedCornerShape(28.dp), clip = false).clip(RoundedCornerShape(28.dp)).clickable { onClick() },
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Column(Modifier.fillMaxSize().padding(13.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(18.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(23.dp))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
 }
 
 @Composable
@@ -1981,9 +2078,7 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
         accent = color,
         headerAction = { Icon(Icons.Rounded.ChevronRight, null, tint = color, modifier = Modifier.size(22.dp)) },
         modifier = Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }
-    ) {
-        Text("整张卡片可直接进入", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f))
-    }
+    ) { }
 }
 
 @Composable
@@ -1992,6 +2087,8 @@ fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("延迟测试"
 fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
 @Composable
 fun PortProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("端口探测", "TCP / UDP，支持域名、IPv4、IPv6", onBack) { TcpTool(prefs) }
+@Composable
+fun NatScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 检测", "RFC3489 TEST 1/2/3/4 · STUN 行为发现", onBack) { NatTool(prefs) }
 @Composable
 fun SshScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack) { SshTool(prefs) }
 
@@ -2485,6 +2582,120 @@ fun TcpTool(prefs: AppPrefs) {
         PillButton("开始探测", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) { scope.launch { prefs.addHistory("port_host", host); prefs.addHistory("port_port", port); result = if (protocol == "UDP") udpProbeSmart(host, port.toIntOrNull() ?: 53, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) else tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2) } }
     }
     ExpressiveCard("探测结果", protocol, Icons.Rounded.Route, Color(0xFF64748B)) { ResultText(result) }
+}
+
+@Composable
+fun NatTool(prefs: AppPrefs) {
+    var server by remember { mutableStateOf(prefs.natServer) }
+    var port by remember { mutableStateOf(prefs.natPort) }
+    var timeout by remember { mutableStateOf(prefs.natTimeout) }
+    var ipMode by remember { mutableStateOf(prefs.natIpMode) }
+    var running by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<NatRunResult?>(null) }
+    var msg by remember { mutableStateOf("等待检测") }
+    val scope = rememberCoroutineScope()
+    ExpressiveCard("检测配置", "完整 TEST 2/3/4 需要 STUN 服务器支持 Changed/Other Address。", Icons.Rounded.Router, Color(0xFF7C3AED)) {
+        LabeledHistoryInput("服务器", "stun.l.google.com", server, { server = it; prefs.natServer = it }, "nat_server", prefs)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(Modifier.weight(1f)) { LabeledInput("端口", "19302", port, { port = it; prefs.natPort = it }, KeyboardType.Number) }
+            Column(Modifier.weight(1f)) { LabeledInput("超时", "1200", timeout, { timeout = it; prefs.natTimeout = it }, KeyboardType.Number) }
+        }
+        SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it; prefs.natIpMode = it }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Button(
+                onClick = {
+                    val safePort = port.toIntOrNull()?.coerceIn(1, 65535) ?: 19302
+                    val safeTimeout = timeout.toIntOrNull()?.coerceIn(300, 8000) ?: 1200
+                    prefs.addHistory("nat_server", server)
+                    scope.launch {
+                        running = true
+                        msg = "检测中：TEST 1/2/3/4"
+                        result = runCatching { runNatBehaviorTest(server, safePort, safeTimeout, ipMode) }.getOrElse { e ->
+                            NatRunResult(
+                                title = "检测失败",
+                                summary = e.message ?: e.javaClass.simpleName,
+                                mapped = null,
+                                local = null,
+                                other = null,
+                                mappingBehavior = "未知",
+                                filteringBehavior = "未知",
+                                classicType = "无法判断",
+                                confidence = "低",
+                                steps = listOf(NatStep("执行异常", "失败", e.javaClass.simpleName + ": " + (e.message ?: ""), false)),
+                                elapsedMs = 0L
+                            )
+                        }
+                        msg = result?.summary ?: "完成"
+                        running = false
+                    }
+                },
+                enabled = !running,
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                modifier = Modifier.weight(1f).height(48.dp)
+            ) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (running) "检测中" else "开始检测", fontWeight = FontWeight.Black) }
+            OutlinedButton(
+                onClick = { server = "stun.l.google.com"; port = "19302"; timeout = "1200"; ipMode = "自动"; prefs.natServer = server; prefs.natPort = port; prefs.natTimeout = timeout; prefs.natIpMode = ipMode },
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.weight(1f).height(48.dp)
+            ) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("恢复默认", fontWeight = FontWeight.Bold) }
+        }
+    }
+    val r = result
+    ExpressiveCard("结果", msg, Icons.Rounded.TravelExplore, Color(0xFF2563EB)) {
+        if (r == null) {
+            ResultText("说明：NAT 行为检测使用 STUN UDP。公共 STUN 若只支持基础 Binding，只能得出公网映射，无法完整区分 Full Cone / Restricted / Port Restricted / Symmetric。")
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusPill("传统类型", r.classicType, Color(0xFF7C3AED))
+                StatusPill("可信度", r.confidence, Color(0xFF2563EB))
+            }
+            InfoRow("公网映射", r.mapped?.toString(), copyable = true)
+            InfoRow("本地端点", r.local?.toString())
+            InfoRow("备用地址", r.other?.toString(), copyable = true)
+            InfoRow("映射行为", r.mappingBehavior)
+            InfoRow("过滤行为", r.filteringBehavior)
+            InfoRow("耗时", formatElapsedMs(r.elapsedMs))
+        }
+    }
+    ExpressiveCard("TEST 1/2/3/4", "日志保留 RFC3489 传统编号，结果采用行为描述。", Icons.Rounded.Notes, Color(0xFF0EA5E9)) {
+        val steps = r?.steps ?: listOf(
+            NatStep("TEST 1 基础映射", "等待", "向 STUN 主地址发送 Binding Request，获取公网映射。", null),
+            NatStep("TEST 2 换IP+端口回包", "等待", "要求服务器从备用 IP 与备用端口回包，用于判断过滤行为。", null),
+            NatStep("TEST 3 换端口回包", "等待", "要求服务器仅换端口回包，用于区分地址限制和端口限制。", null),
+            NatStep("TEST 4 映射一致性", "等待", "换目标地址再次获取映射，判断是否疑似对称 NAT。", null)
+        )
+        steps.forEach { NatStepRow(it) }
+    }
+    ExpressiveCard("判定口径", "避免 NAT1/NAT3 误导，显示行为和可信度。", Icons.Rounded.Info, Color(0xFF64748B)) {
+        ResultText("Full Cone / Restricted / Port Restricted / Symmetric 属于 RFC3489 传统分类；现代 STUN 更推荐描述映射行为与过滤行为。若服务器不支持 Changed/Other Address，本页会标记为增强测试不足，不会硬判。")
+    }
+}
+
+@Composable
+fun NatStepRow(step: NatStep) {
+    val color = when (step.success) {
+        true -> Color(0xFF2563EB)
+        false -> Color(0xFFEF4444)
+        null -> Color(0xFF64748B)
+    }
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = color.copy(alpha = .06f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(color))
+                Spacer(Modifier.width(7.dp))
+                Text(step.title, fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.weight(1f))
+                Text(step.status, fontSize = 11.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            }
+            Text(step.detail, fontSize = 11.3.sp, fontWeight = FontWeight.SemiBold, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+        }
+    }
 }
 
 @Composable
@@ -3474,6 +3685,273 @@ suspend fun udpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, d
 }
 
 fun isIpLiteral(s: String): Boolean = s.contains(":") || Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$").matches(s)
+
+fun detectNetworkBrief(ctx: Context): NetworkBrief {
+    val transport = runCatching {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        when {
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi‑Fi"
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "蜂窝"
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "以太网"
+            else -> "未知"
+        }
+    }.getOrDefault("未知")
+    var hasV4 = false
+    var hasV6 = false
+    runCatching {
+        val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val ni = interfaces.nextElement()
+            if (!ni.isUp || ni.isLoopback) continue
+            val addrs = ni.inetAddresses
+            while (addrs.hasMoreElements()) {
+                val a = addrs.nextElement()
+                if (a.isLoopbackAddress || a.isLinkLocalAddress) continue
+                if (a is Inet6Address) hasV6 = true else hasV4 = true
+            }
+        }
+    }
+    return NetworkBrief(transport, hasV4, hasV6)
+}
+
+private fun resolveNatTargets(host: String, ipMode: String): List<InetAddress> {
+    val all = runCatching { if (isIpLiteral(host)) listOf(InetAddress.getByName(host)) else InetAddress.getAllByName(host).toList() }.getOrElse { emptyList() }
+    val filtered = all.filter { addr ->
+        when (ipMode) {
+            "仅IPv6" -> addr is Inet6Address
+            "仅IPv4" -> addr !is Inet6Address
+            else -> true
+        }
+    }
+    val prefer6 = ipMode == "IPv6优先"
+    val prefer4 = ipMode == "IPv4优先"
+    return when {
+        prefer6 -> filtered.sortedBy { if (it is Inet6Address) 0 else 1 }
+        prefer4 -> filtered.sortedBy { if (it is Inet6Address) 1 else 0 }
+        else -> filtered
+    }.distinctBy { it.hostAddress }
+}
+
+suspend fun runNatBehaviorTest(server: String, port: Int, timeoutMs: Int, ipMode: String): NatRunResult = withContext(Dispatchers.IO) {
+    val started = SystemClock.elapsedRealtime()
+    val host = server.trim().ifBlank { "stun.l.google.com" }
+    val targets = resolveNatTargets(host, ipMode)
+    if (targets.isEmpty()) {
+        return@withContext NatRunResult(
+            title = "DNS失败",
+            summary = "无法解析 STUN 服务器：$host",
+            mapped = null,
+            local = null,
+            other = null,
+            mappingBehavior = "未知",
+            filteringBehavior = "未知",
+            classicType = "无法判断",
+            confidence = "低",
+            steps = listOf(NatStep("TEST 1 基础映射", "失败", "DNS 解析失败或当前 IP 策略没有可用地址。", false)),
+            elapsedMs = SystemClock.elapsedRealtime() - started
+        )
+    }
+    val target = targets.first()
+    DatagramSocket().use { socket ->
+        socket.soTimeout = timeoutMs.coerceIn(300, 8000)
+        val steps = mutableListOf<NatStep>()
+        val localBefore = StunEndpoint(socket.localAddress?.hostAddress ?: "0.0.0.0", socket.localPort)
+        val t1 = stunTransaction(socket, target, port, timeoutMs, changeIp = false, changePort = false)
+        if (t1 == null) {
+            steps += NatStep("TEST 1 基础映射", "失败", "未收到 STUN Binding Response。可能 UDP 被拦截、服务器不可用或超时。", false)
+            return@withContext NatRunResult(
+                title = "STUN无响应",
+                summary = "TEST 1 未收到响应，无法继续 TEST 2/3/4",
+                mapped = null,
+                local = localBefore,
+                other = null,
+                mappingBehavior = "未知",
+                filteringBehavior = "未知",
+                classicType = "无法判断",
+                confidence = "低",
+                steps = steps,
+                elapsedMs = SystemClock.elapsedRealtime() - started
+            )
+        }
+        val local = StunEndpoint(socket.localAddress?.hostAddress ?: "0.0.0.0", socket.localPort)
+        val other = t1.other ?: t1.changed
+        steps += NatStep(
+            "TEST 1 基础映射",
+            "成功",
+            "公网映射 ${t1.mapped ?: "未知"}，响应源 ${t1.source}，备用地址 ${other ?: "服务器未返回"}。",
+            true
+        )
+        val noNat = t1.mapped?.let { it.port == local.port && endpointHostSame(it.address, local.address) } == true
+        val t2 = stunTransaction(socket, target, port, timeoutMs, changeIp = true, changePort = true)
+        steps += if (t2 != null) {
+            NatStep("TEST 2 换IP+端口回包", "成功", "收到来自 ${t2.source} 的响应，外部任意地址/端口回包能力较强。", true)
+        } else {
+            NatStep("TEST 2 换IP+端口回包", "无响应", "未收到换地址+换端口响应，继续 TEST 3 判断过滤强度。", false)
+        }
+        val t3 = stunTransaction(socket, target, port, timeoutMs, changeIp = false, changePort = true)
+        steps += if (t3 != null) {
+            NatStep("TEST 3 换端口回包", "成功", "收到同 IP 不同端口响应：过滤行为偏地址限制。", true)
+        } else {
+            NatStep("TEST 3 换端口回包", "无响应", "未收到同 IP 换端口响应：过滤行为偏端口限制或服务器不支持。", false)
+        }
+        val t4 = other?.let { alt ->
+            runCatching { stunTransaction(socket, InetAddress.getByName(alt.address), alt.port, timeoutMs, changeIp = false, changePort = false) }.getOrNull()
+        }
+        steps += when {
+            other == null -> NatStep("TEST 4 映射一致性", "跳过", "服务器未返回 CHANGED-ADDRESS / OTHER-ADDRESS，无法换目标复测映射。", null)
+            t4 == null -> NatStep("TEST 4 映射一致性", "无响应", "向备用地址 $other 发送 Binding Request 未收到响应，可能备用地址不可达。", false)
+            endpointsSame(t1.mapped, t4.mapped) -> NatStep("TEST 4 映射一致性", "一致", "换目标后映射仍为 ${t4.mapped}，映射行为偏 Endpoint-Independent。", true)
+            else -> NatStep("TEST 4 映射一致性", "变化", "第一次 ${t1.mapped}，换目标后 ${t4.mapped}，疑似对称/地址相关映射。", false)
+        }
+        val mappingBehavior = when {
+            noNat -> "无 NAT / 公网直连"
+            other == null || t4 == null -> "未知：服务器不支持增强行为发现"
+            endpointsSame(t1.mapped, t4.mapped) -> "Endpoint-Independent Mapping（端点独立映射）"
+            else -> "Address/Port-Dependent Mapping（疑似对称 NAT）"
+        }
+        val filteringBehavior = when {
+            noNat -> "无 NAT 过滤或主机防火墙未限制"
+            t2 != null -> "Endpoint-Independent Filtering（接近 Full Cone）"
+            t3 != null -> "Address-Dependent Filtering（Restricted Cone 倾向）"
+            else -> "Address and Port-Dependent Filtering（Port Restricted 倾向）"
+        }
+        val classicType = when {
+            noNat -> "Open Internet"
+            mappingBehavior.startsWith("Unknown", true) || mappingBehavior.startsWith("未知") -> "基础 STUN：无法完整分类"
+            mappingBehavior.startsWith("Address") -> "Symmetric NAT"
+            t2 != null -> "Full Cone NAT"
+            t3 != null -> "Restricted Cone NAT"
+            else -> "Port Restricted Cone NAT"
+        }
+        val confidence = when {
+            noNat -> "中"
+            other == null || t4 == null -> "低：缺少增强 STUN"
+            t2 == null && t3 == null -> "中：可能受服务器能力影响"
+            else -> "较高"
+        }
+        val summary = when {
+            noNat -> "TEST 1 成功：疑似公网直连"
+            other == null -> "基础映射成功，但服务器不支持完整 TEST 2/3/4"
+            else -> "检测完成：$classicType"
+        }
+        NatRunResult(
+            title = "NAT 行为检测完成",
+            summary = summary,
+            mapped = t1.mapped,
+            local = local,
+            other = other,
+            mappingBehavior = mappingBehavior,
+            filteringBehavior = filteringBehavior,
+            classicType = classicType,
+            confidence = confidence,
+            steps = steps,
+            elapsedMs = SystemClock.elapsedRealtime() - started
+        )
+    }
+}
+
+private fun endpointsSame(a: StunEndpoint?, b: StunEndpoint?): Boolean = a != null && b != null && a.port == b.port && endpointHostSame(a.address, b.address)
+
+private fun endpointHostSame(a: String, b: String): Boolean = runCatching { InetAddress.getByName(a) == InetAddress.getByName(b) }.getOrElse { a == b }
+
+private fun stunTransaction(socket: DatagramSocket, address: InetAddress, port: Int, timeoutMs: Int, changeIp: Boolean, changePort: Boolean): StunResponse? {
+    repeat(2) {
+        val req = buildStunRequest(changeIp, changePort)
+        val data = req.first
+        val tx = req.second
+        val start = SystemClock.elapsedRealtime()
+        runCatching {
+            socket.soTimeout = timeoutMs.coerceIn(300, 8000)
+            socket.send(DatagramPacket(data, data.size, address, port))
+            val buf = ByteArray(1500)
+            val packet = DatagramPacket(buf, buf.size)
+            socket.receive(packet)
+            val elapsed = SystemClock.elapsedRealtime() - start
+            val bytes = packet.data.copyOf(packet.length)
+            val parsed = parseStunResponse(bytes, tx, StunEndpoint(packet.address.hostAddress ?: packet.address.hostName, packet.port), elapsed)
+            if (parsed != null) return parsed
+        }
+    }
+    return null
+}
+
+private fun buildStunRequest(changeIp: Boolean, changePort: Boolean): Pair<ByteArray, ByteArray> {
+    val tx = ByteArray(12)
+    SecureRandom().nextBytes(tx)
+    val flags = (if (changeIp) 0x04 else 0x00) or (if (changePort) 0x02 else 0x00)
+    val attrLen = if (flags != 0) 8 else 0
+    val out = ByteArray(20 + attrLen)
+    out[0] = 0x00; out[1] = 0x01
+    out[2] = ((attrLen ushr 8) and 0xff).toByte(); out[3] = (attrLen and 0xff).toByte()
+    out[4] = 0x21; out[5] = 0x12; out[6] = 0xA4.toByte(); out[7] = 0x42
+    for (i in tx.indices) out[8 + i] = tx[i]
+    if (flags != 0) {
+        out[20] = 0x00; out[21] = 0x03
+        out[22] = 0x00; out[23] = 0x04
+        out[24] = 0x00; out[25] = 0x00; out[26] = 0x00; out[27] = flags.toByte()
+    }
+    return out to tx
+}
+
+private fun parseStunResponse(data: ByteArray, tx: ByteArray, source: StunEndpoint, elapsedMs: Long): StunResponse? {
+    if (data.size < 20) return null
+    val type = u16(data, 0)
+    if (type != 0x0101) return null
+    if (data[4] != 0x21.toByte() || data[5] != 0x12.toByte() || data[6] != 0xA4.toByte() || data[7] != 0x42.toByte()) return null
+    for (i in tx.indices) if (data[8 + i] != tx[i]) return null
+    val length = u16(data, 2).coerceAtMost(data.size - 20)
+    var pos = 20
+    val end = 20 + length
+    var mapped: StunEndpoint? = null
+    var changed: StunEndpoint? = null
+    var other: StunEndpoint? = null
+    while (pos + 4 <= end && pos + 4 <= data.size) {
+        val attrType = u16(data, pos)
+        val attrLen = u16(data, pos + 2)
+        val valuePos = pos + 4
+        if (valuePos + attrLen > data.size) break
+        when (attrType) {
+            0x0001 -> mapped = parseMappedAddress(data, valuePos, attrLen, false, data.copyOfRange(8, 20)) ?: mapped
+            0x0020 -> mapped = parseMappedAddress(data, valuePos, attrLen, true, data.copyOfRange(8, 20)) ?: mapped
+            0x0005 -> changed = parseMappedAddress(data, valuePos, attrLen, false, data.copyOfRange(8, 20)) ?: changed
+            0x802c -> other = parseMappedAddress(data, valuePos, attrLen, false, data.copyOfRange(8, 20)) ?: other
+        }
+        pos = valuePos + attrLen + ((4 - (attrLen % 4)) % 4)
+    }
+    return StunResponse(mapped, changed, other, source, elapsedMs)
+}
+
+private fun parseMappedAddress(data: ByteArray, pos: Int, len: Int, xor: Boolean, tx: ByteArray): StunEndpoint? {
+    if (len < 8 || pos + len > data.size) return null
+    val family = u8(data, pos + 1)
+    val rawPort = u16(data, pos + 2)
+    val port = if (xor) rawPort xor 0x2112 else rawPort
+    return when (family) {
+        0x01 -> {
+            if (len < 8) return null
+            val addr = ByteArray(4)
+            val cookie = byteArrayOf(0x21, 0x12, 0xA4.toByte(), 0x42)
+            for (i in 0 until 4) addr[i] = (u8(data, pos + 4 + i) xor (if (xor) u8(cookie, i) else 0)).toByte()
+            StunEndpoint(InetAddress.getByAddress(addr).hostAddress ?: "", port)
+        }
+        0x02 -> {
+            if (len < 20) return null
+            val mask = ByteArray(16)
+            mask[0] = 0x21; mask[1] = 0x12; mask[2] = 0xA4.toByte(); mask[3] = 0x42
+            for (i in tx.indices) mask[4 + i] = tx[i]
+            val addr = ByteArray(16)
+            for (i in 0 until 16) addr[i] = (u8(data, pos + 4 + i) xor (if (xor) u8(mask, i) else 0)).toByte()
+            StunEndpoint(InetAddress.getByAddress(addr).hostAddress ?: "", port)
+        }
+        else -> null
+    }
+}
+
+private fun u8(data: ByteArray, idx: Int): Int = data[idx].toInt() and 0xff
+private fun u16(data: ByteArray, idx: Int): Int = (u8(data, idx) shl 8) or u8(data, idx + 1)
+
 
 suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: String): String = withContext(Dispatchers.IO) {
     val session = JSch().getSession(user, host, port); session.setPassword(pass)
