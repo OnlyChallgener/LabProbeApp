@@ -113,9 +113,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 51
+    const val CODE = 52
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · Traceroute 与 SSH 记录热修" to listOf(
+            "新增路由追踪功能，支持追踪域名解析后的 IPv4 / IPv6 路径",
+            "SSH 命令下拉保存最近 6 条，执行结果最多保留 5 条并支持点击复制真实输出",
+            "DNS / TCP / UDP / NAT / SSH 配置框统一修复高度和双列对齐，避免文字被遮挡"
+        ),
         "v0.9.15 · 工具页与更新入口热修" to listOf(
             "版本信息卡新增检测更新按钮，支持读取 GitHub Releases 最新版本",
             "网络状态 IPv4/IPv6 胶囊可跳转 DNS 解析，运营商增加本地快速推断",
@@ -261,8 +266,9 @@ class AppPrefs(context: Context) {
     var privacyMode: Boolean get() = sp.getBoolean("privacy_mode", false)
         set(v) = sp.edit().putBoolean("privacy_mode", v).apply()
 
-    private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(3)
-    private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(3).joinToString("\n")).apply() }
+    private fun historyLimit(key: String): Int = if (key.contains("ssh_cmd", true)) 6 else 3
+    private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(historyLimit(key))
+    private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(historyLimit(key)).joinToString("\n")).apply() }
     fun history(key: String): List<String> = getHistory("history_" + key)
     fun addHistory(key: String, value: String) { val v = value.trim(); if (v.isNotBlank()) putHistory("history_" + key, listOf(v) + getHistory("history_" + key).filter { it != v }) }
     fun removeHistory(key: String, value: String) { putHistory("history_" + key, getHistory("history_" + key).filter { it != value }) }
@@ -543,6 +549,47 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("ssh_password", v).apply()
     var sshCommand: String get() = sp.getString("ssh_cmd", "ip -6 neigh show") ?: "ip -6 neigh show"
         set(v) = sp.edit().putString("ssh_cmd", v).apply()
+
+    fun sshResults(): List<SshResultEntry> {
+        val raw = sp.getString("ssh_results_v1", "[]") ?: "[]"
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                SshResultEntry(
+                    id = o.optLong("id", i.toLong()),
+                    time = o.optString("time"),
+                    host = o.optString("host"),
+                    command = o.optString("command"),
+                    output = o.optString("output")
+                )
+            }
+        }.getOrDefault(emptyList()).take(5)
+    }
+
+    fun addSshResult(entry: SshResultEntry) {
+        val arr = JSONArray()
+        (listOf(entry) + sshResults()).distinctBy { it.id }.take(5).forEach { r ->
+            arr.put(JSONObject()
+                .put("id", r.id)
+                .put("time", r.time)
+                .put("host", r.host)
+                .put("command", r.command)
+                .put("output", r.output))
+        }
+        sp.edit().putString("ssh_results_v1", arr.toString()).apply()
+    }
+
+    fun clearSshResults() { sp.edit().putString("ssh_results_v1", "[]").apply() }
+
+    var traceHost: String get() = sp.getString("trace_host", "net86.dynv6.net") ?: "net86.dynv6.net"
+        set(v) = sp.edit().putString("trace_host", v.trim()).apply()
+    var traceMaxHops: String get() = sp.getString("trace_max_hops", "16") ?: "16"
+        set(v) = sp.edit().putString("trace_max_hops", v.trim()).apply()
+    var traceTimeout: String get() = sp.getString("trace_timeout", "1200") ?: "1200"
+        set(v) = sp.edit().putString("trace_timeout", v.trim()).apply()
+    var traceIpMode: String get() = sp.getString("trace_ip_mode", "IPv6优先") ?: "IPv6优先"
+        set(v) = sp.edit().putString("trace_ip_mode", v).apply()
 }
 
 data class DeviceItem(
@@ -579,6 +626,7 @@ data class EventItem(
 )
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
+data class SshResultEntry(val id: Long, val time: String, val host: String, val command: String, val output: String)
 data class PingPoint(val index: Int, val ms: Int?, val text: String, val elapsedMs: Long)
 data class PingRunResult(val points: List<PingPoint>, val elapsedMs: Long, val mode: String, val protocol: String = "ICMP", val resolvedIp: String = "")
 data class PingBucket(val startMs: Long, val avgMs: Int?, val peakMs: Int?, val hasLoss: Boolean, val sampleCount: Int)
@@ -808,6 +856,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
                         "tool_udp" -> UdpProbeScreen(prefs) { route = "tools" }
+                        "tool_trace" -> TraceScreen(prefs) { route = "tools" }
                         "tool_nat" -> NatScreen(prefs, { route = "tools" }) { route = "tool_nat_history" }
                         "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
@@ -1033,8 +1082,8 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
     var tick by remember { mutableStateOf(0) }
     val items = remember(tick, keyName) { prefs.history(keyName) }
     Box {
-        IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty()) {
-            Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f))
+        IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty(), modifier = Modifier.size(30.dp)) {
+            Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f))
         }
         DropdownMenu(
             expanded = expanded,
@@ -1150,8 +1199,8 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 44.dp
-private val ParamFieldRadius = 15.dp
+private val ParamFieldHeight = 52.dp
+private val ParamFieldRadius = 18.dp
 
 @Composable
 fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
@@ -1256,15 +1305,15 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
 @Composable
 fun FieldIconBox(icon: ImageVector, accent: Color = Color(0xFF2563EB)) {
     Box(
-        Modifier.size(22.dp).clip(RoundedCornerShape(8.dp)).background(accent.copy(alpha = .11f)),
+        Modifier.size(27.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = .11f)),
         contentAlignment = Alignment.Center
-    ) { Icon(icon, null, Modifier.size(13.dp), tint = accent) }
+    ) { Icon(icon, null, Modifier.size(16.dp), tint = accent) }
 }
 
 @Composable
 fun CompactIconHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Text) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(48.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.4.sp, maxLines = 1)
+        Text(label, Modifier.width(50.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 11.4.sp, maxLines = 1)
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
@@ -1273,10 +1322,10 @@ fun CompactIconHistoryInput(label: String, hint: String, value: String, onValueC
             leadingIcon = { FieldIconBox(icon) },
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(20.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 13.4.sp, fontWeight = FontWeight.SemiBold),
+            shape = RoundedCornerShape(22.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.2.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(46.dp)
+            modifier = Modifier.weight(1f).height(56.dp)
         )
     }
 }
@@ -1327,6 +1376,44 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                     onClick = { onChange(option); expanded = false },
                     leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }) else null
                 )
+            }
+        }
+    }
+}
+
+
+@Composable
+fun TinyHistoryParamInputIcon(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Text, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 10.6.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
+        ParamFrame(Modifier.fillMaxWidth()) {
+            FieldIconBox(icon)
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.8.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
+                modifier = Modifier.weight(1f)
+            )
+            HistoryDropdown(historyKey, prefs) { onValueChange(it) }
+        }
+    }
+}
+
+@Composable
+fun TinyInfoParam(label: String, value: String, icon: ImageVector, accent: Color, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 10.6.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(ParamFieldHeight),
+            shape = RoundedCornerShape(ParamFieldRadius),
+            color = accent.copy(alpha = .08f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .12f))
+        ) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                FieldIconBox(icon, accent)
+                Text(value, fontSize = 12.7.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -2267,6 +2354,10 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
         ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
         ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
     }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
+        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
+    }
     ToolGroupLabel("解析与 NAT")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("DNS解析", "A/AAAA", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
@@ -2274,8 +2365,8 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     ToolGroupLabel("设备工具")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
         ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -2349,6 +2440,8 @@ fun PortProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("端口�
 
 @Composable
 fun UdpProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("UDP 探测", "STUN / DNS / NTP · 无响应不等于关闭", onBack) { UdpTool(prefs) }
+@Composable
+fun TraceScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("路由追踪", "Traceroute · 追踪域名经过的 IP", onBack) { TraceTool(prefs) }
 @Composable
 fun NatScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) = DetailShell("NAT 检测", "RFC5780 行为发现 · RFC3489 TEST 1-4", onBack) { NatTool(prefs, openHistory) }
 
@@ -2774,8 +2867,8 @@ fun DnsTool(prefs: AppPrefs) {
             TinyParamSelectIcon("策略", if (type == "AAAA") "优先AAAA" else if (type == "A") "优先A" else "自动", listOf("自动", "优先AAAA", "优先A"), { v -> type = when(v){"优先AAAA" -> "AAAA"; "优先A" -> "A"; else -> "ALL"}; prefs.dnsRecord = type }, Icons.Rounded.Public, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            Column(Modifier.weight(1f)) { CompactIconHistoryInput("DNS1", "223.5.5.5", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs, Icons.Rounded.Storage) }
-            Column(Modifier.weight(1f)) { CompactIconHistoryInput("DNS2", "8.8.8.8", dns2, { dns2 = it; prefs.dns2 = it }, "dns2", prefs, Icons.Rounded.Storage) }
+            TinyHistoryParamInputIcon("DNS1", "223.5.5.5", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs, Icons.Rounded.Storage, KeyboardType.Text, Modifier.weight(1f))
+            TinyHistoryParamInputIcon("DNS2", "8.8.8.8", dns2, { dns2 = it; prefs.dns2 = it }, "dns2", prefs, Icons.Rounded.Storage, KeyboardType.Text, Modifier.weight(1f))
         }
         PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) {
             scope.launch {
@@ -2858,7 +2951,7 @@ fun TcpTool(prefs: AppPrefs) {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
-            Surface(Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(15.dp), color = Color(0xFF0EA5E9).copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0EA5E9).copy(alpha = .12f))) { Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) { FieldIconBox(Icons.Rounded.Info, Color(0xFF0EA5E9)); Spacer(Modifier.width(7.dp)); Text("成功/拒绝/超时", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f), maxLines = 1) } }
+            TinyInfoParam("结果", "成功/拒绝/超时", Icons.Rounded.Info, Color(0xFF0EA5E9), Modifier.weight(1f))
         }
         PillButton("开始 TCP 测试", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) {
             scope.launch {
@@ -2956,12 +3049,15 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
                 }
             }
         }
-        LabeledHistoryInput("服务器", defaultNatServer(mode).host, host, { host = it }, "nat_server_$mode", prefs)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Column(Modifier.weight(1f)) { LabeledInput("端口", defaultNatServer(mode).port.toString(), port, { port = it }, KeyboardType.Number) }
-            Column(Modifier.weight(1f)) { LabeledInput("超时", "1200", timeout, { timeout = it; prefs.natTimeout = it }, KeyboardType.Number) }
+        CompactIconHistoryInput("服务器", defaultNatServer(mode).host, host, { host = it }, "nat_server_$mode", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("端口", port, { port = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.natTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
         }
-        SelectInput("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4")) { ipMode = it; prefs.natIpMode = it }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.natIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
+            TinyInfoParam("模式", if (mode == "RFC3489") "TEST 1-4" else "行为发现", Icons.Rounded.Info, accent, Modifier.weight(1f))
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             Button(
                 onClick = {
@@ -3132,6 +3228,42 @@ fun NatStepRow(step: NatStep) {
 }
 
 @Composable
+fun TraceTool(prefs: AppPrefs) {
+    var host by remember { mutableStateOf(prefs.traceHost) }
+    var maxHops by remember { mutableStateOf(prefs.traceMaxHops) }
+    var timeout by remember { mutableStateOf(prefs.traceTimeout) }
+    var ipMode by remember { mutableStateOf(prefs.traceIpMode) }
+    var result by remember { mutableStateOf("等待追踪") }
+    var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    ExpressiveCard("追踪配置", "逐跳追踪域名经过的 IP；Android 设备能力不同，结果以系统 ping 支持为准。", Icons.Rounded.AltRoute, Color(0xFF2563EB)) {
+        CompactIconHistoryInput("目标", "net86.dynv6.net / 223.5.5.5", host, { host = it; prefs.traceHost = it }, "trace_host", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.traceIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
+            TinyParamInputIcon("跳数", maxHops, { maxHops = it; prefs.traceMaxHops = it }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.traceTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyInfoParam("说明", "显示经过IP", Icons.Rounded.Info, Color(0xFF2563EB), Modifier.weight(1f))
+        }
+        PillButton(if (running) "追踪中" else "开始追踪", Icons.Rounded.AltRoute, accent = Color(0xFF2563EB)) {
+            if (!running) scope.launch {
+                running = true
+                prefs.addHistory("trace_host", host)
+                result = traceRouteSmart(host, maxHops.toIntOrNull() ?: 16, timeout.toIntOrNull() ?: 1200, prefs.dns1, prefs.dns2, ipMode)
+                running = false
+            }
+        }
+    }
+    ExpressiveCard("追踪结果", "点击结果可复制。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .045f), modifier = Modifier.fillMaxWidth().clickable { copy(ctx, result) }) {
+            ResultText(result)
+        }
+    }
+}
+
+@Composable
 fun SshTool(prefs: AppPrefs) {
     var host by remember { mutableStateOf(prefs.sshHost) }
     var port by remember { mutableStateOf(prefs.sshPort) }
@@ -3139,8 +3271,10 @@ fun SshTool(prefs: AppPrefs) {
     var savePass by remember { mutableStateOf(prefs.sshSavePass) }
     var password by remember { mutableStateOf(if (prefs.sshSavePass) prefs.sshPassword else "") }
     var command by remember { mutableStateOf(prefs.sshCommand) }
-    var result by remember { mutableStateOf("等待连接") }
+    var results by remember { mutableStateOf(prefs.sshResults()) }
+    var running by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     ExpressiveCard("连接与命令", "路由器 / NAS 单条命令执行，返回仍在 APP 内。", Icons.Rounded.Terminal, Color(0xFF2563EB)) {
         CompactIconHistoryInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
@@ -3148,12 +3282,66 @@ fun SshTool(prefs: AppPrefs) {
             TinyParamInputIcon("用户", user, { user = it; prefs.sshUser = it }, Icons.Rounded.Person, KeyboardType.Text, Modifier.weight(1f))
         }
         LabeledInput("密码", "SSH 密码", password, { password = it; if (savePass) prefs.sshPassword = it }, password = true)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("保存", Modifier.width(48.dp), fontWeight = FontWeight.Black, fontSize = 11.5.sp); Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" }); Text("保存密码", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("保存", Modifier.width(50.dp), fontWeight = FontWeight.Black, fontSize = 11.5.sp)
+            Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" })
+            Text("保存密码", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
         CompactIconHistoryInput("命令", "ip -6 neigh show", command, { command = it; prefs.sshCommand = it }, "ssh_cmd", prefs, Icons.Rounded.Terminal)
-        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) { listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime", "内核" to "uname -a", "存储" to "df -h").forEach { (t,c) -> AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) }) } }
-        PillButton("执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF2563EB)) { scope.launch { prefs.addHistory("ssh_host", host); result = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" } } }
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime", "内核" to "uname -a", "存储" to "df -h", "路由" to "ip route show").forEach { (t,c) ->
+                AssistChip(onClick = { command = c; prefs.sshCommand = c }, label = { Text(t, fontSize = 11.5.sp) })
+            }
+        }
+        PillButton(if (running) "执行中" else "执行 SSH", Icons.Rounded.Terminal, accent = Color(0xFF2563EB)) {
+            if (!running) scope.launch {
+                running = true
+                prefs.addHistory("ssh_host", host)
+                prefs.addHistory("ssh_cmd", command)
+                val raw = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" }
+                val clean = sshRealOutput(raw)
+                prefs.addSshResult(SshResultEntry(
+                    id = System.currentTimeMillis(),
+                    time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+                    host = host,
+                    command = command,
+                    output = clean
+                ))
+                results = prefs.sshResults()
+                running = false
+            }
+        }
     }
-    ExpressiveCard("执行结果", null, Icons.Rounded.Notes, Color(0xFF2563EB)) { ResultText(result) }
+    ExpressiveCard("执行结果", "最多保留 5 条，点击卡片复制真实输出。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
+        if (results.isEmpty()) {
+            Text("等待连接", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontWeight = FontWeight.SemiBold)
+        } else {
+            results.forEach { item ->
+                SshResultCard(item) { copy(ctx, item.output) }
+            }
+            TextButton(onClick = { prefs.clearSshResults(); results = emptyList() }) { Text("清空执行记录", fontSize = 12.sp) }
+        }
+    }
+}
+
+@Composable
+fun SshResultCard(item: SshResultEntry, onCopy: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = .055f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
+        modifier = Modifier.fillMaxWidth().clickable { onCopy() }
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(item.time, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
+                Spacer(Modifier.weight(1f))
+                Text(item.host, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(item.command, fontSize = 12.4.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(item.output.ifBlank { "无输出" }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), lineHeight = 16.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
@@ -4560,6 +4748,59 @@ suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: St
     val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="no"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256"; cfg["PubkeyAcceptedAlgorithms"]="+ssh-rsa,rsa-sha2-256,rsa-sha2-512"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["cipher.c2s"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)
     session.userInfo = object: UserInfo, UIKeyboardInteractive { override fun getPassphrase(): String?=null; override fun getPassword(): String=pass; override fun promptPassword(message:String?)=true; override fun promptPassphrase(message:String?)=false; override fun promptYesNo(message:String?)=true; override fun showMessage(message:String?){}; override fun promptKeyboardInteractive(destination:String?, name:String?, instruction:String?, prompt:Array<out String>?, echo:BooleanArray?): Array<String> = Array(prompt?.size ?: 0) { pass } }
     session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { val hasOut = out.isNotBlank(); val title = when { exit == 0 -> "执行成功"; exit == -1 && hasOut -> "执行完成 · 未获取退出码"; exit != 0 && hasOut -> "执行完成 · exit $exit"; else -> "执行失败 · exit $exit" }; append(title); append("\n"); append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); if (exit != 0 && !hasOut) append("\n返回码：").append(exit) }
+}
+
+
+fun sshRealOutput(raw: String): String {
+    val lines = raw.lines().map { it.trimEnd() }.filter { it.isNotBlank() }
+    val useful = lines.dropWhile { it.startsWith("执行") || it.startsWith("SSH失败") }
+        .filterNot { it.startsWith("返回码：") }
+    return useful.joinToString("\n").ifBlank { raw.lines().filterNot { it.startsWith("返回码：") }.joinToString("\n").trim().ifBlank { "无输出" } }
+}
+
+suspend fun traceRouteSmart(host: String, maxHops: Int, timeoutMs: Int, dns1: String, dns2: String, ipMode: String): String = withContext(Dispatchers.IO) {
+    val targetHost = extractLatencyHost(host)
+    val targets = resolveProbeTargets(targetHost, dns1, dns2, ipMode)
+    if (targets.isEmpty()) return@withContext "无法解析或当前 IP 策略无可用地址：$targetHost"
+    val target = targets.first()
+    val is6 = target.contains(":")
+    val max = maxHops.coerceIn(4, 32)
+    val timeoutSec = ((timeoutMs.coerceIn(500, 5000) + 999) / 1000).coerceAtLeast(1)
+    val cmdName = if (is6) "/system/bin/ping6" else "/system/bin/ping"
+    val fallbackCmdName = "/system/bin/ping"
+    val out = mutableListOf<String>()
+    out += "目标 $targetHost → $target"
+    out += "说明：Android 无原生 traceroute 权限时，用逐跳 TTL Ping 近似追踪。"
+    for (ttl in 1..max) {
+        val start = SystemClock.elapsedRealtime()
+        val commands = if (is6) listOf(
+            listOf(cmdName, "-c", "1", "-W", timeoutSec.toString(), "-t", ttl.toString(), target),
+            listOf(fallbackCmdName, "-6", "-c", "1", "-W", timeoutSec.toString(), "-t", ttl.toString(), target)
+        ) else listOf(listOf(cmdName, "-c", "1", "-W", timeoutSec.toString(), "-t", ttl.toString(), target))
+        val raw = commands.asSequence().mapNotNull { cmd -> runCatching { runTraceCommand(cmd, timeoutMs.coerceIn(500, 5000) + 1200) }.getOrNull() }.firstOrNull { it.isNotBlank() }.orEmpty()
+        val elapsed = SystemClock.elapsedRealtime() - start
+        val hop = parseTraceHop(raw)
+        val reached = raw.contains("bytes from", true) || raw.contains(" 0% packet loss", true) || hop == target
+        out += ttl.toString().padStart(2, '0') + "  " + (hop ?: "*") + "  ${elapsed}ms"
+        if (reached) break
+    }
+    out.joinToString("\n")
+}
+
+private fun runTraceCommand(cmd: List<String>, waitMs: Int): String {
+    val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
+    val done = p.waitFor(waitMs.toLong(), TimeUnit.MILLISECONDS)
+    if (!done) p.destroyForcibly()
+    return p.inputStream.bufferedReader().readText().trim()
+}
+
+private fun parseTraceHop(raw: String): String? {
+    val lines = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+    val fromRegex = Regex("(?i)(?:from|bytes from)\\s+([0-9a-fA-F:.%]+)")
+    for (line in lines) {
+        fromRegex.find(line)?.groupValues?.getOrNull(1)?.trim('[', ']', ':')?.substringBefore('%')?.let { if (it.isNotBlank()) return it }
+    }
+    return null
 }
 
 fun cleanApiText(v: String?): String {

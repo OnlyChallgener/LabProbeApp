@@ -1,3 +1,12 @@
+# Labprobe v0.9.15 hotfix7
+
+- versionCode: 52
+- 新增路由追踪功能，可追踪域名解析后的 IPv4 / IPv6 路径。
+- 修复 DNS / TCP / UDP / NAT / SSH 参数框过矮导致文字被遮挡的问题，统一双列控件高度和图标尺寸。
+- NAT 检测配置卡片改为科技蓝双列布局，与其他工具页观感一致。
+- SSH 命令下拉栏保存最近 6 条命令。
+- SSH 执行结果最多保留 5 条记录，最新在上，点击卡片复制真实输出内容，不复制返回码。
+
 # Labprobe v0.9.15
 
 极客网探 Labprobe Android 客户端，Kotlin + Jetpack Compose 单文件工程。
