@@ -123,7 +123,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 64
+    const val CODE = 65
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
@@ -2816,7 +2816,7 @@ fun LoadLatencyTool(prefs: AppPrefs) {
                 prefs.addHistory("load_speed_url", safeUrl); prefs.addHistory("load_ping_target", pingTarget)
                 running = true; status = "测空闲延迟..."; samples = emptyList(); summary = null
                 val result = runLoadLatencyTest(safeUrl, pingTarget, duration.toIntOrNull()?.coerceIn(3, 60) ?: 8) { idx, ms, lost ->
-                    samples = (samples + WifiSample(formatClock(), "load", "", 0, ms, lost, 0)).takeLast(120)
+                    samples = (samples + WifiSample(nowClock(), "load", "", 0, ms, lost, 0)).takeLast(120)
                     status = "负载采样 ${idx} 次"
                 }
                 summary = result; status = result.note; running = false
