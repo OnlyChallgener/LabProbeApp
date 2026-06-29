@@ -123,7 +123,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 65
+    const val CODE = 67
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
@@ -968,9 +968,6 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_nat" -> NatScreen(prefs, { route = "tools" }) { route = "tool_nat_history" }
                         "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
-                        "tool_speed" -> SpeedTemplateScreen(prefs) { route = "tools" }
-                        "tool_lan_speed" -> LanSpeedScreen(prefs) { route = "tools" }
-                        "tool_load_latency" -> LoadLatencyScreen(prefs) { route = "tools" }
                         "tool_ipv6" -> Ipv6TestScreen(prefs) { route = "tools" }
                         "tool_roam" -> WifiRoamingScreen(prefs) { route = "tools" }
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
@@ -2487,16 +2484,12 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     ToolGroupLabel("质量与监控")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("峰值外网", "公网峰值测速", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_speed") }
-        ToolHubTile("局域网测速", "路由/NAS吞吐", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_lan_speed") }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("负载延迟", "满载Ping波动", Icons.Rounded.Timeline, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_load_latency") }
         ToolHubTile("无线漫游", "RSSI/AP切换", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f)) { open("tool_roam") }
+        ToolHubTile("MTU检测", "分片/路径MTU", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_mtu") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("MTU检测", "分片/路径MTU", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_mtu") }
         ToolHubTile("DNS质量", "多DNS延迟", Icons.Rounded.TravelExplore, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_dns_quality") }
+        Spacer(Modifier.weight(1f))
     }
     ToolGroupLabel("设备工具")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2629,9 +2622,9 @@ fun Ipv6TestTool(prefs: AppPrefs) {
     var rows by remember { mutableStateOf<List<Ipv6TestRow>>(emptyList()) }
     var summary by remember { mutableStateOf("等待检测") }
     val blue = Color(0xFF2563EB)
-    ExpressiveCard("IPv6 配置", "参考 test-ipv6 思路：分别测试出口、AAAA、IPv6 Ping 与 TCP 443。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
+    ExpressiveCard("IPv6 配置", "对标 test-ipv6：IPv4/IPv6/双栈/大包/DNS/运营商分项检测。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TinyInfoParam("目标", "testipv6.cn", Icons.Rounded.Dns, blue, Modifier.weight(1f))
+            TinyInfoParam("目标", "test-ipv6", Icons.Rounded.Dns, blue, Modifier.weight(1f))
             TinyInfoParam("模式", "自动检测", Icons.Rounded.Timeline, Color(0xFF06B6D4), Modifier.weight(1f))
         }
         PillButton(if (running) "检测中..." else "开始 IPv6 检测", Icons.Rounded.PlayArrow, enabled = !running, accent = Color(0xFF06B6D4)) {
@@ -2649,7 +2642,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
         }
     }
     ExpressiveCard("IPv6 结果", summary, Icons.Rounded.FactCheck, blue) {
-        if (rows.isEmpty()) Text("点击开始后检测 IPv4/IPv6 出口、AAAA 解析、IPv6 Ping、IPv6 TCP 443 与优先级。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 17.sp)
+        if (rows.isEmpty()) Text("点击开始后检测 IPv4/IPv6 域名、双栈优先级、大数据包、DNS IPv6 接入和运营商。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 17.sp)
         rows.forEach { row ->
             val c = when (row.ok) { true -> Color(0xFF16A34A); false -> Color(0xFFEF4444); null -> Color(0xFFF59E0B) }
             Surface(
@@ -2671,7 +2664,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
                 }
             }
         }
-        Text("说明：ICMPv6 被拦截时，IPv6 TCP 仍可能正常；不要只用 Ping 判断 IPv6 是否可用。", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f), lineHeight = 15.sp)
+        Text("说明：对标 test-ipv6 的分项结果；Android 客户端无法完全等同浏览器站点，但会分别标注使用 IPv4/IPv6 的链路。", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.56f), lineHeight = 15.sp)
     }
 }
 
@@ -2931,12 +2924,16 @@ fun MtuTool(prefs: AppPrefs) {
     ExpressiveCard("MTU 配置", "常用档位先测，再对通过/失败临界区间二分细化。", Icons.Rounded.SettingsEthernet, accent) {
         CompactIconHistoryInput("目标", "223.5.5.5", host, { host = it }, "mtu_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            TinyParamSelectIcon("协议", protocol, listOf("IPv4", "IPv6"), { protocol = it }, Icons.Rounded.Public, Modifier.weight(1f))
-            TinyInfoParam("方式", if (protocol == "IPv6") "ping6 PMTU" else "DF + 二分", Icons.Rounded.Info, accent, Modifier.weight(1f))
+            TinyParamSelectIcon("协议", protocol, listOf("IPv4", "IPv6"), { selected ->
+                protocol = selected
+                if (selected == "IPv6" && (host.isBlank() || host == "223.5.5.5" || host == "www.amazon.com")) host = "2400:3200::1"
+                if (selected == "IPv4" && (host.isBlank() || host == "2400:3200::1" || host == "2400:da00::6666")) host = "223.5.5.5"
+            }, Icons.Rounded.Public, Modifier.weight(1f))
+            TinyInfoParam("方式", if (protocol == "IPv6") "ICMPv6 Echo" else "DF + 二分", Icons.Rounded.Info, accent, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            TinyInfoParam("常用", if (protocol == "IPv6") "1280/1492/1500" else "1460/1480/1492", Icons.Rounded.Timeline, Color(0xFF2563EB), Modifier.weight(1f))
-            TinyInfoParam("说明", "payload口径", Icons.Rounded.Info, Color(0xFF7C3AED), Modifier.weight(1f))
+            TinyInfoParam("常用", if (protocol == "IPv6") "1280/1492/1500" else "1492/1500", Icons.Rounded.Timeline, Color(0xFF2563EB), Modifier.weight(1f))
+            TinyInfoParam("说明", if (protocol == "IPv6") "payload+48" else "payload+28", Icons.Rounded.Info, Color(0xFF7C3AED), Modifier.weight(1f))
         }
         PillButton(if (running) "检测中..." else "开始 MTU 检测", Icons.Rounded.PlayArrow, enabled = !running, accent = accent) {
             scope.launch {
@@ -3541,8 +3538,8 @@ fun SelectableLineChart(
     var selected by remember(values) { mutableStateOf<Int?>(null) }
     val safeMax = if (maxY <= minY) minY + 1 else maxY
     val density = LocalDensity.current
-    val axisLeft = with(density) { 76.dp.toPx() }
-    val axisRightPad = with(density) { 20.dp.toPx() }
+    val axisLeft = with(density) { 42.dp.toPx() }
+    val axisRightPad = with(density) { 12.dp.toPx() }
     LabChartFrame(
         modifier = modifier.pointerInput(values, axisLeft, axisRightPad) {
             detectTapGestures { offset ->
@@ -3558,8 +3555,8 @@ fun SelectableLineChart(
         if (values.isEmpty()) return@LabChartFrame
         val left = axisLeft
         val right = w - axisRightPad
-        val top = 24.dp.toPx()
-        val bottom = h - 34.dp.toPx()
+        val top = 18.dp.toPx()
+        val bottom = h - 28.dp.toPx()
         val ticks = listOf(minY, minY + (safeMax-minY)/4, minY + (safeMax-minY)/2, minY + (safeMax-minY)*3/4, safeMax)
         drawGrid(drawContext.canvas.nativeCanvas, paint, left, right, top, bottom, ticks, yFormat)
         val pts = values.mapIndexed { idx, v ->
@@ -3654,10 +3651,10 @@ fun LabChartFrame(modifier: Modifier = Modifier, emptyText: String? = null, draw
 fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(canvas: android.graphics.Canvas, paint: Paint, left: Float, right: Float, top: Float, bottom: Float, ticks: List<Double>, format: (Double)->String) {
     paint.strokeWidth = 1.15f
     paint.color = android.graphics.Color.rgb(226,232,240)
-    paint.textSize = 15.sp.toPx()
+    paint.textSize = 12.sp.toPx()
     paint.textAlign = Paint.Align.RIGHT
     paint.isFakeBoldText = true
-    val labelGap = 14.dp.toPx()
+    val labelGap = 6.dp.toPx()
     ticks.forEach { t ->
         val min = ticks.minOrNull() ?: 0.0
         val max = ticks.maxOrNull() ?: 1.0
@@ -6120,8 +6117,27 @@ private fun intToIp(i: Int): String {
 
 suspend fun runMtuProbeSmart(host: String, ipv6: Boolean, onProgress: suspend (List<Pair<Int, Boolean>>) -> Unit = {}): MtuProbeResult = withContext(Dispatchers.IO) {
     val target = host.trim().ifBlank { if (ipv6) "2400:3200::1" else "223.5.5.5" }
-    val resolved = runCatching { InetAddress.getByName(target).hostAddress ?: target }.getOrDefault(target)
-    val common = if (ipv6) listOf(1200, 1232, 1280, 1400, 1460, 1472, 1492, 1500) else listOf(1200, 1280, 1400, 1460, 1472, 1480, 1492, 1500)
+    val resolvedAddr = resolveAddressForFamily(target, ipv6)
+    if (resolvedAddr == null) {
+        val type = if (ipv6) "AAAA / IPv6" else "A / IPv4"
+        val summary = "无法按当前协议解析目标。\n协议：${if (ipv6) "IPv6" else "IPv4"}\n需要记录：$type\n目标：$target\n建议：IPv6请使用IPv6地址或有AAAA记录的域名；IPv4请使用IPv4地址或有A记录的域名。"
+        return@withContext MtuProbeResult(summary, emptyList())
+    }
+    val resolved = resolvedAddr.hostAddress ?: target
+
+    val basicOk = basicPingForMtu(resolved, ipv6)
+    if (!basicOk) {
+        val summary = "基础 Ping 不通，无法进行 MTU 探测。\n协议：${if (ipv6) "IPv6" else "IPv4"}\n目标：$target → $resolved\n说明：目标可能禁止 ICMP${if (ipv6) "v6" else ""} Echo、VPN/防火墙拦截，或当前网络不支持该协议；这不是 MTU 全部失败。"
+        return@withContext MtuProbeResult(summary, emptyList())
+    }
+
+    val common = if (ipv6) {
+        // IPv6 MTU ≈ payload + 48. 1232≈1280, 1444≈1492, 1452≈1500.
+        listOf(1200, 1232, 1400, 1444, 1452)
+    } else {
+        // IPv4 MTU ≈ payload + 28. 1464≈1492, 1472≈1500.
+        listOf(1200, 1280, 1400, 1460, 1464, 1472, 1480)
+    }
     val rows = mutableListOf<Pair<Int, Boolean>>()
     var lastOk: Int? = null
     var firstFail: Int? = null
@@ -6130,7 +6146,11 @@ suspend fun runMtuProbeSmart(host: String, ipv6: Boolean, onProgress: suspend (L
         val ok = mtuPingOnce(resolved, p, ipv6)
         rows += p to ok
         withContext(Dispatchers.Main) { onProgress(rows.toList()) }
-        if (ok) lastOk = p else if (firstFail == null && lastOk != null) firstFail = p
+        if (ok) {
+            lastOk = p
+        } else if (firstFail == null && lastOk != null) {
+            firstFail = p
+        }
         if (!ok && lastOk != null) break
     }
     if (lastOk != null && firstFail != null && firstFail!! - lastOk!! > 1) {
@@ -6148,6 +6168,11 @@ suspend fun runMtuProbeSmart(host: String, ipv6: Boolean, onProgress: suspend (L
     val best = lastOk
     val mtuOverhead = if (ipv6) 48 else 28
     val mssOverhead = if (ipv6) 60 else 40
+    val header = if (ipv6) {
+        "IPv6 使用 ICMPv6 Echo payload 估算路径 MTU；不使用 IPv4 的 DF / -M do。\npayload 1232≈MTU 1280，1444≈1492，1452≈1500。"
+    } else {
+        "IPv4 使用 DF 禁止分片方式估算路径 MTU。\npayload 1464≈MTU 1492，1472≈1500。"
+    }
     val summary = if (best != null) {
         val mtu = best + mtuOverhead
         val mss = (mtu - mssOverhead).coerceAtLeast(0)
@@ -6155,23 +6180,57 @@ suspend fun runMtuProbeSmart(host: String, ipv6: Boolean, onProgress: suspend (L
             !ipv6 && mtu in 1488..1496 -> "疑似 PPPoE / VPN 常见 MTU 区间"
             !ipv6 && mtu >= 1500 -> "接近以太网常见 1500 MTU"
             ipv6 && mtu <= 1280 -> "IPv6 最小 MTU 附近；需关注 ICMPv6/PMTUD"
+            ipv6 && mtu >= 1500 -> "IPv6 路径接近 1500 MTU"
             else -> "路径 MTU 可用，建议结合实际业务复测"
         }
-        "最大通过 payload：$best bytes\n估算 ${if (ipv6) "IPv6" else "IPv4"} MTU：$mtu bytes\n建议 TCP MSS：$mss bytes\n判断：$hint\n目标：$target → $resolved\n" + rows.sortedBy { it.first }.joinToString("\n") { "payload ${it.first}: ${if (it.second) "通过" else "失败/分片受限"}" }
+        "$header\n\n最大通过 payload：$best bytes\n估算 ${if (ipv6) "IPv6" else "IPv4"} MTU：$mtu bytes\n建议 TCP MSS：$mss bytes\n判断：$hint\n目标：$target → $resolved\n" + rows.distinctBy { it.first }.sortedBy { it.first }.joinToString("\n") { "payload ${it.first}: ${if (it.second) "通过" else "失败/受限"}" }
     } else {
-        "未找到可通过 payload。可能目标禁 ICMP、VPN/防火墙拦截，或 Android ping 不支持 DF/PMTUD 探测。\n目标：$target → $resolved\n" + rows.joinToString("\n") { "payload ${it.first}: ${if (it.second) "通过" else "失败"}" }
+        "$header\n\n基础 Ping 可通，但未找到可通过 payload。可能 Android ping 参数受限、VPN/防火墙拦截大包，或路径 ICMP 报文被过滤。\n目标：$target → $resolved\n" + rows.distinctBy { it.first }.sortedBy { it.first }.joinToString("\n") { "payload ${it.first}: ${if (it.second) "通过" else "失败"}" }
     }
-    MtuProbeResult(summary, rows.sortedBy { it.first })
+    MtuProbeResult(summary, rows.distinctBy { it.first }.sortedBy { it.first })
 }
 
-private fun mtuPingOnce(host: String, payload: Int, ipv6: Boolean = false): Boolean = runCatching {
-    val bin = if (ipv6) "/system/bin/ping6" else "/system/bin/ping"
-    val cmd = if (ipv6) listOf(bin, "-c", "1", "-W", "1", "-s", payload.toString(), host) else listOf(bin, "-c", "1", "-W", "1", "-M", "do", "-s", payload.toString(), host)
+private fun resolveAddressForFamily(target: String, ipv6: Boolean): InetAddress? = runCatching {
+    InetAddress.getAllByName(target).firstOrNull { addr -> if (ipv6) addr is Inet6Address else addr is Inet4Address }
+}.getOrNull()
+
+private fun basicPingForMtu(host: String, ipv6: Boolean): Boolean {
+    val commands = if (ipv6) {
+        listOf(
+            listOf("/system/bin/ping6", "-c", "1", "-W", "1", host),
+            listOf("/system/bin/ping", "-6", "-c", "1", "-W", "1", host)
+        )
+    } else {
+        listOf(
+            listOf("/system/bin/ping", "-c", "1", "-W", "1", host),
+            listOf("/system/bin/ping", "-4", "-c", "1", "-W", "1", host)
+        )
+    }
+    return commands.any { runPingCommand(it) }
+}
+
+private fun mtuPingOnce(host: String, payload: Int, ipv6: Boolean = false): Boolean {
+    val commands = if (ipv6) {
+        // IPv6 不使用 -M do；通过 ICMPv6 Echo 的 payload 大小估算。
+        listOf(
+            listOf("/system/bin/ping6", "-c", "1", "-W", "1", "-s", payload.toString(), host),
+            listOf("/system/bin/ping", "-6", "-c", "1", "-W", "1", "-s", payload.toString(), host)
+        )
+    } else {
+        listOf(
+            listOf("/system/bin/ping", "-c", "1", "-W", "1", "-M", "do", "-s", payload.toString(), host)
+        )
+    }
+    return commands.any { runPingCommand(it) }
+}
+
+private fun runPingCommand(cmd: List<String>): Boolean = runCatching {
     val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
     val text = p.inputStream.bufferedReader().readText()
-    p.waitFor(1800, TimeUnit.MILLISECONDS)
-    if (p.isAlive) p.destroyForcibly()
-    p.exitValue() == 0 || text.contains("1 received") || text.contains("bytes from")
+    val finished = p.waitFor(2200, TimeUnit.MILLISECONDS)
+    if (!finished || p.isAlive) p.destroyForcibly()
+    val code = runCatching { p.exitValue() }.getOrDefault(1)
+    code == 0 || text.contains("1 received", ignoreCase = true) || text.contains("1 packets received", ignoreCase = true) || text.contains("bytes from", ignoreCase = true)
 }.getOrDefault(false)
 
 suspend fun runDnsQuality(domain: String, servers: List<String>): List<DnsQualityRow> = withContext(Dispatchers.IO) {
@@ -6200,33 +6259,67 @@ suspend fun runServiceMonitor(targets: List<ServiceTarget>, prefs: AppPrefs): Li
 
 suspend fun runIpv6AvailabilityTest(onProgress: suspend (List<Ipv6TestRow>) -> Unit = {}): List<Ipv6TestRow> = withContext(Dispatchers.IO) {
     val rows = mutableListOf<Ipv6TestRow>()
-    suspend fun add(row: Ipv6TestRow) {
-        rows += row
+    suspend fun add(name: String, ok: Boolean?, ms: Long, family: String, detail: String, route: String = "") {
+        val status = when (ok) { true -> "成功"; false -> "失败"; null -> "完成" }
+        val d = buildString {
+            if (ms >= 0) append("(${String.format(Locale.US, "%.3fs", ms / 1000.0)}) ")
+            if (family.isNotBlank()) append("使用 ").append(family).append(" · ")
+            append(detail)
+        }
+        rows += Ipv6TestRow(name, status, d, ok, route)
         withContext(Dispatchers.Main) { onProgress(rows.toList()) }
     }
-    val v4 = runCatching { httpGetWithFamily("https://api.ipify.org", false, 3000).trim() }.getOrNull()
-    add(Ipv6TestRow("IPv4 出口", if (v4.isNullOrBlank()) "不可用" else "可用", v4 ?: "IPv4 HTTP 出口不可达或超时", v4?.isNotBlank(), "tool_dns"))
-    val v6 = runCatching { httpGetWithFamily("https://api64.ipify.org", true, 4000).trim() }.getOrNull()
-    add(Ipv6TestRow("IPv6 出口", if (v6.isNullOrBlank()) "不可用" else "可用", v6 ?: "IPv6 HTTP 出口不可达或超时", v6?.isNotBlank(), "tool_dns"))
-    val addresses = runCatching { InetAddress.getAllByName("testipv6.cn").toList() }.getOrDefault(emptyList())
-    val hasAaaa = addresses.any { it is Inet6Address }
-    add(Ipv6TestRow("AAAA 解析", if (hasAaaa) "正常" else "异常", addresses.joinToString(" / ") { it.hostAddress ?: "" }.ifBlank { "未解析到地址" }, hasAaaa, "tool_dns"))
-    val v6Addr = addresses.filterIsInstance<Inet6Address>().firstOrNull() ?: runCatching { InetAddress.getAllByName("ipv6.google.com").filterIsInstance<Inet6Address>().firstOrNull() }.getOrNull()
-    val ping6 = if (v6Addr != null) runCatching { pingOnceAddress(v6Addr, 1200) }.getOrNull() else null
-    add(Ipv6TestRow("IPv6 Ping", if (ping6 != null) "可达" else "受限", ping6?.let { "${it}ms · ICMPv6 可达" } ?: "ICMPv6 可能被防火墙或运营商拦截", ping6 != null, "tool_ping"))
-    val tcp6 = if (v6Addr != null) runCatching {
-        val started = SystemClock.elapsedRealtime()
-        Socket().use { it.connect(InetSocketAddress(v6Addr, 443), 1800) }
-        (SystemClock.elapsedRealtime() - started).toInt()
-    }.getOrNull() else null
-    add(Ipv6TestRow("IPv6 TCP 443", if (tcp6 != null) "可达" else "不可达", tcp6?.let { "${it}ms · IPv6 TCP 连接成功" } ?: "IPv6 TCP 443 连接失败或超时", tcp6 != null, "tool_port"))
-    val priority = when {
-        !v6.isNullOrBlank() && !v4.isNullOrBlank() -> if ((v6Addr != null) && hasAaaa) "双栈可用，建议按系统优先级" else "双栈可用"
-        !v6.isNullOrBlank() -> "仅 IPv6/IPv6 优先"
-        !v4.isNullOrBlank() -> "仅 IPv4 或 IPv6 受限"
-        else -> "网络不可用"
+
+    suspend fun timed(name: String, family: String, route: String = "", block: () -> String): String? {
+        val st = SystemClock.elapsedRealtime()
+        return try {
+            val detail = block().ifBlank { "无返回内容" }
+            add(name, true, SystemClock.elapsedRealtime() - st, family, detail, route)
+            detail
+        } catch (e: Exception) {
+            add(name, false, SystemClock.elapsedRealtime() - st, family, e.message ?: e.javaClass.simpleName, route)
+            null
+        }
     }
-    add(Ipv6TestRow("访问优先级", "完成", priority, null, ""))
+
+    val ipv4 = timed("IPv4 域名连接测试", "ipv4", "tool_dns") {
+        val ip = httpGetWithFamily("https://api.ipify.org", false, 3000).trim()
+        "IPv4 出口 $ip"
+    }
+    val ipv6 = timed("IPv6 域名连接测试", "ipv6", "tool_dns") {
+        val ip = httpGetWithFamily("https://api64.ipify.org", true, 4000).trim()
+        "IPv6 出口 $ip"
+    }
+    timed("双栈域名连接测试", if (ipv6 != null && ipv4 == null) "ipv6" else "ipv4", "tool_dns") {
+        val ip = httpGetWithFamily("https://api64.ipify.org", false, 3500).trim()
+        "双栈域名可访问，返回 $ip"
+    }
+    timed("双栈域名大数据包传输测试", if (ipv6 != null) "ipv6" else "ipv4", "tool_ipv6") {
+        val body = httpGetWithFamily("https://speed.cloudflare.com/__down?bytes=65536", ipv6 != null, 5000)
+        "下载 ${body.length.coerceAtLeast(0)} bytes"
+    }
+    timed("IPv6 大数据包传输测试", "ipv6", "tool_ipv6") {
+        val body = httpGetWithFamily("https://speed.cloudflare.com/__down?bytes=65536", true, 5500)
+        "下载 ${body.length.coerceAtLeast(0)} bytes"
+    }
+    timed("测试运营商 DNS 是否接入 IPv6", "ipv6", "tool_dns") {
+        val addresses = InetAddress.getAllByName("testipv6.cn").toList()
+        val aaaas = addresses.filterIsInstance<Inet6Address>().mapNotNull { it.hostAddress }
+        if (aaaas.isEmpty()) throw IllegalStateException("未解析到 AAAA")
+        "AAAA ${aaaas.take(2).joinToString(" / ")}"
+    }
+    timed("查询 IPv4 运营商", "ipv4", "tool_dns") {
+        val ip = ipv4?.substringAfter("IPv4 出口 ")?.trim().orEmpty()
+        val op = inferOperatorByIpOnly(ip).ifBlank { "ASN/运营商需外部库，当前显示出口 $ip" }
+        "$op"
+    }
+    timed("查询 IPv6 运营商", "ipv6", "tool_dns") {
+        val ip = ipv6?.substringAfter("IPv6 出口 ")?.trim().orEmpty()
+        val op = inferOperatorByIpOnly(ip).ifBlank { "ASN/运营商需外部库，当前显示出口 $ip" }
+        "$op"
+    }
+    val okCount = rows.count { it.ok == true }
+    add("IPv6 综合结论", null, -1, "", if (ipv6 != null) "IPv6 可用性 ${okCount}/${rows.count { it.ok != null }}，双栈网络可用" else "IPv6 不可用或受限，建议检查运营商 IPv6/路由器 RA/DNS")
     rows.toList()
 }
 

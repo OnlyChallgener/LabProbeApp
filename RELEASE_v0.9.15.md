@@ -1,45 +1,8 @@
-# Labprobe v0.9.15 buildfix17
+# Labprobe v0.9.15 buildfix22
 
-- versionCode = 62
-- 新增 IPv6 可用性测试入口：检测 IPv4/IPv6 出口、AAAA、IPv6 Ping、IPv6 TCP 443 和访问优先级。
-- 模板测速改为峰值测速：预热后寻找峰值，速度稳定自动停止，并支持点选曲线查看数值。
-- 无线漫游新增指定 Ping 目标、丢包率、协商速率；RSSI/延迟曲线支持点选显示当时数值。
-- MTU / 分片检测改为常用档位 + 二分细化，输出 payload、估算 MTU 和建议 MSS。
-- 图表轴数字改为深色半粗体，提升可读性；拖拽卡片悬浮阴影改为圆角形态。
-
-# Labprobe v0.9.15 personal test build 13
-
-个人测试版，versionCode 58。
-
-## 更新内容
-
-- 移除一键自测 / 一键诊断报告入口。
-- 新增模板测速页面：内置下载模板，显示当前速度、平均速度、峰值和总流量。上传/双向暂作为预留，后续需要自建服务端才能保证准确性。
-- 新增无线漫游页面：采集 SSID / BSSID / RSSI、网关延迟、丢包与 AP 切换事件，适合 Mesh / 多 AP 漫游自测。
-- 新增 MTU / 分片检测页面：使用 ping DF 方式粗测路径 MTU，结果用于 VPN / IPv6 / 分片排障参考。
-- 新增 DNS 质量检测页面：对多个 DNS 服务器并行测试 A / AAAA 响应与延迟。
-- 新增服务可达性监控页面：按名称、主机、端口、TCP/UDP 批量检测服务状态。
-- 新增页面统一使用科技蓝小图标、双列参数框和足够内边距，避免上下左右遮挡文字。
-
-## 注意
-
-- 无线漫游在 Android 新系统上需要位置权限才能读取真实 SSID / BSSID，否则可能显示 unknown。
-- 模板测速结果代表当前测速源到手机的实际吞吐，不等于宽带物理上限。
-- 上传 / 双向测速要想准确，建议后续增加自建测速服务端。
-
-
-### buildfix15
-- 修复无线漫游图表编译错误：补齐 `niceLatencyMax` 延迟刻度函数。
-- versionCode 更新到 60。
-
-
-## buildfix18
-- 新增/拆分峰值外网测速、局域网测速、负载延迟测试。
-- DNS 解析增加本机 DNS 显示与小开关，可切换系统解析。
-- 测速与漫游图表 Y 轴数字进一步加粗放大，避免看不清。
-
-
-### buildfix19 编译修复
-- 修复负载延迟图表 pointLabels 字符串换行导致的 Kotlin 语法错误。
-- 修复 IPv6 页面图标名 SettingsEthernetguage 拼写错误。
-- versionCode 更新到 64。
+## MTU IPv6 探测修复
+- IPv6 模式强制解析 AAAA / IPv6 地址，避免误用 IPv4 地址导致全失败。
+- IPv6 MTU 改用 ICMPv6 Echo payload 估算，不再依赖 IPv4 的 `-M do` DF 参数。
+- 检测前先做基础 Ping；基础 Ping 不通时明确提示目标不响应 ICMP / 网络受限，而不是把所有 payload 标成失败。
+- IPv6 默认目标建议使用 `2400:3200::1`；IPv4 默认目标为 `223.5.5.5`。
+- 更新 payload 说明：IPv4 `payload+28`，IPv6 `payload+48`。
