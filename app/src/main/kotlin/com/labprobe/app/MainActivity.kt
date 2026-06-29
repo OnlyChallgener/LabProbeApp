@@ -123,7 +123,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 67
+    const val CODE = 68
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
@@ -2585,7 +2585,7 @@ fun LanSpeedScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("局域网
 @Composable
 fun LoadLatencyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("负载延迟", "下载满载时同步 Ping", onBack) { LoadLatencyTool(prefs) }
 @Composable
-fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "IPv4 / IPv6 / AAAA / 优先级", onBack) { Ipv6TestTool(prefs) }
+fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "公网出口 / 双栈 / AAAA / ASN", onBack) { Ipv6TestTool(prefs) }
 @Composable
 fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) { WifiRoamingTool(prefs) }
 @Composable
@@ -2622,7 +2622,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
     var rows by remember { mutableStateOf<List<Ipv6TestRow>>(emptyList()) }
     var summary by remember { mutableStateOf("等待检测") }
     val blue = Color(0xFF2563EB)
-    ExpressiveCard("IPv6 配置", "对标 test-ipv6：IPv4/IPv6/双栈/大包/DNS/运营商分项检测。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
+    ExpressiveCard("IPv6 配置", "对标 test-ipv6：IPv4/IPv6公网出口、双栈、大包、AAAA 与 ASN 分项检测。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TinyInfoParam("目标", "test-ipv6", Icons.Rounded.Dns, blue, Modifier.weight(1f))
             TinyInfoParam("模式", "自动检测", Icons.Rounded.Timeline, Color(0xFF06B6D4), Modifier.weight(1f))
@@ -2635,14 +2635,14 @@ fun Ipv6TestTool(prefs: AppPrefs) {
                 rows = runIpv6AvailabilityTest { partial -> rows = partial }
                 val okCount = rows.count { it.ok == true }
                 val total = rows.count { it.ok != null }.coerceAtLeast(1)
-                val hasV6 = rows.any { it.name.contains("IPv6 出口") && it.ok == true }
+                val hasV6 = rows.any { it.name.contains("IPv6 公网出口") && it.ok == true }
                 summary = "IPv6 可用性 ${okCount}/${total} · ${if (hasV6) "IPv6 可用" else "IPv6 不可用或受限"}"
                 running = false
             }
         }
     }
     ExpressiveCard("IPv6 结果", summary, Icons.Rounded.FactCheck, blue) {
-        if (rows.isEmpty()) Text("点击开始后检测 IPv4/IPv6 域名、双栈优先级、大数据包、DNS IPv6 接入和运营商。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 17.sp)
+        if (rows.isEmpty()) Text("点击开始后检测 IPv4/IPv6 公网出口、双栈优先级、大数据包、AAAA 解析和 ASN 运营商。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 17.sp)
         rows.forEach { row ->
             val c = when (row.ok) { true -> Color(0xFF16A34A); false -> Color(0xFFEF4444); null -> Color(0xFFF59E0B) }
             Surface(
@@ -6282,63 +6282,181 @@ suspend fun runIpv6AvailabilityTest(onProgress: suspend (List<Ipv6TestRow>) -> U
         }
     }
 
-    val ipv4 = timed("IPv4 域名连接测试", "ipv4", "tool_dns") {
-        val ip = httpGetWithFamily("https://api.ipify.org", false, 3000).trim()
-        "IPv4 出口 $ip"
+    var ipv4Exit = ""
+    var ipv6Exit = ""
+    var dualFamily = ""
+
+    val ipv4 = timed("IPv4 公网出口测试", "ipv4", "tool_dns") {
+        val r = firstHttpProbe(
+            listOf("https://api.ipify.org", "https://ipv4.icanhazip.com", "https://v4.ident.me"),
+            preferredIpv6 = false,
+            timeoutMs = 3500
+        )
+        ipv4Exit = r.body.trim()
+        "IPv4 出口 $ipv4Exit · 来源 ${hostOfUrl(r.url)}"
     }
-    val ipv6 = timed("IPv6 域名连接测试", "ipv6", "tool_dns") {
-        val ip = httpGetWithFamily("https://api64.ipify.org", true, 4000).trim()
-        "IPv6 出口 $ip"
+
+    val ipv6 = timed("IPv6 公网出口测试", "ipv6", "tool_dns") {
+        val r = firstHttpProbe(
+            listOf("https://api64.ipify.org", "https://ipv6.icanhazip.com", "https://v6.ident.me"),
+            preferredIpv6 = true,
+            timeoutMs = 4500
+        )
+        ipv6Exit = r.body.trim()
+        "IPv6 出口 $ipv6Exit · 来源 ${hostOfUrl(r.url)}"
     }
-    timed("双栈域名连接测试", if (ipv6 != null && ipv4 == null) "ipv6" else "ipv4", "tool_dns") {
-        val ip = httpGetWithFamily("https://api64.ipify.org", false, 3500).trim()
-        "双栈域名可访问，返回 $ip"
+
+    timed("双栈域名连接测试", "自动", "tool_dns") {
+        val r = firstHttpProbe(
+            listOf("https://api64.ipify.org", "https://icanhazip.com", "https://ident.me"),
+            preferredIpv6 = null,
+            timeoutMs = 4500
+        )
+        dualFamily = inferFamilyFromIpText(r.body).ifBlank { r.family }
+        "双栈域名可访问，实际使用 $dualFamily，返回 ${r.body.trim()} · 来源 ${hostOfUrl(r.url)}"
     }
-    timed("双栈域名大数据包传输测试", if (ipv6 != null) "ipv6" else "ipv4", "tool_ipv6") {
-        val body = httpGetWithFamily("https://speed.cloudflare.com/__down?bytes=65536", ipv6 != null, 5000)
-        "下载 ${body.length.coerceAtLeast(0)} bytes"
+
+    timed("双栈域名大数据包传输测试", dualFamily.ifBlank { "自动" }, "tool_ipv6") {
+        val prefer = when (dualFamily) { "ipv6" -> true; "ipv4" -> false; else -> null }
+        val r = httpGetWithPreferredFamily("https://speed.cloudflare.com/__down?bytes=65536", prefer, 6000)
+        "下载 ${r.body.length.coerceAtLeast(0)} bytes · 实际使用 ${r.family}"
     }
+
     timed("IPv6 大数据包传输测试", "ipv6", "tool_ipv6") {
-        val body = httpGetWithFamily("https://speed.cloudflare.com/__down?bytes=65536", true, 5500)
-        "下载 ${body.length.coerceAtLeast(0)} bytes"
+        val r = httpGetWithPreferredFamily("https://speed.cloudflare.com/__down?bytes=65536", true, 6500)
+        "下载 ${r.body.length.coerceAtLeast(0)} bytes"
     }
-    timed("测试运营商 DNS 是否接入 IPv6", "ipv6", "tool_dns") {
-        val addresses = InetAddress.getAllByName("testipv6.cn").toList()
-        val aaaas = addresses.filterIsInstance<Inet6Address>().mapNotNull { it.hostAddress }
-        if (aaaas.isEmpty()) throw IllegalStateException("未解析到 AAAA")
-        "AAAA ${aaaas.take(2).joinToString(" / ")}"
+
+    timed("本机 DNS AAAA 解析能力", "系统DNS", "tool_dns") {
+        val domains = listOf("test-ipv6.com", "ipv6.google.com", "www.cloudflare.com", "testipv6.cn")
+        val first = domains.firstNotNullOfOrNull { d ->
+            val aaaas = runCatching { InetAddress.getAllByName(d).toList().filterIsInstance<Inet6Address>().mapNotNull { it.hostAddress } }.getOrDefault(emptyList())
+            if (aaaas.isNotEmpty()) d to aaaas else null
+        } ?: throw IllegalStateException("系统 DNS 未返回 AAAA；这不等同于运营商 DNS IPv6 权威查询能力")
+        "${first.first} 返回 AAAA ${first.second.take(2).joinToString(" / ")}"
     }
+
     timed("查询 IPv4 运营商", "ipv4", "tool_dns") {
-        val ip = ipv4?.substringAfter("IPv4 出口 ")?.trim().orEmpty()
-        val op = inferOperatorByIpOnly(ip).ifBlank { "ASN/运营商需外部库，当前显示出口 $ip" }
-        "$op"
+        if (ipv4Exit.isBlank()) throw IllegalStateException("未获得 IPv4 公网出口，无法查询 ASN")
+        lookupIpOwnerOnline(ipv4Exit)
     }
+
     timed("查询 IPv6 运营商", "ipv6", "tool_dns") {
-        val ip = ipv6?.substringAfter("IPv6 出口 ")?.trim().orEmpty()
-        val op = inferOperatorByIpOnly(ip).ifBlank { "ASN/运营商需外部库，当前显示出口 $ip" }
-        "$op"
+        if (ipv6Exit.isBlank()) throw IllegalStateException("未获得 IPv6 公网出口，无法查询 ASN")
+        lookupIpOwnerOnline(ipv6Exit)
     }
+
+    val checked = rows.count { it.ok != null }.coerceAtLeast(1)
     val okCount = rows.count { it.ok == true }
-    add("IPv6 综合结论", null, -1, "", if (ipv6 != null) "IPv6 可用性 ${okCount}/${rows.count { it.ok != null }}，双栈网络可用" else "IPv6 不可用或受限，建议检查运营商 IPv6/路由器 RA/DNS")
+    val conclusion = when {
+        ipv6 != null && ipv4 != null -> "IPv6 可用性 $okCount/$checked，IPv4/IPv6 双栈公网出口均可用"
+        ipv6 != null && ipv4 == null -> "IPv6 可用性 $okCount/$checked，IPv6 可用；IPv4 公网出口失败或受限"
+        ipv6 == null && ipv4 != null -> "IPv6 可用性 $okCount/$checked，仅 IPv4 公网出口可用；IPv6 不可用或受限"
+        else -> "IPv6 可用性 $okCount/$checked，IPv4/IPv6 公网出口均失败，请检查网络/VPN/DNS"
+    }
+    add("IPv6 综合结论", null, -1, "", conclusion)
     rows.toList()
 }
 
-private fun httpGetWithFamily(url: String, ipv6: Boolean, timeoutMs: Long): String {
-    val client = OkHttpClient.Builder()
+private data class HttpFamilyProbe(val url: String, val body: String, val family: String)
+
+private fun firstHttpProbe(urls: List<String>, preferredIpv6: Boolean?, timeoutMs: Long): HttpFamilyProbe {
+    var lastError = ""
+    for (url in urls) {
+        try {
+            return httpGetWithPreferredFamily(url, preferredIpv6, timeoutMs)
+        } catch (e: Exception) {
+            lastError = "${hostOfUrl(url)}: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+    throw IllegalStateException("所有测试源失败：$lastError")
+}
+
+private fun httpGetWithPreferredFamily(url: String, preferredIpv6: Boolean?, timeoutMs: Long): HttpFamilyProbe {
+    val clientBuilder = OkHttpClient.Builder()
         .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
         .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
-        .dns(object : Dns {
+    if (preferredIpv6 != null) {
+        clientBuilder.dns(object : Dns {
             override fun lookup(hostname: String): List<InetAddress> {
                 val all = InetAddress.getAllByName(hostname).toList()
-                val selected = all.filter { if (ipv6) it is Inet6Address else it is Inet4Address }
-                return selected.ifEmpty { all }
+                val selected = all.filter { if (preferredIpv6) it is Inet6Address else it is Inet4Address }
+                if (selected.isEmpty()) throw IllegalStateException("DNS 未解析到 ${if (preferredIpv6) "IPv6/AAAA" else "IPv4/A"} 记录")
+                return selected
             }
         })
-        .build()
+    }
+    val client = clientBuilder.build()
     client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
         if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
-        return resp.body?.string().orEmpty()
+        val body = resp.body?.string().orEmpty().trim()
+        val family = inferFamilyFromIpText(body).ifBlank {
+            when (preferredIpv6) { true -> "ipv6"; false -> "ipv4"; null -> "自动" }
+        }
+        return HttpFamilyProbe(url, body, family)
     }
 }
+
+private fun inferFamilyFromIpText(text: String): String {
+    val t = text.trim().removePrefix("[").removeSuffix("]")
+    return when {
+        t.contains(":") -> "ipv6"
+        Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(t) -> "ipv4"
+        else -> ""
+    }
+}
+
+private fun hostOfUrl(url: String): String = runCatching { Uri.parse(url).host.orEmpty() }.getOrDefault(url)
+
+private fun lookupIpOwnerOnline(ip: String): String {
+    val cleanIp = ip.trim().removePrefix("[").removeSuffix("]")
+    val prefixGuess = inferOperatorByIpOnly(cleanIp)
+    val client = OkHttpClient.Builder()
+        .connectTimeout(3500, TimeUnit.MILLISECONDS)
+        .readTimeout(3500, TimeUnit.MILLISECONDS)
+        .build()
+
+    val encoded = URLEncoder.encode(cleanIp, "UTF-8")
+    runCatching {
+        val url = "http://ip-api.com/json/$encoded?fields=status,message,query,as,isp,org"
+        val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string().orEmpty() }
+        val o = JSONObject(text)
+        if (o.optString("status") == "success") {
+            val asText = o.optString("as")
+            val isp = o.optString("isp")
+            val org = o.optString("org")
+            val carrier = carrierFromAsnOrg(asText, isp, org).ifBlank { prefixGuess }
+            return listOf(carrier, asText, isp.ifBlank { org }).filter { it.isNotBlank() }.distinct().joinToString(" · ").ifBlank { "ASN 查询成功，但运营商未知" }
+        }
+    }
+
+    runCatching {
+        val url = "https://api.ip.sb/geoip/$encoded"
+        val text = client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string().orEmpty() }
+        val o = JSONObject(text)
+        val asn = o.optString("asn")
+        val org = o.optString("organization").ifBlank { o.optString("isp") }
+        val carrier = carrierFromAsnOrg(asn, org, org).ifBlank { prefixGuess }
+        if (asn.isNotBlank() || org.isNotBlank()) {
+            return listOf(carrier, asn.takeIf { it.isNotBlank() }?.let { "AS$it" }.orEmpty(), org).filter { it.isNotBlank() }.distinct().joinToString(" · ")
+        }
+    }
+
+    if (prefixGuess.isNotBlank()) return "$prefixGuess · IPv6 前缀判断（在线 ASN 查询失败）"
+    throw IllegalStateException("ASN/Geo 查询失败")
+}
+
+private fun carrierFromAsnOrg(asText: String, isp: String, org: String): String {
+    val text = "$asText $isp $org".lowercase(Locale.getDefault())
+    val asn = Regex("as\\s*(\\d+)", RegexOption.IGNORE_CASE).find(asText)?.groupValues?.getOrNull(1).orEmpty()
+    return when {
+        asn in setOf("4134", "4809", "4812", "4816", "58543") || text.contains("chinanet") || text.contains("china telecom") || text.contains("ct") && text.contains("telecom") -> "中国电信"
+        asn in setOf("4837", "4808", "9929", "10099") || text.contains("china unicom") || text.contains("unicom") -> "中国联通"
+        asn in setOf("9808", "56040", "56041", "56046", "58453") || text.contains("china mobile") || text.contains("cmcc") || text.contains("cmi") -> "中国移动"
+        asn == "4538" || text.contains("cernet") || text.contains("education") -> "中国教育网"
+        else -> ""
+    }
+}
+
 
 fun copy(ctx: Context, text: String) { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("极客网探", text)); toast(ctx, "已复制") }
