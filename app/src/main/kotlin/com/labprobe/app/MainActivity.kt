@@ -123,7 +123,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 70
+    const val CODE = 72
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 设备事件去重热修" to listOf(
@@ -2234,13 +2234,40 @@ fun homeDailyFromApi(root: JSONObject, date: String, fallback: HomeDailySnapshot
     val summary = daily.optJSONObject("summary") ?: JSONObject()
     val note = cleanApiText(daily.optString("note"))
     return HomeDailySnapshot(
-        up = summary.optInt("deviceOnline", fallback.up),
-        down = summary.optInt("deviceOffline", fallback.down),
+        // 设备上线/下线统一使用 APP 本地规范化事件，避免 Hub 旧缓存重复离线继续影响首页。
+        up = fallback.up,
+        down = fallback.down,
         vpn = summary.optInt("vpnChanges", fallback.vpn),
         ddns = summary.optInt("ddnsChanges", fallback.ddns),
         hasNote = note.isNotBlank(),
-        source = "已同步每日总结 $date"
+        source = "已同步每日总结 $date · 设备统计已本地去重"
     )
+}
+
+fun localDailyDeviceSummary(events: List<EventItem>, date: String): JSONArray {
+    val arr = JSONArray()
+    val today = events.filter { eventMatchesDate(it.time, date) && (it.type == "device_online" || it.type == "device_offline") }
+    val grouped = today.groupBy { eventDeviceKey(it).ifBlank { it.name.ifBlank { it.title } } }
+    grouped.values.sortedBy { it.firstOrNull()?.name ?: it.firstOrNull()?.title ?: "" }.forEach { list ->
+        val latest = list.maxByOrNull { parseEventMillis(it.time) ?: 0L } ?: return@forEach
+        val name = latest.name.ifBlank { latest.title.removeSuffix(" 上线").removeSuffix(" 离线") }.ifBlank { "未知终端" }
+        val online = list.count { it.type == "device_online" }
+        val offline = list.count { it.type == "device_offline" }
+        val totalOnlineSeconds = list.filter { it.type == "device_offline" }.mapNotNull { parseDurationSeconds(it.onlineDurationText) }.sum()
+        arr.put(JSONObject()
+            .put("name", name)
+            .put("online", online)
+            .put("offline", offline)
+            .put("onlineDurationText", if (totalOnlineSeconds > 0) formatDurationMs(totalOnlineSeconds * 1000L) else latest.onlineDurationText)
+            .put("lastIp", latest.ip)
+            .put("lastSignal", listOfNotNull(
+                latest.rssi.takeIf { it.isNotBlank() }?.let { "$it dBm" },
+                latest.band.takeIf { it.isNotBlank() },
+                latest.rxrate.takeIf { it.isNotBlank() }
+            ).joinToString(" "))
+        )
+    }
+    return arr
 }
 
 @Composable
@@ -2299,12 +2326,14 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
         Modifier
             .fillMaxWidth()
             .zIndex(if (dragging) 5f else 0f)
+            // 阴影放在带 shape 的 Modifier.shadow 上，避免 graphicsLayer 生成方形投影。
+            .shadow(if (dragging) 18.dp else 0.dp, RoundedCornerShape(30.dp), clip = false)
             .graphicsLayer {
                 translationY = if (dragging) dragY else 0f
                 scaleX = scale
                 scaleY = scale
                 alpha = if (dragging) 0.985f else 1f
-                shadowElevation = 18f * shadowLift
+                shadowElevation = 0f
                 shape = RoundedCornerShape(30.dp)
                 clip = false
             }
@@ -2470,37 +2499,34 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
-    ToolGroupLabel("网络测试")
+    ToolGroupLabel("网络检测")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
         ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
+        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
+    }
+
+    ToolGroupLabel("解析与公网")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("DNS解析", "A/AAAA/归属", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
         ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
-        Spacer(Modifier.weight(1f))
-    }
-    ToolGroupLabel("解析与 NAT")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("DNS解析", "A/AAAA", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
         ToolHubTile("NAT检测", "RFC5780 / 3489", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
+        ToolHubTile("DNS质量", "多DNS延迟", Icons.Rounded.TravelExplore, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_dns_quality") }
     }
-    ToolGroupLabel("质量与监控")
+
+    ToolGroupLabel("设备与链路")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("无线漫游", "RSSI/AP切换", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f)) { open("tool_roam") }
         ToolHubTile("MTU检测", "分片/路径MTU", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_mtu") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("DNS质量", "多DNS延迟", Icons.Rounded.TravelExplore, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_dns_quality") }
-        Spacer(Modifier.weight(1f))
-    }
-    ToolGroupLabel("设备工具")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("服务监控", "TCP/UDP可达", Icons.Rounded.Public, Color(0xFFF59E0B), Modifier.weight(1f)) { open("tool_service") }
         ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
+        ToolHubTile("服务监控", "TCP/UDP可达", Icons.Rounded.Public, Color(0xFFF59E0B), Modifier.weight(1f)) { open("tool_service") }
     }
 }
 
@@ -4727,12 +4753,15 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
+        val localEvents = normalizeDeviceEvents(parseEvents(prefs.cacheEvents))
+        val localSnapshot = homeDailyFromEvents(localEvents, selected, "本地规范化事件")
+        val localDevices = localDailyDeviceSummary(localEvents, selected)
         ExpressiveCard("概览", "上线 / 下线 / VPN-STUN / DDNS / 备注", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                StatusPill("上线", summary.optInt("deviceOnline", 0).toString()+"次", Color(0xFF16A34A))
-                StatusPill("下线", summary.optInt("deviceOffline", 0).toString()+"次", Color(0xFFEF4444))
-                StatusPill("VPN-STUN", summary.optInt("vpnChanges", 0).toString()+"次", Color(0xFF0EA5E9))
-                StatusPill("DDNS", summary.optInt("ddnsChanges", 0).toString()+"次", Color(0xFFF59E0B))
+                StatusPill("上线", localSnapshot.up.toString()+"次", Color(0xFF16A34A))
+                StatusPill("下线", localSnapshot.down.toString()+"次", Color(0xFFEF4444))
+                StatusPill("VPN-STUN", summary.optInt("vpnChanges", localSnapshot.vpn).toString()+"次", Color(0xFF0EA5E9))
+                StatusPill("DDNS", summary.optInt("ddnsChanges", localSnapshot.ddns).toString()+"次", Color(0xFFF59E0B))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 StatusPill("备注", if (noteText.isBlank()) "0条" else "1条", Color(0xFF64748B))
@@ -4740,7 +4769,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         }
         val sections = d.optJSONObject("sections") ?: JSONObject()
         fun arr(name:String) = sections.optJSONArray(name) ?: JSONArray()
-        DailySection("终端情况", arr("devices"), Icons.Rounded.Devices, Color(0xFFF59E0B), kind = "devices")
+        DailySection("终端情况", if (localDevices.length() > 0) localDevices else arr("devices"), Icons.Rounded.Devices, Color(0xFFF59E0B), kind = "devices")
         DailySection("VPN / STUN", arr("vpn"), Icons.Rounded.VpnKey, Color(0xFF7C3AED), kind = "address")
         DailySection("网络变化", arr("network"), Icons.Rounded.Public, Color(0xFF0EA5E9), kind = "address")
         DailySection("DDNS 状态", arr("ddns"), Icons.Rounded.Dns, Color(0xFF2563EB), kind = "normal")
@@ -5991,7 +6020,8 @@ private const val DEVICE_EVENT_OFFLINE_COOLDOWN_MS = 5 * 60 * 1000L
 
 fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
     if (raw.isEmpty()) return raw
-    val chronological = raw.asReversed()
+    // 统一按时间从旧到新处理，避免 Hub / 缓存顺序不同导致重复离线被重新计数。
+    val chronological = raw.sortedWith(compareBy<EventItem> { parseEventMillis(it.time) ?: Long.MAX_VALUE }.thenBy { it.id })
     val stateByKey = mutableMapOf<String, String>()
     val onlineAtByKey = mutableMapOf<String, Long>()
     val lastOfflineAtByKey = mutableMapOf<String, Long>()
@@ -6020,19 +6050,23 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
         }
 
         if (type == "device_offline") {
+            val fixedDuration = bestOfflineDurationText(event, onlineAtByKey[key], at)
+            val durationSec = parseDurationSeconds(fixedDuration.ifBlank { event.onlineDurationText })
+            // Hub/路由器偶发抖动会生成“在线 0 秒”的离线事件，这类不计入历史和每日统计。
+            if (durationSec != null && durationSec <= 0L) return@forEach
+
             val lastOffline = lastOfflineAtByKey[key]
             val isDuplicateState = previousState == "offline"
             val isCooldownDuplicate = at != null && lastOffline != null && at - lastOffline in 0..DEVICE_EVENT_OFFLINE_COOLDOWN_MS
             if (isDuplicateState || isCooldownDuplicate) return@forEach
 
-            val fixedDuration = bestOfflineDurationText(event, onlineAtByKey[key], at)
             kept += event.copy(onlineDurationText = fixedDuration.ifBlank { event.onlineDurationText })
             stateByKey[key] = "offline"
             if (at != null) lastOfflineAtByKey[key] = at
             onlineAtByKey.remove(key)
         }
     }
-    return kept.asReversed()
+    return kept.sortedWith(compareByDescending<EventItem> { parseEventMillis(it.time) ?: 0L }.thenByDescending { it.id })
 }
 
 fun eventDeviceKey(e: EventItem): String {
@@ -6040,8 +6074,8 @@ fun eventDeviceKey(e: EventItem): String {
     if (mac.isNotBlank() && mac != "null" && mac != "-") return "mac:$mac"
     val name = e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }.trim().lowercase(Locale.getDefault())
     val ip = e.ip.trim().lowercase(Locale.getDefault())
+    // MAC 优先；没有 MAC 时优先用设备名，避免同一设备 DHCP/IP 字段变化导致同一天离线被计多次。
     return when {
-        name.isNotBlank() && ip.isNotBlank() -> "nameip:$name|$ip"
         name.isNotBlank() -> "name:$name"
         ip.isNotBlank() -> "ip:$ip"
         else -> ""
@@ -6056,6 +6090,17 @@ fun bestOfflineDurationText(e: EventItem, trackedOnlineAt: Long?, offlineAt: Lon
 }
 
 fun Long?.orElse(other: Long?): Long? = this ?: other
+
+fun parseDurationSeconds(raw: String): Long? {
+    val s = raw.trim()
+    if (s.isBlank()) return null
+    var total = 0L
+    Regex("(\\d+)天").find(s)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { total += it * 86400L }
+    Regex("(\\d+)小时").find(s)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { total += it * 3600L }
+    Regex("(\\d+)分").find(s)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { total += it * 60L }
+    Regex("(\\d+)秒").find(s)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { total += it }
+    return if (total > 0L || s.contains("0秒")) total else null
+}
 
 fun parseEventMillis(raw: String): Long? {
     val s = raw.trim()
