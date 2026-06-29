@@ -156,3 +156,14 @@ app/build/outputs/apk/debug/app-debug.apk
 - 修复 MTU IPv6 模式误解析到 IPv4 地址的问题。
 - IPv6 使用 ping6 / ping -6 的 ICMPv6 Echo payload 方式估算路径 MTU。
 - 基础 Ping 不通时显示“无法进行 MTU 探测”，避免误判为 MTU 全失败。
+
+
+### v0.9.15 buildfix24
+
+本次为设备事件热修：修复同一终端连续离线重复显示、离线时长来源不一致的问题。
+
+
+### buildfix25
+- 调整漫游/测速图表 Y 轴：字号缩小一号、位置左移但保留圆角安全距。
+- DNS 解析结果加入联网 ASN/Geo 查询，失败时回退本地/IPv6 前缀判断。
+- versionCode 70。

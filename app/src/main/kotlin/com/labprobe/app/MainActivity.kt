@@ -123,9 +123,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 68
+    const val CODE = 70
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 设备事件去重热修" to listOf(
+            "终端事件按 MAC / 名称快照做状态机去重，离线后继续离线不再重复显示",
+            "离线在线时长优先按 offlineAt - onlineSince 固化计算，避免历史刷新后时长倒退",
+            "同一设备连续离线增加冷却保护，事件列表只保留真实状态变化"
+        ),
         "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
             "测速拆分为峰值外网测速、局域网测速和负载延迟测试，逻辑更清晰",
             "DNS 解析增加本机 DNS 小开关，支持系统解析和本机 DNS 显示",
@@ -729,7 +734,8 @@ data class EventItem(
     val ssid: String = "",
     val onlineSince: String = "",
     val offlineAt: String = "",
-    val onlineDurationText: String = ""
+    val onlineDurationText: String = "",
+    val mac: String = ""
 )
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
@@ -811,7 +817,7 @@ class AppState(private val prefs: AppPrefs) {
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
     var devices by mutableStateOf(parseDeviceArray(prefs.cacheDevices))
     var onlineDevices by mutableStateOf(parseDeviceArray(prefs.cacheOnlineDevices))
-    var events by mutableStateOf(parseEvents(prefs.cacheEvents))
+    var events by mutableStateOf(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)))
     var loading by mutableStateOf(false)
     var hubConnected by mutableStateOf(prefs.lastRefresh.isNotBlank() && prefs.hub.isNotBlank())
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
@@ -857,7 +863,7 @@ class AppState(private val prefs: AppPrefs) {
         val stRoot = api.getStatus()
         val devWatched = api.getDevices(false)
         val devOnline = api.getDevices(true)
-        val evs = api.getEvents()
+        val evs = normalizeDeviceEvents(api.getEvents())
         status = stRoot
         val mergedDevices = mergeDeviceCache(devices, devWatched)
         devices = mergedDevices
@@ -3538,8 +3544,8 @@ fun SelectableLineChart(
     var selected by remember(values) { mutableStateOf<Int?>(null) }
     val safeMax = if (maxY <= minY) minY + 1 else maxY
     val density = LocalDensity.current
-    val axisLeft = with(density) { 42.dp.toPx() }
-    val axisRightPad = with(density) { 12.dp.toPx() }
+    val axisLeft = with(density) { 36.dp.toPx() }
+    val axisRightPad = with(density) { 10.dp.toPx() }
     LabChartFrame(
         modifier = modifier.pointerInput(values, axisLeft, axisRightPad) {
             detectTapGestures { offset ->
@@ -3603,7 +3609,7 @@ fun SelectableLineChart(
         }
         drawContext.canvas.nativeCanvas.apply {
             paint.color = android.graphics.Color.rgb(2,6,23)
-            paint.textSize = 12.sp.toPx()
+            paint.textSize = 10.5.sp.toPx()
             paint.textAlign = Paint.Align.LEFT
             paint.isFakeBoldText = true
             drawText("0", left, h - 7.dp.toPx(), paint)
@@ -3651,10 +3657,10 @@ fun LabChartFrame(modifier: Modifier = Modifier, emptyText: String? = null, draw
 fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(canvas: android.graphics.Canvas, paint: Paint, left: Float, right: Float, top: Float, bottom: Float, ticks: List<Double>, format: (Double)->String) {
     paint.strokeWidth = 1.15f
     paint.color = android.graphics.Color.rgb(226,232,240)
-    paint.textSize = 12.sp.toPx()
+    paint.textSize = 10.5.sp.toPx()
     paint.textAlign = Paint.Align.RIGHT
     paint.isFakeBoldText = true
-    val labelGap = 6.dp.toPx()
+    val labelGap = 4.dp.toPx()
     ticks.forEach { t ->
         val min = ticks.minOrNull() ?: 0.0
         val max = ticks.maxOrNull() ?: 1.0
@@ -5031,18 +5037,23 @@ suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String, 
 }
 
 fun operatorLookup(ip: String, prefs: AppPrefs): String {
-    val fast = inferOperatorByIpOnly(ip)
-    if (fast.isNotBlank()) return fast
+    val clean = ip.trim().removePrefix("[").removeSuffix("]")
+    if (clean.isBlank() || clean.startsWith("无记录") || clean.contains("超时")) return "运营商未知"
+    if (isPrivateOrLocalIp(clean)) return "本地/局域网"
+
+    // DNS 解析页也走联网 ASN / Geo 查询；失败时再回退到 IPv6 前缀快速判断。
+    runCatching { return lookupIpOwnerOnline(clean) }
+
     val hub = prefs.hub.trim().trimEnd('/')
     val token = prefs.token.trim()
-    if (hub.isNotBlank() && token.isNotBlank() && !ip.startsWith("无记录")) {
+    if (hub.isNotBlank() && token.isNotBlank()) {
         runCatching {
             val client = OkHttpClient.Builder()
                 .connectTimeout(4, TimeUnit.SECONDS)
                 .readTimeout(4, TimeUnit.SECONDS)
                 .dns(CustomDns(prefs.hubDns))
                 .build()
-            val url = joinUrl(hub, "/api/geo?ip=${URLEncoder.encode(ip, "UTF-8")}")
+            val url = joinUrl(hub, "/api/geo?ip=${URLEncoder.encode(clean, "UTF-8")}")
             val req = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
             val text = client.newCall(req).execute().body?.string().orEmpty()
             val o = JSONObject(text)
@@ -5059,8 +5070,13 @@ fun operatorLookup(ip: String, prefs: AppPrefs): String {
             }
         }
     }
-    return "运营商未知"
+    return inferOperatorByIpOnly(clean).ifBlank { "运营商未知" }
 }
+
+fun isPrivateOrLocalIp(ip: String): Boolean = runCatching {
+    val addr = InetAddress.getByName(ip)
+    addr.isAnyLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress || addr.isSiteLocalAddress || addr.isMulticastAddress
+}.getOrElse { false }
 
 fun inferOperatorByIpOnly(ip: String): String {
     val lower = ip.trim().removePrefix("[").removeSuffix("]").lowercase(Locale.getDefault())
@@ -5970,6 +5986,121 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
     return merged
 }
 
+
+private const val DEVICE_EVENT_OFFLINE_COOLDOWN_MS = 5 * 60 * 1000L
+
+fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
+    if (raw.isEmpty()) return raw
+    val chronological = raw.asReversed()
+    val stateByKey = mutableMapOf<String, String>()
+    val onlineAtByKey = mutableMapOf<String, Long>()
+    val lastOfflineAtByKey = mutableMapOf<String, Long>()
+    val kept = mutableListOf<EventItem>()
+
+    chronological.forEach { event ->
+        val key = eventDeviceKey(event)
+        if (key.isBlank()) {
+            kept += event
+            return@forEach
+        }
+        val type = event.type
+        if (type != "device_online" && type != "device_offline") {
+            kept += event
+            return@forEach
+        }
+
+        val at = parseEventMillis(event.time)
+        val previousState = stateByKey[key]
+        if (type == "device_online") {
+            if (previousState == "online") return@forEach
+            stateByKey[key] = "online"
+            at?.let { onlineAtByKey[key] = it }
+            kept += event
+            return@forEach
+        }
+
+        if (type == "device_offline") {
+            val lastOffline = lastOfflineAtByKey[key]
+            val isDuplicateState = previousState == "offline"
+            val isCooldownDuplicate = at != null && lastOffline != null && at - lastOffline in 0..DEVICE_EVENT_OFFLINE_COOLDOWN_MS
+            if (isDuplicateState || isCooldownDuplicate) return@forEach
+
+            val fixedDuration = bestOfflineDurationText(event, onlineAtByKey[key], at)
+            kept += event.copy(onlineDurationText = fixedDuration.ifBlank { event.onlineDurationText })
+            stateByKey[key] = "offline"
+            if (at != null) lastOfflineAtByKey[key] = at
+            onlineAtByKey.remove(key)
+        }
+    }
+    return kept.asReversed()
+}
+
+fun eventDeviceKey(e: EventItem): String {
+    val mac = e.mac.trim().lowercase(Locale.getDefault())
+    if (mac.isNotBlank() && mac != "null" && mac != "-") return "mac:$mac"
+    val name = e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }.trim().lowercase(Locale.getDefault())
+    val ip = e.ip.trim().lowercase(Locale.getDefault())
+    return when {
+        name.isNotBlank() && ip.isNotBlank() -> "nameip:$name|$ip"
+        name.isNotBlank() -> "name:$name"
+        ip.isNotBlank() -> "ip:$ip"
+        else -> ""
+    }
+}
+
+fun bestOfflineDurationText(e: EventItem, trackedOnlineAt: Long?, offlineAt: Long?): String {
+    val end = parseEventMillis(e.offlineAt).orElse(offlineAt)
+    val start = parseEventMillis(e.onlineSince).orElse(trackedOnlineAt)
+    if (start != null && end != null && end >= start) return formatDurationMs(end - start)
+    return formatDurationText(e.onlineDurationText)
+}
+
+fun Long?.orElse(other: Long?): Long? = this ?: other
+
+fun parseEventMillis(raw: String): Long? {
+    val s = raw.trim()
+    if (s.isBlank() || s == "-") return null
+    val patterns = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy/MM/dd HH:mm:ss",
+        "MM-dd HH:mm:ss",
+        "HH:mm:ss"
+    )
+    for (pattern in patterns) {
+        val parsed = runCatching { SimpleDateFormat(pattern, Locale.CHINA).parse(s) }.getOrNull() ?: continue
+        val cal = Calendar.getInstance(Locale.CHINA)
+        cal.time = parsed
+        if (pattern == "MM-dd HH:mm:ss") {
+            cal.set(Calendar.YEAR, Calendar.getInstance(Locale.CHINA).get(Calendar.YEAR))
+        } else if (pattern == "HH:mm:ss") {
+            val now = Calendar.getInstance(Locale.CHINA)
+            cal.set(Calendar.YEAR, now.get(Calendar.YEAR))
+            cal.set(Calendar.MONTH, now.get(Calendar.MONTH))
+            cal.set(Calendar.DAY_OF_MONTH, now.get(Calendar.DAY_OF_MONTH))
+        }
+        return cal.timeInMillis
+    }
+    return null
+}
+
+fun formatDurationMs(msRaw: Long): String {
+    val totalSec = (msRaw / 1000L).coerceAtLeast(0L)
+    val days = totalSec / 86400L
+    val hours = (totalSec % 86400L) / 3600L
+    val minutes = (totalSec % 3600L) / 60L
+    val seconds = totalSec % 60L
+    return buildString {
+        if (days > 0) append(days).append("天")
+        if (hours > 0) append(hours).append("小时")
+        if (minutes > 0 || days > 0 || hours > 0) append(minutes).append("分")
+        append(seconds).append("秒")
+    }
+}
+
 fun parseDeviceArray(json: String): List<DeviceItem> { if (json.isBlank()) return emptyList(); val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }; return (0 until arr.length()).mapNotNull { parseDevice(arr.optJSONObject(it)) } }
 fun parseEvents(json: String): List<EventItem> {
     if (json.isBlank()) return emptyList()
@@ -5998,7 +6129,8 @@ fun parseEvents(json: String): List<EventItem> {
             ssid = field("ssid").ifBlank { field("lastSsid") },
             onlineSince = field("onlineSince"),
             offlineAt = field("offlineAt"),
-            onlineDurationText = field("onlineDurationText")
+            onlineDurationText = field("onlineDurationText"),
+            mac = field("mac").ifBlank { field("deviceMac") }.ifBlank { field("lastMac") }
         )
     }
     return out
@@ -6029,7 +6161,7 @@ fun EventItem.toJson(): JSONObject = JSONObject()
     .put("oldValue", oldValue).put("newValue", newValue).put("createdAt", time)
     .put("ip", ip).put("rssi", rssi).put("band", band).put("rxrate", rxrate)
     .put("ssid", ssid).put("onlineSince", onlineSince).put("offlineAt", offlineAt)
-    .put("onlineDurationText", onlineDurationText)
+    .put("onlineDurationText", onlineDurationText).put("mac", mac)
 fun joinUrl(base: String, path: String): String { val b=base.trim().trimEnd('/'); return if(path.startsWith("/")) b+path else "$b/$path" }
 fun maskSensitive(s: String): String = s.replace(Regex("(?i)(token|password|secret)[^,}]*"), "$1:***")
 fun nowClock(): String = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
