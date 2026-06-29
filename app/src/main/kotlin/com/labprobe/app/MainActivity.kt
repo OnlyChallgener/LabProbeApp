@@ -88,6 +88,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.coroutineScope
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -122,9 +123,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 61
+    const val CODE = 63
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
+            "测速拆分为峰值外网测速、局域网测速和负载延迟测试，逻辑更清晰",
+            "DNS 解析增加本机 DNS 小开关，支持系统解析和本机 DNS 显示",
+            "测速与漫游图表 Y 轴数字加粗放大，提升可读性"
+        ),
         "v0.9.15 · IPv6/峰值测速/漫游图表测试版" to listOf(
             "新增 IPv6 可用性测试：IPv4/IPv6 出口、AAAA、IPv6 Ping、IPv6 TCP 443 与优先级判断",
             "模板测速改为峰值测速逻辑，连续稳定后自动停止；图表支持点击曲线点显示数值",
@@ -441,6 +447,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("dns2", v).apply()
     var dnsRecord: String get() = sp.getString("dns_record", "ALL") ?: "ALL"
         set(v) = sp.edit().putString("dns_record", v).apply()
+    var dnsUseSystem: Boolean get() = sp.getBoolean("dns_use_system", false)
+        set(v) = sp.edit().putBoolean("dns_use_system", v).apply()
 
     var tcpHost: String get() = sp.getString("tcp_host", "192.168.5.46") ?: "192.168.5.46"
         set(v) = sp.edit().putString("tcp_host", v).apply()
@@ -961,6 +969,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
                         "tool_speed" -> SpeedTemplateScreen(prefs) { route = "tools" }
+                        "tool_lan_speed" -> LanSpeedScreen(prefs) { route = "tools" }
+                        "tool_load_latency" -> LoadLatencyScreen(prefs) { route = "tools" }
                         "tool_ipv6" -> Ipv6TestScreen(prefs) { route = "tools" }
                         "tool_roam" -> WifiRoamingScreen(prefs) { route = "tools" }
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
@@ -2445,7 +2455,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkStatusTile("IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), clickable = true) { open("tool_dns") }
-                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.Language, Color(0xFF06B6D4), Modifier.weight(1f), clickable = true) { open("tool_dns") }
+                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.SettingsEthernetguage, Color(0xFF06B6D4), Modifier.weight(1f), clickable = true) { open("tool_dns") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkStatusTile("NAT类型", profile.natType, Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f), clickable = true) { open("tool_nat") }
@@ -2464,7 +2474,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
-        ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.Language, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
+        ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.SettingsEthernetguage, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
@@ -2477,7 +2487,11 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     ToolGroupLabel("质量与监控")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("模板测速", "下载吞吐/模板", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_speed") }
+        ToolHubTile("峰值外网", "公网峰值测速", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_speed") }
+        ToolHubTile("局域网测速", "路由/NAS吞吐", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_lan_speed") }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("负载延迟", "满载Ping波动", Icons.Rounded.Timeline, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_load_latency") }
         ToolHubTile("无线漫游", "RSSI/AP切换", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f)) { open("tool_roam") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2572,7 +2586,11 @@ fun NatHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 记
 fun SshScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack) { SshTool(prefs) }
 
 @Composable
-fun SpeedTemplateScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("峰值测速", "测到峰值即停 · 模板下载", onBack) { SpeedTemplateTool(prefs) }
+fun SpeedTemplateScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("峰值外网测速", "测到峰值即停 · 公网模板", onBack) { SpeedTemplateTool(prefs) }
+@Composable
+fun LanSpeedScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("局域网测速", "手机到路由器 / NAS 吞吐", onBack) { LanSpeedTool(prefs) }
+@Composable
+fun LoadLatencyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("负载延迟", "下载满载时同步 Ping", onBack) { LoadLatencyTool(prefs) }
 @Composable
 fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "IPv4 / IPv6 / AAAA / 优先级", onBack) { Ipv6TestTool(prefs) }
 @Composable
@@ -2588,6 +2606,7 @@ fun ServiceMonitorScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("服
 data class DownloadTemplate(val name: String, val url: String, val note: String)
 data class SpeedTestResult(val avgMbps: Double, val peakMbps: Double, val totalBytes: Long, val seconds: Int, val note: String)
 data class SpeedSample(val second: Int, val mbps: Double, val avgMbps: Double)
+data class LoadLatencyResult(val baselineAvg: Double, val loadedAvg: Double, val loadedMax: Int?, val lossRate: Double, val note: String)
 data class Ipv6TestRow(val name: String, val status: String, val detail: String, val ok: Boolean?, val route: String = "")
 data class MtuProbeResult(val summary: String, val rows: List<Pair<Int, Boolean>>)
 data class WifiSample(val time: String, val ssid: String, val bssid: String, val rssi: Int, val latency: Int?, val lost: Boolean, val linkMbps: Int = 0)
@@ -2610,7 +2629,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
     var rows by remember { mutableStateOf<List<Ipv6TestRow>>(emptyList()) }
     var summary by remember { mutableStateOf("等待检测") }
     val blue = Color(0xFF2563EB)
-    ExpressiveCard("IPv6 配置", "参考 test-ipv6 思路：分别测试出口、AAAA、IPv6 Ping 与 TCP 443。", Icons.Rounded.Language, Color(0xFF06B6D4)) {
+    ExpressiveCard("IPv6 配置", "参考 test-ipv6 思路：分别测试出口、AAAA、IPv6 Ping 与 TCP 443。", Icons.Rounded.SettingsEthernetguage, Color(0xFF06B6D4)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TinyInfoParam("目标", "testipv6.cn", Icons.Rounded.Dns, blue, Modifier.weight(1f))
             TinyInfoParam("模式", "自动检测", Icons.Rounded.Timeline, Color(0xFF06B6D4), Modifier.weight(1f))
@@ -2715,8 +2734,105 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
             StatChip("平均", avg, Color(0xFF0EA5E9), Modifier.weight(1f))
             StatChip("峰值", peak, Color(0xFF7C3AED), Modifier.weight(1f))
         }
-        LabSpeedChart(samples, modifier = Modifier.fillMaxWidth().height(230.dp))
+        LabSpeedChart(samples, modifier = Modifier.fillMaxWidth().height(260.dp))
         Text("总流量 $total · 峰值稳定后自动停止；测速源/CDN/运营商会影响结果，不等于宽带物理上限。", fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
+    }
+}
+
+
+@Composable
+fun LanSpeedTool(prefs: AppPrefs) {
+    var url by remember { mutableStateOf("http://192.168.5.1:8989/download") }
+    var duration by remember { mutableStateOf("8") }
+    var running by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("等待测速") }
+    var current by remember { mutableStateOf("--") }
+    var avg by remember { mutableStateOf("--") }
+    var peak by remember { mutableStateOf("--") }
+    var total by remember { mutableStateOf("0.0 MB") }
+    var samples by remember { mutableStateOf<List<SpeedSample>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    val blue = Color(0xFF0EA5E9)
+    ExpressiveCard("局域网配置", "需要路由器 / NAS 提供 HTTP 大文件或 Homebox 下载地址。", Icons.Rounded.SettingsEthernet, blue) {
+        CompactIconHistoryInput("服务地址", "http://192.168.5.1:8989/download", url, { url = it }, "lan_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyInfoParam("模式", "下载峰值", Icons.Rounded.Speed, blue, Modifier.weight(1f))
+        }
+        PillButton(if (running) "局域网测速中..." else "开始局域网测速", Icons.Rounded.PlayArrow, enabled = !running, accent = blue) {
+            scope.launch {
+                val safeUrl = url.trim()
+                if (!safeUrl.startsWith("http")) { status = "请输入局域网 HTTP 下载地址"; return@launch }
+                prefs.addHistory("lan_speed_url", safeUrl)
+                running = true; status = "连接局域网测速服务..."; current="--"; avg="--"; peak="--"; total="0.0 MB"; samples=emptyList()
+                val result = runDownloadTemplateTest(safeUrl, duration.toIntOrNull()?.coerceIn(3, 60) ?: 8) { cur, av, pk, bytes ->
+                    current = String.format(Locale.US, "%.1f Mbps", cur)
+                    avg = String.format(Locale.US, "%.1f Mbps", av)
+                    peak = String.format(Locale.US, "%.1f Mbps", pk)
+                    total = formatTraffic(bytes)
+                    val next = (samples.lastOrNull()?.second ?: 0) + 1
+                    samples = (samples + SpeedSample(next, cur.coerceAtLeast(0.0), av.coerceAtLeast(0.0))).takeLast(120)
+                }
+                status = result.note
+                avg = String.format(Locale.US, "%.1f Mbps", result.avgMbps)
+                peak = String.format(Locale.US, "%.1f Mbps", result.peakMbps)
+                total = formatTraffic(result.totalBytes)
+                running = false
+            }
+        }
+    }
+    ExpressiveCard("局域网结果", status, Icons.Rounded.Timeline, blue) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("当前", current, blue, Modifier.weight(1f))
+            StatChip("平均", avg, Color(0xFF2563EB), Modifier.weight(1f))
+            StatChip("峰值", peak, Color(0xFF7C3AED), Modifier.weight(1f))
+        }
+        LabSpeedChart(samples, modifier = Modifier.fillMaxWidth().height(260.dp))
+        Text("总流量 $total · 局域网测速取决于服务端、Wi‑Fi 协商速率、手机性能和路由器 CPU。", fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
+    }
+}
+
+@Composable
+fun LoadLatencyTool(prefs: AppPrefs) {
+    var url by remember { mutableStateOf("https://speed.cloudflare.com/__down?bytes=25000000") }
+    var pingTarget by remember { mutableStateOf("223.5.5.5") }
+    var duration by remember { mutableStateOf("8") }
+    var running by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("等待测试") }
+    var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
+    var summary by remember { mutableStateOf<LoadLatencyResult?>(null) }
+    val scope = rememberCoroutineScope()
+    val accent = Color(0xFF7C3AED)
+    ExpressiveCard("负载配置", "先测空闲 Ping，再下载满载并同步采样延迟。", Icons.Rounded.Timeline, accent) {
+        CompactIconHistoryInput("下载URL", "https://...", url, { url = it }, "load_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            TinyHistoryParamInputIcon("Ping目标", "223.5.5.5", pingTarget, { pingTarget = it }, "load_ping_target", prefs, Icons.Rounded.Router, KeyboardType.Text, Modifier.weight(1f))
+            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+        }
+        PillButton(if (running) "负载测试中..." else "开始负载延迟", Icons.Rounded.PlayArrow, enabled = !running, accent = accent) {
+            scope.launch {
+                val safeUrl = url.trim()
+                if (!safeUrl.startsWith("http")) { status = "请输入有效下载 URL"; return@launch }
+                prefs.addHistory("load_speed_url", safeUrl); prefs.addHistory("load_ping_target", pingTarget)
+                running = true; status = "测空闲延迟..."; samples = emptyList(); summary = null
+                val result = runLoadLatencyTest(safeUrl, pingTarget, duration.toIntOrNull()?.coerceIn(3, 60) ?: 8) { idx, ms, lost ->
+                    samples = (samples + WifiSample(formatClock(), "load", "", 0, ms, lost, 0)).takeLast(120)
+                    status = "负载采样 ${idx} 次"
+                }
+                summary = result; status = result.note; running = false
+            }
+        }
+    }
+    ExpressiveCard("负载结果", status, Icons.Rounded.ShowChart, accent) {
+        summary?.let { r ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatChip("空闲", String.format(Locale.US, "%.0fms", r.baselineAvg), Color(0xFF2563EB), Modifier.weight(1f))
+                StatChip("满载", String.format(Locale.US, "%.0fms", r.loadedAvg), accent, Modifier.weight(1f))
+                StatChip("丢包", String.format(Locale.US, "%.1f%%", r.lossRate), Color(0xFFEF4444), Modifier.weight(1f))
+            }
+        }
+        LabLatencyOnlyChart(samples, modifier = Modifier.fillMaxWidth().height(260.dp))
+        Text("用于判断下载满载时是否出现 bufferbloat / 负载延迟升高。", fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
     }
 }
 
@@ -3376,7 +3492,7 @@ fun LabRoamCharts(samples: List<WifiSample>, modifier: Modifier = Modifier) {
             empty = "无可用 RSSI",
             yFormat = { it.roundToInt().toString() },
             pointLabels = rssiSamples.map { "${it.time}\nRSSI ${it.rssi} dBm\nBSSID ${it.bssid.ifBlank { "未知" }}\n协商 ${if (it.linkMbps > 0) "${it.linkMbps}Mbps" else "--"}" },
-            modifier = Modifier.fillMaxWidth().height(180.dp)
+            modifier = Modifier.fillMaxWidth().height(220.dp)
         )
         Text("延迟 ms", fontSize = 13.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.78f))
         val latencySamples = samples.filter { it.latency != null }
@@ -3389,9 +3505,28 @@ fun LabRoamCharts(samples: List<WifiSample>, modifier: Modifier = Modifier) {
             empty = "等待延迟样本",
             yFormat = { it.roundToInt().toString() },
             pointLabels = latencySamples.map { "${it.time}\n延迟 ${it.latency ?: 0} ms\n丢包 ${if (it.lost) "是" else "否"}\nBSSID ${it.bssid.ifBlank { "未知" }}" },
-            modifier = Modifier.fillMaxWidth().height(180.dp)
+            modifier = Modifier.fillMaxWidth().height(220.dp)
         )
     }
+}
+
+
+@Composable
+fun LabLatencyOnlyChart(samples: List<WifiSample>, modifier: Modifier = Modifier) {
+    val latencySamples = samples.filter { it.latency != null }
+    val maxLat = niceLatencyMax((latencySamples.mapNotNull { it.latency }.maxOrNull() ?: 30))
+    SelectableLineChart(
+        values = latencySamples.mapNotNull { it.latency?.toDouble() },
+        minY = 0.0,
+        maxY = maxLat.toDouble(),
+        color = Color(0xFF7C3AED),
+        empty = "等待负载延迟",
+        yFormat = { it.roundToInt().toString() },
+        pointLabels = latencySamples.map { "${it.time}
+延迟 ${it.latency ?: 0} ms
+丢包 ${if (it.lost) "是" else "否"}" },
+        modifier = modifier
+    )
 }
 
 @Composable
@@ -3407,12 +3542,15 @@ fun SelectableLineChart(
 ) {
     var selected by remember(values) { mutableStateOf<Int?>(null) }
     val safeMax = if (maxY <= minY) minY + 1 else maxY
+    val density = LocalDensity.current
+    val axisLeft = with(density) { 76.dp.toPx() }
+    val axisRightPad = with(density) { 20.dp.toPx() }
     LabChartFrame(
-        modifier = modifier.pointerInput(values) {
+        modifier = modifier.pointerInput(values, axisLeft, axisRightPad) {
             detectTapGestures { offset ->
                 if (values.isEmpty()) return@detectTapGestures
-                val left = 48f
-                val right = size.width - 16f
+                val left = axisLeft
+                val right = size.width - axisRightPad
                 val ratio = ((offset.x - left) / (right - left).coerceAtLeast(1f)).coerceIn(0f, 1f)
                 selected = (ratio * (values.size - 1)).roundToInt().coerceIn(0, values.lastIndex)
             }
@@ -3420,7 +3558,10 @@ fun SelectableLineChart(
         emptyText = if (values.isEmpty()) empty else null
     ) { w, h, paint ->
         if (values.isEmpty()) return@LabChartFrame
-        val left = 48f; val right = w - 16f; val top = 18f; val bottom = h - 30f
+        val left = axisLeft
+        val right = w - axisRightPad
+        val top = 24.dp.toPx()
+        val bottom = h - 34.dp.toPx()
         val ticks = listOf(minY, minY + (safeMax-minY)/4, minY + (safeMax-minY)/2, minY + (safeMax-minY)*3/4, safeMax)
         drawGrid(drawContext.canvas.nativeCanvas, paint, left, right, top, bottom, ticks, yFormat)
         val pts = values.mapIndexed { idx, v ->
@@ -3466,13 +3607,13 @@ fun SelectableLineChart(
             }
         }
         drawContext.canvas.nativeCanvas.apply {
-            paint.color = android.graphics.Color.rgb(51,65,85)
-            paint.textSize = 22f
+            paint.color = android.graphics.Color.rgb(2,6,23)
+            paint.textSize = 12.sp.toPx()
             paint.textAlign = Paint.Align.LEFT
             paint.isFakeBoldText = true
-            drawText("0", left, h-5f, paint)
+            drawText("0", left, h - 7.dp.toPx(), paint)
             paint.textAlign = Paint.Align.RIGHT
-            drawText("${values.lastIndex}s", right, h-5f, paint)
+            drawText("${values.lastIndex}s", right, h - 7.dp.toPx(), paint)
             paint.isFakeBoldText = false
         }
     }
@@ -3513,12 +3654,22 @@ fun LabChartFrame(modifier: Modifier = Modifier, emptyText: String? = null, draw
 }
 
 fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(canvas: android.graphics.Canvas, paint: Paint, left: Float, right: Float, top: Float, bottom: Float, ticks: List<Double>, format: (Double)->String) {
-    paint.strokeWidth = 1f; paint.color = android.graphics.Color.rgb(226,232,240); paint.textSize = 23f; paint.textAlign = Paint.Align.RIGHT; paint.isFakeBoldText = true
+    paint.strokeWidth = 1.15f
+    paint.color = android.graphics.Color.rgb(226,232,240)
+    paint.textSize = 15.sp.toPx()
+    paint.textAlign = Paint.Align.RIGHT
+    paint.isFakeBoldText = true
+    val labelGap = 14.dp.toPx()
     ticks.forEach { t ->
-        val min = ticks.minOrNull() ?: 0.0; val max = ticks.maxOrNull() ?: 1.0
+        val min = ticks.minOrNull() ?: 0.0
+        val max = ticks.maxOrNull() ?: 1.0
         val y = bottom - (((t-min)/(max-min).coerceAtLeast(0.0001)).toFloat())*(bottom-top)
-        drawLine(Color(0xFFE2E8F0), Offset(left, y), Offset(right, y), strokeWidth = 1f)
-        canvas.drawText(format(t), left-7f, y+7f, paint)
+        drawLine(Color(0xFFE2E8F0), Offset(left, y), Offset(right, y), strokeWidth = 1.05f)
+        paint.color = android.graphics.Color.rgb(2,6,23)
+        val fm = paint.fontMetrics
+        val baseline = y - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(format(t), left-labelGap, baseline, paint)
+        paint.color = android.graphics.Color.rgb(226,232,240)
     }
     paint.isFakeBoldText = false
 }
@@ -3552,17 +3703,50 @@ fun niceSpeedMax(v: Double): Double = when {
     else -> 2000.0
 }
 
+
+@Composable
+fun SmallSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val bg by animateColorAsState(if (checked) Color(0xFF2563EB) else Color(0xFFE2E8F0), label = "small-switch-bg")
+    val knobOffset by animateFloatAsState(if (checked) 18f else 0f, label = "small-switch-knob")
+    Box(
+        Modifier
+            .size(width = 42.dp, height = 24.dp)
+            .clip(RoundedCornerShape(99.dp))
+            .background(bg)
+            .clickable { onCheckedChange(!checked) }
+            .padding(3.dp)
+    ) {
+        Box(
+            Modifier
+                .size(18.dp)
+                .graphicsLayer { translationX = knobOffset }
+                .clip(CircleShape)
+                .background(Color.White)
+        )
+    }
+}
+
 @Composable
 fun DnsTool(prefs: AppPrefs) {
     var domain by remember { mutableStateOf(prefs.dnsDomain) }
     var dns1 by remember { mutableStateOf(prefs.dns1) }
     var dns2 by remember { mutableStateOf(prefs.dns2) }
     var type by remember { mutableStateOf(prefs.dnsRecord) }
+    var useSystem by remember { mutableStateOf(prefs.dnsUseSystem) }
     var result by remember { mutableStateOf<List<DnsRecord>>(emptyList()) }
     var history by remember { mutableStateOf(prefs.dnsQueryHistory()) }
     var msg by remember { mutableStateOf("等待解析") }
     val scope = rememberCoroutineScope(); val ctx = LocalContext.current
+    val localDns = remember { getLocalDnsServers(ctx) }.ifEmpty { listOf("系统 DNS") }
     ExpressiveCard("查询配置", "双 DNS 备选，A / AAAA 解析与运营商识别。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("本机DNS", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f))
+            Spacer(Modifier.width(8.dp))
+            SmallSwitch(checked = useSystem, onCheckedChange = { useSystem = it; prefs.dnsUseSystem = it })
+            Spacer(Modifier.width(8.dp))
+            Text(if (useSystem) "使用系统解析" else "使用自定义DNS", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        TinyInfoParam("本机DNS", localDns.joinToString(" / "), Icons.Rounded.Info, Color(0xFF2563EB))
         CompactIconHistoryInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it }, "dns_domain", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("记录", type, listOf("A", "AAAA", "ALL"), { type = it; prefs.dnsRecord = it }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
@@ -3575,7 +3759,7 @@ fun DnsTool(prefs: AppPrefs) {
         PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) {
             scope.launch {
                 msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2)
-                val records = dnsLookup(domain, dns1, dns2, type, prefs)
+                val records = dnsLookup(domain, if (useSystem) "system" else dns1, if (useSystem) "system" else dns2, type, prefs)
                 result = records; prefs.addDnsQueryHistory(domain, records); history = prefs.dnsQueryHistory(); msg = "完成：${records.size} 条"
             }
         }
@@ -4803,6 +4987,34 @@ object DnsWire {
     private fun parseResponse(data: ByteArray, qtype: Int): List<String> { if (data.size < 12) return emptyList(); val an = u16(data,6); var off=12; while (off < data.size && data[off].toInt()!=0) off += 1 + (data[off].toInt() and 0xff); off += 5; val list= mutableListOf<String>(); repeat(an){ off = skipName(data, off); if (off+10 > data.size) return@repeat; val type=u16(data,off); off+=2; off+=2; off+=4; val len=u16(data,off); off+=2; if (off+len>data.size) return@repeat; if (type==qtype){ if(type==1&&len==4) list+=InetAddress.getByAddress(data.copyOfRange(off,off+4)).hostAddress ?: ""; if(type==28&&len==16) list+=InetAddress.getByAddress(data.copyOfRange(off,off+16)).hostAddress ?: "" }; off+=len }; return list.filter{it.isNotBlank()}.distinct() }
     private fun skipName(data: ByteArray, start: Int): Int { var o=start; while(o<data.size){ val v=data[o].toInt() and 0xff; if(v and 0xc0 == 0xc0) return o+2; if(v==0) return o+1; o += 1+v }; return o }
     private fun u16(data: ByteArray, off: Int): Int = ((data[off].toInt() and 0xff) shl 8) or (data[off+1].toInt() and 0xff)
+}
+
+
+fun getLocalDnsServers(ctx: Context): List<String> {
+    val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return emptyList()
+    val lp = cm.getLinkProperties(cm.activeNetwork) ?: return emptyList()
+    return lp.dnsServers.mapNotNull { it.hostAddress }.filter { it.isNotBlank() }.distinct()
+}
+
+suspend fun runLoadLatencyTest(url: String, pingHost: String, durationSec: Int, onTick: suspend (Int, Int?, Boolean) -> Unit): LoadLatencyResult = coroutineScope {
+    val baseline = mutableListOf<Int>()
+    repeat(3) {
+        pingOnce(pingHost, 1000)?.let { baseline += it }
+        delay(250)
+    }
+    val baselineAvg = baseline.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+    val loaded = mutableListOf<Int?>()
+    runDownloadTemplateTest(url, durationSec) { _, _, _, _ ->
+        val ms = pingOnce(pingHost, 900)
+        loaded += ms
+        onTick(loaded.size, ms, ms == null)
+    }
+    val ok = loaded.mapNotNull { it }
+    val lossRate = if (loaded.isEmpty()) 0.0 else loaded.count { it == null } * 100.0 / loaded.size
+    val loadedAvg = ok.takeIf { it.isNotEmpty() }?.average() ?: 0.0
+    val loadedMax = ok.maxOrNull()
+    val note = "空闲 ${String.format(Locale.US, "%.0f", baselineAvg)}ms · 满载 ${String.format(Locale.US, "%.0f", loadedAvg)}ms · 丢包 ${String.format(Locale.US, "%.1f%%", lossRate)}"
+    LoadLatencyResult(baselineAvg, loadedAvg, loadedMax, lossRate, note)
 }
 
 suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String, prefs: AppPrefs): List<DnsRecord> = withContext(Dispatchers.IO) {

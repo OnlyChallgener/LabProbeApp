@@ -1,6 +1,6 @@
-# Labprobe v0.9.15 buildfix16
+# Labprobe v0.9.15 buildfix17
 
-- versionCode = 61
+- versionCode = 62
 - 新增 IPv6 可用性测试入口：检测 IPv4/IPv6 出口、AAAA、IPv6 Ping、IPv6 TCP 443 和访问优先级。
 - 模板测速改为峰值测速：预热后寻找峰值，速度稳定自动停止，并支持点选曲线查看数值。
 - 无线漫游新增指定 Ping 目标、丢包率、协商速率；RSSI/延迟曲线支持点选显示当时数值。
@@ -139,3 +139,9 @@ app/build/outputs/apk/debug/app-debug.apk
 ### buildfix15
 - 修复无线漫游图表编译错误：补齐 `niceLatencyMax` 延迟刻度函数。
 - versionCode 更新到 60。
+
+
+## buildfix18
+- 新增/拆分峰值外网测速、局域网测速、负载延迟测试。
+- DNS 解析增加本机 DNS 显示与小开关，可切换系统解析。
+- 测速与漫游图表 Y 轴数字进一步加粗放大，避免看不清。
