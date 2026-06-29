@@ -114,9 +114,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 56
+    const val CODE = 57
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 一键自测自测版" to listOf(
+            "新增一键自测页面，聚合网络概览、DNS、延迟、端口、NAT 与路由摘要",
+            "自测结果卡片支持点击跳转到对应工具页，布局采用小图标和紧凑双列卡片",
+            "控制字号、图标和卡片高度，避免大幅占用版面并保持 OneUI 风格统一"
+        ),
         "v0.9.15 · 左滑删除显示热修" to listOf(
             "修复 SSH 执行结果和路由追踪历史未滑动也显示删除按钮的问题",
             "删除背景仅在左滑展开时显示，默认状态不再透出红色删除按钮",
@@ -708,6 +713,7 @@ data class DnsRecord(val value: String, val type: String, val source: String, va
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
 data class SshResultEntry(val id: Long, val time: String, val host: String, val command: String, val output: String)
 data class TraceHistoryEntry(val id: Long, val time: String, val host: String, val ipMode: String, val hops: Int, val status: String, val output: String)
+data class SelfTestItem(val id: String, val title: String, val value: String, val detail: String, val icon: ImageVector, val accent: Color, val route: String, val status: String = "等待")
 data class PingPoint(val index: Int, val ms: Int?, val text: String, val elapsedMs: Long)
 data class PingRunResult(val points: List<PingPoint>, val elapsedMs: Long, val mode: String, val protocol: String = "ICMP", val resolvedIp: String = "")
 data class PingBucket(val startMs: Long, val avgMs: Int?, val peakMs: Int?, val hasLoss: Boolean, val sampleCount: Int)
@@ -933,6 +939,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
                         "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it }, topNav)
+                        "tool_selftest" -> SelfTestScreen(prefs, { route = "tools" }) { route = it }
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
@@ -2432,12 +2439,16 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     ToolGroupLabel("网络测试")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("一键自测", "诊断报告", Icons.Rounded.CheckCircle, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_selftest") }
         ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
-        ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
         ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
+        Spacer(Modifier.weight(1f))
     }
     ToolGroupLabel("解析与 NAT")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2513,6 +2524,9 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
 }
 
 @Composable
+fun SelfTestScreen(prefs: AppPrefs, onBack: () -> Unit, open: (String) -> Unit) = DetailShell("一键自测", "网络概览 · 诊断报告 · 点击跳转", onBack) { SelfTestTool(prefs, open) }
+
+@Composable
 fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("延迟测试", "ICMP / TCP / HTTP · IPv4 / IPv6 · 真实时间轴", onBack) { PingTool(prefs) }
 @Composable
 fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
@@ -2530,6 +2544,208 @@ fun NatScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) = De
 fun NatHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 记录", "最近 50 条 · 左滑删除", onBack) { NatHistoryTool(prefs) }
 @Composable
 fun SshScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack) { SshTool(prefs) }
+
+
+@Composable
+fun SelfTestTool(prefs: AppPrefs, open: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var target by remember { mutableStateOf(prefs.dnsDomain) }
+    var pingTarget by remember { mutableStateOf(prefs.pingHost) }
+    var running by remember { mutableStateOf(false) }
+    var summary by remember { mutableStateOf("等待自测") }
+    var report by remember { mutableStateOf("") }
+    var items by remember { mutableStateOf(defaultSelfTestItems()) }
+
+    fun update(id: String, value: String, detail: String, status: String = "完成") {
+        items = items.map { if (it.id == id) it.copy(value = value, detail = detail, status = status) else it }
+    }
+
+    ExpressiveCard("自测配置", "小范围快速诊断，结果卡可点击跳转到对应工具页。", Icons.Rounded.CheckCircle, Color(0xFF2563EB)) {
+        CompactIconHistoryInput("域名", "net86.dynv6.net", target, { target = it; prefs.dnsDomain = it }, "self_test_domain", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyHistoryParamInputIcon("延迟目标", "223.5.5.5", pingTarget, { pingTarget = it; prefs.pingHost = it }, "self_ping_host", prefs, Icons.Rounded.Speed, KeyboardType.Text, Modifier.weight(1f))
+            TinyInfoParam("模式", if (running) "自测中" else "快速", Icons.Rounded.Bolt, Color(0xFF2563EB), Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.weight(1f)) {
+                PillButton(if (running) "自测中..." else "开始自测", Icons.Rounded.PlayArrow, enabled = !running, accent = Color(0xFF2563EB)) {
+                    scope.launch {
+                    running = true
+                    summary = "正在准备..."
+                    report = ""
+                    items = defaultSelfTestItems().map { it.copy(value = "--", detail = "等待检测", status = "等待") }
+                    val start = SystemClock.elapsedRealtime()
+                    runCatching {
+                        summary = "读取本机网络..."
+                        val profile = detectNetworkProfile(ctx, prefs)
+                        update("network", profile.priority, "IPv4 ${profile.ipv4Exit} · IPv6 ${shortText(profile.ipv6Address, 24)} · ${profile.operator}")
+
+                        summary = "解析 DNS..."
+                        val records = dnsLookup(target, prefs.dns1, prefs.dns2, "ALL", prefs)
+                        val aCount = records.count { it.type == "A" }
+                        val aaaaCount = records.count { it.type == "AAAA" }
+                        val dnsDetail = if (records.isEmpty()) "无 A/AAAA 记录或解析失败" else records.take(2).joinToString(" · ") { "${it.type} ${shortText(it.value, 22)} ${it.operator}" }
+                        update("dns", if (records.isEmpty()) "异常" else "A$aCount / AAAA$aaaaCount", dnsDetail, if (records.isEmpty()) "注意" else "完成")
+
+                        summary = "测试网关延迟..."
+                        val gateway = guessGatewayFromProfile(profile)
+                        if (gateway.isBlank()) {
+                            update("gateway", "未知", "未能从本地 IP 推断网关，可进入延迟测试手动测", "跳过")
+                        } else {
+                            val ms = pingOnce(gateway, 900)
+                            update("gateway", ms?.let { "${it}ms" } ?: "超时", "网关 $gateway", if (ms == null) "注意" else "完成")
+                        }
+
+                        summary = "测试公网延迟..."
+                        val latency = runLatencySeries(pingTarget, "ICMP", prefs.pingIpMode, prefs.pingDnsMode, 80, 4, 350L, 1200) { }
+                        val ok = latency.points.mapNotNull { it.ms }
+                        val avg = ok.takeIf { it.isNotEmpty() }?.average()?.roundToInt()
+                        val loss = latency.points.size - ok.size
+                        update("latency", avg?.let { "${it}ms" } ?: "失败", "${pingTarget} · 丢包 ${loss}/${latency.points.size} · ${formatElapsedMs(latency.elapsedMs)}", if (avg == null) "注意" else "完成")
+
+                        summary = "测试 TCP 端口..."
+                        val tcpText = tcpProbeSmart(prefs.tcpHost, prefs.tcpPort.toIntOrNull() ?: 80, prefs.tcpTimeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, "自动")
+                        val tcpOk = tcpText.contains("成功")
+                        val tcpShort = when {
+                            tcpText.contains("成功") -> "可达"
+                            tcpText.contains("拒绝") -> "拒绝"
+                            tcpText.contains("超时") -> "超时"
+                            else -> "未知"
+                        }
+                        update("tcp", tcpShort, tcpText.lines().firstOrNull().orEmpty().ifBlank { "${prefs.tcpHost}:${prefs.tcpPort}" }, if (tcpOk) "完成" else "注意")
+
+                        summary = "读取 NAT 与路由摘要..."
+                        val nat = prefs.natHistory().firstOrNull()
+                        update("nat", nat?.classicType?.takeIf { it.isNotBlank() } ?: "未测", nat?.let { "${it.mode} · ${it.server} · ${it.confidence}" } ?: "点击进入 NAT 检测", if (nat == null) "跳转" else "完成")
+                        val trace = prefs.traceHistory().firstOrNull()
+                        update("trace", trace?.let { "${it.hops}跳" } ?: "未测", trace?.let { "${it.host} · ${it.status}" } ?: "点击进入路由追踪", if (trace == null) "跳转" else "完成")
+                    }.onFailure { e ->
+                        summary = "自测中断：${e.message ?: "未知错误"}"
+                    }
+                    val spent = formatElapsedMs(SystemClock.elapsedRealtime() - start)
+                    summary = if (summary.startsWith("自测中断")) summary else "自测完成 · $spent"
+                    report = buildSelfTestReport(items, summary)
+                    running = false
+                    }
+                }
+            }
+            OutlinedButton(
+                onClick = { copy(ctx, report.ifBlank { buildSelfTestReport(items, summary) }) },
+                modifier = Modifier.weight(1f).height(52.dp),
+                shape = RoundedCornerShape(22.dp)
+            ) {
+                Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("复制报告", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (running) LinearProgressIndicator(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape))
+    }
+
+    ExpressiveCard("自测报告", summary, Icons.Rounded.Assessment, Color(0xFF06B6D4)) {
+        SelfTestGrid(items, open)
+        Text("提示：自测为轻量快速诊断。需要完整结论时，点对应卡片进入专项测试。", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), lineHeight = 16.sp)
+    }
+
+    ExpressiveCard("快捷跳转", "根据自测结果继续深入检查。", Icons.Rounded.TouchApp, Color(0xFF7C3AED)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TinyJumpChip("DNS", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
+            TinyJumpChip("延迟", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
+            TinyJumpChip("NAT", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TinyJumpChip("端口", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
+            TinyJumpChip("路由", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
+            TinyJumpChip("UDP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
+        }
+    }
+}
+
+fun defaultSelfTestItems(): List<SelfTestItem> = listOf(
+    SelfTestItem("network", "网络", "--", "IPv4 / IPv6 / 运营商", Icons.Rounded.Public, Color(0xFF2563EB), "tools"),
+    SelfTestItem("dns", "DNS", "--", "A / AAAA 解析", Icons.Rounded.Dns, Color(0xFF2563EB), "tool_dns"),
+    SelfTestItem("gateway", "网关", "--", "本地网关延迟", Icons.Rounded.Router, Color(0xFF0EA5E9), "tool_ping"),
+    SelfTestItem("latency", "公网", "--", "公网延迟与丢包", Icons.Rounded.Speed, Color(0xFF2563EB), "tool_ping"),
+    SelfTestItem("tcp", "端口", "--", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), "tool_port"),
+    SelfTestItem("nat", "NAT", "--", "最近 NAT 记录", Icons.Rounded.Router, Color(0xFF7C3AED), "tool_nat"),
+    SelfTestItem("trace", "路由", "--", "最近追踪记录", Icons.Rounded.AltRoute, Color(0xFFF59E0B), "tool_trace")
+)
+
+@Composable
+fun SelfTestGrid(items: List<SelfTestItem>, open: (String) -> Unit) {
+    val rows = items.chunked(2)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { item -> SelfTestMiniTile(item, Modifier.weight(1f)) { if (item.route.isNotBlank()) open(item.route) } }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+fun SelfTestMiniTile(item: SelfTestItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        modifier = modifier.height(86.dp).clip(RoundedCornerShape(22.dp)).clickable { onClick() },
+        shape = RoundedCornerShape(22.dp),
+        color = item.accent.copy(alpha = .07f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, item.accent.copy(alpha = .13f))
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp).clip(RoundedCornerShape(14.dp)).background(item.accent.copy(alpha = .13f)), contentAlignment = Alignment.Center) {
+                Icon(item.icon, null, tint = item.accent, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.title, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                    Spacer(Modifier.weight(1f))
+                    Icon(Icons.Rounded.ChevronRight, null, tint = item.accent.copy(alpha = .65f), modifier = Modifier.size(15.dp))
+                }
+                Text(item.value.ifBlank { "--" }, fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = item.accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(item.detail, fontSize = 10.3.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+fun TinyJumpChip(text: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(42.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = color.copy(alpha = .08f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .14f))
+    ) {
+        Row(Modifier.padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(text, color = color, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+        }
+    }
+}
+
+fun buildSelfTestReport(items: List<SelfTestItem>, summary: String): String {
+    val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+    return buildString {
+        appendLine("Labprobe 一键自测报告")
+        appendLine("时间：$now")
+        appendLine("状态：$summary")
+        appendLine()
+        items.forEach { item -> appendLine("${item.title}：${item.value} · ${item.detail}") }
+    }.trim()
+}
+
+fun guessGatewayFromProfile(profile: NetworkProfile): String {
+    val ip = profile.localIp
+    val parts = ip.split('.').mapNotNull { it.toIntOrNull() }
+    return if (parts.size == 4 && parts[0] in 1..223) "${parts[0]}.${parts[1]}.${parts[2]}.1" else ""
+}
+
+fun shortText(value: String, max: Int): String = if (value.length <= max) value else value.take(max.coerceAtLeast(4) - 3) + "..."
 
 @Composable
 fun PingTool(prefs: AppPrefs) {
