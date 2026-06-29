@@ -1,3 +1,11 @@
+# Labprobe v0.9.15 buildfix14
+
+- versionCode = 59
+- 模板测速新增 Labprobe 风格速度曲线，按约 1 秒采样显示当前/平均/峰值。
+- 无线漫游新增 RSSI 曲线、延迟曲线和漫游事件轴，并提供精确定位权限弹窗入口。
+- MTU / 分片检测改为常用档位 + 二分细化，输出 payload、估算 MTU 和建议 MSS。
+- 统一输入框、结果卡片和图表卡片的安全内边距，避免上下左右遮挡文字。
+
 # Labprobe v0.9.15 personal test build 13
 
 个人测试版，versionCode 58。

@@ -1,6 +1,10 @@
 package com.labprobe.app
 
 import android.content.ClipData
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
@@ -116,9 +120,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 58
+    const val CODE = 59
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 图表/MTU/漫游权限测试版" to listOf(
+            "模板测速新增速度曲线，漫游新增 RSSI/延迟曲线与权限提示，MTU 改为常用档位 + 二分细化",
+            "统一结果卡片与输入框安全内边距，避免上下左右裁字，所有图表保持 Labprobe 科技蓝风格",
+            "无线漫游页可弹窗申请精确定位权限，用于读取 SSID/BSSID/RSSI"
+        ),
         "v0.9.15 · 个人测试功能扩展" to listOf(
             "移除一键自测入口，新增模板测速、无线漫游、MTU/分片、DNS质量和服务监控五个独立工具",
             "新增页面采用紧凑双列参数框与科技蓝图标，输入框保留足够高度和内边距，避免文字被遮挡",
@@ -1292,7 +1301,7 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 52.dp
+private val ParamFieldHeight = 58.dp
 private val ParamFieldRadius = 18.dp
 
 @Composable
@@ -1398,9 +1407,9 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
 @Composable
 fun FieldIconBox(icon: ImageVector, accent: Color = Color(0xFF2563EB)) {
     Box(
-        Modifier.size(27.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = .11f)),
+        Modifier.size(30.dp).clip(RoundedCornerShape(11.dp)).background(accent.copy(alpha = .11f)),
         contentAlignment = Alignment.Center
-    ) { Icon(icon, null, Modifier.size(16.dp), tint = accent) }
+    ) { Icon(icon, null, Modifier.size(17.dp), tint = accent) }
 }
 
 @Composable
@@ -2566,6 +2575,8 @@ fun ServiceMonitorScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("服
 
 data class DownloadTemplate(val name: String, val url: String, val note: String)
 data class SpeedTestResult(val avgMbps: Double, val peakMbps: Double, val totalBytes: Long, val seconds: Int, val note: String)
+data class SpeedSample(val second: Int, val mbps: Double, val avgMbps: Double)
+data class MtuProbeResult(val summary: String, val rows: List<Pair<Int, Boolean>>)
 data class WifiSample(val time: String, val ssid: String, val bssid: String, val rssi: Int, val latency: Int?, val lost: Boolean)
 data class DnsQualityRow(val server: String, val ms: Long?, val a: String, val aaaa: String, val note: String)
 data class ServiceTarget(val name: String, val host: String, val port: Int, val protocol: String)
@@ -2591,6 +2602,7 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
     var avg by remember { mutableStateOf("--") }
     var peak by remember { mutableStateOf("--") }
     var total by remember { mutableStateOf("0.0 MB") }
+    var samples by remember { mutableStateOf<List<SpeedSample>>(emptyList()) }
     val scope = rememberCoroutineScope()
     val blue = Color(0xFF2563EB)
     fun applyTemplate(name: String) {
@@ -2598,14 +2610,14 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
         templates.firstOrNull { it.name == name }?.let { if (it.url.isNotBlank()) url = it.url }
     }
     ExpressiveCard("测速配置", "默认下载测试；上传/双向需要自建接收服务端。", Icons.Rounded.Speed, blue) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("模板", template, templates.map { it.name }, { applyTemplate(it) }, Icons.Rounded.Speed, Modifier.weight(1f))
             TinyParamSelectIcon("模式", mode, listOf("下载", "上传预留", "双向预留"), { mode = it }, Icons.Rounded.SyncAlt, Modifier.weight(1f))
         }
         CompactIconHistoryInput("URL", "https://...", url, { url = it }, "speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
-            TinyInfoParam("说明", "限下载自测", Icons.Rounded.Info, blue, Modifier.weight(1f))
+            TinyInfoParam("说明", "1秒预热", Icons.Rounded.Info, blue, Modifier.weight(1f))
         }
         PillButton(if (running) "测速中..." else "开始模板测速", Icons.Rounded.PlayArrow, enabled = !running, accent = blue) {
             scope.launch {
@@ -2613,12 +2625,14 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
                 val safeUrl = url.trim()
                 if (!safeUrl.startsWith("http")) { status = "请输入有效 HTTP/HTTPS 下载 URL"; return@launch }
                 prefs.addHistory("speed_url", safeUrl)
-                running = true; status = "预热并测速中..."; current = "--"; avg = "--"; peak = "--"; total = "0.0 MB"
+                running = true; status = "预热并测速中..."; current = "--"; avg = "--"; peak = "--"; total = "0.0 MB"; samples = emptyList()
                 val result = runDownloadTemplateTest(safeUrl, duration.toIntOrNull()?.coerceIn(3, 60) ?: 8) { cur, av, pk, bytes ->
                     current = String.format(Locale.US, "%.1f Mbps", cur)
                     avg = String.format(Locale.US, "%.1f Mbps", av)
                     peak = String.format(Locale.US, "%.1f Mbps", pk)
                     total = formatTraffic(bytes)
+                    val next = (samples.lastOrNull()?.second ?: 0) + 1
+                    samples = (samples + SpeedSample(next, cur.coerceAtLeast(0.0), av.coerceAtLeast(0.0))).takeLast(120)
                 }
                 status = result.note
                 avg = String.format(Locale.US, "%.1f Mbps", result.avgMbps)
@@ -2634,8 +2648,8 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
             StatChip("平均", avg, Color(0xFF0EA5E9), Modifier.weight(1f))
             StatChip("峰值", peak, Color(0xFF7C3AED), Modifier.weight(1f))
         }
-        Spacer(Modifier.height(8.dp))
-        Text("总流量 $total · 测速源不同会明显影响结果，不等于宽带物理上限。", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
+        LabSpeedChart(samples, modifier = Modifier.fillMaxWidth().height(178.dp))
+        Text("总流量 $total · 曲线按约 1 秒采样；测速源/CDN/运营商都会影响结果，不等于宽带物理上限。", fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
     }
 }
 
@@ -2647,12 +2661,42 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
     var status by remember { mutableStateOf("等待测试") }
     var job by remember { mutableStateOf<Job?>(null) }
+    var hasLocation by remember { mutableStateOf(ctx.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasLocation = granted
+        status = if (granted) "已获取精确定位权限，可读取 SSID/BSSID/RSSI" else "未授予定位权限，SSID/BSSID/RSSI 可能不可用"
+    }
     val latest = samples.lastOrNull()
-    val roamCount = samples.zipWithNext().count { it.first.bssid.isNotBlank() && it.second.bssid.isNotBlank() && it.first.bssid != it.second.bssid }
-    ExpressiveCard("漫游配置", "读取 Wi‑Fi SSID/BSSID/RSSI；无定位权限时可能显示 unknown。", Icons.Rounded.Wifi, Color(0xFF16A34A)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TinyInfoParam("当前AP", latest?.bssid?.takeIf { it.isNotBlank() } ?: "未开始", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f))
+    val validSamples = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
+    val roamCount = validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
+    val lostCount = samples.count { it.lost }
+    ExpressiveCard(
+        "漫游配置",
+        "同一 SSID 下 BSSID 变化即记录漫游；需要精确定位权限读取 Wi‑Fi 信息。",
+        Icons.Rounded.Wifi,
+        Color(0xFF16A34A),
+        headerAction = {
+            if (!hasLocation) {
+                AssistChip(
+                    onClick = { permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
+                    label = { Text("授权定位", fontSize = 10.8.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Rounded.LocationOn, null, Modifier.size(14.dp)) }
+                )
+            }
+        }
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TinyInfoParam("当前AP", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: if (hasLocation) "未开始" else "需授权", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f))
             TinyInfoParam("目标", "网关Ping", Icons.Rounded.Router, Color(0xFF2563EB), Modifier.weight(1f))
+        }
+        if (!hasLocation) {
+            Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFFFF7ED), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = .20f))) {
+                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Info, null, Modifier.size(17.dp), tint = Color(0xFFF59E0B))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Android 需要精确定位权限才能读取 SSID/BSSID/RSSI；未授权时仅能做网关延迟粗测。", fontSize = 11.2.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f), modifier = Modifier.weight(1f))
+                }
+            }
         }
         PillButton(if (running) "停止漫游测试" else "开始漫游测试", if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, accent = if (running) Color(0xFF64748B) else Color(0xFF16A34A)) {
             if (running) { job?.cancel(); running = false; status = "已停止" } else {
@@ -2661,7 +2705,8 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                     while (currentCoroutineContext().isActive) {
                         val info = readWifiSample(ctx)
                         samples = (samples + info).takeLast(240)
-                        status = "采样 ${samples.size} 次 · 漫游 $roamCount 次"
+                        val okRssi = info.rssi > -120
+                        status = if (okRssi) "采样 ${samples.size} 次 · 漫游 $roamCount 次 · 丢包 $lostCount" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $lostCount"
                         delay(1000)
                     }
                 }
@@ -2670,13 +2715,16 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     }
     ExpressiveCard("实时状态", status, Icons.Rounded.TravelExplore, Color(0xFF16A34A)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("SSID", latest?.ssid ?: "--", Color(0xFF2563EB), Modifier.weight(1f))
-            StatChip("信号", latest?.rssi?.let { "$it dBm" } ?: "--", Color(0xFF16A34A), Modifier.weight(1f))
+            StatChip("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "<unknown ssid>" } ?: "--", Color(0xFF2563EB), Modifier.weight(1f))
+            StatChip("信号", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "需权限", Color(0xFF16A34A), Modifier.weight(1f))
             StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: if (latest?.lost == true) "丢包" else "--", Color(0xFFF59E0B), Modifier.weight(1f))
         }
-        Spacer(Modifier.height(8.dp))
-        samples.takeLast(8).forEach { s ->
-            Text("${s.time}  ${s.bssid.ifBlank { "BSSID未知" }}  ${s.rssi}dBm  ${s.latency?.let { "${it}ms" } ?: "timeout"}", fontSize = 11.3.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+        LabRoamCharts(samples, modifier = Modifier.fillMaxWidth())
+        if (samples.isEmpty()) {
+            Text("开始后会记录 RSSI、网关延迟、丢包和 BSSID 切换事件。", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.60f))
+        } else {
+            Text("漫游事件", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+            RoamEventTimeline(samples.takeLast(40))
         }
     }
 }
@@ -2684,32 +2732,37 @@ fun WifiRoamingTool(prefs: AppPrefs) {
 @Composable
 fun MtuTool(prefs: AppPrefs) {
     var host by remember { mutableStateOf("223.5.5.5") }
-    var min by remember { mutableStateOf("1200") }
-    var max by remember { mutableStateOf("1500") }
-    var step by remember { mutableStateOf("20") }
+    var protocol by remember { mutableStateOf("IPv4") }
     var result by remember { mutableStateOf("等待检测") }
+    var mtuRows by remember { mutableStateOf<List<Pair<Int, Boolean>>>(emptyList()) }
     var running by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("MTU 配置", "IPv4 使用 DF 分片探测；Android 命令能力不同会影响结果。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
+    val accent = Color(0xFF0EA5E9)
+    ExpressiveCard("MTU 配置", "常用档位先测，再对通过/失败临界区间二分细化。", Icons.Rounded.SettingsEthernet, accent) {
         CompactIconHistoryInput("目标", "223.5.5.5", host, { host = it }, "mtu_host", prefs, Icons.Rounded.Dns)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInputIcon("起始", min, { min = it.filter { c -> c.isDigit() } }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("最高", max, { max = it.filter { c -> c.isDigit() } }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("协议", protocol, listOf("IPv4", "IPv6"), { protocol = it }, Icons.Rounded.Public, Modifier.weight(1f))
+            TinyInfoParam("方式", if (protocol == "IPv6") "ping6 PMTU" else "DF + 二分", Icons.Rounded.Info, accent, Modifier.weight(1f))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInputIcon("步进", step, { step = it.filter { c -> c.isDigit() } }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
-            TinyInfoParam("方式", "ping -M do", Icons.Rounded.Info, Color(0xFF0EA5E9), Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            TinyInfoParam("常用", if (protocol == "IPv6") "1280/1492/1500" else "1460/1480/1492", Icons.Rounded.Timeline, Color(0xFF2563EB), Modifier.weight(1f))
+            TinyInfoParam("说明", "payload口径", Icons.Rounded.Info, Color(0xFF7C3AED), Modifier.weight(1f))
         }
-        PillButton(if (running) "检测中..." else "开始 MTU 检测", Icons.Rounded.PlayArrow, enabled = !running, accent = Color(0xFF0EA5E9)) {
+        PillButton(if (running) "检测中..." else "开始 MTU 检测", Icons.Rounded.PlayArrow, enabled = !running, accent = accent) {
             scope.launch {
-                running = true; result = "检测中..."
+                running = true; result = "检测中..."; mtuRows = emptyList()
                 prefs.addHistory("mtu_host", host)
-                result = runMtuProbe(host, min.toIntOrNull() ?: 1200, max.toIntOrNull() ?: 1500, step.toIntOrNull() ?: 20)
+                val r = runMtuProbeSmart(host, protocol == "IPv6") { rows -> mtuRows = rows }
+                mtuRows = r.rows
+                result = r.summary
                 running = false
             }
         }
     }
-    ExpressiveCard("MTU 结果", "推荐值仅供排障参考", Icons.Rounded.Route, Color(0xFF2563EB)) { ResultText(result) }
+    ExpressiveCard("MTU 结果", "估算值仅供排障参考；不同 Android ping 能力会影响结果。", Icons.Rounded.Route, Color(0xFF2563EB)) {
+        MtuStepChart(mtuRows, modifier = Modifier.fillMaxWidth().height(118.dp))
+        ResultText(result)
+    }
 }
 
 @Composable
@@ -3205,16 +3258,141 @@ fun PingStats(points: List<PingPoint>) {
 @Composable
 fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.height(50.dp),
+        modifier = modifier.heightIn(min = 58.dp),
         shape = RoundedCornerShape(18.dp),
         color = color.copy(alpha = .06f),
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.Center) {
+        Column(Modifier.padding(horizontal = 9.dp, vertical = 7.dp), verticalArrangement = Arrangement.Center) {
             Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
             Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
+}
+
+
+@Composable
+fun LabSpeedChart(points: List<SpeedSample>, modifier: Modifier = Modifier) {
+    LabChartFrame(modifier, emptyText = if (points.isEmpty()) "等待测速" else null) { w, h, paint ->
+        if (points.isEmpty()) return@LabChartFrame
+        val maxY = niceSpeedMax(points.maxOfOrNull { it.mbps } ?: 1.0)
+        val left = 38f; val right = w - 10f; val top = 12f; val bottom = h - 24f
+        drawGrid(drawContext.canvas.nativeCanvas, paint, left, right, top, bottom, listOf(0.0, maxY/2, maxY), { v -> if (v >= 1000) "${(v/1000).roundToInt()}G" else "${v.roundToInt()}M" })
+        val path = Path()
+        points.forEachIndexed { idx, p ->
+            val x = left + (right-left) * idx / (points.size-1).coerceAtLeast(1)
+            val y = bottom - ((p.mbps / maxY).coerceIn(0.0, 1.0).toFloat()) * (bottom-top)
+            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, color = Color(0xFF2563EB), style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        val last = points.last()
+        drawCircle(Color(0xFF2563EB), 5f, Offset(right, bottom - ((last.mbps/maxY).coerceIn(0.0,1.0).toFloat())*(bottom-top)))
+        drawContext.canvas.nativeCanvas.apply {
+            paint.color = android.graphics.Color.rgb(100,116,139); paint.textSize = 24f; paint.textAlign = Paint.Align.LEFT
+            drawText("0s", left, h-4f, paint)
+            paint.textAlign = Paint.Align.RIGHT
+            drawText("${points.last().second}s", right, h-4f, paint)
+        }
+    }
+}
+
+@Composable
+fun LabRoamCharts(samples: List<WifiSample>, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("信号强度 dBm", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f))
+        SimpleSeriesChart(
+            values = samples.mapNotNull { it.rssi.takeIf { r -> r > -120 }?.toDouble() },
+            minY = -90.0,
+            maxY = -30.0,
+            color = Color(0xFF16A34A),
+            empty = "无可用 RSSI",
+            format = { it.roundToInt().toString() },
+            modifier = Modifier.fillMaxWidth().height(116.dp)
+        )
+        Text("网关延迟 ms", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f))
+        val latencies = samples.mapNotNull { it.latency?.toDouble() }
+        val maxLat = niceLatencyMax((latencies.maxOrNull() ?: 30.0).roundToInt())
+        SimpleSeriesChart(latencies, 0.0, maxLat.toDouble(), Color(0xFF2563EB), "等待延迟样本", { it.roundToInt().toString() }, Modifier.fillMaxWidth().height(116.dp))
+    }
+}
+
+@Composable
+fun SimpleSeriesChart(values: List<Double>, minY: Double, maxY: Double, color: Color, empty: String, format: (Double)->String, modifier: Modifier = Modifier) {
+    LabChartFrame(modifier, emptyText = if (values.isEmpty()) empty else null) { w, h, paint ->
+        if (values.isEmpty()) return@LabChartFrame
+        val left = 38f; val right = w - 10f; val top = 10f; val bottom = h - 18f
+        drawGrid(drawContext.canvas.nativeCanvas, paint, left, right, top, bottom, listOf(minY, (minY+maxY)/2, maxY), format)
+        val path = Path()
+        values.forEachIndexed { idx, v ->
+            val x = left + (right-left) * idx / (values.size-1).coerceAtLeast(1)
+            val y = bottom - (((v-minY)/(maxY-minY)).coerceIn(0.0,1.0).toFloat())*(bottom-top)
+            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, color = color, style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+fun MtuStepChart(rows: List<Pair<Int, Boolean>>, modifier: Modifier = Modifier) {
+    LabChartFrame(modifier, emptyText = if (rows.isEmpty()) "等待 MTU 检测" else null) { w, h, paint ->
+        if (rows.isEmpty()) return@LabChartFrame
+        val left = 10f; val right = w - 10f; val top = 14f; val rowH = ((h - 28f) / rows.size.coerceAtMost(12)).coerceAtLeast(12f)
+        rows.takeLast(12).forEachIndexed { idx, (payload, ok) ->
+            val y = top + idx * rowH
+            val barW = (right-left) * ((payload - 1000).coerceAtLeast(0) / 600.0f).coerceIn(0f, 1f)
+            drawRoundRect(color = (if (ok) Color(0xFF16A34A) else Color(0xFFEF4444)).copy(alpha=.16f), topLeft = Offset(left, y), size = androidx.compose.ui.geometry.Size((barW).coerceAtLeast(70f), rowH-4f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f,8f))
+            drawContext.canvas.nativeCanvas.apply {
+                paint.textSize = 22f; paint.textAlign = Paint.Align.LEFT; paint.color = if (ok) android.graphics.Color.rgb(22,163,74) else android.graphics.Color.rgb(239,68,68)
+                drawText("$payload  ${if (ok) "通过" else "失败"}", left+8f, y+rowH-8f, paint)
+            }
+        }
+    }
+}
+
+@Composable
+fun LabChartFrame(modifier: Modifier = Modifier, emptyText: String? = null, draw: androidx.compose.ui.graphics.drawscope.DrawScope.(Float, Float, Paint) -> Unit) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFFF8FAFC), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)), modifier = modifier) {
+        Canvas(Modifier.fillMaxSize().padding(8.dp)) {
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            draw(size.width, size.height, paint)
+            if (!emptyText.isNullOrBlank()) {
+                drawContext.canvas.nativeCanvas.apply {
+                    paint.color = android.graphics.Color.rgb(148,163,184); paint.textSize = 28f; paint.textAlign = Paint.Align.CENTER; paint.isFakeBoldText = true
+                    drawText(emptyText, size.width/2, size.height/2, paint)
+                    paint.isFakeBoldText = false
+                }
+            }
+        }
+    }
+}
+
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(canvas: android.graphics.Canvas, paint: Paint, left: Float, right: Float, top: Float, bottom: Float, ticks: List<Double>, format: (Double)->String) {
+    paint.strokeWidth = 1f; paint.color = android.graphics.Color.rgb(226,232,240); paint.textSize = 20f; paint.textAlign = Paint.Align.RIGHT
+    ticks.forEach { t ->
+        val min = ticks.minOrNull() ?: 0.0; val max = ticks.maxOrNull() ?: 1.0
+        val y = bottom - (((t-min)/(max-min).coerceAtLeast(0.0001)).toFloat())*(bottom-top)
+        drawLine(Color(0xFFE2E8F0), Offset(left, y), Offset(right, y), strokeWidth = 1f)
+        canvas.drawText(format(t), left-6f, y+7f, paint)
+    }
+}
+
+@Composable
+fun RoamEventTimeline(samples: List<WifiSample>) {
+    val events = samples.zipWithNext().mapNotNull { (a,b) ->
+        if (a.bssid.isNotBlank() && b.bssid.isNotBlank() && a.bssid != b.bssid && a.bssid != "02:00:00:00:00:00" && b.bssid != "02:00:00:00:00:00") "${b.time}  AP切换  ${a.bssid.takeLast(5)} → ${b.bssid.takeLast(5)}" else null
+    }.takeLast(5)
+    if (events.isEmpty()) {
+        samples.takeLast(4).forEach { s -> Text("${s.time}  ${s.bssid.ifBlank { "BSSID未知" }}  ${s.rssi.takeIf { it > -120 }?.let { "$it dBm" } ?: "RSSI不可用"}  ${s.latency?.let { "${it}ms" } ?: "timeout"}", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f)) }
+    } else events.forEach { Text(it, fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF16A34A), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+}
+
+fun niceSpeedMax(v: Double): Double = when {
+    v <= 10.0 -> 10.0
+    v <= 50.0 -> 50.0
+    v <= 100.0 -> 100.0
+    v <= 300.0 -> 300.0
+    v <= 1000.0 -> 1000.0
+    else -> 2000.0
 }
 
 @Composable
@@ -3928,7 +4106,7 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
     )
 }
 
-@Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, fontSize = 12.5.sp) }
+@Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 4.dp, start = 2.dp, end = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), fontWeight = FontWeight.SemiBold, lineHeight = 18.sp, fontSize = 12.2.sp) }
 
 @Composable
 fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) = ScreenShell("记录", "事件流 · 左滑删除 · 每日总结", action = {
@@ -5557,27 +5735,55 @@ private fun intToIp(i: Int): String {
     return listOf(i and 0xff, i shr 8 and 0xff, i shr 16 and 0xff, i shr 24 and 0xff).joinToString(".")
 }
 
-suspend fun runMtuProbe(host: String, min: Int, max: Int, step: Int): String = withContext(Dispatchers.IO) {
-    val target = host.trim().ifBlank { "223.5.5.5" }
-    val startSize = min.coerceIn(500, 9000)
-    val endSize = max.coerceIn(startSize, 9000)
-    val inc = step.coerceIn(8, 500)
+suspend fun runMtuProbeSmart(host: String, ipv6: Boolean, onProgress: suspend (List<Pair<Int, Boolean>>) -> Unit = {}): MtuProbeResult = withContext(Dispatchers.IO) {
+    val target = host.trim().ifBlank { if (ipv6) "2400:3200::1" else "223.5.5.5" }
     val resolved = runCatching { InetAddress.getByName(target).hostAddress ?: target }.getOrDefault(target)
-    var best: Int? = null
-    val logs = mutableListOf<String>()
-    var size = startSize
-    while (size <= endSize && currentCoroutineContext().isActive) {
-        val ok = mtuPingOnce(resolved, size)
-        logs += "payload $size : " + if (ok) "通过" else "失败/分片受限"
-        if (ok) best = size
-        size += inc
+    val common = if (ipv6) listOf(1200, 1232, 1280, 1400, 1460, 1472, 1492, 1500) else listOf(1200, 1280, 1400, 1460, 1472, 1480, 1492, 1500)
+    val rows = mutableListOf<Pair<Int, Boolean>>()
+    var lastOk: Int? = null
+    var firstFail: Int? = null
+    for (p in common) {
+        if (!currentCoroutineContext().isActive) break
+        val ok = mtuPingOnce(resolved, p, ipv6)
+        rows += p to ok
+        withContext(Dispatchers.Main) { onProgress(rows.toList()) }
+        if (ok) lastOk = p else if (firstFail == null && lastOk != null) firstFail = p
+        if (!ok && lastOk != null) break
     }
-    val header = if (best != null) "最大通过 payload：${best} bytes\n估算 IPv4 MTU：${best!! + 28} bytes" else "未找到可通过的 payload，可能目标禁 ICMP 或系统不支持 DF 探测"
-    header + "\n目标：$target → $resolved\n" + logs.takeLast(12).joinToString("\n")
+    if (lastOk != null && firstFail != null && firstFail!! - lastOk!! > 1) {
+        var lo = lastOk!!
+        var hi = firstFail!!
+        while (hi - lo > 1 && currentCoroutineContext().isActive) {
+            val mid = (lo + hi) / 2
+            val ok = mtuPingOnce(resolved, mid, ipv6)
+            rows += mid to ok
+            withContext(Dispatchers.Main) { onProgress(rows.toList()) }
+            if (ok) lo = mid else hi = mid
+        }
+        lastOk = lo
+    }
+    val best = lastOk
+    val mtuOverhead = if (ipv6) 48 else 28
+    val mssOverhead = if (ipv6) 60 else 40
+    val summary = if (best != null) {
+        val mtu = best + mtuOverhead
+        val mss = (mtu - mssOverhead).coerceAtLeast(0)
+        val hint = when {
+            !ipv6 && mtu in 1488..1496 -> "疑似 PPPoE / VPN 常见 MTU 区间"
+            !ipv6 && mtu >= 1500 -> "接近以太网常见 1500 MTU"
+            ipv6 && mtu <= 1280 -> "IPv6 最小 MTU 附近；需关注 ICMPv6/PMTUD"
+            else -> "路径 MTU 可用，建议结合实际业务复测"
+        }
+        "最大通过 payload：$best bytes\n估算 ${if (ipv6) "IPv6" else "IPv4"} MTU：$mtu bytes\n建议 TCP MSS：$mss bytes\n判断：$hint\n目标：$target → $resolved\n" + rows.sortedBy { it.first }.joinToString("\n") { "payload ${it.first}: ${if (it.second) "通过" else "失败/分片受限"}" }
+    } else {
+        "未找到可通过 payload。可能目标禁 ICMP、VPN/防火墙拦截，或 Android ping 不支持 DF/PMTUD 探测。\n目标：$target → $resolved\n" + rows.joinToString("\n") { "payload ${it.first}: ${if (it.second) "通过" else "失败"}" }
+    }
+    MtuProbeResult(summary, rows.sortedBy { it.first })
 }
 
-private fun mtuPingOnce(host: String, payload: Int): Boolean = runCatching {
-    val cmd = listOf("/system/bin/ping", "-c", "1", "-W", "1", "-M", "do", "-s", payload.toString(), host)
+private fun mtuPingOnce(host: String, payload: Int, ipv6: Boolean = false): Boolean = runCatching {
+    val bin = if (ipv6) "/system/bin/ping6" else "/system/bin/ping"
+    val cmd = if (ipv6) listOf(bin, "-c", "1", "-W", "1", "-s", payload.toString(), host) else listOf(bin, "-c", "1", "-W", "1", "-M", "do", "-s", payload.toString(), host)
     val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
     val text = p.inputStream.bufferedReader().readText()
     p.waitFor(1800, TimeUnit.MILLISECONDS)
