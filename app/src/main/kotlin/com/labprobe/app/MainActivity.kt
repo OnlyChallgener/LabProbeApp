@@ -123,9 +123,13 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 72
+    const val CODE = 73
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 拖拽阴影热修" to listOf(
+            "移除拖拽外层矩形阴影，修复长按卡片时方形边角和底部长横杠",
+            "拖拽时仅保留圆角卡片投影，排序标签阴影同步减弱"
+        ),
         "v0.9.15 · 设备事件去重热修" to listOf(
             "终端事件按 MAC / 名称快照做状态机去重，离线后继续离线不再重复显示",
             "离线在线时长优先按 offlineAt - onlineSince 固化计算，避免历史刷新后时长倒退",
@@ -2308,7 +2312,6 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
     var dragging by remember(cardKey) { mutableStateOf(false) }
     var dragY by remember(cardKey) { mutableStateOf(0f) }
     val scale by animateFloatAsState(if (dragging) 1.025f else 1f, animationSpec = tween(140), label = "home-card-scale")
-    val shadowLift by animateFloatAsState(if (dragging) 1f else 0f, animationSpec = tween(140), label = "home-card-lift")
     val thresholdPx = with(LocalDensity.current) { 92.dp.toPx() }
 
     fun commitOrder() {
@@ -2326,15 +2329,14 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
         Modifier
             .fillMaxWidth()
             .zIndex(if (dragging) 5f else 0f)
-            // 阴影放在带 shape 的 Modifier.shadow 上，避免 graphicsLayer 生成方形投影。
-            .shadow(if (dragging) 18.dp else 0.dp, RoundedCornerShape(30.dp), clip = false)
+            // 这里只做位移和缩放，不再给整张 Box 加阴影。
+            // 整张 Box 是 fillMaxWidth 的矩形，给它加 shadow 会在拖拽时露出方形阴影和底部长横杠。
+            .offset { IntOffset(0, if (dragging) dragY.roundToInt() else 0) }
             .graphicsLayer {
-                translationY = if (dragging) dragY else 0f
                 scaleX = scale
                 scaleY = scale
                 alpha = if (dragging) 0.985f else 1f
                 shadowElevation = 0f
-                shape = RoundedCornerShape(30.dp)
                 clip = false
             }
             .pointerInput(cardKey, order) {
@@ -2353,13 +2355,17 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
                 )
             }
     ) {
-        content()
+        // 不再包一层额外阴影/裁剪层，直接移动原卡片内容。
+        // 原卡片本身已经是圆角 Surface；额外 fillMaxWidth 阴影会变成方形灰块。
+        Box(Modifier.fillMaxWidth()) {
+            content()
+        }
         if (dragging) {
             Surface(
                 modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                 shape = RoundedCornerShape(50),
-                color = Color.White.copy(alpha = 0.94f),
-                shadowElevation = 6.dp
+                color = Color.White.copy(alpha = 0.96f),
+                shadowElevation = 4.dp
             ) {
                 Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.OpenWith, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
