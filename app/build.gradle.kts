@@ -30,7 +30,7 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 59
+        versionCode = 60
         versionName = "0.9.15"
     }
 

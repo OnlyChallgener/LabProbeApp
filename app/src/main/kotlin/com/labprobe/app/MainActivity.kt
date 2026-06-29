@@ -120,7 +120,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 59
+    const val CODE = 60
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 图表/MTU/漫游权限测试版" to listOf(
@@ -3384,6 +3384,16 @@ fun RoamEventTimeline(samples: List<WifiSample>) {
     if (events.isEmpty()) {
         samples.takeLast(4).forEach { s -> Text("${s.time}  ${s.bssid.ifBlank { "BSSID未知" }}  ${s.rssi.takeIf { it > -120 }?.let { "$it dBm" } ?: "RSSI不可用"}  ${s.latency?.let { "${it}ms" } ?: "timeout"}", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f)) }
     } else events.forEach { Text(it, fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF16A34A), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+}
+
+fun niceLatencyMax(v: Int): Int = when {
+    v <= 30 -> 30
+    v <= 60 -> 60
+    v <= 120 -> 120
+    v <= 300 -> 300
+    v <= 600 -> 600
+    v <= 1000 -> 1000
+    else -> ((v + 499) / 500) * 500
 }
 
 fun niceSpeedMax(v: Double): Double = when {

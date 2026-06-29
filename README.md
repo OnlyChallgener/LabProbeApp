@@ -133,3 +133,8 @@ app/build/outputs/apk/debug/app-debug.apk
 - 移除一键自测 / 一键诊断报告入口。
 - 新增模板测速、无线漫游、MTU / 分片检测、DNS 质量检测、服务可达性监控。
 - 新增页面按科技蓝双列参数框统一排布，控件高度和内边距按不遮挡文字处理。
+
+
+### buildfix15
+- 修复无线漫游图表编译错误：补齐 `niceLatencyMax` 延迟刻度函数。
+- versionCode 更新到 60。
