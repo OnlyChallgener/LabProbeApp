@@ -10,6 +10,7 @@ import android.content.Intent
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -105,6 +106,7 @@ import java.util.Date
 import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 private const val DEFAULT_HUB = ""
@@ -114,13 +116,13 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 57
+    const val CODE = 58
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.15 · 一键自测自测版" to listOf(
-            "新增一键自测页面，聚合网络概览、DNS、延迟、端口、NAT 与路由摘要",
-            "自测结果卡片支持点击跳转到对应工具页，布局采用小图标和紧凑双列卡片",
-            "控制字号、图标和卡片高度，避免大幅占用版面并保持 OneUI 风格统一"
+        "v0.9.15 · 个人测试功能扩展" to listOf(
+            "移除一键自测入口，新增模板测速、无线漫游、MTU/分片、DNS质量和服务监控五个独立工具",
+            "新增页面采用紧凑双列参数框与科技蓝图标，输入框保留足够高度和内边距，避免文字被遮挡",
+            "模板测速默认只做下载吞吐自测；无线漫游显示 SSID/BSSID/RSSI、延迟、丢包与漫游事件；MTU/DNS质量/服务监控用于个人测试"
         ),
         "v0.9.15 · 左滑删除显示热修" to listOf(
             "修复 SSH 执行结果和路由追踪历史未滑动也显示删除按钮的问题",
@@ -713,7 +715,6 @@ data class DnsRecord(val value: String, val type: String, val source: String, va
 data class DnsQueryHistory(val domain: String, val time: String, val summary: String, val signature: String)
 data class SshResultEntry(val id: Long, val time: String, val host: String, val command: String, val output: String)
 data class TraceHistoryEntry(val id: Long, val time: String, val host: String, val ipMode: String, val hops: Int, val status: String, val output: String)
-data class SelfTestItem(val id: String, val title: String, val value: String, val detail: String, val icon: ImageVector, val accent: Color, val route: String, val status: String = "等待")
 data class PingPoint(val index: Int, val ms: Int?, val text: String, val elapsedMs: Long)
 data class PingRunResult(val points: List<PingPoint>, val elapsedMs: Long, val mode: String, val protocol: String = "ICMP", val resolvedIp: String = "")
 data class PingBucket(val startMs: Long, val avgMs: Int?, val peakMs: Int?, val hasLoss: Boolean, val sampleCount: Int)
@@ -939,7 +940,6 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
                         "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it }, topNav)
-                        "tool_selftest" -> SelfTestScreen(prefs, { route = "tools" }) { route = it }
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
@@ -948,6 +948,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_nat" -> NatScreen(prefs, { route = "tools" }) { route = "tool_nat_history" }
                         "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
                         "tool_ssh" -> SshScreen(prefs) { route = "tools" }
+                        "tool_speed" -> SpeedTemplateScreen(prefs) { route = "tools" }
+                        "tool_roam" -> WifiRoamingScreen(prefs) { route = "tools" }
+                        "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
+                        "tool_dns_quality" -> DnsQualityScreen(prefs) { route = "tools" }
+                        "tool_service" -> ServiceMonitorScreen(prefs) { route = "tools" }
                         else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
                     }
                 }
@@ -2439,26 +2444,31 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     ToolGroupLabel("网络测试")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("一键自测", "诊断报告", Icons.Rounded.CheckCircle, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_selftest") }
         ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
-        ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
         ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
-        Spacer(Modifier.weight(1f))
     }
     ToolGroupLabel("解析与 NAT")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("DNS解析", "A/AAAA", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
         ToolHubTile("NAT检测", "RFC5780 / 3489", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
     }
+    ToolGroupLabel("质量与监控")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("模板测速", "下载吞吐/模板", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_speed") }
+        ToolHubTile("无线漫游", "RSSI/AP切换", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f)) { open("tool_roam") }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("MTU检测", "分片/路径MTU", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_mtu") }
+        ToolHubTile("DNS质量", "多DNS延迟", Icons.Rounded.TravelExplore, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_dns_quality") }
+    }
     ToolGroupLabel("设备工具")
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ToolHubTile("服务监控", "TCP/UDP可达", Icons.Rounded.Public, Color(0xFFF59E0B), Modifier.weight(1f)) { open("tool_service") }
         ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
-        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -2524,9 +2534,6 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
 }
 
 @Composable
-fun SelfTestScreen(prefs: AppPrefs, onBack: () -> Unit, open: (String) -> Unit) = DetailShell("一键自测", "网络概览 · 诊断报告 · 点击跳转", onBack) { SelfTestTool(prefs, open) }
-
-@Composable
 fun PingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("延迟测试", "ICMP / TCP / HTTP · IPv4 / IPv6 · 真实时间轴", onBack) { PingTool(prefs) }
 @Composable
 fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "双 DNS 备选与运营商识别", onBack) { DnsTool(prefs) }
@@ -2545,207 +2552,228 @@ fun NatHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 记
 @Composable
 fun SshScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack) { SshTool(prefs) }
 
-
 @Composable
-fun SelfTestTool(prefs: AppPrefs, open: (String) -> Unit) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var target by remember { mutableStateOf(prefs.dnsDomain) }
-    var pingTarget by remember { mutableStateOf(prefs.pingHost) }
-    var running by remember { mutableStateOf(false) }
-    var summary by remember { mutableStateOf("等待自测") }
-    var report by remember { mutableStateOf("") }
-    var items by remember { mutableStateOf(defaultSelfTestItems()) }
+fun SpeedTemplateScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("模板测速", "模板下载吞吐 · 个人测试版", onBack) { SpeedTemplateTool(prefs) }
+@Composable
+fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) { WifiRoamingTool(prefs) }
+@Composable
+fun MtuScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("MTU 检测", "路径 MTU · 分片探测", onBack) { MtuTool(prefs) }
+@Composable
+fun DnsQualityScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 质量", "多 DNS 延迟与 A/AAAA 对比", onBack) { DnsQualityTool(prefs) }
+@Composable
+fun ServiceMonitorScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("服务监控", "TCP / UDP 服务可达性", onBack) { ServiceMonitorTool(prefs) }
 
-    fun update(id: String, value: String, detail: String, status: String = "完成") {
-        items = items.map { if (it.id == id) it.copy(value = value, detail = detail, status = status) else it }
-    }
 
-    ExpressiveCard("自测配置", "小范围快速诊断，结果卡可点击跳转到对应工具页。", Icons.Rounded.CheckCircle, Color(0xFF2563EB)) {
-        CompactIconHistoryInput("域名", "net86.dynv6.net", target, { target = it; prefs.dnsDomain = it }, "self_test_domain", prefs, Icons.Rounded.Dns)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyHistoryParamInputIcon("延迟目标", "223.5.5.5", pingTarget, { pingTarget = it; prefs.pingHost = it }, "self_ping_host", prefs, Icons.Rounded.Speed, KeyboardType.Text, Modifier.weight(1f))
-            TinyInfoParam("模式", if (running) "自测中" else "快速", Icons.Rounded.Bolt, Color(0xFF2563EB), Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f)) {
-                PillButton(if (running) "自测中..." else "开始自测", Icons.Rounded.PlayArrow, enabled = !running, accent = Color(0xFF2563EB)) {
-                    scope.launch {
-                    running = true
-                    summary = "正在准备..."
-                    report = ""
-                    items = defaultSelfTestItems().map { it.copy(value = "--", detail = "等待检测", status = "等待") }
-                    val start = SystemClock.elapsedRealtime()
-                    runCatching {
-                        summary = "读取本机网络..."
-                        val profile = detectNetworkProfile(ctx, prefs)
-                        update("network", profile.priority, "IPv4 ${profile.ipv4Exit} · IPv6 ${shortText(profile.ipv6Address, 24)} · ${profile.operator}")
+data class DownloadTemplate(val name: String, val url: String, val note: String)
+data class SpeedTestResult(val avgMbps: Double, val peakMbps: Double, val totalBytes: Long, val seconds: Int, val note: String)
+data class WifiSample(val time: String, val ssid: String, val bssid: String, val rssi: Int, val latency: Int?, val lost: Boolean)
+data class DnsQualityRow(val server: String, val ms: Long?, val a: String, val aaaa: String, val note: String)
+data class ServiceTarget(val name: String, val host: String, val port: Int, val protocol: String)
 
-                        summary = "解析 DNS..."
-                        val records = dnsLookup(target, prefs.dns1, prefs.dns2, "ALL", prefs)
-                        val aCount = records.count { it.type == "A" }
-                        val aaaaCount = records.count { it.type == "AAAA" }
-                        val dnsDetail = if (records.isEmpty()) "无 A/AAAA 记录或解析失败" else records.take(2).joinToString(" · ") { "${it.type} ${shortText(it.value, 22)} ${it.operator}" }
-                        update("dns", if (records.isEmpty()) "异常" else "A$aCount / AAAA$aaaaCount", dnsDetail, if (records.isEmpty()) "注意" else "完成")
-
-                        summary = "测试网关延迟..."
-                        val gateway = guessGatewayFromProfile(profile)
-                        if (gateway.isBlank()) {
-                            update("gateway", "未知", "未能从本地 IP 推断网关，可进入延迟测试手动测", "跳过")
-                        } else {
-                            val ms = pingOnce(gateway, 900)
-                            update("gateway", ms?.let { "${it}ms" } ?: "超时", "网关 $gateway", if (ms == null) "注意" else "完成")
-                        }
-
-                        summary = "测试公网延迟..."
-                        val latency = runLatencySeries(pingTarget, "ICMP", prefs.pingIpMode, prefs.pingDnsMode, 80, 4, 350L, 1200) { }
-                        val ok = latency.points.mapNotNull { it.ms }
-                        val avg = ok.takeIf { it.isNotEmpty() }?.average()?.roundToInt()
-                        val loss = latency.points.size - ok.size
-                        update("latency", avg?.let { "${it}ms" } ?: "失败", "${pingTarget} · 丢包 ${loss}/${latency.points.size} · ${formatElapsedMs(latency.elapsedMs)}", if (avg == null) "注意" else "完成")
-
-                        summary = "测试 TCP 端口..."
-                        val tcpText = tcpProbeSmart(prefs.tcpHost, prefs.tcpPort.toIntOrNull() ?: 80, prefs.tcpTimeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, "自动")
-                        val tcpOk = tcpText.contains("成功")
-                        val tcpShort = when {
-                            tcpText.contains("成功") -> "可达"
-                            tcpText.contains("拒绝") -> "拒绝"
-                            tcpText.contains("超时") -> "超时"
-                            else -> "未知"
-                        }
-                        update("tcp", tcpShort, tcpText.lines().firstOrNull().orEmpty().ifBlank { "${prefs.tcpHost}:${prefs.tcpPort}" }, if (tcpOk) "完成" else "注意")
-
-                        summary = "读取 NAT 与路由摘要..."
-                        val nat = prefs.natHistory().firstOrNull()
-                        update("nat", nat?.classicType?.takeIf { it.isNotBlank() } ?: "未测", nat?.let { "${it.mode} · ${it.server} · ${it.confidence}" } ?: "点击进入 NAT 检测", if (nat == null) "跳转" else "完成")
-                        val trace = prefs.traceHistory().firstOrNull()
-                        update("trace", trace?.let { "${it.hops}跳" } ?: "未测", trace?.let { "${it.host} · ${it.status}" } ?: "点击进入路由追踪", if (trace == null) "跳转" else "完成")
-                    }.onFailure { e ->
-                        summary = "自测中断：${e.message ?: "未知错误"}"
-                    }
-                    val spent = formatElapsedMs(SystemClock.elapsedRealtime() - start)
-                    summary = if (summary.startsWith("自测中断")) summary else "自测完成 · $spent"
-                    report = buildSelfTestReport(items, summary)
-                    running = false
-                    }
-                }
-            }
-            OutlinedButton(
-                onClick = { copy(ctx, report.ifBlank { buildSelfTestReport(items, summary) }) },
-                modifier = Modifier.weight(1f).height(52.dp),
-                shape = RoundedCornerShape(22.dp)
-            ) {
-                Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("复制报告", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        if (running) LinearProgressIndicator(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape))
-    }
-
-    ExpressiveCard("自测报告", summary, Icons.Rounded.Assessment, Color(0xFF06B6D4)) {
-        SelfTestGrid(items, open)
-        Text("提示：自测为轻量快速诊断。需要完整结论时，点对应卡片进入专项测试。", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), lineHeight = 16.sp)
-    }
-
-    ExpressiveCard("快捷跳转", "根据自测结果继续深入检查。", Icons.Rounded.TouchApp, Color(0xFF7C3AED)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TinyJumpChip("DNS", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
-            TinyJumpChip("延迟", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
-            TinyJumpChip("NAT", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TinyJumpChip("端口", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
-            TinyJumpChip("路由", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
-            TinyJumpChip("UDP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
-        }
-    }
-}
-
-fun defaultSelfTestItems(): List<SelfTestItem> = listOf(
-    SelfTestItem("network", "网络", "--", "IPv4 / IPv6 / 运营商", Icons.Rounded.Public, Color(0xFF2563EB), "tools"),
-    SelfTestItem("dns", "DNS", "--", "A / AAAA 解析", Icons.Rounded.Dns, Color(0xFF2563EB), "tool_dns"),
-    SelfTestItem("gateway", "网关", "--", "本地网关延迟", Icons.Rounded.Router, Color(0xFF0EA5E9), "tool_ping"),
-    SelfTestItem("latency", "公网", "--", "公网延迟与丢包", Icons.Rounded.Speed, Color(0xFF2563EB), "tool_ping"),
-    SelfTestItem("tcp", "端口", "--", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), "tool_port"),
-    SelfTestItem("nat", "NAT", "--", "最近 NAT 记录", Icons.Rounded.Router, Color(0xFF7C3AED), "tool_nat"),
-    SelfTestItem("trace", "路由", "--", "最近追踪记录", Icons.Rounded.AltRoute, Color(0xFFF59E0B), "tool_trace")
+fun downloadTemplates(): List<DownloadTemplate> = listOf(
+    DownloadTemplate("Cloudflare 25MB", "https://speed.cloudflare.com/__down?bytes=25000000", "国际 CDN；适合粗测公网下载吞吐"),
+    DownloadTemplate("Cloudflare 10MB", "https://speed.cloudflare.com/__down?bytes=10000000", "流量较小，适合移动网络快速自测"),
+    DownloadTemplate("Hetzner 10MB", "https://speed.hetzner.de/10MB.bin", "海外下载源；结果受国际链路影响"),
+    DownloadTemplate("GitHub 仓库包", "https://github.com/OnlyChallgener/LabProbeApp/archive/refs/heads/main.zip", "测试 GitHub 下载体验，不代表宽带上限"),
+    DownloadTemplate("自定义URL", "", "手动输入下载地址")
 )
 
 @Composable
-fun SelfTestGrid(items: List<SelfTestItem>, open: (String) -> Unit) {
-    val rows = items.chunked(2)
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        rows.forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { item -> SelfTestMiniTile(item, Modifier.weight(1f)) { if (item.route.isNotBlank()) open(item.route) } }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
-        }
+fun SpeedTemplateTool(prefs: AppPrefs) {
+    val templates = remember { downloadTemplates() }
+    var template by remember { mutableStateOf(templates.first().name) }
+    var url by remember { mutableStateOf(templates.first().url) }
+    var duration by remember { mutableStateOf("8") }
+    var mode by remember { mutableStateOf("下载") }
+    var running by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Ready") }
+    var current by remember { mutableStateOf("--") }
+    var avg by remember { mutableStateOf("--") }
+    var peak by remember { mutableStateOf("--") }
+    var total by remember { mutableStateOf("0.0 MB") }
+    val scope = rememberCoroutineScope()
+    val blue = Color(0xFF2563EB)
+    fun applyTemplate(name: String) {
+        template = name
+        templates.firstOrNull { it.name == name }?.let { if (it.url.isNotBlank()) url = it.url }
     }
-}
-
-@Composable
-fun SelfTestMiniTile(item: SelfTestItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        modifier = modifier.height(86.dp).clip(RoundedCornerShape(22.dp)).clickable { onClick() },
-        shape = RoundedCornerShape(22.dp),
-        color = item.accent.copy(alpha = .07f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, item.accent.copy(alpha = .13f))
-    ) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(34.dp).clip(RoundedCornerShape(14.dp)).background(item.accent.copy(alpha = .13f)), contentAlignment = Alignment.Center) {
-                Icon(item.icon, null, tint = item.accent, modifier = Modifier.size(18.dp))
-            }
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(item.title, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-                    Spacer(Modifier.weight(1f))
-                    Icon(Icons.Rounded.ChevronRight, null, tint = item.accent.copy(alpha = .65f), modifier = Modifier.size(15.dp))
+    ExpressiveCard("测速配置", "默认下载测试；上传/双向需要自建接收服务端。", Icons.Rounded.Speed, blue) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamSelectIcon("模板", template, templates.map { it.name }, { applyTemplate(it) }, Icons.Rounded.Speed, Modifier.weight(1f))
+            TinyParamSelectIcon("模式", mode, listOf("下载", "上传预留", "双向预留"), { mode = it }, Icons.Rounded.SyncAlt, Modifier.weight(1f))
+        }
+        CompactIconHistoryInput("URL", "https://...", url, { url = it }, "speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyInfoParam("说明", "限下载自测", Icons.Rounded.Info, blue, Modifier.weight(1f))
+        }
+        PillButton(if (running) "测速中..." else "开始模板测速", Icons.Rounded.PlayArrow, enabled = !running, accent = blue) {
+            scope.launch {
+                if (mode != "下载") { status = "上传/双向需要自建测速服务端，个人测试版先保留入口。"; return@launch }
+                val safeUrl = url.trim()
+                if (!safeUrl.startsWith("http")) { status = "请输入有效 HTTP/HTTPS 下载 URL"; return@launch }
+                prefs.addHistory("speed_url", safeUrl)
+                running = true; status = "预热并测速中..."; current = "--"; avg = "--"; peak = "--"; total = "0.0 MB"
+                val result = runDownloadTemplateTest(safeUrl, duration.toIntOrNull()?.coerceIn(3, 60) ?: 8) { cur, av, pk, bytes ->
+                    current = String.format(Locale.US, "%.1f Mbps", cur)
+                    avg = String.format(Locale.US, "%.1f Mbps", av)
+                    peak = String.format(Locale.US, "%.1f Mbps", pk)
+                    total = formatTraffic(bytes)
                 }
-                Text(item.value.ifBlank { "--" }, fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = item.accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(item.detail, fontSize = 10.3.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                status = result.note
+                avg = String.format(Locale.US, "%.1f Mbps", result.avgMbps)
+                peak = String.format(Locale.US, "%.1f Mbps", result.peakMbps)
+                total = formatTraffic(result.totalBytes)
+                running = false
+            }
+        }
+    }
+    ExpressiveCard("测速结果", status, Icons.Rounded.Timeline, Color(0xFF0EA5E9)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("当前", current, blue, Modifier.weight(1f))
+            StatChip("平均", avg, Color(0xFF0EA5E9), Modifier.weight(1f))
+            StatChip("峰值", peak, Color(0xFF7C3AED), Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("总流量 $total · 测速源不同会明显影响结果，不等于宽带物理上限。", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
+    }
+}
+
+@Composable
+fun WifiRoamingTool(prefs: AppPrefs) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
+    var status by remember { mutableStateOf("等待测试") }
+    var job by remember { mutableStateOf<Job?>(null) }
+    val latest = samples.lastOrNull()
+    val roamCount = samples.zipWithNext().count { it.first.bssid.isNotBlank() && it.second.bssid.isNotBlank() && it.first.bssid != it.second.bssid }
+    ExpressiveCard("漫游配置", "读取 Wi‑Fi SSID/BSSID/RSSI；无定位权限时可能显示 unknown。", Icons.Rounded.Wifi, Color(0xFF16A34A)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TinyInfoParam("当前AP", latest?.bssid?.takeIf { it.isNotBlank() } ?: "未开始", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f))
+            TinyInfoParam("目标", "网关Ping", Icons.Rounded.Router, Color(0xFF2563EB), Modifier.weight(1f))
+        }
+        PillButton(if (running) "停止漫游测试" else "开始漫游测试", if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, accent = if (running) Color(0xFF64748B) else Color(0xFF16A34A)) {
+            if (running) { job?.cancel(); running = false; status = "已停止" } else {
+                samples = emptyList(); running = true; status = "采集中..."
+                job = scope.launch {
+                    while (currentCoroutineContext().isActive) {
+                        val info = readWifiSample(ctx)
+                        samples = (samples + info).takeLast(240)
+                        status = "采样 ${samples.size} 次 · 漫游 $roamCount 次"
+                        delay(1000)
+                    }
+                }
+            }
+        }
+    }
+    ExpressiveCard("实时状态", status, Icons.Rounded.TravelExplore, Color(0xFF16A34A)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("SSID", latest?.ssid ?: "--", Color(0xFF2563EB), Modifier.weight(1f))
+            StatChip("信号", latest?.rssi?.let { "$it dBm" } ?: "--", Color(0xFF16A34A), Modifier.weight(1f))
+            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: if (latest?.lost == true) "丢包" else "--", Color(0xFFF59E0B), Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        samples.takeLast(8).forEach { s ->
+            Text("${s.time}  ${s.bssid.ifBlank { "BSSID未知" }}  ${s.rssi}dBm  ${s.latency?.let { "${it}ms" } ?: "timeout"}", fontSize = 11.3.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+        }
+    }
+}
+
+@Composable
+fun MtuTool(prefs: AppPrefs) {
+    var host by remember { mutableStateOf("223.5.5.5") }
+    var min by remember { mutableStateOf("1200") }
+    var max by remember { mutableStateOf("1500") }
+    var step by remember { mutableStateOf("20") }
+    var result by remember { mutableStateOf("等待检测") }
+    var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    ExpressiveCard("MTU 配置", "IPv4 使用 DF 分片探测；Android 命令能力不同会影响结果。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
+        CompactIconHistoryInput("目标", "223.5.5.5", host, { host = it }, "mtu_host", prefs, Icons.Rounded.Dns)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("起始", min, { min = it.filter { c -> c.isDigit() } }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("最高", max, { max = it.filter { c -> c.isDigit() } }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            TinyParamInputIcon("步进", step, { step = it.filter { c -> c.isDigit() } }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
+            TinyInfoParam("方式", "ping -M do", Icons.Rounded.Info, Color(0xFF0EA5E9), Modifier.weight(1f))
+        }
+        PillButton(if (running) "检测中..." else "开始 MTU 检测", Icons.Rounded.PlayArrow, enabled = !running, accent = Color(0xFF0EA5E9)) {
+            scope.launch {
+                running = true; result = "检测中..."
+                prefs.addHistory("mtu_host", host)
+                result = runMtuProbe(host, min.toIntOrNull() ?: 1200, max.toIntOrNull() ?: 1500, step.toIntOrNull() ?: 20)
+                running = false
+            }
+        }
+    }
+    ExpressiveCard("MTU 结果", "推荐值仅供排障参考", Icons.Rounded.Route, Color(0xFF2563EB)) { ResultText(result) }
+}
+
+@Composable
+fun DnsQualityTool(prefs: AppPrefs) {
+    var domain by remember { mutableStateOf("www.baidu.com") }
+    var servers by remember { mutableStateOf("223.5.5.5,119.29.29.29,8.8.8.8,1.1.1.1") }
+    var rows by remember { mutableStateOf<List<DnsQualityRow>>(emptyList()) }
+    var msg by remember { mutableStateOf("等待测试") }
+    val scope = rememberCoroutineScope()
+    ExpressiveCard("质量配置", "并行对比多个 DNS 的 A/AAAA 响应时间。", Icons.Rounded.TravelExplore, Color(0xFF7C3AED)) {
+        CompactIconHistoryInput("域名", "www.baidu.com", domain, { domain = it }, "dnsq_domain", prefs, Icons.Rounded.Dns)
+        CompactIconHistoryInput("DNS", "逗号分隔", servers, { servers = it }, "dnsq_servers", prefs, Icons.Rounded.Storage)
+        PillButton("开始 DNS 质量测试", Icons.Rounded.PlayArrow, accent = Color(0xFF7C3AED)) {
+            scope.launch {
+                msg = "测试中..."; prefs.addHistory("dnsq_domain", domain); prefs.addHistory("dnsq_servers", servers)
+                rows = runDnsQuality(domain, servers.split(',').map { it.trim() }.filter { it.isNotBlank() }.take(8))
+                msg = "完成：${rows.size} 个 DNS"
+            }
+        }
+    }
+    ExpressiveCard("质量结果", msg, Icons.Rounded.Dns, Color(0xFF2563EB)) {
+        if (rows.isEmpty()) Text("暂无结果", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
+        rows.forEach { r ->
+            Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha=.055f), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(11.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row { Text(r.server, fontWeight = FontWeight.Black, fontSize = 12.7.sp); Spacer(Modifier.weight(1f)); Text(r.ms?.let { "${it}ms" } ?: "超时", color = if (r.ms == null) Color(0xFFEF4444) else Color(0xFF2563EB), fontWeight = FontWeight.Black, fontSize = 12.7.sp) }
+                    Text("A ${r.a.ifBlank { "--" }}", fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("AAAA ${r.aaaa.ifBlank { "--" }}", fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }
 }
 
 @Composable
-fun TinyJumpChip(text: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.height(42.dp),
-        shape = RoundedCornerShape(18.dp),
-        color = color.copy(alpha = .08f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .14f))
-    ) {
-        Row(Modifier.padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(5.dp))
-            Text(text, color = color, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+fun ServiceMonitorTool(prefs: AppPrefs) {
+    var targetsText by remember { mutableStateOf("NAS HTTPS,192.168.5.1,5001,TCP\n路由SSH,192.168.5.1,54133,TCP\n阿里DNS,223.5.5.5,53,UDP\nGitHub,github.com,443,TCP") }
+    var result by remember { mutableStateOf<List<String>>(emptyList()) }
+    var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    ExpressiveCard("监控配置", "每行：名称,主机,端口,TCP/UDP。", Icons.Rounded.Public, Color(0xFFF59E0B)) {
+        OutlinedTextField(
+            value = targetsText,
+            onValueChange = { targetsText = it },
+            minLines = 4,
+            maxLines = 6,
+            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 17.sp),
+            colors = labOutlinedColors(),
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        PillButton(if (running) "检测中..." else "开始服务监控", Icons.Rounded.PlayArrow, enabled = !running, accent = Color(0xFFF59E0B)) {
+            scope.launch {
+                running = true; result = listOf("检测中...")
+                result = runServiceMonitor(parseServiceTargets(targetsText), prefs)
+                running = false
+            }
         }
     }
+    ExpressiveCard("监控结果", "TCP 结果较明确；UDP 无响应仍需谨慎解释。", Icons.Rounded.Storage, Color(0xFFF59E0B)) {
+        if (result.isEmpty()) Text("暂无结果", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
+        result.forEach { line -> ResultText(line) }
+    }
 }
-
-fun buildSelfTestReport(items: List<SelfTestItem>, summary: String): String {
-    val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-    return buildString {
-        appendLine("Labprobe 一键自测报告")
-        appendLine("时间：$now")
-        appendLine("状态：$summary")
-        appendLine()
-        items.forEach { item -> appendLine("${item.title}：${item.value} · ${item.detail}") }
-    }.trim()
-}
-
-fun guessGatewayFromProfile(profile: NetworkProfile): String {
-    val ip = profile.localIp
-    val parts = ip.split('.').mapNotNull { it.toIntOrNull() }
-    return if (parts.size == 4 && parts[0] in 1..223) "${parts[0]}.${parts[1]}.${parts[2]}.1" else ""
-}
-
-fun shortText(value: String, max: Int): String = if (value.length <= max) value else value.take(max.coerceAtLeast(4) - 3) + "..."
 
 @Composable
 fun PingTool(prefs: AppPrefs) {
@@ -2788,13 +2816,13 @@ fun PingTool(prefs: AppPrefs) {
             if (showPort) {
                 TinyParamInputIcon("端口", port, { port = it; prefs.pingPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
             } else {
-                TinyParamSelectIcon("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+                TinyParamSelectIcon("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "ms")
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("次数", count, { count = it; prefs.pingCount = it }, Icons.Rounded.Repeat, KeyboardType.Number, Modifier.weight(1f))
             if (showPort) {
-                TinyParamSelectIcon("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+                TinyParamSelectIcon("间隔", interval, listOf("30", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "ms")
             }
             TinyParamInputIcon("超时", timeout, { timeout = it; prefs.pingTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
         }
@@ -5464,4 +5492,120 @@ fun joinUrl(base: String, path: String): String { val b=base.trim().trimEnd('/')
 fun maskSensitive(s: String): String = s.replace(Regex("(?i)(token|password|secret)[^,}]*"), "$1:***")
 fun nowClock(): String = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
 fun toast(ctx: Context, text: String) = Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show()
+
+private fun formatTraffic(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024L * 1024L -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
+    bytes < 1024L * 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+    else -> String.format(Locale.US, "%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
+}
+
+suspend fun runDownloadTemplateTest(url: String, durationSec: Int, onTick: suspend (Double, Double, Double, Long) -> Unit): SpeedTestResult = withContext(Dispatchers.IO) {
+    val client = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS).build()
+    val start = SystemClock.elapsedRealtime()
+    val endAt = start + durationSec.coerceIn(3, 60) * 1000L
+    var total = 0L
+    var lastTotal = 0L
+    var lastAt = start
+    var peak = 0.0
+    runCatching {
+        while (SystemClock.elapsedRealtime() < endAt && currentCoroutineContext().isActive) {
+            val req = Request.Builder().url(url).header("Cache-Control", "no-cache").build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                val input = resp.body?.byteStream() ?: throw IllegalStateException("空响应")
+                val buf = ByteArray(64 * 1024)
+                while (SystemClock.elapsedRealtime() < endAt && currentCoroutineContext().isActive) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    total += n
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastAt >= 650) {
+                        val cur = (total - lastTotal) * 8.0 / (now - lastAt) / 1000.0
+                        val avg = total * 8.0 / (now - start).coerceAtLeast(1) / 1000.0
+                        peak = maxOf(peak, cur)
+                        withContext(Dispatchers.Main) { onTick(cur, avg, peak, total) }
+                        lastTotal = total; lastAt = now
+                    }
+                }
+            }
+        }
+    }.onFailure {
+        val elapsed = (SystemClock.elapsedRealtime() - start).coerceAtLeast(1)
+        val avg = total * 8.0 / elapsed / 1000.0
+        return@withContext SpeedTestResult(avg, peak, total, (elapsed/1000).toInt(), "测速中断：${it.javaClass.simpleName}${it.message?.let { m -> ": $m" } ?: ""}")
+    }
+    val elapsed = (SystemClock.elapsedRealtime() - start).coerceAtLeast(1)
+    val avg = total * 8.0 / elapsed / 1000.0
+    SpeedTestResult(avg, peak, total, (elapsed/1000).toInt(), "完成：${formatTraffic(total)} · ${String.format(Locale.US, "%.1f Mbps", avg)}")
+}
+
+suspend fun readWifiSample(ctx: Context): WifiSample = withContext(Dispatchers.IO) {
+    val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    val info = wifi?.connectionInfo
+    val ssid = info?.ssid?.replace("\"", "") ?: "unknown"
+    val bssid = info?.bssid ?: ""
+    val rssi = info?.rssi ?: -127
+    val gateway = runCatching { intToIp(wifi?.dhcpInfo?.gateway ?: 0) }.getOrDefault("")
+    val latency = if (gateway.isNotBlank() && gateway != "0.0.0.0") runCatching { pingOnceAddress(InetAddress.getByName(gateway), 800) }.getOrNull() else null
+    WifiSample(now, ssid, bssid, rssi, latency, latency == null)
+}
+
+private fun intToIp(i: Int): String {
+    if (i == 0) return ""
+    return listOf(i and 0xff, i shr 8 and 0xff, i shr 16 and 0xff, i shr 24 and 0xff).joinToString(".")
+}
+
+suspend fun runMtuProbe(host: String, min: Int, max: Int, step: Int): String = withContext(Dispatchers.IO) {
+    val target = host.trim().ifBlank { "223.5.5.5" }
+    val startSize = min.coerceIn(500, 9000)
+    val endSize = max.coerceIn(startSize, 9000)
+    val inc = step.coerceIn(8, 500)
+    val resolved = runCatching { InetAddress.getByName(target).hostAddress ?: target }.getOrDefault(target)
+    var best: Int? = null
+    val logs = mutableListOf<String>()
+    var size = startSize
+    while (size <= endSize && currentCoroutineContext().isActive) {
+        val ok = mtuPingOnce(resolved, size)
+        logs += "payload $size : " + if (ok) "通过" else "失败/分片受限"
+        if (ok) best = size
+        size += inc
+    }
+    val header = if (best != null) "最大通过 payload：${best} bytes\n估算 IPv4 MTU：${best!! + 28} bytes" else "未找到可通过的 payload，可能目标禁 ICMP 或系统不支持 DF 探测"
+    header + "\n目标：$target → $resolved\n" + logs.takeLast(12).joinToString("\n")
+}
+
+private fun mtuPingOnce(host: String, payload: Int): Boolean = runCatching {
+    val cmd = listOf("/system/bin/ping", "-c", "1", "-W", "1", "-M", "do", "-s", payload.toString(), host)
+    val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
+    val text = p.inputStream.bufferedReader().readText()
+    p.waitFor(1800, TimeUnit.MILLISECONDS)
+    if (p.isAlive) p.destroyForcibly()
+    p.exitValue() == 0 || text.contains("1 received") || text.contains("bytes from")
+}.getOrDefault(false)
+
+suspend fun runDnsQuality(domain: String, servers: List<String>): List<DnsQualityRow> = withContext(Dispatchers.IO) {
+    servers.map { server ->
+        val start = SystemClock.elapsedRealtime()
+        val a = DnsWire.query(domain, server, 1)
+        val aaaa = DnsWire.query(domain, server, 28)
+        val elapsed = SystemClock.elapsedRealtime() - start
+        DnsQualityRow(server, if (a.isEmpty() && aaaa.isEmpty()) null else elapsed, a.take(2).joinToString(" / "), aaaa.take(2).joinToString(" / "), if (a.isEmpty() && aaaa.isEmpty()) "超时或无记录" else "正常")
+    }
+}
+
+fun parseServiceTargets(text: String): List<ServiceTarget> = text.lines().mapNotNull { line ->
+    val p = line.split(',').map { it.trim() }
+    if (p.size < 4) null else ServiceTarget(p[0], p[1], p[2].toIntOrNull() ?: return@mapNotNull null, p[3].uppercase(Locale.getDefault()))
+}.take(12)
+
+suspend fun runServiceMonitor(targets: List<ServiceTarget>, prefs: AppPrefs): List<String> = withContext(Dispatchers.IO) {
+    if (targets.isEmpty()) return@withContext listOf("没有可检测服务。")
+    targets.map { t ->
+        val r = if (t.protocol == "UDP") udpProbeSmart(t.host, t.port, 1000, prefs.dns1, prefs.dns2, "自动", "UDP 空包").lineSequence().firstOrNull().orEmpty() else tcpProbeSmart(t.host, t.port, 1000, prefs.dns1, prefs.dns2, "自动").lineSequence().firstOrNull().orEmpty()
+        "${t.name}  ${t.protocol} ${t.host}:${t.port}\n$r"
+    }
+}
+
 fun copy(ctx: Context, text: String) { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("极客网探", text)); toast(ctx, "已复制") }
