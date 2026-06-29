@@ -123,7 +123,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 63
+    const val CODE = 64
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
@@ -2455,7 +2455,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkStatusTile("IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), clickable = true) { open("tool_dns") }
-                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.SettingsEthernetguage, Color(0xFF06B6D4), Modifier.weight(1f), clickable = true) { open("tool_dns") }
+                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), clickable = true) { open("tool_dns") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkStatusTile("NAT类型", profile.natType, Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f), clickable = true) { open("tool_nat") }
@@ -2474,7 +2474,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
-        ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.SettingsEthernetguage, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
+        ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
@@ -2629,7 +2629,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
     var rows by remember { mutableStateOf<List<Ipv6TestRow>>(emptyList()) }
     var summary by remember { mutableStateOf("等待检测") }
     val blue = Color(0xFF2563EB)
-    ExpressiveCard("IPv6 配置", "参考 test-ipv6 思路：分别测试出口、AAAA、IPv6 Ping 与 TCP 443。", Icons.Rounded.SettingsEthernetguage, Color(0xFF06B6D4)) {
+    ExpressiveCard("IPv6 配置", "参考 test-ipv6 思路：分别测试出口、AAAA、IPv6 Ping 与 TCP 443。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TinyInfoParam("目标", "testipv6.cn", Icons.Rounded.Dns, blue, Modifier.weight(1f))
             TinyInfoParam("模式", "自动检测", Icons.Rounded.Timeline, Color(0xFF06B6D4), Modifier.weight(1f))
@@ -3522,9 +3522,7 @@ fun LabLatencyOnlyChart(samples: List<WifiSample>, modifier: Modifier = Modifier
         color = Color(0xFF7C3AED),
         empty = "等待负载延迟",
         yFormat = { it.roundToInt().toString() },
-        pointLabels = latencySamples.map { "${it.time}
-延迟 ${it.latency ?: 0} ms
-丢包 ${if (it.lost) "是" else "否"}" },
+        pointLabels = latencySamples.map { "${it.time}\n延迟 ${it.latency ?: 0} ms\n丢包 ${if (it.lost) "是" else "否"}" },
         modifier = modifier
     )
 }

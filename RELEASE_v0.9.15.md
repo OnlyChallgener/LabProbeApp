@@ -37,3 +37,9 @@
 - 新增/拆分峰值外网测速、局域网测速、负载延迟测试。
 - DNS 解析增加本机 DNS 显示与小开关，可切换系统解析。
 - 测速与漫游图表 Y 轴数字进一步加粗放大，避免看不清。
+
+
+### buildfix19 编译修复
+- 修复负载延迟图表 pointLabels 字符串换行导致的 Kotlin 语法错误。
+- 修复 IPv6 页面图标名 SettingsEthernetguage 拼写错误。
+- versionCode 更新到 64。

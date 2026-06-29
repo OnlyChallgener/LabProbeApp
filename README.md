@@ -145,3 +145,7 @@ app/build/outputs/apk/debug/app-debug.apk
 - 新增/拆分峰值外网测速、局域网测速、负载延迟测试。
 - DNS 解析增加本机 DNS 显示与小开关，可切换系统解析。
 - 测速与漫游图表 Y 轴数字进一步加粗放大，避免看不清。
+
+
+## buildfix19
+- 编译修复：修复图表 label 字符串和 IPv6 图标拼写。
