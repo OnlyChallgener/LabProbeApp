@@ -123,9 +123,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 73
+    const val CODE = 74
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · Hub/工具页联动热修" to listOf(
+            "工具页卡片改为图标与标题并排，描述独立一行，卡片更紧凑但不遮挡",
+            "网络状态运营商跟随 IPv4/IPv6 出口变化异步重新识别，避免旧运营商残留",
+            "每日概览与每日总结继续使用规范化事件统计，过滤重复离线和在线 0 秒异常事件"
+        ),
         "v0.9.15 · 拖拽阴影热修" to listOf(
             "移除拖拽外层矩形阴影，修复长按卡片时方形边角和底部长横杠",
             "拖拽时仅保留圆角卡片投影，排序标签阴影同步减弱"
@@ -2222,7 +2227,7 @@ fun eventMatchesDate(time: String, date: String): Boolean {
 }
 
 fun homeDailyFromEvents(events: List<EventItem>, date: String, source: String = "本地事件缓存"): HomeDailySnapshot {
-    val todayEvents = events.filter { eventMatchesDate(it.time, date) }
+    val todayEvents = normalizeDeviceEvents(events).filter { eventMatchesDate(it.time, date) }
     val up = todayEvents.count { it.type == "device_online" }
     val down = todayEvents.count { it.type == "device_offline" }
     val vpn = todayEvents.count {
@@ -2250,7 +2255,7 @@ fun homeDailyFromApi(root: JSONObject, date: String, fallback: HomeDailySnapshot
 
 fun localDailyDeviceSummary(events: List<EventItem>, date: String): JSONArray {
     val arr = JSONArray()
-    val today = events.filter { eventMatchesDate(it.time, date) && (it.type == "device_online" || it.type == "device_offline") }
+    val today = normalizeDeviceEvents(events).filter { eventMatchesDate(it.time, date) && (it.type == "device_online" || it.type == "device_offline") }
     val grouped = today.groupBy { eventDeviceKey(it).ifBlank { it.name.ifBlank { it.title } } }
     grouped.values.sortedBy { it.firstOrNull()?.name ?: it.firstOrNull()?.title ?: "" }.forEach { list ->
         val latest = list.maxByOrNull { parseEventMillis(it.time) ?: 0L } ?: return@forEach
@@ -2478,13 +2483,44 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 @Composable
 fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "网络诊断 · 本地系统", topNav = topNav) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var profile by remember { mutableStateOf(detectNetworkProfile(ctx, prefs)) }
+
+    fun profileOwnerTarget(p: NetworkProfile): String {
+        val v4 = cleanApiText(p.ipv4Exit)
+        val v6 = cleanApiText(p.ipv6Address)
+        return when {
+            v4.isNotBlank() && v4 !in listOf("未测", "未知") && !isPrivateOrLocalIp(v4) -> v4
+            v6.isNotBlank() && v6 !in listOf("未见", "未知") && !isPrivateOrLocalIp(v6) -> v6
+            else -> ""
+        }
+    }
+
+    fun reloadNetworkProfile(forceCarrier: Boolean = true) {
+        val base = detectNetworkProfile(ctx, prefs)
+        val target = profileOwnerTarget(base)
+        profile = if (forceCarrier && target.isNotBlank()) base.copy(operator = "识别中") else base
+        if (forceCarrier && target.isNotBlank()) {
+            scope.launch {
+                val owner = withContext(Dispatchers.IO) {
+                    runCatching { operatorLookup(target, prefs) }.getOrElse { inferOperatorFast(target, detectNetworkBrief(ctx).transport) }
+                }.ifBlank { inferOperatorFast(target, detectNetworkBrief(ctx).transport) }
+                // 只更新运营商，不覆盖刷新过程中可能更新过的地址/NAT。
+                profile = profile.copy(operator = owner)
+            }
+        }
+    }
+
+    LaunchedEffect(prefs.hub, prefs.token) {
+        reloadNetworkProfile(forceCarrier = true)
+    }
+
     ExpressiveCard("网络状态", "本机接口 · 最近 NAT / 延迟结果", Icons.Rounded.Public, Color(0xFF2563EB)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("当前网络", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.weight(1f))
             Surface(
-                onClick = { profile = detectNetworkProfile(ctx, prefs) },
+                onClick = { reloadNetworkProfile(forceCarrier = true) },
                 shape = CircleShape,
                 color = Color(0xFF2563EB).copy(alpha = .10f),
                 modifier = Modifier.size(34.dp)
@@ -2566,21 +2602,37 @@ fun ToolGroupLabel(text: String) {
 @Composable
 fun ToolHubTile(title: String, subtitle: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
-        modifier = modifier.height(122.dp).shadow(4.dp, RoundedCornerShape(28.dp), clip = false).clip(RoundedCornerShape(28.dp)).clickable { onClick() },
-        shape = RoundedCornerShape(28.dp),
+        modifier = modifier
+            .height(96.dp)
+            .shadow(3.dp, RoundedCornerShape(24.dp), clip = false)
+            .clip(RoundedCornerShape(24.dp))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Column(Modifier.fillMaxSize().padding(13.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Box(Modifier.size(42.dp).clip(RoundedCornerShape(18.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(23.dp))
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 13.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(15.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = color, modifier = Modifier.size(19.dp))
+                }
+                Spacer(Modifier.width(9.dp))
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                subtitle,
+                fontSize = 10.6.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
