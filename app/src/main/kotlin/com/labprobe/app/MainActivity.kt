@@ -1921,10 +1921,10 @@ fun routerWan6Rows(router: JSONObject?): List<Pair<String, String>> {
 fun primaryRouterWan6(router: JSONObject?): String = routerWan6Rows(router).firstOrNull()?.second.orEmpty()
 
 fun safeNasIpv6ForUi(nas: JSONObject?, router: JSONObject?): String {
-    val nasIpv6 = cleanApiText(nas?.optString("exitIpv6"))
-    val routerWan6 = primaryRouterWan6(router)
-    // 老 Hub 曾把路由 WAN6 写到 NAS IPv6；两者完全相同则隐藏 NAS IPv6，避免误导。
-    return if (nasIpv6.isNotBlank() && routerWan6.isNotBlank() && nasIpv6 == routerWan6) "" else nasIpv6
+    // NAS IPv6 必须按 Hub/NAS 本机探测结果显示。
+    // 即使它和路由 WAN6 相同，也不能隐藏；WireGuard 也依赖这个字段生成 [NAS IPv6]:51820。
+    // 路由 WAN6 和 NAS IPv6 是两个独立展示字段，防止 buildfix30 误删 NAS 出口。
+    return cleanApiText(nas?.optString("exitIpv6"))
 }
 
 fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem>): List<Pair<String, String>> {
