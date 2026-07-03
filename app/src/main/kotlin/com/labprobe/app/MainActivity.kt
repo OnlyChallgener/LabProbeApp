@@ -1789,7 +1789,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val data = (state.status?.optJSONObject("data") ?: state.status)
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
-    val nasV6 = nas?.optString("exitIpv6").orEmpty()
+    val nasV6 = safeNasIpv6ForUi(nas, router)
     val vpnRows = remember(data?.toString(), nasV6, state.events) {
         buildVpnRowsForHome(data, nasV6, state.events)
     }
@@ -1893,6 +1893,38 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             }
         }
     }
+}
+
+fun routerWan6Rows(router: JSONObject?): List<Pair<String, String>> {
+    val rows = mutableListOf<Pair<String, String>>()
+    val arr = router?.optJSONArray("wan6List")
+        ?: router?.optJSONArray("router_wan6_list")
+        ?: router?.optJSONArray("routerWan6List")
+    if (arr != null) {
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val ip = cleanApiText(o.optString("ip", o.optString("address", o.optString("value"))))
+            if (ip.isBlank() || rows.any { it.second == ip }) continue
+            val name = cleanApiText(o.optString("name")).ifBlank {
+                if (o.optBoolean("primary", i == 0)) "主用 WAN" else "备用 WAN"
+            }
+            rows += name to ip
+        }
+    }
+    if (rows.isEmpty()) {
+        val ip = cleanApiText(router?.optString("wanIpv6") ?: router?.optString("routerWan6") ?: "")
+        if (ip.isNotBlank()) rows += "路由 WAN6" to ip
+    }
+    return rows
+}
+
+fun primaryRouterWan6(router: JSONObject?): String = routerWan6Rows(router).firstOrNull()?.second.orEmpty()
+
+fun safeNasIpv6ForUi(nas: JSONObject?, router: JSONObject?): String {
+    val nasIpv6 = cleanApiText(nas?.optString("exitIpv6"))
+    val routerWan6 = primaryRouterWan6(router)
+    // 老 Hub 曾把路由 WAN6 写到 NAS IPv6；两者完全相同则隐藏 NAS IPv6，避免误导。
+    return if (nasIpv6.isNotBlank() && routerWan6.isNotBlank() && nasIpv6 == routerWan6) "" else nasIpv6
 }
 
 fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem>): List<Pair<String, String>> {
@@ -2133,10 +2165,13 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
         Spacer(Modifier.height(13.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
         Spacer(Modifier.height(9.dp))
-        HealthDataRowDisplay("NAS IPv6", nas?.optString("exitIpv6"), maskAddressForUi(nas?.optString("exitIpv6"), privacyMode))
-        Spacer(Modifier.height(9.dp))
-        val wan6 = router?.optString("wanIpv6") ?: router?.optString("exitIpv6")
-        HealthDataRowDisplay("路由 WAN6", wan6, maskAddressForUi(wan6, privacyMode))
+        val nasIpv6 = safeNasIpv6ForUi(nas, router)
+        HealthDataRowDisplay("NAS IPv6", nasIpv6, maskAddressForUi(nasIpv6, privacyMode))
+        val wan6Rows = routerWan6Rows(router)
+        wan6Rows.forEach { (label, value) ->
+            Spacer(Modifier.height(9.dp))
+            HealthDataRowDisplay(if (wan6Rows.size <= 1) "路由 WAN6" else label, value, maskAddressForUi(value, privacyMode))
+        }
     }
 }
 
@@ -2401,8 +2436,11 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
 fun ExitCard(nas: JSONObject?, router: JSONObject?) {
     ExpressiveCard("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9)) {
         InfoRowVisible("NAS IPv4", nas?.optString("exitIpv4"), true)
-        InfoRowVisible("NAS IPv6", nas?.optString("exitIpv6"), true)
-        InfoRowVisible("路由 WAN6", router?.optString("wanIpv6") ?: router?.optString("exitIpv6"), true)
+        InfoRowVisible("NAS IPv6", safeNasIpv6ForUi(nas, router), true)
+        val wan6Rows = routerWan6Rows(router)
+        wan6Rows.forEach { (label, value) ->
+            InfoRowVisible(if (wan6Rows.size <= 1) "路由 WAN6" else label, value, true)
+        }
     }
 }
 

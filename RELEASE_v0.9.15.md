@@ -1,13 +1,7 @@
-# LabProbe v0.9.15 buildfix29
+# LabProbe v0.9.15 buildfix30
 
-## 本次重点
+- 修复 NAS IPv6 与路由 WAN6 显示混用。
+- NAS IPv6 只显示 Hub/NAS 本机检测结果；如果与路由 WAN6 完全相同会隐藏，避免误导。
+- 路由 WAN6 支持 `wan6List`：单 WAN 显示“路由 WAN6”，多 WAN 显示“主用 WAN / 备用 WAN”。
+- 保留 buildfix29 的 Hub/UI、release workflow 固定签名配置。
 
-- 工具页卡片压缩：图标与标题并排，描述单独一行，卡片更小但保留安全内边距。
-- 网络状态运营商：刷新时跟随 IPv4 / IPv6 出口变化异步重新识别，避免旧运营商残留。
-- 每日统计：首页今日概览与每日总结继续使用规范化事件，过滤连续离线和在线 0 秒异常事件。
-- 继承 buildfix28：release workflow 固定签名构建、拖拽阴影修复。
-
-## 版本
-
-- versionName: 0.9.15
-- versionCode: 74
