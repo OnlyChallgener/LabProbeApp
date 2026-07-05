@@ -134,7 +134,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 80
+    const val CODE = 81
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.15 · 自动更新闭环与 Ping 图表热修" to listOf(
@@ -3736,6 +3736,14 @@ private fun formatSecondsLabel(sec: Float): String {
     return if (sec < 3f && sec != sec.roundToInt().toFloat()) String.format(Locale.US, "%.1fs", sec) else "${sec.roundToInt()}s"
 }
 
+private fun formatPingAxisSeconds(sec: Float, stepSec: Float): String {
+    return when {
+        stepSec < 1f -> String.format(Locale.US, "%.1fs", sec)
+        stepSec < 3f && abs(sec - sec.roundToInt()) > 0.08f -> String.format(Locale.US, "%.1fs", sec)
+        else -> "${sec.roundToInt()}s"
+    }
+}
+
 private fun pingVisualBucketMs(intervalMs: Long): Long = 1000L
 
 private fun buildPingBuckets(points: List<PingPoint>, intervalMs: Long): List<PingBucket> {
@@ -3884,7 +3892,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                                 xTickCount - 1 -> (x - 8.dp.toPx()).coerceAtLeast(plotLeft)
                                 else -> x
                             }
-                            drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(totalSec * ratio), labelX, plotBottom + 12.dp.toPx(), xPaint)
+                            // X 轴标签改由固定覆盖层绘制：保证当前可视区域始终至少 6 个时间点位。
                         }
                         fun yFor(ms: Int): Float {
                             val ratio = ((ms - yMin).toFloat() / (yMax - yMin).toFloat()).coerceIn(0f, 1f)
@@ -3964,6 +3972,41 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                             else -> y + 2.5f
                         }
                         drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 2.5.dp.toPx(), yText, yPaint)
+                    }
+
+                    // 固定 X 轴覆盖层：根据当前横向滚动视口重新计算时间刻度。
+                    // 这样长测试滚动到任意位置，底部都不会只剩 0s / 5s 两个点。
+                    val xPaint = Paint().apply {
+                        color = labelColor
+                        textSize = 7.0.sp.toPx()
+                        isFakeBoldText = true
+                        isAntiAlias = true
+                        textAlign = Paint.Align.CENTER
+                    }
+                    val visiblePlotW = (plotRight - plotLeft).coerceAtLeast(1f)
+                    val contentPlotW = (chartWidth.toPx() - 2.dp.toPx()).coerceAtLeast(visiblePlotW)
+                    val maxScrollPx = (contentPlotW - visiblePlotW).coerceAtLeast(0f)
+                    val scrollPx = scrollState.value.toFloat().coerceIn(0f, maxScrollPx)
+                    val totalSec = totalMs / 1000f
+                    val startRatio = (scrollPx / contentPlotW).coerceIn(0f, 1f)
+                    val endRatio = ((scrollPx + visiblePlotW) / contentPlotW).coerceIn(0f, 1f)
+                    val startSec = totalSec * startRatio
+                    val endSec = totalSec * endRatio
+                    val visibleSec = (endSec - startSec).coerceAtLeast(0.001f)
+                    val xTickCount = 6
+                    val xGrid = Color(0xFF64748B).copy(alpha = 0.030f)
+                    for (idx in 0 until xTickCount) {
+                        val ratio = if (xTickCount <= 1) 0f else idx.toFloat() / (xTickCount - 1)
+                        val x = plotLeft + ratio * visiblePlotW
+                        drawLine(xGrid, Offset(x, plotTop), Offset(x, plotBottom), strokeWidth = 1f)
+                        val stepSec = visibleSec / (xTickCount - 1)
+                        val label = formatPingAxisSeconds(startSec + visibleSec * ratio, stepSec)
+                        val labelX = when (idx) {
+                            0 -> (x + 6.dp.toPx()).coerceAtMost(plotRight)
+                            xTickCount - 1 -> (x - 7.dp.toPx()).coerceAtLeast(plotLeft)
+                            else -> x
+                        }
+                        drawContext.canvas.nativeCanvas.drawText(label, labelX, plotBottom + 12.dp.toPx(), xPaint)
                     }
                 }
             }
