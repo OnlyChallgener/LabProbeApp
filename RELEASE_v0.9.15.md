@@ -1,23 +1,19 @@
-# 极客网探 v0.9.15 build79 · Posix Ping 引擎自测版
+# v0.9.15 build80 · 自动更新闭环与 Ping 图表热修
 
-## Ping 引擎重构
-- ICMP 优先使用 `android.system.Os.socket(AF_INET/AF_INET6, SOCK_DGRAM, IPPROTO_ICMP/IPPROTO_ICMPV6)` 无特权 Socket。
-- 使用 `Os.poll()` 单协程事件驱动收包，失败自动降级到系统 `ping` 单进程采样。
-- 高频发包使用 pacing 节奏控制，降低 Runtime.exec 和线程调度带来的假性抖动。
-- 增加 Jacobson/Karels 动态 RTO：根据 SRTT/RTTVAR 自动调整超时阈值。
-- 抖动继续使用最近 50 个成功 RTT FIFO，相邻 RTT 绝对差平均；丢包/超时不进入抖动队列。
+## 自动更新
+- 启动 APP 后自动检查 GitHub Release，有新版本且未忽略时弹出更新卡片。
+- 版本号徽标支持小红点提示；点版本号可再次进入更新卡片。
+- 更新卡片显示版本、包大小、Release 更新内容、下载进度、下载网速和失败原因。
+- 支持立即更新：下载完成后拉起系统安装器。
+- 支持后台下载：关闭卡片后底部小浮条显示进度，可隐藏，不强制打扰。
+- 支持忽略本版：只忽略当前 build，下一版 buildCode 更高会重新提醒。
+- GitHub 下载速度过慢时提示建议切换代理网络。
 
-## Ping 图表优化
-- Y 轴固定覆盖层最后绘制，曲线不会越过 Y 轴数字。
-- Y 轴数字更靠左，X/Y 轴字号再收小，图形区域更大。
-- 图表圆角缩小，曲线和 X/Y 轴更贴近，但保留边框安全距离。
-- 继续使用现有可横向滑动波形图。
+## Ping 图表
+- 优化 Y 轴自适应区间，避免 120ms 左右峰值时被拉到 240ms 导致上方大面积留白。
+- 图形区域圆角和内边距继续收紧，X/Y 轴数字更贴边但不遮挡曲线。
+- 底部统计浮动栏缩小字号、横向间距和高度，减少“当前/平均/最高/最低/抖动/超时/耗时”的拥挤感。
 
 ## 继承修复
-- NAS IPv6 与路由 WAN6 继续分离。
-- WireGuard 地址继续使用 NAS IPv6。
-- Hub/路由脚本逻辑不变。
-
-## 构建信息
-- versionName = 0.9.15
-- versionCode = 79
+- 保留 build79 Posix Ping 引擎自测：Os.socket + Os.poll 优先，失败自动降级系统 ping。
+- 保留 NAS IPv6 与路由 WAN6 字段分离、WireGuard 使用 NAS IPv6。

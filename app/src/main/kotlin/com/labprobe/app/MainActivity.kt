@@ -16,6 +16,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.system.StructPollfd
 import android.content.Intent
+import androidx.core.content.FileProvider
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -103,6 +104,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import android.graphics.Paint
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.FileDescriptor
 import java.io.DataOutputStream
 import java.net.DatagramPacket
@@ -131,9 +134,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 79
+    const val CODE = 80
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 自动更新闭环与 Ping 图表热修" to listOf(
+            "补齐 GitHub Release 更新闭环：启动自动检查、更新卡片、立即更新、后台下载、忽略本版、小红点",
+            "更新下载显示包大小、进度、网速、失败原因；网速过慢时提示建议使用代理网络",
+            "Ping 图表优化 Y 轴自适应区间，减少上方大留白；底部统计栏缩小字号和间距"
+        ),
         "v0.9.15 · Posix Ping 引擎自测" to listOf(
             "ICMP 优先使用 android.system.Os 无特权 SOCK_DGRAM Socket，失败自动降级系统 ping",
             "单协程 Os.poll 事件驱动，高频采样按 pacing 发包，减少 Runtime.exec 与 UI 调度误差",
@@ -338,6 +346,10 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putBoolean("dark", v).apply()
     var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
+    var ignoredUpdateCode: Int get() = sp.getInt("ignored_update_code", 0)
+        set(v) = sp.edit().putInt("ignored_update_code", v).apply()
+    var lastUpdateCheckAt: Long get() = sp.getLong("last_update_check_at", 0L)
+        set(v) = sp.edit().putLong("last_update_check_at", v).apply()
 
     var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"
         set(v) = sp.edit().putString("home_order", v).apply()
@@ -935,8 +947,47 @@ fun LabProbeApp(prefs: AppPrefs) {
     var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
     val state = remember { AppState(prefs) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var latestUpdate by remember { mutableStateOf<GitHubUpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var ignoredUpdateCode by remember { mutableStateOf(prefs.ignoredUpdateCode) }
+    var downloadUi by remember { mutableStateOf(UpdateDownloadUi()) }
+    var showUpdateBar by remember { mutableStateOf(true) }
+    var installAfterDownload by remember { mutableStateOf(false) }
+    fun pendingUpdate(): Boolean = latestUpdate?.let { it.hasUpdate && ignoredUpdateCode != it.versionCode } == true
+    fun openGithub(info: GitHubUpdateInfo? = latestUpdate) {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info?.htmlUrl?.takeIf { it.isNotBlank() } ?: AppVersion.GITHUB))) }
+    }
+    fun startUpdateDownload(info: GitHubUpdateInfo?, installAfter: Boolean) {
+        val target = info ?: return
+        installAfterDownload = installAfter
+        showUpdateBar = true
+        scope.launch {
+            downloadUi = UpdateDownloadUi(phase = "downloading", total = target.apkSize)
+            runCatching {
+                downloadUpdateApk(context, target) { progress -> downloadUi = progress }
+            }.onSuccess { file ->
+                downloadUi = UpdateDownloadUi(phase = "done", downloaded = file.length(), total = target.apkSize, filePath = file.absolutePath)
+                if (installAfterDownload) installApk(context, file)
+            }.onFailure { e ->
+                downloadUi = UpdateDownloadUi(phase = "error", total = target.apkSize, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
 
-    LaunchedEffect(Unit) { state.refreshAll() }
+    LaunchedEffect(Unit) {
+        state.refreshAll()
+        delay(1500L)
+        updateChecking = true
+        runCatching { fetchGithubLatestInfo() }
+            .onSuccess { info ->
+                latestUpdate = info
+                prefs.lastUpdateCheckAt = System.currentTimeMillis()
+                if (info.hasUpdate && prefs.ignoredUpdateCode != info.versionCode) showUpdateDialog = true
+            }
+        updateChecking = false
+    }
     LaunchedEffect(autoRefresh) {
         val sec = autoRefresh.removeSuffix("S").toIntOrNull() ?: 0
         if (sec > 0) {
@@ -992,7 +1043,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                     }
                 ) { r ->
                     when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate()) { showUpdateDialog = true }
                         "devices" -> DevicesScreen(state, topNav)
                         "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
@@ -1011,7 +1062,31 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
                         "tool_dns_quality" -> DnsQualityScreen(prefs) { route = "tools" }
                         "tool_service" -> ServiceMonitorScreen(prefs) { route = "tools" }
-                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav)
+                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate()) { showUpdateDialog = true }
+                    }
+                }
+                if (showUpdateDialog && latestUpdate != null) {
+                    UpdateDialogCard(
+                        info = latestUpdate!!,
+                        state = downloadUi,
+                        checking = updateChecking,
+                        onDismiss = { showUpdateDialog = false },
+                        onImmediate = { startUpdateDownload(latestUpdate, true) },
+                        onBackground = { showUpdateDialog = false; startUpdateDownload(latestUpdate, false) },
+                        onIgnore = { latestUpdate?.let { prefs.ignoredUpdateCode = it.versionCode; ignoredUpdateCode = it.versionCode }; showUpdateDialog = false },
+                        onGithub = { openGithub() },
+                        onInstall = { downloadUi.filePath.takeIf { it.isNotBlank() }?.let { installApk(context, File(it)) } },
+                        onRetry = { startUpdateDownload(latestUpdate, installAfterDownload) }
+                    )
+                }
+                if (showUpdateBar && downloadUi.phase != "idle") {
+                    Box(Modifier.align(Alignment.BottomCenter).zIndex(8f)) {
+                        UpdateFloatingBar(
+                            state = downloadUi,
+                            onShow = { showUpdateDialog = true },
+                            onHide = { showUpdateBar = false },
+                            onInstall = { downloadUi.filePath.takeIf { it.isNotBlank() }?.let { installApk(context, File(it)) } }
+                        )
                     }
                 }
             }
@@ -1614,64 +1689,195 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
 }
 
 @Composable
-fun VersionBadge(onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.clickable { onClick() },
-        shape = RoundedCornerShape(50),
-        color = Color.White.copy(alpha = 0.72f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.90f)),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
-    ) {
-        Text(
-            "v${AppVersion.NAME}",
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            fontSize = 10.5.sp,
-            fontWeight = FontWeight.Black,
-            color = Color(0xFF2563EB),
-            maxLines = 1
-        )
+fun VersionBadge(hasUpdate: Boolean = false, onClick: () -> Unit) {
+    Box(Modifier.clickable { onClick() }) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = Color.White.copy(alpha = 0.72f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.90f)),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp
+        ) {
+            Text(
+                "v${AppVersion.NAME}",
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Black,
+                color = Color(0xFF2563EB),
+                maxLines = 1
+            )
+        }
+        if (hasUpdate) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 2.dp, y = (-2).dp)
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFEF4444))
+                    .border(1.dp, Color.White, CircleShape)
+            )
+        }
     }
 }
 
-suspend fun checkGithubLatestSummary(): String = withContext(Dispatchers.IO) {
-    runCatching {
-        val client = OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(7, TimeUnit.SECONDS)
-            .build()
-        val req = Request.Builder()
-            .url("https://api.github.com/repos/OnlyChallgener/LabProbeApp/releases/latest")
-            .header("User-Agent", "Labprobe/${AppVersion.NAME}")
-            .build()
-        val resp = client.newCall(req).execute()
-        val body = resp.body?.string().orEmpty()
+
+data class GitHubUpdateInfo(
+    val tag: String,
+    val name: String,
+    val body: String,
+    val versionCode: Int,
+    val htmlUrl: String,
+    val apkName: String,
+    val apkUrl: String,
+    val apkSize: Long
+) {
+    val hasUpdate: Boolean get() = versionCode > AppVersion.CODE
+}
+
+data class UpdateDownloadUi(
+    val phase: String = "idle",
+    val downloaded: Long = 0L,
+    val total: Long = 0L,
+    val speedBytes: Long = 0L,
+    val filePath: String = "",
+    val error: String = "",
+    val slow: Boolean = false
+) {
+    val percent: Int get() = if (total <= 0L) 0 else ((downloaded * 100L / total).coerceIn(0L, 100L)).toInt()
+}
+
+private fun parseReleaseBuildCode(tag: String, name: String): Int {
+    val text = "$tag $name"
+    Regex("build[-_ ]?(\\d+)", RegexOption.IGNORE_CASE).find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+    Regex("[._-](\\d+)$").find(tag)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+    return 0
+}
+
+private fun formatBytesShort(bytes: Long): String = when {
+    bytes <= 0L -> "未知"
+    bytes >= 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+    bytes >= 1024L -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
+    else -> "$bytes B"
+}
+
+private fun formatSpeed(bytesPerSec: Long): String = when {
+    bytesPerSec <= 0L -> "0 KB/s"
+    bytesPerSec >= 1024L * 1024L -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / 1024.0 / 1024.0)
+    else -> String.format(Locale.US, "%.0f KB/s", bytesPerSec / 1024.0)
+}
+
+suspend fun fetchGithubLatestInfo(): GitHubUpdateInfo = withContext(Dispatchers.IO) {
+    val client = OkHttpClient.Builder()
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
+    val req = Request.Builder()
+        .url("https://api.github.com/repos/OnlyChallgener/LabProbeApp/releases/latest")
+        .header("User-Agent", "Labprobe/${AppVersion.NAME}")
+        .build()
+    client.newCall(req).execute().use { resp ->
+        val bodyText = resp.body?.string().orEmpty()
         if (!resp.isSuccessful) {
-            if (resp.code == 404) return@withContext "未找到 GitHub Release。请先在仓库发布 Release 并上传 APK。"
-            return@withContext "检测失败：GitHub HTTP ${resp.code}"
+            if (resp.code == 404) error("未找到 GitHub Release，请先发布 Release 并上传 APK")
+            error("GitHub HTTP ${resp.code}")
         }
-        val json = JSONObject(body)
-        val tag = json.optString("tag_name", "未知")
-        val name = json.optString("name", tag)
+        val json = JSONObject(bodyText)
+        val tag = json.optString("tag_name", "")
+        val name = json.optString("name", tag.ifBlank { "未知版本" })
+        val body = json.optString("body", "")
+        val htmlUrl = json.optString("html_url", AppVersion.GITHUB)
         val assets = json.optJSONArray("assets") ?: JSONArray()
-        var apkName = "未找到 APK"
+        var apkName = ""
+        var apkUrl = ""
         var apkSize = 0L
         for (i in 0 until assets.length()) {
             val a = assets.optJSONObject(i) ?: continue
             val n = a.optString("name")
             if (n.endsWith(".apk", ignoreCase = true)) {
                 apkName = n
+                apkUrl = a.optString("browser_download_url")
                 apkSize = a.optLong("size", 0L)
                 break
             }
         }
-        val sizeText = if (apkSize > 0) String.format(Locale.US, "%.1f MB", apkSize / 1024.0 / 1024.0) else "未知大小"
-        val isSame = tag.removePrefix("v") == AppVersion.NAME
-        val state = if (isSame) "当前已是最新版本" else "发现新版本"
-        "$state：$name\n更新包：$apkName · $sizeText"
-    }.getOrElse { e ->
-        "检测失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+        if (apkUrl.isBlank()) error("最新 Release 没有 APK 附件")
+        GitHubUpdateInfo(tag, name, body, parseReleaseBuildCode(tag, name), htmlUrl, apkName, apkUrl, apkSize)
     }
+}
+
+suspend fun checkGithubLatestSummary(): String = withContext(Dispatchers.IO) {
+    runCatching {
+        val info = fetchGithubLatestInfo()
+        val state = if (info.hasUpdate) "发现新版本" else "当前已是最新版本"
+        "$state：${info.name}\n更新包：${info.apkName} · ${formatBytesShort(info.apkSize)}"
+    }.getOrElse { e ->
+        "检测失败：${e.message ?: e.javaClass.simpleName}"
+    }
+}
+
+suspend fun downloadUpdateApk(context: Context, info: GitHubUpdateInfo, onProgress: (UpdateDownloadUi) -> Unit): File = withContext(Dispatchers.IO) {
+    val dir = File(context.getExternalFilesDir(null) ?: context.cacheDir, "updates").apply { mkdirs() }
+    val file = File(dir, info.apkName.ifBlank { "LabProbe-update-${info.versionCode}.apk" })
+    if (file.exists() && info.apkSize > 0 && file.length() == info.apkSize) {
+        onProgress(UpdateDownloadUi(phase = "done", downloaded = file.length(), total = info.apkSize, filePath = file.absolutePath))
+        return@withContext file
+    }
+    val client = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .build()
+    val req = Request.Builder().url(info.apkUrl).header("User-Agent", "Labprobe/${AppVersion.NAME}").build()
+    client.newCall(req).execute().use { resp ->
+        if (!resp.isSuccessful) error("下载失败：GitHub HTTP ${resp.code}")
+        val body = resp.body ?: error("下载失败：响应为空")
+        val total = if (body.contentLength() > 0) body.contentLength() else info.apkSize
+        val tmp = File(dir, file.name + ".part")
+        val buf = ByteArray(64 * 1024)
+        var downloaded = 0L
+        val start = SystemClock.elapsedRealtime().coerceAtLeast(1L)
+        var lastEmit = 0L
+        body.byteStream().use { input ->
+            FileOutputStream(tmp).use { output ->
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    output.write(buf, 0, n)
+                    downloaded += n
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastEmit >= 250L || (total > 0 && downloaded >= total)) {
+                        val elapsed = (now - start).coerceAtLeast(1L)
+                        val speed = downloaded * 1000L / elapsed
+                        onProgress(UpdateDownloadUi("downloading", downloaded, total, speed, slow = elapsed > 12_000L && speed in 1L until 45_000L))
+                        lastEmit = now
+                    }
+                }
+            }
+        }
+        if (total > 0 && downloaded < total) error("下载失败：文件不完整 ${formatBytesShort(downloaded)} / ${formatBytesShort(total)}")
+        if (file.exists()) file.delete()
+        if (!tmp.renameTo(file)) {
+            tmp.copyTo(file, overwrite = true)
+            tmp.delete()
+        }
+        onProgress(UpdateDownloadUi(phase = "done", downloaded = file.length(), total = total, filePath = file.absolutePath))
+        file
+    }
+}
+
+fun installApk(context: Context, file: File) {
+    if (!file.exists() || file.length() <= 0L) {
+        Toast.makeText(context, "安装失败：APK 文件不存在", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(intent) }
+        .onFailure { Toast.makeText(context, "安装失败：${it.message ?: it.javaClass.simpleName}", Toast.LENGTH_LONG).show() }
 }
 
 @Composable
@@ -1728,6 +1934,112 @@ fun VersionInfoDialog(onDismiss: () -> Unit) {
         tonalElevation = 0.dp
     )
 
+}
+
+
+@Composable
+fun UpdateDialogCard(
+    info: GitHubUpdateInfo,
+    state: UpdateDownloadUi,
+    checking: Boolean,
+    onDismiss: () -> Unit,
+    onImmediate: () -> Unit,
+    onBackground: () -> Unit,
+    onIgnore: () -> Unit,
+    onGithub: () -> Unit,
+    onInstall: () -> Unit,
+    onRetry: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(30.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        title = { Text(if (info.hasUpdate) "发现新版本" else "版本更新", fontWeight = FontWeight.Black, fontSize = 21.sp) },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(shape = RoundedCornerShape(20.dp), color = Color(0xFF2563EB).copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .12f))) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(info.name, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                        Text("当前 build ${AppVersion.CODE} → 最新 build ${info.versionCode}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f))
+                        Text("安装包：${info.apkName} · ${formatBytesShort(info.apkSize)}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f))
+                    }
+                }
+                if (info.body.isNotBlank()) {
+                    Text("更新内容", fontSize = 13.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                    Text(info.body.lineSequence().filter { it.isNotBlank() }.take(10).joinToString("\n"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), lineHeight = 17.sp)
+                }
+                if (state.phase != "idle") {
+                    val total = if (state.total > 0) state.total else info.apkSize
+                    Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF14B8A6).copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF14B8A6).copy(alpha = .12f))) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            val status = when (state.phase) {
+                                "downloading" -> "下载中 ${state.percent}% · ${formatSpeed(state.speedBytes)}"
+                                "done" -> "下载完成 · ${formatBytesShort(state.downloaded)}"
+                                "error" -> "下载失败"
+                                else -> "准备下载"
+                            }
+                            Text(status, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                            if (state.phase == "downloading") LinearProgressIndicator(progress = { state.percent / 100f }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(99.dp)), color = Color(0xFF2563EB), trackColor = Color(0xFF2563EB).copy(alpha = .12f))
+                            if (state.phase == "downloading") Text("${formatBytesShort(state.downloaded)} / ${formatBytesShort(total)}", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f))
+                            if (state.slow) Text("下载网速偏慢，建议切换代理网络后重试。", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = Color(0xFFF59E0B))
+                            if (state.error.isNotBlank()) Text(state.error, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444), lineHeight = 16.sp)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (state.phase == "done" && state.filePath.isNotBlank()) {
+                    Button(onClick = onInstall, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("安装", fontWeight = FontWeight.Black) }
+                } else if (state.phase == "error") {
+                    Button(onClick = onRetry, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("重新下载", fontWeight = FontWeight.Black) }
+                } else {
+                    Button(onClick = onImmediate, enabled = state.phase != "downloading" && !checking, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("立即更新", fontWeight = FontWeight.Black) }
+                }
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onIgnore, enabled = info.hasUpdate) { Text("忽略本版", fontWeight = FontWeight.Bold) }
+                TextButton(onClick = onBackground, enabled = state.phase != "downloading") { Text("后台下载", fontWeight = FontWeight.Bold) }
+                TextButton(onClick = onGithub) { Text("GitHub", fontWeight = FontWeight.Bold) }
+            }
+        }
+    )
+}
+
+@Composable
+fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () -> Unit, onInstall: () -> Unit) {
+    if (state.phase == "idle") return
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f)),
+        shadowElevation = 6.dp
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.SystemUpdateAlt, null, Modifier.size(18.dp), tint = Color(0xFF2563EB))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val text = when (state.phase) {
+                    "downloading" -> "正在后台下载 ${state.percent}% · ${formatSpeed(state.speedBytes)}"
+                    "done" -> "更新包已下载，点击安装"
+                    "error" -> "下载失败：${state.error.ifBlank { "未知错误" }}"
+                    else -> "准备下载更新"
+                }
+                Text(text, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (state.phase == "downloading") LinearProgressIndicator(progress = { state.percent / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(99.dp)), color = Color(0xFF2563EB), trackColor = Color(0xFF2563EB).copy(alpha = .12f))
+            }
+            Spacer(Modifier.width(8.dp))
+            if (state.phase == "done" && state.filePath.isNotBlank()) TextButton(onClick = onInstall) { Text("安装", fontWeight = FontWeight.Black) } else TextButton(onClick = onShow) { Text("详情", fontWeight = FontWeight.Black) }
+            IconButton(onClick = onHide, modifier = Modifier.size(30.dp)) { Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f)) }
+        }
+    }
 }
 
 @Composable
@@ -1800,7 +2112,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit) {
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateClick: () -> Unit = {}) {
     var showVersion by remember { mutableStateOf(false) }
     var privacyMode by remember { mutableStateOf(prefs.privacyMode) }
     var homeOrder by remember { mutableStateOf(normalizeHomeOrder(prefs.homeOrder)) }
@@ -1845,7 +2157,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
                     Spacer(Modifier.width(8.dp))
-                    VersionBadge { showVersion = true }
+                    VersionBadge(hasUpdate = hasPendingUpdate) { if (hasPendingUpdate) onUpdateClick() else showVersion = true }
                 }
                 Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
             }
@@ -3399,9 +3711,16 @@ fun PingHistoryItem(item: PingHistoryEntry) {
 }
 
 private fun pingNiceYMax(raw: Int): Int = when {
+    raw <= 15 -> 15
+    raw <= 30 -> 30
+    raw <= 60 -> 60
+    raw <= 90 -> 90
     raw <= 120 -> 120
+    raw <= 160 -> 160
+    raw <= 200 -> 200
     raw <= 240 -> 240
-    raw <= 360 -> 360
+    raw <= 320 -> 320
+    raw <= 400 -> 400
     raw <= 600 -> 600
     raw <= 1000 -> 1000
     else -> ((raw + 499) / 500) * 500
@@ -3485,10 +3804,10 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(204.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .height(194.dp)
+            .clip(RoundedCornerShape(12.dp))
     ) {
-        val axisWidth = 28.dp
+        val axisWidth = 24.dp
         val baseWidth = maxWidth
         val plotViewportWidth = (baseWidth - axisWidth).coerceAtLeast(120.dp)
         val extraWidth = when {
@@ -3502,7 +3821,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
             if (points.size > 120) scrollState.scrollTo(scrollState.maxValue)
         }
         Surface(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
             shadowElevation = 0.dp,
@@ -3524,16 +3843,16 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .padding(start = axisWidth, end = 3.dp, top = 4.dp, bottom = 0.dp)
+                        .padding(start = axisWidth, end = 2.dp, top = 2.dp, bottom = 0.dp)
                         .horizontalScroll(scrollState)
                         .zIndex(1f)
                 ) {
                     Canvas(Modifier.width(chartWidth).fillMaxHeight()) {
                         val fullW = size.width
                         val fullH = size.height
-                        val bottomH = 18.dp.toPx()
-                        val topH = 7.dp.toPx()
-                        val rightPad = 3.dp.toPx()
+                        val bottomH = 16.dp.toPx()
+                        val topH = 5.dp.toPx()
+                        val rightPad = 2.dp.toPx()
                         val plotLeft = 0f
                         val plotTop = topH
                         val plotRight = fullW - rightPad
@@ -3544,7 +3863,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                         val labelColor = android.graphics.Color.argb(235, 15, 23, 42)
                         val xPaint = Paint().apply {
                             color = labelColor
-                            textSize = 7.8.sp.toPx()
+                            textSize = 7.2.sp.toPx()
                             isFakeBoldText = true
                             isAntiAlias = true
                             textAlign = Paint.Align.CENTER
@@ -3565,7 +3884,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                                 xTickCount - 1 -> (x - 8.dp.toPx()).coerceAtLeast(plotLeft)
                                 else -> x
                             }
-                            drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(totalSec * ratio), labelX, plotBottom + 13.dp.toPx(), xPaint)
+                            drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(totalSec * ratio), labelX, plotBottom + 12.dp.toPx(), xPaint)
                         }
                         fun yFor(ms: Int): Float {
                             val ratio = ((ms - yMin).toFloat() / (yMax - yMin).toFloat()).coerceIn(0f, 1f)
@@ -3608,15 +3927,15 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                 Canvas(
                     Modifier
                         .fillMaxSize()
-                        .padding(start = 1.dp, end = 3.dp, top = 4.dp, bottom = 0.dp)
+                        .padding(start = 0.dp, end = 2.dp, top = 2.dp, bottom = 0.dp)
                         .zIndex(2f)
                 ) {
                     val fullW = size.width
                     val fullH = size.height
                     val labelW = axisWidth.toPx()
-                    val bottomH = 18.dp.toPx()
-                    val topH = 7.dp.toPx()
-                    val rightPad = 3.dp.toPx()
+                    val bottomH = 16.dp.toPx()
+                    val topH = 5.dp.toPx()
+                    val rightPad = 2.dp.toPx()
                     val plotLeft = labelW
                     val plotTop = topH
                     val plotRight = fullW - rightPad
@@ -3628,7 +3947,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                     val labelColor = android.graphics.Color.argb(238, 15, 23, 42)
                     val yPaint = Paint().apply {
                         color = labelColor
-                        textSize = 7.8.sp.toPx()
+                        textSize = 7.2.sp.toPx()
                         isFakeBoldText = true
                         isAntiAlias = true
                         textAlign = Paint.Align.RIGHT
@@ -3644,7 +3963,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                             yMax -> y + 3.0.dp.toPx()
                             else -> y + 2.5f
                         }
-                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 4.dp.toPx(), yText, yPaint)
+                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 2.5.dp.toPx(), yText, yPaint)
                     }
                 }
             }
@@ -3664,15 +3983,15 @@ fun PingStats(points: List<PingPoint>) {
     val timeout = if (points.isEmpty()) "超时 --" else "超时 ${pingTimeoutCount(points)}"
     val elapsed = points.maxOfOrNull { it.elapsedMs } ?: 0L
     val spent = if (points.isEmpty()) "耗时 --" else "耗时 ${formatElapsedMs(elapsed)}"
-    val text = listOf(current, avg, max, min, jitter, timeout, spent).joinToString("  ·  ")
+    val text = listOf(current, avg, max, min, jitter, timeout, spent).joinToString(" · ")
     Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = Color(0xFF2563EB).copy(alpha = .055f),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF2563EB).copy(alpha = .052f),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .08f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(text, fontSize = 12.0.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .76f), maxLines = 1)
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .76f), maxLines = 1)
         }
     }
 }
