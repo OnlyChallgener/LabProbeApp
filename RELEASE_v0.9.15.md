@@ -1,20 +1,21 @@
-# LabProbe v0.9.15 buildfix30
+# LabProbe v0.9.15 buildfix33
 
-- 修复 NAS IPv6 与路由 WAN6 显示混用。
-- NAS IPv6 只显示 Hub/NAS 本机检测结果；如果与路由 WAN6 完全相同会隐藏，避免误导。
-- 路由 WAN6 支持 `wan6List`：单 WAN 显示“路由 WAN6”，多 WAN 显示“主用 WAN / 备用 WAN”。
-- 保留 buildfix29 的 Hub/UI、release workflow 固定签名配置。
+## Ping 波形与高频采样热修
 
+- 默认 Ping 次数改为 1000。
+- 次数改为下拉：200 / 500 / 1000 / 2000。
+- 间隔补充：25 / 30 / 50 / 100 / 200 / 500 / 1000 ms。
+- 超时改为：自动 / 300 / 500 / 800 / 1000 / 1500 / 3000 ms。
+- 自动超时会按间隔匹配：25/30ms → 300ms，50ms → 500ms，100ms → 800ms，200ms → 1000ms，500ms → 1500ms，1000ms → 3000ms。
+- Ping 图表改为可横向滑动波形图，长测试不会挤压到一团。
+- 波形按真实 elapsed time 绘制，结束后自动连接左右边界，X 轴自适应完整显示。
+- 统计栏增加抖动与超时数量。
+- 响应日志精简，不再每条重复显示目标地址。
+- 低延迟网关场景启用自适应 Y 轴，不再把 0–15ms 稳定延迟压成一条直线。
+- X/Y 轴贴边收紧，但保留圆角安全距离。
 
+## 技术说明
 
-## buildfix31
-- 修复 buildfix30 误隐藏 NAS IPv6，NAS IPv6 与路由 WAN6 完全分开显示。
-- WireGuard 恢复使用 `[NAS IPv6]:51820`，不再因为 NAS IPv6 与路由 WAN6 相同而消失。
-- versionCode = 77。
-
-
-## buildfix32 - NAS IPv6 / 路由 WAN6 分离修复
-
-- NAS IPv6 只显示 Hub/NAS 自己检测到的 `nas.exitIpv6`，不再和路由 WAN6 互相兜底。
-- WireGuard 地址固定使用 `[NAS IPv6]:51820`，NAS IPv6 未获取时不使用路由 WAN6 顶替。
-- 路由 WAN6 继续显示 `router.wanIpv6 / wan6List`。
+- Android 普通 App 无 root/CAP_NET_RAW 权限时，ICMP 不能使用纯 Java/Kotlin Socket 原生发包。
+- 本版 ICMP 继续使用单进程系统 ping 高频采样，避免每次启动进程造成卡顿。
+- TCP 使用 Socket Connect，HTTP 使用 OkHttp，自身属于原生网络栈调用。
