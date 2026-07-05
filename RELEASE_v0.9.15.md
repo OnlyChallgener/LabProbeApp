@@ -1,22 +1,23 @@
-# 极客网探 v0.9.15 build78 · Ping 图表与调度热修
+# 极客网探 v0.9.15 build79 · Posix Ping 引擎自测版
 
-## Ping 图表
-- 修复横向滑动后 Y 轴数字不跟随视口的问题：Y 轴固定在左侧，曲线和 X 轴可横向滑动。
-- 图形区域圆角从 24dp 收紧到 18dp，X/Y 轴数字更小、更贴边，扩大中间波形绘制区域。
-- 低延迟网关场景继续使用窄区间自适应 Y 轴，0–15ms 稳定延迟不会被压成直线。
+## Ping 引擎重构
+- ICMP 优先使用 `android.system.Os.socket(AF_INET/AF_INET6, SOCK_DGRAM, IPPROTO_ICMP/IPPROTO_ICMPV6)` 无特权 Socket。
+- 使用 `Os.poll()` 单协程事件驱动收包，失败自动降级到系统 `ping` 单进程采样。
+- 高频发包使用 pacing 节奏控制，降低 Runtime.exec 和线程调度带来的假性抖动。
+- 增加 Jacobson/Karels 动态 RTO：根据 SRTT/RTTVAR 自动调整超时阈值。
+- 抖动继续使用最近 50 个成功 RTT FIFO，相邻 RTT 绝对差平均；丢包/超时不进入抖动队列。
 
-## 抖动与超时
-- 抖动改为最近 50 个成功 RTT 的 FIFO 队列算法：只统计成功 RTT，相邻 RTT 绝对差求平均。
-- 丢包/超时不进入抖动队列，不参与 jitter 计算。
-- 自动超时按间隔动态匹配，并给 Android 调度/息屏留缓冲，减少 APP 自身调度造成的伪超时。
+## Ping 图表优化
+- Y 轴固定覆盖层最后绘制，曲线不会越过 Y 轴数字。
+- Y 轴数字更靠左，X/Y 轴字号再收小，图形区域更大。
+- 图表圆角缩小，曲线和 X/Y 轴更贴近，但保留边框安全距离。
+- 继续使用现有可横向滑动波形图。
 
-## 采样与后台
-- ICMP 继续使用单进程系统 ping 高频采样，避免每次启动进程造成卡顿。
-- 下载/渲染/UI 更新分离，UI 约 1 秒批量刷新，降低高频采样卡顿。
-- Ping 运行时申请 PARTIAL_WAKE_LOCK，尽量在息屏/后台保持测试连续。
-- 如果兼容模式下连续无有效响应，会自动停止，避免一直丢包空跑。
+## 继承修复
+- NAS IPv6 与路由 WAN6 继续分离。
+- WireGuard 地址继续使用 NAS IPv6。
+- Hub/路由脚本逻辑不变。
 
-## 安装
-- 版本号仍为 v0.9.15。
-- versionCode = 78。
-- 继承 release workflow 固定签名配置。
+## 构建信息
+- versionName = 0.9.15
+- versionCode = 79

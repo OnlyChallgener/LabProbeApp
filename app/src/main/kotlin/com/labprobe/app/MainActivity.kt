@@ -11,6 +11,10 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.SystemClock
 import android.os.PowerManager
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import android.content.Intent
 import android.net.Uri
 import android.net.ConnectivityManager
@@ -99,6 +103,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import android.graphics.Paint
 import java.io.ByteArrayOutputStream
+import java.io.FileDescriptor
 import java.io.DataOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -116,6 +121,8 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
+import kotlin.math.abs
+import kotlin.math.min
 
 private const val DEFAULT_HUB = ""
 private const val DEFAULT_DNS1 = "223.5.5.5"
@@ -124,9 +131,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 78
+    const val CODE = 79
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · Posix Ping 引擎自测" to listOf(
+            "ICMP 优先使用 android.system.Os 无特权 SOCK_DGRAM Socket，失败自动降级系统 ping",
+            "单协程 Os.poll 事件驱动，高频采样按 pacing 发包，减少 Runtime.exec 与 UI 调度误差",
+            "加入 Jacobson/Karels 动态 RTO、最近 50 RTT FIFO 抖动统计，波形图 Y 轴固定不被曲线覆盖"
+        ),
         "v0.9.15 · Ping 图表与调度热修" to listOf(
             "Ping 波形图 Y 轴固定随视口显示，X/Y 数字更小更贴边，图形区域更大",
             "抖动改为最近 50 个成功 RTT 的 FIFO 相邻差平均，超时不参与计算",
@@ -3455,7 +3467,6 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
         } else {
             val rawRange = (maxOk - minOk).coerceAtLeast(0)
             when {
-                // 网关 0~15ms 很稳定时，给一个窄但不贴边的窗口，避免视觉上压成直线。
                 maxOk <= 15 && rawRange <= 3 -> (minOk - 3).coerceAtLeast(0) to (maxOk + 5).coerceAtLeast(8)
                 maxOk <= 18 && rawRange <= 5 -> (minOk - 4).coerceAtLeast(0) to (maxOk + 6).coerceAtLeast(12)
                 maxOk <= 30 && rawRange <= 10 -> (minOk - 5).coerceAtLeast(0) to (maxOk + 8).coerceAtLeast(18)
@@ -3469,33 +3480,34 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     val rawLast = points.maxOfOrNull { it.elapsedMs } ?: intervalMs.coerceAtLeast(1000L)
     val rawFirst = points.firstOrNull()?.elapsedMs ?: 0L
     val totalMs = (rawLast - rawFirst).coerceAtLeast(intervalMs.coerceAtLeast(1000L))
+    val chartSurfaceColor = MaterialTheme.colorScheme.surface
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(214.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .height(204.dp)
+            .clip(RoundedCornerShape(14.dp))
     ) {
+        val axisWidth = 28.dp
         val baseWidth = maxWidth
+        val plotViewportWidth = (baseWidth - axisWidth).coerceAtLeast(120.dp)
         val extraWidth = when {
             points.size <= 80 -> 0.dp
             points.size <= 300 -> ((points.size - 80) * 1.0f).dp
             points.size <= 1000 -> (220 + (points.size - 300) * .42f).dp
             else -> (520 + (points.size - 1000) * .20f).dp
         }
-        val chartWidth = (baseWidth + extraWidth).coerceAtLeast(baseWidth)
+        val chartWidth = (plotViewportWidth + extraWidth).coerceAtLeast(plotViewportWidth)
         LaunchedEffect(points.size) {
             if (points.size > 120) scrollState.scrollTo(scrollState.maxValue)
         }
         Surface(
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surface,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
             shadowElevation = 0.dp,
             tonalElevation = 0.dp,
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(baseWidth)
+            modifier = Modifier.fillMaxSize()
         ) {
             Box(Modifier.fillMaxSize()) {
                 if (points.isEmpty()) {
@@ -3504,66 +3516,35 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                         modifier = Modifier.align(Alignment.Center),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha=.40f),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.4.sp
+                        fontSize = 12.0.sp
                     )
                 }
 
-                // 固定层：Y 轴数字和横向网格不跟随横向滚动，解决滑动后 Y 轴消失/不同步。
-                Canvas(Modifier.fillMaxSize().padding(start = 2.dp, end = 4.dp, top = 3.dp, bottom = 0.dp)) {
-                    val fullW = size.width
-                    val fullH = size.height
-                    val labelW = 25.dp.toPx()
-                    val bottomH = 22.dp.toPx()
-                    val topH = 8.dp.toPx()
-                    val rightPad = 5.dp.toPx()
-                    val plotLeft = labelW
-                    val plotTop = topH
-                    val plotRight = fullW - rightPad
-                    val plotBottom = fullH - bottomH
-                    val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
-                    val grid = Color(0xFF64748B).copy(alpha = 0.070f)
-                    val labelColor = android.graphics.Color.argb(232, 15, 23, 42)
-                    val yPaint = Paint().apply {
-                        color = labelColor
-                        textSize = 8.3.sp.toPx()
-                        isFakeBoldText = true
-                        isAntiAlias = true
-                        textAlign = Paint.Align.RIGHT
-                    }
-                    val tickStep = (yMax - yMin) / 4.0
-                    val yTicks = (0..4).map { (yMin + tickStep * it).roundToInt() }.distinct()
-                    yTicks.forEach { tick ->
-                        val yRatio = ((tick - yMin).toFloat() / (yMax - yMin).toFloat()).coerceIn(0f, 1f)
-                        val y = plotBottom - yRatio * plotH
-                        drawLine(grid, Offset(plotLeft, y), Offset(plotRight, y), strokeWidth = 1f)
-                        val yText = when (tick) {
-                            yMin -> y - 2.dp.toPx()
-                            yMax -> y + 3.5.dp.toPx()
-                            else -> y + 2.7f
-                        }
-                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 2.dp.toPx(), yText, yPaint)
-                    }
-                }
-
-                Box(Modifier.fillMaxSize().horizontalScroll(scrollState)) {
-                    Canvas(Modifier.width(chartWidth).fillMaxHeight().padding(start = 2.dp, end = 4.dp, top = 3.dp, bottom = 0.dp)) {
+                // 滚动层只占用曲线区域，永远不会压到左侧 Y 轴数字。
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(start = axisWidth, end = 3.dp, top = 4.dp, bottom = 0.dp)
+                        .horizontalScroll(scrollState)
+                        .zIndex(1f)
+                ) {
+                    Canvas(Modifier.width(chartWidth).fillMaxHeight()) {
                         val fullW = size.width
                         val fullH = size.height
-                        val labelW = 25.dp.toPx()
-                        val bottomH = 22.dp.toPx()
-                        val topH = 8.dp.toPx()
-                        val rightPad = 5.dp.toPx()
-                        val plotLeft = labelW
+                        val bottomH = 18.dp.toPx()
+                        val topH = 7.dp.toPx()
+                        val rightPad = 3.dp.toPx()
+                        val plotLeft = 0f
                         val plotTop = topH
                         val plotRight = fullW - rightPad
                         val plotBottom = fullH - bottomH
                         val plotW = (plotRight - plotLeft).coerceAtLeast(1f)
                         val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
-                        val faintGrid = Color(0xFF64748B).copy(alpha = 0.022f)
-                        val labelColor = android.graphics.Color.argb(230, 15, 23, 42)
+                        val faintGrid = Color(0xFF64748B).copy(alpha = 0.026f)
+                        val labelColor = android.graphics.Color.argb(235, 15, 23, 42)
                         val xPaint = Paint().apply {
                             color = labelColor
-                            textSize = 8.3.sp.toPx()
+                            textSize = 7.8.sp.toPx()
                             isFakeBoldText = true
                             isAntiAlias = true
                             textAlign = Paint.Align.CENTER
@@ -3580,11 +3561,11 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                             val x = plotLeft + ratio * plotW
                             drawLine(faintGrid, Offset(x, plotTop), Offset(x, plotBottom), strokeWidth = 1f)
                             val labelX = when (idx) {
-                                0 -> (x + 5.dp.toPx()).coerceAtMost(plotRight)
-                                xTickCount - 1 -> (x - 6.dp.toPx()).coerceAtLeast(plotLeft)
+                                0 -> (x + 7.dp.toPx()).coerceAtMost(plotRight)
+                                xTickCount - 1 -> (x - 8.dp.toPx()).coerceAtLeast(plotLeft)
                                 else -> x
                             }
-                            drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(totalSec * ratio), labelX, plotBottom + 16.dp.toPx(), xPaint)
+                            drawContext.canvas.nativeCanvas.drawText(formatSecondsLabel(totalSec * ratio), labelX, plotBottom + 13.dp.toPx(), xPaint)
                         }
                         fun yFor(ms: Int): Float {
                             val ratio = ((ms - yMin).toFloat() / (yMax - yMin).toFloat()).coerceIn(0f, 1f)
@@ -3610,16 +3591,60 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                                 }
                                 lineTo(plotRight, linePoints.last().y)
                             }
-                            drawPath(path, Color(0xFF2563EB), style = Stroke(width = 1.7f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                            drawPath(path, Color(0xFF2563EB), style = Stroke(width = 1.55f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                         } else if (linePoints.size == 1) {
-                            drawCircle(Color(0xFF2563EB), radius = 2.0.dp.toPx(), center = linePoints.first())
+                            drawCircle(Color(0xFF2563EB), radius = 1.8.dp.toPx(), center = linePoints.first())
                         }
                         points.forEach { pnt ->
                             if (pnt.ms == null) {
                                 val x = xFor(pnt.elapsedMs)
-                                drawCircle(Color(0xFFEF4444), radius = 1.55.dp.toPx(), center = Offset(x, plotBottom - 4.dp.toPx()))
+                                drawCircle(Color(0xFFEF4444), radius = 1.45.dp.toPx(), center = Offset(x, plotBottom - 3.dp.toPx()))
                             }
                         }
+                    }
+                }
+
+                // 固定覆盖层最后绘制：Y 轴数字和横向网格固定在视口，不随横向滚动。
+                Canvas(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(start = 1.dp, end = 3.dp, top = 4.dp, bottom = 0.dp)
+                        .zIndex(2f)
+                ) {
+                    val fullW = size.width
+                    val fullH = size.height
+                    val labelW = axisWidth.toPx()
+                    val bottomH = 18.dp.toPx()
+                    val topH = 7.dp.toPx()
+                    val rightPad = 3.dp.toPx()
+                    val plotLeft = labelW
+                    val plotTop = topH
+                    val plotRight = fullW - rightPad
+                    val plotBottom = fullH - bottomH
+                    val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
+                    // 给 Y 轴标签一个极淡背景，彻底避免曲线划过数字。
+                    drawRect(chartSurfaceColor.copy(alpha = 0.96f), topLeft = Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(labelW, fullH))
+                    val grid = Color(0xFF64748B).copy(alpha = 0.068f)
+                    val labelColor = android.graphics.Color.argb(238, 15, 23, 42)
+                    val yPaint = Paint().apply {
+                        color = labelColor
+                        textSize = 7.8.sp.toPx()
+                        isFakeBoldText = true
+                        isAntiAlias = true
+                        textAlign = Paint.Align.RIGHT
+                    }
+                    val tickStep = (yMax - yMin) / 4.0
+                    val yTicks = (0..4).map { (yMin + tickStep * it).roundToInt() }.distinct()
+                    yTicks.forEach { tick ->
+                        val yRatio = ((tick - yMin).toFloat() / (yMax - yMin).toFloat()).coerceIn(0f, 1f)
+                        val y = plotBottom - yRatio * plotH
+                        drawLine(grid, Offset(plotLeft, y), Offset(plotRight, y), strokeWidth = 1f)
+                        val yText = when (tick) {
+                            yMin -> y - 1.4.dp.toPx()
+                            yMax -> y + 3.0.dp.toPx()
+                            else -> y + 2.5f
+                        }
+                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 4.dp.toPx(), yText, yPaint)
                     }
                 }
             }
@@ -5420,6 +5445,225 @@ suspend fun runLatencySeries(
     }.let { it.copy(protocol = protocol, resolvedIp = resolvedIp) }
 }
 
+
+private class PingRtoEstimator(private val baseTimeoutMs: Int, private val intervalMs: Long) {
+    private var srtt = 0.0
+    private var rttvar = 0.0
+    private var initialized = false
+
+    val rtoMs: Int
+        get() {
+            val minRto = kotlin.math.max(200.0, intervalMs * 4.0)
+            val raw = if (!initialized) baseTimeoutMs.toDouble() else srtt + 4.0 * rttvar
+            return raw.coerceIn(minRto, 3000.0).roundToInt()
+        }
+
+    fun onRtt(rttMs: Int) {
+        val r = rttMs.toDouble().coerceAtLeast(0.1)
+        if (!initialized) {
+            srtt = r
+            rttvar = r / 2.0
+            initialized = true
+        } else {
+            rttvar = (1.0 - 0.25) * rttvar + 0.25 * abs(srtt - r)
+            srtt = (1.0 - 0.125) * srtt + 0.125 * r
+        }
+    }
+}
+
+private fun buildIcmpEchoPacket(buffer: ByteArray, seq: Int, ipv6: Boolean): Int {
+    val type = if (ipv6) 128 else 8
+    buffer[0] = type.toByte()
+    buffer[1] = 0
+    buffer[2] = 0
+    buffer[3] = 0
+    // Linux ping datagram socket 会重写 identifier，所以这里不依赖 ID 匹配。
+    buffer[4] = 0
+    buffer[5] = 0
+    buffer[6] = ((seq ushr 8) and 0xff).toByte()
+    buffer[7] = (seq and 0xff).toByte()
+    buffer[8] = 'L'.code.toByte()
+    buffer[9] = 'P'.code.toByte()
+    buffer[10] = 0x35
+    buffer[11] = 0x0f
+    val len = 16
+    if (!ipv6) {
+        val c = icmpChecksum(buffer, len)
+        buffer[2] = ((c ushr 8) and 0xff).toByte()
+        buffer[3] = (c and 0xff).toByte()
+    }
+    return len
+}
+
+private fun icmpChecksum(data: ByteArray, len: Int): Int {
+    var sum = 0
+    var i = 0
+    while (i + 1 < len) {
+        sum += ((data[i].toInt() and 0xff) shl 8) or (data[i + 1].toInt() and 0xff)
+        i += 2
+    }
+    if (i < len) sum += (data[i].toInt() and 0xff) shl 8
+    while ((sum ushr 16) != 0) sum = (sum and 0xffff) + (sum ushr 16)
+    return sum.inv() and 0xffff
+}
+
+private fun parseIcmpReplySeq(buf: ByteArray, len: Int, ipv6: Boolean): Int {
+    if (len < 8) return -1
+    val type = buf[0].toInt() and 0xff
+    val expected = if (ipv6) 129 else 0
+    if (type != expected) return -1
+    return ((buf[6].toInt() and 0xff) shl 8) or (buf[7].toInt() and 0xff)
+}
+
+private fun setNonBlocking(fd: FileDescriptor) {
+    runCatching {
+        val flags = Os.fcntlInt(fd, OsConstants.F_GETFL, 0)
+        Os.fcntlInt(fd, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+    }
+}
+
+private suspend fun runPosixIcmpSeries(
+    address: InetAddress,
+    count: Int,
+    intervalMs: Long,
+    timeoutMs: Int,
+    start: Long,
+    onPoint: suspend (PingPoint) -> Unit
+): PingRunResult? = withContext(Dispatchers.IO) {
+    val host = address.hostAddress ?: address.hostName
+    val ipv6 = address is Inet6Address
+    val family = if (ipv6) OsConstants.AF_INET6 else OsConstants.AF_INET
+    val proto = if (ipv6) OsConstants.IPPROTO_ICMPV6 else OsConstants.IPPROTO_ICMP
+    val fd = try {
+        Os.socket(family, OsConstants.SOCK_DGRAM, proto)
+    } catch (_: Throwable) {
+        return@withContext null
+    }
+
+    val points = ArrayList<PingPoint>(count.coerceAtMost(5000))
+    val sendBuf = ByteArray(16)
+    val recvBuf = ByteArray(512)
+    val sendTimes = LongArray(count + 1)
+    val done = BooleanArray(count + 1)
+    val rto = PingRtoEstimator(timeoutMs, intervalMs)
+    val pollFds = arrayOf(StructPollfd().apply {
+        this.fd = fd
+        this.events = OsConstants.POLLIN.toShort()
+    })
+    val recvFrom = InetSocketAddress(0)
+    var sent = 0
+    var finished = 0
+    var nextSendAt = SystemClock.elapsedRealtime()
+    var firstSendAt = 0L
+    var successCount = 0
+    var noReplyFallback = false
+    var hadKernelError = false
+
+    fun earliestTimeout(now: Long): Long {
+        var t = Long.MAX_VALUE
+        val currentRto = rto.rtoMs.toLong()
+        var i = 1
+        while (i <= sent) {
+            if (!done[i]) {
+                val due = sendTimes[i] + currentRto
+                if (due < t) t = due
+            }
+            i++
+        }
+        return t
+    }
+
+    try {
+        setNonBlocking(fd)
+        runCatching { Os.setsockoptInt(fd, OsConstants.SOL_SOCKET, OsConstants.SO_RCVBUF, 1 shl 20) }
+        while (currentCoroutineContext().isActive && finished < count) {
+            val now = SystemClock.elapsedRealtime()
+            if (sent < count && now >= nextSendAt) {
+                sent++
+                val len = buildIcmpEchoPacket(sendBuf, sent, ipv6)
+                try {
+                    Os.sendto(fd, sendBuf, 0, len, 0, address, 0)
+                    val t = SystemClock.elapsedRealtime()
+                    if (firstSendAt == 0L) firstSendAt = t
+                    sendTimes[sent] = t
+                    // 不追赶式补发，避免 App/系统短暂调度延迟后瞬间突发塞爆内核队列。
+                    nextSendAt = if (t - nextSendAt > intervalMs * 4) t + intervalMs else nextSendAt + intervalMs
+                } catch (e: Throwable) {
+                    hadKernelError = true
+                }
+            }
+            if (hadKernelError) break
+
+            val timeoutDue = earliestTimeout(now)
+            val nextDue = if (sent < count) min(nextSendAt, timeoutDue) else timeoutDue
+            val waitMs = when {
+                nextDue == Long.MAX_VALUE -> 10
+                nextDue <= now -> 0
+                else -> (nextDue - now).coerceIn(0L, 50L).toInt()
+            }
+
+            val ready = runCatching { Os.poll(pollFds, waitMs) }.getOrElse { hadKernelError = true; -1 }
+            if (hadKernelError) break
+            if (ready > 0 && (pollFds[0].revents.toInt() and OsConstants.POLLIN) != 0) {
+                while (currentCoroutineContext().isActive) {
+                    val recvAt = SystemClock.elapsedRealtime()
+                    val n = try {
+                        Os.recvfrom(fd, recvBuf, 0, recvBuf.size, 0, recvFrom)
+                    } catch (e: ErrnoException) {
+                        if (e.errno == OsConstants.EAGAIN) -1 else { hadKernelError = true; -2 }
+                    } catch (_: Throwable) {
+                        hadKernelError = true; -2
+                    }
+                    if (n <= 0) break
+                    val seq = parseIcmpReplySeq(recvBuf, n, ipv6)
+                    if (seq in 1..count && !done[seq] && sendTimes[seq] > 0L) {
+                        done[seq] = true
+                        finished++
+                        successCount++
+                        val ms = (recvAt - sendTimes[seq]).toInt().coerceAtLeast(0)
+                        rto.onRtt(ms)
+                        val elapsed = recvAt - start
+                        val point = PingPoint(seq, ms, "#$seq ${ms}ms @${formatElapsedMs(elapsed)}", elapsed)
+                        points += point
+                        withContext(Dispatchers.Main) { onPoint(point) }
+                    }
+                }
+            }
+
+            val after = SystemClock.elapsedRealtime()
+            val currentRto = rto.rtoMs.toLong()
+            var i = 1
+            while (i <= sent) {
+                if (!done[i] && sendTimes[i] > 0L && after - sendTimes[i] >= currentRto) {
+                    done[i] = true
+                    finished++
+                    val elapsed = after - start
+                    val point = PingPoint(i, null, "#$i timeout @${formatElapsedMs(elapsed)}", elapsed)
+                    points += point
+                    withContext(Dispatchers.Main) { onPoint(point) }
+                }
+                i++
+            }
+            // 某些 ROM 允许创建 socket 但 ICMPv6/ICMP datagram 实际不回包。
+            // 前 8 个探测全无响应时快速降级系统 ping，避免空跑 1000 次。
+            val probeLimit = count.coerceAtMost(8)
+            if (successCount == 0 && finished >= probeLimit && sent >= probeLimit) {
+                noReplyFallback = true
+                break
+            }
+        }
+    } finally {
+        runCatching { Os.close(fd) }
+    }
+
+    if (hadKernelError || noReplyFallback || sent == 0) {
+        null
+    } else {
+        val elapsed = (points.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
+        PingRunResult(points.sortedBy { it.elapsedMs }, elapsed, "ICMP Posix Os.poll 引擎：无特权 Socket，高频事件驱动", "ICMP", host)
+    }
+}
+
 suspend fun runIcmpSeries(
     address: InetAddress,
     count: Int,
@@ -5428,6 +5672,11 @@ suspend fun runIcmpSeries(
     start: Long,
     onPoint: suspend (PingPoint) -> Unit
 ): PingRunResult {
+    // buildfix35：优先使用 Android Posix Os.socket + Os.poll 无特权 ICMP。
+    // 部分 ROM / 内核未开放 ping_group_range 时会失败，此时自动降级到系统 ping 单进程采样。
+    val posix = runPosixIcmpSeries(address, count, intervalMs, timeoutMs, start, onPoint)
+    if (posix != null && posix.points.isNotEmpty()) return posix
+
     val host = address.hostAddress ?: address.hostName
     val is6 = address is Inet6Address
     val fastPoints = mutableListOf<PingPoint>()
