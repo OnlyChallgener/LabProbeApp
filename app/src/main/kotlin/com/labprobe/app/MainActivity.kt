@@ -134,9 +134,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.15"
-    const val CODE = 81
+    const val CODE = 82
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.15 · 更新检测与 Ping 丢包热修" to listOf(
+            "检测更新页发现新版本时自动关闭，再弹出更新卡片，避免两层页面叠加",
+            "Ping 图表丢包标记由红点改为底部细红竖条，连续丢包更清晰",
+            "Ping 连续 3 秒 100% 丢包自动中断并记录原因，避免目标不可达时一直空跑"
+        ),
         "v0.9.15 · 自动更新闭环与 Ping 图表热修" to listOf(
             "补齐 GitHub Release 更新闭环：启动自动检查、更新卡片、立即更新、后台下载、忽略本版、小红点",
             "更新下载显示包大小、进度、网速、失败原因；网速过慢时提示建议使用代理网络",
@@ -1043,7 +1048,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                     }
                 ) { r ->
                     when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate()) { showUpdateDialog = true }
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "devices" -> DevicesScreen(state, topNav)
                         "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
@@ -1062,7 +1067,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
                         "tool_dns_quality" -> DnsQualityScreen(prefs) { route = "tools" }
                         "tool_service" -> ServiceMonitorScreen(prefs) { route = "tools" }
-                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate()) { showUpdateDialog = true }
+                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                     }
                 }
                 if (showUpdateDialog && latestUpdate != null) {
@@ -1881,7 +1886,7 @@ fun installApk(context: Context, file: File) {
 }
 
 @Composable
-fun VersionInfoDialog(onDismiss: () -> Unit) {
+fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
@@ -1903,8 +1908,21 @@ fun VersionInfoDialog(onDismiss: () -> Unit) {
                         scope.launch {
                             checking = true
                             updateText = "正在检测 GitHub Release..."
-                            updateText = checkGithubLatestSummary()
-                            checking = false
+                            runCatching { fetchGithubLatestInfo() }
+                                .onSuccess { info ->
+                                    if (info.hasUpdate) {
+                                        checking = false
+                                        onDismiss()
+                                        onUpdateFound(info)
+                                    } else {
+                                        updateText = "当前已是最新版本：${info.name}\n更新包：${info.apkName} · ${formatBytesShort(info.apkSize)}"
+                                        checking = false
+                                    }
+                                }
+                                .onFailure { e ->
+                                    updateText = "检测失败：${e.message ?: e.javaClass.simpleName}"
+                                    checking = false
+                                }
                         }
                     },
                     enabled = !checking,
@@ -2112,7 +2130,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateClick: () -> Unit = {}) {
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}, onUpdateClick: () -> Unit = {}) {
     var showVersion by remember { mutableStateOf(false) }
     var privacyMode by remember { mutableStateOf(prefs.privacyMode) }
     var homeOrder by remember { mutableStateOf(normalizeHomeOrder(prefs.homeOrder)) }
@@ -2171,7 +2189,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
 
         topNav()
 
-        if (showVersion) VersionInfoDialog { showVersion = false }
+        if (showVersion) VersionInfoDialog(onDismiss = { showVersion = false }, onUpdateFound = onUpdateFound)
 
         homeOrder.forEach { cardKey ->
             key(cardKey) {
@@ -3786,8 +3804,10 @@ fun PingLossPill(points: List<PingPoint>) {
 fun PingChart(points: List<PingPoint>, intervalMs: Long) {
     val scrollState = rememberScrollState()
     val ok = points.mapNotNull { it.ms }
-    val minOk = ok.minOrNull()
-    val maxOk = ok.maxOrNull()
+    // Y 轴优先参考当前尾部可视数据，避免历史偶发尖峰把整张图拉到过大的区间。
+    val axisOk = remember(points) { points.takeLast(360).mapNotNull { it.ms }.ifEmpty { ok } }
+    val minOk = axisOk.minOrNull()
+    val maxOk = axisOk.maxOrNull()
     val adaptiveRange = remember(points) {
         if (minOk == null || maxOk == null) {
             0 to 30
@@ -3798,7 +3818,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                 maxOk <= 18 && rawRange <= 5 -> (minOk - 4).coerceAtLeast(0) to (maxOk + 6).coerceAtLeast(12)
                 maxOk <= 30 && rawRange <= 10 -> (minOk - 5).coerceAtLeast(0) to (maxOk + 8).coerceAtLeast(18)
                 maxOk <= 60 -> 0 to pingNiceYMax(maxOk.coerceAtLeast(30))
-                else -> 0 to pingNiceYMax(maxOk)
+                else -> 0 to pingNiceYMax((maxOk * 1.12f).roundToInt())
             }
         }
     }
@@ -3815,7 +3835,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
             .height(194.dp)
             .clip(RoundedCornerShape(12.dp))
     ) {
-        val axisWidth = 24.dp
+        val axisWidth = 30.dp
         val baseWidth = maxWidth
         val plotViewportWidth = (baseWidth - axisWidth).coerceAtLeast(120.dp)
         val extraWidth = when {
@@ -3925,7 +3945,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                         points.forEach { pnt ->
                             if (pnt.ms == null) {
                                 val x = xFor(pnt.elapsedMs)
-                                drawCircle(Color(0xFFEF4444), radius = 1.45.dp.toPx(), center = Offset(x, plotBottom - 3.dp.toPx()))
+                                drawLine(Color(0xFFEF4444), Offset(x, plotBottom - 11.dp.toPx()), Offset(x, plotBottom - 2.dp.toPx()), strokeWidth = 1.6.dp.toPx(), cap = StrokeCap.Round)
                             }
                         }
                     }
@@ -3958,7 +3978,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                         textSize = 7.2.sp.toPx()
                         isFakeBoldText = true
                         isAntiAlias = true
-                        textAlign = Paint.Align.RIGHT
+                        textAlign = Paint.Align.LEFT
                     }
                     val tickStep = (yMax - yMin) / 4.0
                     val yTicks = (0..4).map { (yMin + tickStep * it).roundToInt() }.distinct()
@@ -3971,7 +3991,7 @@ fun PingChart(points: List<PingPoint>, intervalMs: Long) {
                             yMax -> y + 3.0.dp.toPx()
                             else -> y + 2.5f
                         }
-                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), plotLeft - 2.5.dp.toPx(), yText, yPaint)
+                        drawContext.canvas.nativeCanvas.drawText(tick.toString(), 5.dp.toPx(), yText, yPaint)
                     }
 
                     // 固定 X 轴覆盖层：根据当前横向滚动视口重新计算时间刻度。
@@ -4026,15 +4046,15 @@ fun PingStats(points: List<PingPoint>) {
     val timeout = if (points.isEmpty()) "超时 --" else "超时 ${pingTimeoutCount(points)}"
     val elapsed = points.maxOfOrNull { it.elapsedMs } ?: 0L
     val spent = if (points.isEmpty()) "耗时 --" else "耗时 ${formatElapsedMs(elapsed)}"
-    val text = listOf(current, avg, max, min, jitter, timeout, spent).joinToString(" · ")
+    val text = listOf(current, avg, max, min, jitter, timeout, spent).joinToString(" ·")
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF2563EB).copy(alpha = .052f),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF2563EB).copy(alpha = .050f),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .08f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(text, fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .76f), maxLines = 1)
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .76f), maxLines = 1)
         }
     }
 }
@@ -4205,7 +4225,7 @@ fun SelectableLineChart(
             paint.textAlign = Paint.Align.LEFT
             paint.isFakeBoldText = true
             drawText("0", left, h - 7.dp.toPx(), paint)
-            paint.textAlign = Paint.Align.RIGHT
+            paint.textAlign = Paint.Align.LEFT
             drawText("${values.lastIndex}s", right, h - 7.dp.toPx(), paint)
             paint.isFakeBoldText = false
         }
@@ -4250,7 +4270,7 @@ fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(canvas: android.gr
     paint.strokeWidth = 1.15f
     paint.color = android.graphics.Color.rgb(226,232,240)
     paint.textSize = 10.5.sp.toPx()
-    paint.textAlign = Paint.Align.RIGHT
+    paint.textAlign = Paint.Align.LEFT
     paint.isFakeBoldText = true
     val labelGap = 4.dp.toPx()
     ticks.forEach { t ->
@@ -5733,6 +5753,23 @@ private fun pingJitterMs(points: List<PingPoint>): Int? {
 
 private fun pingTimeoutCount(points: List<PingPoint>): Int = points.count { it.ms == null }
 
+private fun shouldAutoStopPingNoReply(points: List<PingPoint>, nowElapsedMs: Long, windowMs: Long = 3000L, minAttempts: Int = 3): Boolean {
+    if (nowElapsedMs < windowMs || points.size < minAttempts) return false
+    val windowStart = (nowElapsedMs - windowMs).coerceAtLeast(0L)
+    var recent = 0
+    var success = 0
+    var i = points.size - 1
+    while (i >= 0) {
+        val p = points[i]
+        if (p.elapsedMs < windowStart) break
+        recent++
+        if (p.ms != null) success++
+        i--
+    }
+    return recent >= minAttempts && success == 0
+}
+
+
 private fun formatBytes(bytes: Int): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
@@ -5919,6 +5956,7 @@ private suspend fun runPosixIcmpSeries(
     var firstSendAt = 0L
     var successCount = 0
     var noReplyFallback = false
+    var autoStopNoReply = false
     var hadKernelError = false
 
     fun earliestTimeout(now: Long): Long {
@@ -6006,11 +6044,15 @@ private suspend fun runPosixIcmpSeries(
                 }
                 i++
             }
+            val nowElapsed = after - start
+            if (shouldAutoStopPingNoReply(points, nowElapsed)) {
+                autoStopNoReply = true
+                break
+            }
             // 某些 ROM 允许创建 socket 但 ICMPv6/ICMP datagram 实际不回包。
-            // 前 8 个探测全无响应时快速降级系统 ping，避免空跑 1000 次。
-            val probeLimit = count.coerceAtMost(8)
-            if (successCount == 0 && finished >= probeLimit && sent >= probeLimit) {
-                noReplyFallback = true
+            // 3 秒内仍无任何有效响应时直接结束，不再长期空跑。
+            if (successCount == 0 && nowElapsed >= 3000L && sent >= 3) {
+                autoStopNoReply = true
                 break
             }
         }
@@ -6022,7 +6064,8 @@ private suspend fun runPosixIcmpSeries(
         null
     } else {
         val elapsed = (points.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
-        PingRunResult(points.sortedBy { it.elapsedMs }, elapsed, "ICMP Posix Os.poll 引擎：无特权 Socket，高频事件驱动", "ICMP", host)
+        val mode = if (autoStopNoReply) "ICMP 自动停止：连续 3 秒 100% 丢包，目标可能不可达" else "ICMP Posix Os.poll 引擎：无特权 Socket，高频事件驱动"
+        PingRunResult(points.sortedBy { it.elapsedMs }, elapsed, mode, "ICMP", host)
     }
 }
 
@@ -6079,6 +6122,7 @@ suspend fun runIcmpSeries(
                                 val point = PingPoint(idx, ms, "#$idx ${ms}ms @${formatElapsedMs(elapsed)}", elapsed)
                                 fastPoints += point
                                 withContext(Dispatchers.Main) { onPoint(point) }
+                                if (shouldAutoStopPingNoReply(fastPoints, elapsed)) break
                                 if (idx >= count) break
                                 continue
                             }
@@ -6087,6 +6131,7 @@ suspend fun runIcmpSeries(
                                 val point = PingPoint(idx, null, "#$idx timeout @${formatElapsedMs(elapsed)}", elapsed)
                                 fastPoints += point
                                 withContext(Dispatchers.Main) { onPoint(point) }
+                                if (shouldAutoStopPingNoReply(fastPoints, elapsed)) break
                                 if (idx >= count) break
                             }
                         }
@@ -6135,7 +6180,7 @@ suspend fun runIcmpSeries(
         val point = PingPoint(i, ms, if (ms == null) "#$i timeout @${formatElapsedMs(elapsed)}" else "#$i ${ms}ms @${formatElapsedMs(elapsed)}", elapsed)
         fallbackPoints += point
         onPoint(point)
-        if (fallbackPoints.none { it.ms != null } && consecutiveTimeout >= noDataStop) {
+        if (shouldAutoStopPingNoReply(fallbackPoints, elapsed) || (fallbackPoints.none { it.ms != null } && consecutiveTimeout >= noDataStop)) {
             autoStopped = true
             break
         }
@@ -6144,7 +6189,7 @@ suspend fun runIcmpSeries(
         if (sleepMs > 0L) delay(sleepMs)
     }
     val elapsed = (fallbackPoints.maxOfOrNull { it.elapsedMs } ?: (SystemClock.elapsedRealtime() - start)).coerceAtLeast(0L)
-    val mode = if (autoStopped) "ICMP 自动停止：连续无有效响应，避免后台空跑" else "ICMP 兼容稳定采样：真实时间轴"
+    val mode = if (autoStopped) "ICMP 自动停止：连续 3 秒 100% 丢包，目标可能不可达" else "ICMP 兼容稳定采样：真实时间轴"
     return PingRunResult(fallbackPoints.toList(), elapsed, mode, "ICMP", host)
 }
 
@@ -6168,6 +6213,7 @@ suspend fun runConnectSeries(
         val point = PingPoint(i, ms, if (ms == null) "#$i TCP超时 @${formatElapsedMs(elapsed)}" else "#$i TCP ${ms}ms @${formatElapsedMs(elapsed)}", elapsed)
         points += point
         onPoint(point)
+        if (shouldAutoStopPingNoReply(points, elapsed)) break
         nextAt += intervalMs
         val sleepMs = nextAt - SystemClock.elapsedRealtime()
         if (sleepMs > 0L) delay(sleepMs)
@@ -6198,6 +6244,7 @@ suspend fun runHttpSeries(
         val point = PingPoint(i, result.first, if (result.first == null) "#$i HTTP失败 @${formatElapsedMs(elapsed)}" else "#$i HTTP ${result.first}ms @${formatElapsedMs(elapsed)}", elapsed)
         points += point
         onPoint(point)
+        if (shouldAutoStopPingNoReply(points, elapsed)) break
         nextAt += intervalMs
         val sleepMs = nextAt - SystemClock.elapsedRealtime()
         if (sleepMs > 0L) delay(sleepMs)
