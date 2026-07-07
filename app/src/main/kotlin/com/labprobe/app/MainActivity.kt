@@ -3385,7 +3385,9 @@ fun LoadLatencyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("负载
 @Composable
 fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "公网出口 / 双栈 / AAAA / ASN", onBack) { Ipv6TestTool(prefs) }
 @Composable
-fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) { WifiRoamingTool(prefs) }
+fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) {
+    WifiRoamingTool(prefs)
+}
 @Composable
 fun MtuScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("MTU 检测", "路径 MTU · 分片探测", onBack) { MtuTool(prefs) }
 @Composable
@@ -3715,20 +3717,19 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     var reportHistory by remember { mutableStateOf(prefs.roamingReports()) }
     var job by remember { mutableStateOf<Job?>(null) }
     var requestedOnEnter by remember { mutableStateOf(false) }
-    var hasRoamPermissions by remember { mutableStateOf(hasRequiredWifiRoamingPermissions(ctx)) }
+    var hasRoamPermissions by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
         status = if (hasRoamPermissions) "权限已就绪" else "缺少必要权限，下次进入漫游测试页会再次提醒"
     }
     LaunchedEffect(Unit) {
+        // 只做权限状态检查，不在进入页面时直接拉起系统权限弹窗。
+        // 部分国产系统在页面切换/首帧期间调用 ActivityResultLauncher 会直接导致闪退。
+        delay(420)
+        hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
         if (!hasRoamPermissions && !requestedOnEnter) {
             requestedOnEnter = true
-            delay(260)
-            val missing = missingWifiRoamingPermissions(ctx)
-            if (missing.isNotEmpty()) {
-                runCatching { permissionLauncher.launch(missing) }
-                    .onFailure { status = "权限请求启动失败：${it.javaClass.simpleName}" }
-            }
+            status = "需要定位/Wi‑Fi 权限；点击开始测试后会自动请求"
         }
     }
 
