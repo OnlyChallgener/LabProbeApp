@@ -1,11 +1,15 @@
-# LabProbe v0.9.17 build104 完整覆盖修复包
+# LabProbe build105 完整覆盖说明
 
-用途：从稳定的 build101 漫游入口回退版重新打包，修复 build102/103 混合覆盖导致的大量 Kotlin unresolved reference 编译错误。
+把本目录内所有内容复制到 `D:\Github\LabProbeApp`，选择全部覆盖。
 
-重要：这次需要先删除旧源码目录再复制，避免旧文件和新文件混编。
+覆盖后检查：
 
-1. 备份 D:\\Github\\LabProbeApp
-2. 删除 D:\\Github\\LabProbeApp\\app\\src\\main\\kotlin\\com\\labprobe\\app 整个 app 文件夹
-3. 把本包内所有内容覆盖到 D:\\Github\\LabProbeApp
-4. 检查 versionCode=104 和 AppVersion.CODE=104
-5. git add . && git commit && git push && tag
+```bash
+cd /d/Github/LabProbeApp
+grep -n "versionCode" app/build.gradle.kts
+grep -n "const val CODE" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+grep -n "fun WifiRoamingScreen" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+grep -n "fun WifiRoamingTool" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+```
+
+应看到 versionCode/CODE 为 105，并且 WifiRoamingScreen 调用完整 WifiRoamingTool。

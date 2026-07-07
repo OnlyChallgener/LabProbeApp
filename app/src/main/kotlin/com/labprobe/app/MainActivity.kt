@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 104
+    const val CODE = 105
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
@@ -3394,7 +3394,8 @@ fun LoadLatencyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("负载
 fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "公网出口 / 双栈 / AAAA / ASN", onBack) { Ipv6TestTool(prefs) }
 @Composable
 fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) {
-    WifiRoamingToolEmergencyStable(prefs)
+    // build105: 使用完整漫游模块；该模块进入页不读取 Wi-Fi、不弹权限，点击开始后才检查。
+    WifiRoamingTool(prefs)
 }
 
 @Composable
@@ -4156,7 +4157,21 @@ private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifie
 private fun RoamPlainInfo(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("$label：", Modifier.width(58.dp), fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
-        Text(value, fontSize = 12.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .80f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(
+            Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                value,
+                fontSize = 12.2.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .80f),
+                maxLines = 1,
+                overflow = TextOverflow.Visible
+            )
+        }
     }
 }
 
