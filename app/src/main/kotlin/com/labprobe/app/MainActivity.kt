@@ -3385,27 +3385,7 @@ fun LoadLatencyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("负载
 @Composable
 fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "公网出口 / 双栈 / AAAA / ASN", onBack) { Ipv6TestTool(prefs) }
 @Composable
-fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) {
-    var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(360)
-        ready = true
-    }
-    if (!ready) {
-        ExpressiveCard("漫游测试", "正在准备权限与 Wi‑Fi 状态", Icons.Rounded.Wifi, Color(0xFF16A34A)) {
-            Text(
-                "正在初始化漫游测试页面…",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f)
-            )
-        }
-    } else {
-        // Compose 不允许在 try/catch 中直接包裹 @Composable 调用；
-        // 入口稳定后直接渲染漫游工具，内部权限/Wi-Fi 读取已经各自做 runCatching 保护。
-        WifiRoamingTool(prefs)
-    }
-}
+fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) { WifiRoamingTool(prefs) }
 @Composable
 fun MtuScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("MTU 检测", "路径 MTU · 分片探测", onBack) { MtuTool(prefs) }
 @Composable
@@ -3735,19 +3715,15 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     var reportHistory by remember { mutableStateOf(prefs.roamingReports()) }
     var job by remember { mutableStateOf<Job?>(null) }
     var requestedOnEnter by remember { mutableStateOf(false) }
-    var hasRoamPermissions by remember { mutableStateOf(false) }
+    var hasRoamPermissions by remember { mutableStateOf(hasRequiredWifiRoamingPermissions(ctx)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
         status = if (hasRoamPermissions) "权限已就绪" else "缺少必要权限，下次进入漫游测试页会再次提醒"
     }
     LaunchedEffect(Unit) {
-        delay(420)
-        hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
         if (!hasRoamPermissions && !requestedOnEnter) {
             requestedOnEnter = true
-            // 页面由工具卡片切入时，系统权限弹窗不能贴着路由动画立即启动；部分系统会直接抛异常/闪退。
-            // 延迟到页面稳定后再请求，且所有异常只显示为状态文案。
-            delay(900)
+            delay(260)
             val missing = missingWifiRoamingPermissions(ctx)
             if (missing.isNotEmpty()) {
                 runCatching { permissionLauncher.launch(missing) }
