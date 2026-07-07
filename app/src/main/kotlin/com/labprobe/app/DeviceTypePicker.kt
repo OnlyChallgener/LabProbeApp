@@ -96,7 +96,7 @@ fun DeviceTypeIconPreview(rule: DeviceTypeRule, size: Int = 38) {
             .background(rule.accent.copy(alpha = .12f)),
         contentAlignment = Alignment.Center
     ) {
-        Icon(deviceTypeIcon(rule.iconKey), null, tint = rule.accent, modifier = Modifier.size((size * 0.52f).dp))
+        LabMiniDeviceIcon(rule.iconKey, rule.accent, sizeDp = size)
     }
 }
 

@@ -109,7 +109,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
     var editing by remember { mutableStateOf(false) }
     LabBottomSheet(onDismiss = onDismiss) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LabIconBox(profile.icon, profile.accent, sizeDp = 48)
+            LabIconBox(profile.icon, profile.accent, sizeDp = 48, iconKey = profile.iconKey)
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
                 Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, fontSize = 19.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)

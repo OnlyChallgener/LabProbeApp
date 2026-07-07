@@ -32,7 +32,8 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
         accent = rule.accent,
         wolCandidate = wol,
         confidence = confidence,
-        note = note
+        note = note,
+        iconKey = rule.iconKey
     )
 }
 

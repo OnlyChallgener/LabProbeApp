@@ -35,7 +35,8 @@ data class DeviceVisualProfile(
     val accent: Color,
     val wolCandidate: Boolean,
     val confidence: Int,
-    val note: String
+    val note: String,
+    val iconKey: String = "unknown"
 )
 
 data class EventItem(

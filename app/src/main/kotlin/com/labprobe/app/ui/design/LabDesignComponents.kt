@@ -75,15 +75,19 @@ fun LabStatusBadge(online: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun LabIconBox(icon: ImageVector, accent: Color, modifier: Modifier = Modifier, sizeDp: Int = 42) {
-    Box(
-        modifier
-            .size(sizeDp.dp)
-            .clip(RoundedCornerShape((sizeDp * .38f).dp))
-            .background(accent.copy(alpha = .12f)),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size((sizeDp * .48f).dp))
+fun LabIconBox(icon: ImageVector, accent: Color, modifier: Modifier = Modifier, sizeDp: Int = 42, iconKey: String = "") {
+    if (iconKey.isNotBlank()) {
+        LabMiniDeviceIcon(iconKey, accent, modifier = modifier, sizeDp = sizeDp)
+    } else {
+        Box(
+            modifier
+                .size(sizeDp.dp)
+                .clip(RoundedCornerShape((sizeDp * .38f).dp))
+                .background(accent.copy(alpha = .12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size((sizeDp * .48f).dp))
+        }
     }
 }
 

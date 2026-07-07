@@ -282,9 +282,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
 
 @Composable
 private fun SmallTypeIcon(profile: DeviceVisualProfile, size: Int = 40) {
-    Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 3).dp)).background(profile.accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-        Icon(profile.icon, null, tint = profile.accent, modifier = Modifier.size((size * 0.52f).dp))
-    }
+    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = size)
 }
 
 @Composable

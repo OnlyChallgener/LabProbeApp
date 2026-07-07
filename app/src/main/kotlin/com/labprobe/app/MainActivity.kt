@@ -1363,6 +1363,7 @@ fun ExpressiveCard(
     accent: Color = MaterialTheme.colorScheme.primary,
     headerAction: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    iconKey: String = "",
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(26.dp)
@@ -1378,7 +1379,10 @@ fun ExpressiveCard(
     ) {
         Column(Modifier.padding(horizontal = 15.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) {
+                if (iconKey.isNotBlank()) {
+                    LabMiniDeviceIcon(iconKey, accent, sizeDp = 38)
+                    Spacer(Modifier.width(10.dp))
+                } else if (icon != null) {
                     Box(
                         Modifier
                             .size(36.dp)
@@ -2990,6 +2994,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         subtitle = if (wifi) listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ") else "",
         icon = profile.icon,
         accent = profile.accent,
+        iconKey = profile.iconKey,
         headerAction = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = profile.accent.copy(alpha = .10f)) {
@@ -3718,7 +3723,12 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     LaunchedEffect(Unit) {
         if (!hasRoamPermissions && !requestedOnEnter) {
             requestedOnEnter = true
-            permissionLauncher.launch(requiredWifiRoamingPermissions())
+            delay(260)
+            val missing = missingWifiRoamingPermissions(ctx)
+            if (missing.isNotEmpty()) {
+                runCatching { permissionLauncher.launch(missing) }
+                    .onFailure { status = "权限请求启动失败：${it.javaClass.simpleName}" }
+            }
         }
     }
 
@@ -3857,7 +3867,11 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                         hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
                         if (!hasRoamPermissions) {
                             status = "缺少必要权限，已请求授权"
-                            permissionLauncher.launch(requiredWifiRoamingPermissions())
+                            val missing = missingWifiRoamingPermissions(ctx)
+                            if (missing.isNotEmpty()) {
+                                runCatching { permissionLauncher.launch(missing) }
+                                    .onFailure { status = "权限请求启动失败：${it.javaClass.simpleName}" }
+                            }
                             return@Button
                         }
                         if (!isWifiConnected(ctx)) {
@@ -7957,32 +7971,39 @@ suspend fun runDownloadTemplateTest(url: String, durationSec: Int, onTick: suspe
 }
 
 fun requiredWifiRoamingPermissions(): Array<String> {
-    val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    val perms = mutableListOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         perms += Manifest.permission.NEARBY_WIFI_DEVICES
     }
     return perms.distinct().toTypedArray()
 }
 
-fun hasRequiredWifiRoamingPermissions(ctx: Context): Boolean =
-    requiredWifiRoamingPermissions().all { ctx.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+fun missingWifiRoamingPermissions(ctx: Context): Array<String> =
+    requiredWifiRoamingPermissions().filter { runCatching { ctx.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.getOrDefault(false) }.toTypedArray()
+
+fun hasRequiredWifiRoamingPermissions(ctx: Context): Boolean = missingWifiRoamingPermissions(ctx).isEmpty()
 
 fun isWifiConnected(ctx: Context): Boolean {
-    val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-    val active = cm?.activeNetwork
-    val caps = active?.let { cm.getNetworkCapabilities(it) }
-    if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) return true
-    val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-    val info = wifi?.connectionInfo
-    val ssid = info?.ssid?.replace("\"", "")?.trim().orEmpty()
-    val bssid = info?.bssid.orEmpty()
-    return info != null && info.networkId != -1 && ssid.isNotBlank() && ssid != "<unknown ssid>" && bssid.isNotBlank() && bssid != "02:00:00:00:00:00"
+    return runCatching {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val active = cm?.activeNetwork
+        val caps = active?.let { cm.getNetworkCapabilities(it) }
+        if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) return true
+        val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val info = runCatching { wifi?.connectionInfo }.getOrNull()
+        val ssid = info?.ssid?.replace("\"", "")?.trim().orEmpty()
+        val bssid = info?.bssid.orEmpty()
+        info != null && info.networkId != -1 && ssid.isNotBlank() && ssid != "<unknown ssid>" && bssid.isNotBlank() && bssid != "02:00:00:00:00:00"
+    }.getOrDefault(false)
 }
 
 suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutMs: Int = 800, requestScan: Boolean = false): WifiSample = withContext(Dispatchers.IO) {
     val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-    val info = wifi?.connectionInfo
+    val info = runCatching { wifi?.connectionInfo }.getOrNull()
     val ssid = info?.ssid?.replace("\"", "")?.trim().orEmpty().ifBlank { "unknown" }
     val bssid = info?.bssid?.lowercase(Locale.US).orEmpty()
     val rssi = info?.rssi ?: -127
