@@ -1,7 +1,6 @@
 package com.labprobe.app
 
 import android.graphics.Paint
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -176,7 +175,7 @@ private fun RoamingWaveChart(
                     val gridColor = Color(0xFF94A3B8).copy(alpha = .20f)
                     val axisColor = scheme.onSurfaceVariant.copy(alpha = .78f)
                     val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = axisColor.toArgbCompat()
+                        setColor(axisColor.toArgbCompat())
                         textSize = 9.2.sp.toPx()
                         textAlign = Paint.Align.RIGHT
                         isFakeBoldText = false
@@ -190,7 +189,7 @@ private fun RoamingWaveChart(
                         drawContext.canvas.nativeCanvas.drawText(yFormatter(tick), axisLeft - 5.dp.toPx(), y - (fm.ascent + fm.descent) / 2f, labelPaint)
                     }
                     val xPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = axisColor.toArgbCompat()
+                        setColor(axisColor.toArgbCompat())
                         textSize = 8.8.sp.toPx()
                         textAlign = Paint.Align.CENTER
                     }
@@ -221,8 +220,10 @@ private fun RoamingWaveChart(
                     }
                 }
                 if (values.isEmpty()) Text(emptyText, modifier = Modifier.align(Alignment.Center), color = scheme.onSurfaceVariant.copy(alpha = .58f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                AnimatedVisibility(visible = running && !followLive, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                    AssistChip(onClick = { followLive = true }, label = { Text("返回实时", fontSize = 10.5.sp) }, leadingIcon = { Icon(Icons.Rounded.MyLocation, null) })
+                if (running && !followLive) {
+                    Box(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+                        AssistChip(onClick = { followLive = true }, label = { Text("返回实时", fontSize = 10.5.sp) }, leadingIcon = { Icon(Icons.Rounded.MyLocation, null) })
+                    }
                 }
             }
         }
