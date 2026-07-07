@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 101
+    const val CODE = 102
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
@@ -3399,6 +3399,7 @@ fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线
 
 @Composable
 fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
+    // build102：在 build101 稳定入口基础上恢复专业能力；进入页面仍然不读 Wi‑Fi、不弹权限。
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
@@ -3409,69 +3410,139 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     var sampleMode by remember { mutableStateOf("标准250ms") }
     var sampleMs by remember { mutableStateOf("250") }
     var timeoutMs by remember { mutableStateOf("1000") }
+    var scanMs by remember { mutableStateOf("1500") }
+    var weakRssiThreshold by remember { mutableStateOf("-70") }
+    var candidateGapDb by remember { mutableStateOf("10") }
+    var triggerSeconds by remember { mutableStateOf("3") }
+    var highLatencyMs by remember { mutableStateOf("150") }
+    var lossTriggerCount by remember { mutableStateOf("2") }
+    var advancedOpen by remember { mutableStateOf(false) }
+    var roamView by remember { mutableStateOf("main") }
+    var selectedReport by remember { mutableStateOf<RoamingReport?>(null) }
+    var reportHistory by remember { mutableStateOf<List<RoamingReport>>(emptyList()) }
     var job by remember { mutableStateOf<Job?>(null) }
 
-    val interval = sampleMs.toIntOrNull()?.coerceIn(100, 5000) ?: when (sampleMode) {
+    val interval = sampleMs.toIntOrNull()?.coerceIn(80, 5000) ?: when (sampleMode) {
         "高频100ms" -> 100
         "低频500ms" -> 500
         else -> 250
     }
-    val timeout = timeoutMs.toIntOrNull()?.coerceIn(300, 5000) ?: 1000
+    val timeout = timeoutMs.toIntOrNull()?.coerceIn(150, 5000) ?: 1000
+    val scanInterval = scanMs.toIntOrNull()?.coerceIn(500, 10000) ?: 1500
+    val weakThreshold = weakRssiThreshold.toIntOrNull()?.coerceIn(-90, -45) ?: -70
+    val candidateGap = candidateGapDb.toIntOrNull()?.coerceIn(3, 35) ?: 10
+    val triggerSec = triggerSeconds.toIntOrNull()?.coerceIn(1, 15) ?: 3
+    val highLatency = highLatencyMs.toIntOrNull()?.coerceIn(50, 3000) ?: 150
+    val lossTrigger = lossTriggerCount.toIntOrNull()?.coerceIn(1, 10) ?: 2
     val effectiveTarget = remember(targetMode, wanTarget) {
         when (targetMode) {
             "仅外网" -> wanTarget.trim().ifBlank { "223.5.5.5" }
             else -> "网关"
         }
     }
+
     val latest = samples.lastOrNull()
     val validSamples = remember(samples) { samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" } }
     val roamCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid } }
     val lostCount = remember(samples) { samples.count { it.lost } }
     val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
-    val events = remember(samples) { buildRoamingEventChain(samples, -70, 10, 3, 150, 2) }
-
-    DisposableEffect(Unit) {
-        onDispose { job?.cancel() }
+    val stickyScore = remember(samples, weakThreshold, candidateGap) { calculateStickyScore(samples, weakThreshold, candidateGap) }
+    val events = remember(samples, weakThreshold, candidateGap, triggerSec, highLatency, lossTrigger) {
+        buildRoamingEventChain(samples, weakThreshold, candidateGap, triggerSec, highLatency, lossTrigger)
+    }
+    val quality = remember(samples, events, stickyScore) { buildRoamingQuality(samples, events, stickyScore) }
+    val currentReport = remember(samples, events, quality, targetMode, sampleMode, stickyScore) {
+        buildRoamingReport(samples, events, quality, targetMode, sampleMode, stickyScore)
     }
 
-    ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi，不弹权限；点击开始后才检测。", null, Color(0xFF2563EB)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
-            RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
-            RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f)) { targetMode = "仅外网" }
+    DisposableEffect(Unit) { onDispose { job?.cancel() } }
+    BackHandler(enabled = roamView != "main") {
+        roamView = "main"
+        selectedReport = null
+    }
+    if (roamView == "history") {
+        RoamingReportHistoryScreen(
+            reports = reportHistory,
+            storageKb = prefs.roamingReportsKb(),
+            onBack = { roamView = "main" },
+            onOpen = { selectedReport = it; roamView = "report" },
+            onDelete = { id -> prefs.deleteRoamingReport(id); reportHistory = prefs.roamingReports() },
+            onClear = { prefs.clearRoamingReports(); reportHistory = emptyList() }
+        )
+        return
+    }
+    selectedReport?.takeIf { roamView == "report" }?.let { report ->
+        RoamingReportDetailScreen(report = report, onBack = { roamView = "history" })
+        return
+    }
+
+    ExpressiveCard("漫游配置", "稳定增强模式：进入页面不读 Wi‑Fi；专业参数/历史按需打开。", null, Color(0xFF2563EB)) {
+        Text("目标", fontSize = 11.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            RoamSegmentButtonCompact("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
+            RoamSegmentButtonCompact("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
+            RoamSegmentButtonCompact("仅外网", targetMode == "仅外网", Modifier.weight(1f)) { targetMode = "仅外网" }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("外网", Modifier.width(52.dp), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f))
-            OutlinedTextField(
-                value = wanTarget,
-                onValueChange = { wanTarget = it.trim().take(64) },
-                enabled = targetMode != "仅路由器",
-                singleLine = true,
-                leadingIcon = { FieldIconBox(Icons.Rounded.Public, Color(0xFF2563EB)) },
-                textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold),
-                colors = labOutlinedColors(),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.weight(1f).height(58.dp)
-            )
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TinyParamInputIcon("采样ms", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f))
+            Text("外网", Modifier.width(42.dp), fontSize = 11.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f))
+            RoamAddressInput(wanTarget, { wanTarget = it.trim().take(64) }, enabled = targetMode != "仅路由器", modifier = Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CompactRoamInputSmall("采样", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+            CompactRoamInputSmall("超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, Modifier.weight(1f), "ms")
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             listOf("高频100ms", "标准250ms", "低频500ms").forEach { mode ->
-                RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f)) {
+                RoamSegmentButtonCompact(mode, sampleMode == mode, Modifier.weight(1f)) {
                     sampleMode = mode
                     sampleMs = when (mode) { "高频100ms" -> "100"; "低频500ms" -> "500"; else -> "250" }
+                    scanMs = when (mode) { "高频100ms" -> "1000"; "低频500ms" -> "3000"; else -> "1500" }
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().clickable { advancedOpen = !advancedOpen },
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = .90f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f))
+        ) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Tune, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
+                Spacer(Modifier.width(7.dp))
+                Text("高级参数", Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                Text("弱信号 $weakThreshold · 候选差 ${candidateGap}dB", fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
+                Spacer(Modifier.width(4.dp))
+                Icon(if (advancedOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f))
+            }
+        }
+        AnimatedVisibility(advancedOpen) {
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    CompactRoamInputSmall("弱信号", weakRssiThreshold, { weakRssiThreshold = sanitizeSignedNumber(it).take(4) }, Icons.Rounded.Wifi, Modifier.weight(1f), "dBm")
+                    CompactRoamInputSmall("候选差", candidateGapDb, { candidateGapDb = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.CompareArrows, Modifier.weight(1f), "dB")
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    CompactRoamInputSmall("触发", triggerSeconds, { triggerSeconds = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "s")
+                    CompactRoamInputSmall("高延迟", highLatencyMs, { highLatencyMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Speed, Modifier.weight(1f), "ms")
+                    CompactRoamInputSmall("丢包", lossTriggerCount, { lossTriggerCount = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Warning, Modifier.weight(1f), "个")
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    CompactRoamInputSmall("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+                    CompactRoamInputSmall("AP扫描", scanMs, { scanMs = it.filter { c -> c.isDigit() }.take(5) }, Icons.Rounded.Radar, Modifier.weight(1f), "ms")
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { samples = emptyList(); status = "已清空" },
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.weight(.8f).height(52.dp)
-            ) { Text("清空", fontSize = 13.sp, fontWeight = FontWeight.Black) }
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(.72f).height(44.dp)
+            ) { Text("清空", fontSize = 12.2.sp, fontWeight = FontWeight.Black) }
+            OutlinedButton(
+                onClick = { reportHistory = prefs.roamingReports(); roamView = "history" },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(.72f).height(44.dp)
+            ) { Text("历史", fontSize = 12.2.sp, fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
                     if (running) {
@@ -3479,7 +3550,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     } else {
                         val hasPerm = runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
                         if (!hasPerm) {
-                            Toast.makeText(ctx, "请先在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(ctx, "请在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
                             status = "缺少定位/附近设备权限，无法读取 Wi‑Fi 漫游信息"
                             return@Button
                         }
@@ -3490,62 +3561,88 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         }
                         samples = emptyList(); running = true; status = "采集中..."
                         job = scope.launch {
+                            var lastScanAt = 0L
                             while (currentCoroutineContext().isActive) {
-                                val sample = runCatching { readWifiSample(ctx, effectiveTarget, timeout, false) }
+                                val nowMs = SystemClock.elapsedRealtime()
+                                val requestScan = nowMs - lastScanAt >= scanInterval
+                                if (requestScan) lastScanAt = nowMs
+                                val sample = runCatching { readWifiSample(ctx, effectiveTarget, timeout, requestScan) }
                                     .getOrElse {
                                         val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                                         WifiSample(now, "unknown", "", -127, null, true)
                                     }
-                                samples = (samples + sample).takeLast(1200)
-                                val okRssi = sample.rssi > -120
+                                samples = (samples + sample).takeLast(3600)
                                 val latestLoss = samples.count { it.lost }
                                 val latestValid = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
                                 val latestRoam = latestValid.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
-                                status = if (okRssi) "采样 ${samples.size} 次 · 漫游 $latestRoam 次 · 丢包 $latestLoss" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss"
+                                status = if (sample.rssi > -120) "采样 ${samples.size} · 漫游 $latestRoam · 丢包 $latestLoss · 粘AP ${calculateStickyScore(samples, weakThreshold, candidateGap)}" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} · 丢包 $latestLoss"
                                 delay(interval.toLong())
                             }
                         }
                     }
                 },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
-                modifier = Modifier.weight(1.3f).height(52.dp)
+                modifier = Modifier.weight(1.16f).height(44.dp)
             ) {
-                Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (running) "停止测试" else "开始测试", fontSize = 13.2.sp, fontWeight = FontWeight.Black)
+                Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (running) "停止测试" else "开始测试", fontSize = 12.6.sp, fontWeight = FontWeight.Black)
             }
         }
     }
 
-    ExpressiveCard("实时结果", status, null, Color(0xFF16A34A)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.weight(1f))
-            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.weight(1f))
-            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.weight(1f))
-            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.weight(1f))
-        }
-        RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
+    ExpressiveCard("实时结果", status, null, Color(0xFF16A34A), headerAction = {
+        TextButton(onClick = { reportHistory = prefs.roamingReports(); roamView = "history" }) { Text("历史", fontSize = 11.2.sp, fontWeight = FontWeight.Black) }
+        if (samples.isNotEmpty()) TextButton(onClick = { selectedReport = currentReport; roamView = "report" }) { Text("总结", fontSize = 11.2.sp, fontWeight = FontWeight.Black) }
+    }) {
+        RoamMetricStrip(
+            listOf(
+                RoamMetric("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—", Color(0xFF2563EB), 104.dp),
+                RoamMetric("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), 78.dp),
+                RoamMetric("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), 74.dp),
+                RoamMetric("候选AP", latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—", Color(0xFF0EA5E9), 78.dp),
+                RoamMetric("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", Color(0xFF7C3AED), 68.dp),
+                RoamMetric("粘AP", "$stickyScore", Color(0xFFEF4444), 68.dp),
+                RoamMetric("漫游", "$roamCount", Color(0xFF7C3AED), 68.dp)
+            )
+        )
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
+        RoamPlainInfo("候选", latest?.candidateBssid?.takeIf { it.isNotBlank() }?.let { "$it · ${latest.candidateRssi}dBm" } ?: "—")
         RoamPlainInfo("速率", buildRoamRateText(latest))
-        if (samples.isEmpty()) {
-            Text("点击开始测试后生成 RSSI、延迟、丢包和 AP 切换记录。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), lineHeight = 18.sp)
-        } else {
-            Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .94f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .08f))) {
-                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("漫游图表", fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.weight(1f))
-                        Text("轻量稳定模式", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
-                    }
-                    LabRoamCharts(samples, running = running, events = events, modifier = Modifier.fillMaxWidth())
-                }
+        RoamQualityCard(quality)
+        if (samples.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { selectedReport = currentReport; roamView = "report" },
+                    shape = RoundedCornerShape(15.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                ) { Text("查看总结", fontSize = 11.8.sp, fontWeight = FontWeight.Black) }
+                Button(
+                    onClick = { prefs.addRoamingReport(currentReport); reportHistory = prefs.roamingReports(); status = "测试总结已保存 · ${reportHistory.size}/20" },
+                    shape = RoundedCornerShape(15.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                ) { Text("保存报告", fontSize = 11.8.sp, fontWeight = FontWeight.Black) }
             }
-            Text("漫游事件", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
-            RoamEventTimeline(events.takeLast(8))
+        }
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .94f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .08f))) {
+            Column(Modifier.padding(9.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("漫游图表", fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.weight(1f))
+                    Text("竖线=事件", fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
+                }
+                LabRoamCharts(samples, running = running, events = events, modifier = Modifier.fillMaxWidth())
+            }
+        }
+        if (samples.isNotEmpty()) {
+            Text("漫游事件链", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+            RoamEventTimeline(events.takeLast(12))
         }
     }
 }
+
 @Composable
 fun MtuScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("MTU 检测", "路径 MTU · 分片探测", onBack) { MtuTool(prefs) }
 @Composable
