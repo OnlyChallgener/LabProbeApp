@@ -7,8 +7,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.ContextWrapper
-import android.app.Activity
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Build
@@ -20,7 +18,6 @@ import android.system.OsConstants
 import android.system.StructPollfd
 import android.content.Intent
 import androidx.core.content.FileProvider
-import androidx.core.app.ActivityCompat
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -139,10 +136,15 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.15"
-    const val CODE = 83
+    const val NAME = "0.9.17"
+    const val CODE = 99
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.17 build99 · 漫游入口稳定与版本显示修复" to listOf(
+            "修复 App 内部版本仍显示 v0.9.15 的问题，版本号同步为 v0.9.17 build99",
+            "漫游测试页进入时不读取 Wi‑Fi/权限状态，不弹权限页，避免页面切换时退回桌面",
+            "开始测试时再检查权限与 Wi‑Fi 连接，没连接 Wi‑Fi 只提示不启动采样"
+        ),
         "v0.9.15 · 设备识别 / IPv6 / WOL 自测" to listOf(
             "终端卡片新增自动设备类型识别：手机、平板、电脑、NAS、路由、电视、打印机、摄像头、音箱、IoT 等",
             "设备列表支持显示 IPv6 地址，多地址自动折叠为主 IPv6 + 数量提示，点击可复制",
@@ -3719,15 +3721,11 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     var selectedReport by remember { mutableStateOf<RoamingReport?>(null) }
     var reportHistory by remember { mutableStateOf(prefs.roamingReports()) }
     var job by remember { mutableStateOf<Job?>(null) }
-    var hasRoamPermissions by remember { mutableStateOf(safeHasWifiRoamingPermissions(ctx)) }
+    var hasRoamPermissions by remember { mutableStateOf(true) }
 
-    // 进入页面只渲染 UI，不自动弹系统权限、不注册 ActivityResult 请求。
-    // 部分国产系统/定制 ROM 在路由动画或首帧期间拉起权限页，会把 APP 切到后台。
-    // 因此权限只在用户点击“开始测试”时使用 ActivityCompat.requestPermissions 请求。
-    LaunchedEffect(Unit) {
-        hasRoamPermissions = safeHasWifiRoamingPermissions(ctx)
-        if (!hasRoamPermissions) status = "需要定位/Wi‑Fi 权限；点击开始测试后会请求"
-    }
+    // build99：进入页面只渲染静态 UI，不注册 ActivityResultLauncher，
+    // 不检查权限、不访问 Wi‑Fi 系统服务，避免部分国产 ROM 在页面首帧把 APP 切到后台。
+    // 点击“开始测试”时再检查权限和 Wi‑Fi 状态。
 
     val interval = sampleMs.toIntOrNull()?.coerceIn(80, 5000) ?: when (sampleMode) {
         "高频100ms" -> 100
@@ -3867,7 +3865,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                             val missing = safeMissingWifiRoamingPermissions(ctx)
                             val activity = ctx.findActivity()
                             if (missing.isNotEmpty() && activity != null) {
-                                runCatching { ActivityCompat.requestPermissions(activity, missing, 9701) }
+                                runCatching { ActivityCompat.requestPermissions(activity, missing, 9901) }
                                     .onFailure { status = "权限请求启动失败：${it.javaClass.simpleName}" }
                             } else {
                                 Toast.makeText(ctx, "请在系统设置中允许定位/Wi‑Fi权限", Toast.LENGTH_SHORT).show()
@@ -6510,7 +6508,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME}\nv0.9.15：白底导航、隐私模式、首页每日总结同步、整卡点击、拖拽缓冲和删除动画。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.17：设备识别、IPv6、WOL、漫游测试与轻量图标持续修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
@@ -7970,18 +7968,6 @@ suspend fun runDownloadTemplateTest(url: String, durationSec: Int, onTick: suspe
     val note = if (stopByPeak) "峰值稳定，自动停止：${formatTraffic(total)} · 峰值 ${String.format(Locale.US, "%.1f Mbps", peak)}" else "完成：${formatTraffic(total)} · 峰值 ${String.format(Locale.US, "%.1f Mbps", peak)}"
     SpeedTestResult(avg, peak, total, (elapsed/1000).toInt(), note)
 }
-
-fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
-}
-
-fun safeMissingWifiRoamingPermissions(ctx: Context): Array<String> =
-    runCatching { missingWifiRoamingPermissions(ctx) }.getOrDefault(emptyArray())
-
-fun safeHasWifiRoamingPermissions(ctx: Context): Boolean =
-    runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
 
 fun requiredWifiRoamingPermissions(): Array<String> {
     val perms = mutableListOf(

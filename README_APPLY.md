@@ -1,23 +1,17 @@
-# build98 完整覆盖说明
+# build99 完整覆盖说明
 
-这是完整工程覆盖包，不是小补丁。
+把本目录内所有文件复制覆盖到 `D:\Github\LabProbeApp`。
 
-推荐做法：
-
-1. 备份 D:\Github\LabProbeApp
-2. 删除或覆盖 D:\Github\LabProbeApp 内全部文件
-3. 将本压缩包内 LabProbeApp-main 文件夹里的所有内容复制到 D:\Github\LabProbeApp
-4. 执行：
+覆盖后检查：
 
 ```bash
 cd /d/Github/LabProbeApp
-git status
-git add .
-git commit -m "fix roaming entry safe permission request"
-git pull --rebase origin main
-git push origin main
-git tag v0.9.17-build98
-git push origin v0.9.17-build98
+grep -n "versionCode" app/build.gradle.kts
+grep -n "const val NAME" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+grep -n "const val CODE" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+grep -n "测试准备中" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+grep -n "正在初始化漫游测试页面" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+grep -n "正在准备权限" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 ```
 
-如果 tag 已存在，先删除再重打。
+正确结果：versionCode = 99；NAME = 0.9.17；CODE = 99；后三条无输出。
