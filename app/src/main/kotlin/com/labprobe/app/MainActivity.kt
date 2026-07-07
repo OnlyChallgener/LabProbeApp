@@ -5055,7 +5055,7 @@ fun buildRoamingReport(
     val duration = samples.size.coerceAtLeast(1)
     val roamCount = events.count { it.title == "AP 切换" }
     val lossNear = events.filter { it.title == "AP 切换" }.sumOf { e ->
-        Regex("丢包\s*(\d+)").find(e.detail)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+        Regex("""丢包\s*(\d+)""").find(e.detail)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
     }
     val bestGap = samples.map { it.rssiGapDb }.filter { it > 0 }.maxOrNull()
     val longestBreak = estimateLongestBreakMs(samples)
