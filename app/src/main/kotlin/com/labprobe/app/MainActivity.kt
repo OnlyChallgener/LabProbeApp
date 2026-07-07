@@ -1,6 +1,8 @@
 package com.labprobe.app
 
 import android.content.ClipData
+import android.content.ContextWrapper
+import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,6 +20,7 @@ import android.system.OsConstants
 import android.system.StructPollfd
 import android.content.Intent
 import androidx.core.content.FileProvider
+import androidx.core.app.ActivityCompat
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -137,13 +140,13 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 99
+    const val CODE = 100
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.17 build99 · 漫游入口稳定与版本显示修复" to listOf(
-            "修复 App 内部版本仍显示 v0.9.15 的问题，版本号同步为 v0.9.17 build99",
-            "漫游测试页进入时不读取 Wi‑Fi/权限状态，不弹权限页，避免页面切换时退回桌面",
-            "开始测试时再检查权限与 Wi‑Fi 连接，没连接 Wi‑Fi 只提示不启动采样"
+        "v0.9.17 build100 · 漫游权限编译修复" to listOf(
+            "补齐漫游权限安全函数与 Activity 查找函数，修复 build99 编译失败",
+            "开始测试时再请求缺失权限，进入漫游页仍保持静态安全渲染",
+            "版本号同步为 v0.9.17 build100"
         ),
         "v0.9.15 · 设备识别 / IPv6 / WOL 自测" to listOf(
             "终端卡片新增自动设备类型识别：手机、平板、电脑、NAS、路由、电视、打印机、摄像头、音箱、IoT 等",
@@ -7967,6 +7970,22 @@ suspend fun runDownloadTemplateTest(url: String, durationSec: Int, onTick: suspe
     val avg = total * 8.0 / elapsed / 1000.0
     val note = if (stopByPeak) "峰值稳定，自动停止：${formatTraffic(total)} · 峰值 ${String.format(Locale.US, "%.1f Mbps", peak)}" else "完成：${formatTraffic(total)} · 峰值 ${String.format(Locale.US, "%.1f Mbps", peak)}"
     SpeedTestResult(avg, peak, total, (elapsed/1000).toInt(), note)
+}
+
+
+fun safeMissingWifiRoamingPermissions(ctx: Context): Array<String> =
+    runCatching { missingWifiRoamingPermissions(ctx) }.getOrDefault(requiredWifiRoamingPermissions())
+
+fun safeHasWifiRoamingPermissions(ctx: Context): Boolean =
+    runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
+
+fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }
 
 fun requiredWifiRoamingPermissions(): Array<String> {
