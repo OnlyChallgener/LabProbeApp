@@ -3040,19 +3040,23 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
                 cleanApiText(d.lastSeenAt).takeIf { it.isNotBlank() }?.let { "最后 $it" }
             ).joinToString(" · ")
         }
-    } else ""
+    } else "有线设备"
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Surface(shape = RoundedCornerShape(14.dp), color = profile.accent.copy(alpha = .10f)) {
             Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
         }
-        Spacer(Modifier.width(8.dp))
-        Surface(shape = RoundedCornerShape(14.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFFFE4E6)) {
-            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
-        }
         if (timeText.isNotBlank()) {
             Spacer(Modifier.width(8.dp))
-            Text(timeText, Modifier.weight(1f).horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Clip)
+            Text(
+                timeText,
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (showTime) .54f else .62f),
+                fontSize = 10.8.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Clip
+            )
         } else {
             Spacer(Modifier.weight(1f))
         }
