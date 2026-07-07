@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 107
+    const val CODE = 108
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
@@ -3397,6 +3397,7 @@ fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线
     WifiRoamingToolEmergencyStable(prefs)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val ctx = LocalContext.current
@@ -3411,6 +3412,10 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     var timeoutMs by remember { mutableStateOf("1000") }
     var job by remember { mutableStateOf<Job?>(null) }
     var showCurrentSummary by remember { mutableStateOf(false) }
+    var showHistorySheet by remember { mutableStateOf(false) }
+    var selectedHistoryReport by remember { mutableStateOf<RoamingReport?>(null) }
+    var reportHistory by remember { mutableStateOf<List<RoamingReport>>(emptyList()) }
+    var reportHistoryKb by remember { mutableStateOf(1) }
 
     val interval = sampleMs.toIntOrNull()?.coerceIn(100, 5000) ?: when (sampleMode) {
         "高频100ms" -> 100
@@ -3435,8 +3440,71 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         if (samples.isEmpty()) null else buildRoamingReport(samples, events, quality, targetMode, sampleMode, 0)
     }
 
+    fun refreshRoamingHistory() {
+        reportHistory = prefs.roamingReports()
+        reportHistoryKb = prefs.roamingReportsKb()
+    }
+
     DisposableEffect(Unit) {
         onDispose { job?.cancel() }
+    }
+
+    if (showHistorySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showHistorySheet = false },
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            containerColor = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.88f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                RoamingReportHistoryScreen(
+                    reports = reportHistory,
+                    storageKb = reportHistoryKb,
+                    onBack = { showHistorySheet = false },
+                    onOpen = { report ->
+                        selectedHistoryReport = report
+                        showHistorySheet = false
+                    },
+                    onDelete = { id ->
+                        prefs.deleteRoamingReport(id)
+                        refreshRoamingHistory()
+                        status = "已删除一条漫游历史 · ${reportHistory.size}/20"
+                    },
+                    onClear = {
+                        prefs.clearRoamingReports()
+                        refreshRoamingHistory()
+                        status = "已清空漫游历史"
+                    }
+                )
+                Spacer(Modifier.height(18.dp))
+            }
+        }
+    }
+
+    selectedHistoryReport?.let { report ->
+        ModalBottomSheet(
+            onDismissRequest = { selectedHistoryReport = null },
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            containerColor = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.88f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                RoamingReportDetailScreen(report = report, onBack = { selectedHistoryReport = null })
+                Spacer(Modifier.height(18.dp))
+            }
+        }
     }
 
     ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi，不弹权限；点击开始后才检测。", null, Color(0xFF2563EB)) {
@@ -3471,12 +3539,17 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { samples = emptyList(); status = "已清空"; showCurrentSummary = false },
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.weight(.8f).height(52.dp)
-            ) { Text("清空", fontSize = 13.sp, fontWeight = FontWeight.Black) }
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(.72f).height(46.dp)
+            ) { Text("清空", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+            OutlinedButton(
+                onClick = { refreshRoamingHistory(); showHistorySheet = true },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(.78f).height(46.dp)
+            ) { Text("历史", fontSize = 12.sp, fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
                     if (running) {
@@ -3514,7 +3587,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 },
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
-                modifier = Modifier.weight(1.3f).height(52.dp)
+                modifier = Modifier.weight(1.35f).height(46.dp)
             ) {
                 Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
@@ -3559,6 +3632,13 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                             Column(Modifier.weight(1f)) {
                                 Text("当前测试总结", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                                 Text("不进入三级页面；仅在当前页折叠展示", fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f))
+                            }
+                            TextButton(onClick = {
+                                prefs.addRoamingReport(report)
+                                refreshRoamingHistory()
+                                status = "测试总结已保存 · ${reportHistory.size}/20 · ${reportHistoryKb}KB"
+                            }) {
+                                Text("保存", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
                             }
                             TextButton(onClick = { showCurrentSummary = !showCurrentSummary }) {
                                 Text(if (showCurrentSummary) "收起" else "展开", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
