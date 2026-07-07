@@ -34,6 +34,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -419,6 +420,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("cache_events", v).apply()
     var wolDevicesJson: String get() = sp.getString("wol_devices_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("wol_devices_v1", v).apply()
+    var deviceOverridesJson: String get() = sp.getString("device_overrides_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("device_overrides_v1", v).apply()
     var lastRefresh: String get() = sp.getString("last_refresh", "") ?: ""
         set(v) = sp.edit().putString("last_refresh", v).apply()
 
@@ -833,8 +836,9 @@ data class NatRunResult(
 
 class AppState(private val prefs: AppPrefs) {
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
-    var devices by mutableStateOf(parseDeviceArray(prefs.cacheDevices))
-    var onlineDevices by mutableStateOf(parseDeviceArray(prefs.cacheOnlineDevices))
+    var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
+    var devices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), deviceOverrides))
+    var onlineDevices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheOnlineDevices), deviceOverrides))
     var events by mutableStateOf(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)))
     var wolDevices by mutableStateOf(parseWolDevices(prefs.wolDevicesJson))
     var loading by mutableStateOf(false)
@@ -884,9 +888,9 @@ class AppState(private val prefs: AppPrefs) {
         val devOnline = api.getDevices(true)
         val evs = normalizeDeviceEvents(api.getEvents())
         status = stRoot
-        val devOnlineWithIpv6 = mergeIpv6NeighborsFromStatus(stRoot, devOnline)
-        val devWatchedWithIpv6 = mergeIpv6NeighborsFromStatus(stRoot, devWatched)
-        val mergedDevices = mergeDeviceCache(devices, devWatchedWithIpv6)
+        val devOnlineWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devOnline), deviceOverrides)
+        val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
+        val mergedDevices = applyDeviceOverrides(mergeDeviceCache(devices, devWatchedWithIpv6), deviceOverrides)
         devices = mergedDevices
         onlineDevices = devOnlineWithIpv6
         events = evs
@@ -904,6 +908,27 @@ class AppState(private val prefs: AppPrefs) {
     fun markHubChanged() {
         hubConnected = false
         message = "Hub 设置已变更，请测试或刷新"
+    }
+
+    fun saveDeviceOverride(mac: String, remark: String, typeInput: String, wolEnabledOverride: Boolean?) {
+        val clean = cleanMac(mac)
+        if (!isValidMac(clean)) {
+            message = "MAC 地址无效，未保存设备备注"
+            return
+        }
+        val normalizedType = normalizeDeviceTypeToken(typeInput).ifBlank { typeInput.trim() }
+        val item = DeviceOverrideConfig(
+            mac = clean,
+            remark = remark.trim(),
+            typeId = normalizedType,
+            wolEnabledOverride = wolEnabledOverride,
+            updatedAt = System.currentTimeMillis()
+        )
+        deviceOverrides = (listOf(item) + deviceOverrides.filterNot { it.mac.equals(clean, ignoreCase = true) }).take(200)
+        prefs.deviceOverridesJson = deviceOverridesToJson(deviceOverrides)
+        devices = applyDeviceOverrides(devices, deviceOverrides)
+        onlineDevices = applyDeviceOverrides(onlineDevices, deviceOverrides)
+        message = "已保存设备备注：${item.remark.ifBlank { clean }}"
     }
 
     suspend fun wakeDevice(ctx: Context, device: DeviceItem): String {
@@ -955,6 +980,7 @@ class AppState(private val prefs: AppPrefs) {
         val fixed = item.copy(mac = clean, id = item.id.ifBlank { clean }, typeId = normalizeDeviceTypeToken(item.typeId).ifBlank { item.typeId.ifBlank { "desktop" } }, updatedAt = System.currentTimeMillis())
         wolDevices = (listOf(fixed) + wolDevices.filterNot { it.mac.equals(clean, ignoreCase = true) }).take(80)
         prefs.wolDevicesJson = wolDevicesToJson(wolDevices)
+        saveDeviceOverride(clean, fixed.remark, fixed.typeId, fixed.enabled)
         message = "已保存 WOL 设备：${fixed.remark.ifBlank { fixed.mac }}"
     }
 
@@ -2877,7 +2903,6 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell
             FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("全部在线", fontSize = 12.sp) })
             FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
         }
-        Text("按 MAC 归并 IPv4 / IPv6；WOL 页共享在线列表状态，不单独连续 Ping。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     if (mode == "wol") {
@@ -2893,15 +2918,21 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
-    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.devType, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType) { inferDeviceProfile(d) }
+    var editingDevice by remember { mutableStateOf(false) }
+    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType) { inferDeviceProfile(d) }
     ExpressiveCard(
-        title = d.name.ifBlank { d.mac },
+        title = d.remark.ifBlank { d.name.ifBlank { d.mac } },
         subtitle = listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · "),
         icon = profile.icon,
         accent = profile.accent,
         headerAction = {
-            Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFFFE4E6)) {
-                Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = profile.accent.copy(alpha = .10f)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Edit, null, tint = profile.accent, modifier = Modifier.size(15.dp)) }
+                }
+                Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFFFE4E6)) {
+                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+                }
             }
         }
     ) {
@@ -2931,6 +2962,13 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem) {
                 }
             }
         }
+    }
+    if (editingDevice) {
+        DeviceOverrideEditDialog(
+            device = d,
+            state = state,
+            onDismiss = { editingDevice = false }
+        )
     }
 }
 
@@ -2964,10 +3002,10 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
         }.ifBlank { if (d.online) "在线信息待刷新" else "离线 · 暂无历史详情" }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(14.dp), color = profile.accent.copy(alpha = .10f)) {
-                Text("${profile.label} · 置信 ${profile.confidence}%", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Spacer(Modifier.width(8.dp))
-            Text(timeText, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(timeText, Modifier.weight(1f).horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Clip)
         }
         if (v6.size > 1) {
             Text("IPv6 共 ${v6.size} 个：${v6.take(2).joinToString(" · ") { shortIpv6(it) }}${if (v6.size > 2) " · …" else ""}", Modifier.clickable { copy(ctx, v6.joinToString("\n")) }.horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -2994,6 +3032,72 @@ fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Col
     }
 }
 
+
+@Composable
+fun DeviceOverrideEditDialog(device: DeviceItem, state: AppState, onDismiss: () -> Unit) {
+    val override = remember(device.mac, state.deviceOverrides) { overrideForDevice(device, state.deviceOverrides) }
+    var remark by remember(override) { mutableStateOf(override.remark.ifBlank { device.remark.ifBlank { device.name } }) }
+    var typeInput by remember(override) { mutableStateOf(override.typeId.ifBlank { inferDeviceProfile(device).type }) }
+    var wolOverride by remember(override) { mutableStateOf(override.wolEnabledOverride) }
+    val rule = deviceTypeRuleForInput(typeInput)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑设备", fontWeight = FontWeight.Black) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = remark,
+                    onValueChange = { remark = it },
+                    label = { Text("备注名称") },
+                    placeholder = { Text("例如：海尔电热水器 / 美的空调 / 绿联 DH4300") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                EditableDeviceTypeField(
+                    value = typeInput,
+                    onChange = { typeInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "设备类型（可输入/点箭头选择）"
+                )
+                OutlinedTextField(
+                    value = cleanMac(device.mac),
+                    onValueChange = {},
+                    label = { Text("MAC 地址") },
+                    readOnly = true,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Surface(shape = RoundedCornerShape(18.dp), color = rule.accent.copy(alpha = .08f), border = BorderStroke(1.dp, rule.accent.copy(alpha = .12f))) {
+                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        DeviceTypeIconPreview(rule, 42)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("图标预览：${rule.label}", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text("保存后按 MAC 本地覆盖，不受 Hub 旧分类影响", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 2)
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("WOL 候选", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                        Text("不确定可保持自动；NAS/台式/迷你主机建议开启", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
+                    }
+                    FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
+                    Spacer(Modifier.width(6.dp))
+                    Switch(checked = wolOverride ?: rule.wolDefault, onCheckedChange = { wolOverride = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                state.saveDeviceOverride(device.mac, remark, typeInput, wolOverride)
+                onDismiss()
+            }) { Text("保存", fontWeight = FontWeight.Black) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
 
 @Composable
 fun DeviceLine(d: DeviceItem, details: Boolean = false) {

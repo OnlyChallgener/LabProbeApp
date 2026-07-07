@@ -68,7 +68,7 @@ fun WolManagementPanel(state: AppState) {
     val candidates = remember(state.wolDevices, shared) { wolCandidatesFromDevices(shared, state.wolDevices) }
     val enabledCount = state.wolDevices.count { it.enabled }
 
-    ExpressiveCard("WOL 设备", "手动维护可唤醒设备；在线/离线直接共享终端列表状态。", Icons.Rounded.Power, Color(0xFF8B5CF6)) {
+    ExpressiveCard("WOL 设备", null, Icons.Rounded.Power, Color(0xFF8B5CF6)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f))
             Spacer(Modifier.weight(1f))
@@ -83,10 +83,8 @@ fun WolManagementPanel(state: AppState) {
                 Text("添加", fontSize = 12.sp, fontWeight = FontWeight.Black)
             }
         }
-        Text("不用连续 Ping：绿点/灰点来自 Hub 在线列表。点击唤醒后等待下一轮终端同步变更状态。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), fontSize = 11.sp, lineHeight = 15.sp)
-
         if (runtimes.isEmpty()) {
-            SurfaceHint("还没有手动 WOL 设备。建议先添加 NAS / 台式电脑 / 工控机，例如：绿联 DH4300 · NAS · 6C:1F:F7:76:71:04。")
+            Text("暂无 WOL 设备，点右上角添加。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontSize = 11.sp)
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 runtimes.forEach { item ->
@@ -157,36 +155,57 @@ private fun WolDeviceCard(
         shadowElevation = 2.dp,
         border = BorderStroke(1.dp, p.accent.copy(alpha = .10f))
     ) {
-        Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
-            SmallTypeIcon(p, 46)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(item.config.remark.ifBlank { item.config.mac }, Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    TypeBadge(p.label, p.accent)
+        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SmallTypeIcon(p, 44)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.config.remark.ifBlank { item.config.mac }, Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        TypeBadge(p.label, p.accent)
+                    }
+                    Text("MAC：${item.config.mac}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Text("MAC：${item.config.mac}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1)
-                Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    OnlineDot(item.online)
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (item.online) "在线" else "离线", fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (item.online) Color(0xFF16A34A) else Color(0xFF64748B))
-                    if (item.ip.isNotBlank()) Text(" · IP：${item.ip}", fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
-                    if (item.ipv6.isNotBlank()) Text(" · IPv6：${item.ipv6}", fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
-                    if (!item.online && item.lastSeen.isNotBlank()) Text(" · 最后：${item.lastSeen}", fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
-                }
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Switch(checked = item.config.enabled, onCheckedChange = onToggle)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButtonLite(Icons.Rounded.Edit, p.accent, onEdit)
-                    IconButtonLite(Icons.Rounded.Delete, Color(0xFFEF4444), onDelete)
+            }
+
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                OnlineDot(item.online)
+                Spacer(Modifier.width(5.dp))
+                Text(if (item.online) "在线" else "离线", fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (item.online) Color(0xFF16A34A) else Color(0xFF64748B))
+                if (item.ip.isNotBlank()) Text(" · IP：${item.ip}", fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
+                if (item.ipv6.isNotBlank()) Text(" · IPv6：${item.ipv6}", fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
+                if (!item.online && item.lastSeen.isNotBlank()) Text(" · 最后：${item.lastSeen}", fontSize = 11.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(
+                    onClick = onEdit,
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.Edit, null, tint = p.accent, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("编辑", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                }
+                OutlinedButton(
+                    onClick = onDelete,
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("删除", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFFEF4444))
                 }
                 Button(
                     onClick = onWake,
                     enabled = item.config.enabled && !item.online,
-                    shape = RoundedCornerShape(13.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF14B8A6)),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+                    modifier = Modifier.weight(1f)
                 ) { Text("唤醒", fontSize = 11.sp, fontWeight = FontWeight.Black) }
             }
         }
@@ -195,12 +214,11 @@ private fun WolDeviceCard(
 
 @Composable
 private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSave: (WolDeviceConfig) -> Unit) {
-    val typeOptions = selectableDeviceTypes()
     var remark by remember(initial) { mutableStateOf(initial?.remark.orEmpty()) }
     var mac by remember(initial) { mutableStateOf(initial?.mac.orEmpty()) }
     var typeId by remember(initial) { mutableStateOf(initial?.typeId ?: "nas") }
     var enabled by remember(initial) { mutableStateOf(initial?.enabled ?: true) }
-    val selectedRule = deviceTypeById(typeId)
+    val selectedRule = deviceTypeRuleForInput(typeId)
     val validMac = isValidMac(cleanMac(mac))
 
     AlertDialog(
@@ -216,7 +234,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                DeviceTypeDropdown(value = typeId, options = typeOptions, onChange = { typeId = it })
+                EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
                 OutlinedTextField(
                     value = mac,
                     onValueChange = { mac = it.uppercase() },
@@ -229,7 +247,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    SmallTypeIcon(DeviceVisualProfile(selectedRule.id, selectedRule.label, deviceTypeIcon(selectedRule.iconKey), selectedRule.accent, selectedRule.wolDefault, 99, ""), 44)
+                    DeviceTypeIconPreview(selectedRule, 44)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(selectedRule.label, fontSize = 13.sp, fontWeight = FontWeight.Black)
@@ -247,7 +265,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                         id = initial?.id ?: clean,
                         remark = remark.trim().ifBlank { selectedRule.label },
                         mac = clean,
-                        typeId = typeId,
+                        typeId = normalizeDeviceTypeToken(typeId).ifBlank { typeId.trim() },
                         enabled = enabled,
                         createdAt = initial?.createdAt ?: System.currentTimeMillis(),
                         updatedAt = System.currentTimeMillis()
@@ -257,47 +275,6 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
-}
-
-@Composable
-private fun DeviceTypeDropdown(value: String, options: List<DeviceTypeRule>, onChange: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val selected = deviceTypeById(value)
-    Box {
-        OutlinedTextField(
-            value = selected.label,
-            onValueChange = {},
-            label = { Text("设备类型") },
-            readOnly = true,
-            trailingIcon = { Text("▼", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f)) },
-            modifier = Modifier.fillMaxWidth().clickable { expanded = true }
-        )
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.heightIn(max = 292.dp)
-        ) {
-            options.forEach { rule ->
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            SmallTypeIcon(DeviceVisualProfile(rule.id, rule.label, deviceTypeIcon(rule.iconKey), rule.accent, rule.wolDefault, 99, ""), 30)
-                            Spacer(Modifier.width(8.dp))
-                            Text(rule.label, fontWeight = FontWeight.Bold)
-                        }
-                    },
-                    onClick = { onChange(rule.id); expanded = false }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SurfaceHint(text: String) {
-    androidx.compose.material3.Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF8B5CF6).copy(alpha = .08f), border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = .12f))) {
-        Text(text, Modifier.padding(11.dp), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), lineHeight = 16.sp, fontWeight = FontWeight.SemiBold)
-    }
 }
 
 @Composable

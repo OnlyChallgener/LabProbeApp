@@ -3,9 +3,8 @@ package com.labprobe.app
 import java.util.Locale
 
 fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
+    // 只有 APP 本地手动类型才当作强制类型；Hub / 路由器返回的 devType 只做弱参考，避免把海尔热水器、美的空调误锁成“路由/AP”。
     val manualType = normalizeDeviceTypeToken(d.manualType)
-        .ifBlank { normalizeDeviceTypeToken(d.devType) }
-        .ifBlank { normalizeDeviceTypeToken(d.wolMode) }
 
     val rule = if (manualType.isNotBlank()) {
         deviceTypeById(manualType)
@@ -17,7 +16,6 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
     val wol = manualWol ?: rule.wolDefault
     val confidence = when {
         d.manualType.isNotBlank() -> 98
-        manualType.isNotBlank() -> 94
         rule.id == "unknown" -> 52
         else -> rule.priority.coerceIn(55, 95)
     }
@@ -54,10 +52,13 @@ fun inferDeviceTypeRule(d: DeviceItem): DeviceTypeRule {
     }
     if (bestScore <= 0) return deviceTypeById("unknown")
 
-    // 品牌太泛时防误判：只有品牌命中但没有类型词时，电脑/家电类降级为未知。
+    // 品牌太泛时防误判：只有品牌命中但没有类型词时，不把“美的/海尔/小米/华为”等泛品牌硬判成具体设备。
     val hasTypeKeyword = best.keywords.any { containsToken(text, it) }
     val onlyBrand = !hasTypeKeyword && best.brands.any { containsToken(text, it) }
-    if (onlyBrand && best.id in listOf("router", "desktop", "laptop", "aircon", "fridge", "washer", "water_heater", "tv")) {
+    if (onlyBrand && best.id in listOf(
+            "router", "ont", "desktop", "laptop", "mini_pc", "aircon", "fridge", "washer", "water_heater", "tv", "tv_box", "projector"
+        )
+    ) {
         return deviceTypeById("unknown")
     }
     return best
@@ -66,13 +67,16 @@ fun inferDeviceTypeRule(d: DeviceItem): DeviceTypeRule {
 private fun scoreDeviceRule(text: String, rule: DeviceTypeRule): Int {
     var score = 0
     for (kw in rule.keywords) {
-        if (containsToken(text, kw)) score += 18
+        if (containsToken(text, kw)) score += when {
+            kw.length >= 4 || kw.any { it.code > 127 } -> 22
+            else -> 14
+        }
     }
     for (brand in rule.brands) {
-        if (containsToken(text, brand)) score += 8
+        if (containsToken(text, brand)) score += 7
     }
     for (alias in rule.aliases) {
-        if (containsToken(text, alias)) score += 12
+        if (containsToken(text, alias)) score += 14
     }
     if (score > 0) score += rule.priority / 10
     return score
@@ -94,7 +98,7 @@ private fun deviceFingerprintText(d: DeviceItem): String = listOf(
     d.band,
     d.connectType,
     d.hostName,
-    d.devType,
+    // devType 经常来自旧规则或路由器弱分类，不能直接参与自动识别，否则会把家电误判为路由/AP。
     d.osType,
     d.manufacture,
     d.wolMode
