@@ -140,12 +140,12 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 100
+    const val CODE = 101
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.17 build100 · 漫游权限编译修复" to listOf(
-            "补齐漫游权限安全函数与 Activity 查找函数，修复 build99 编译失败",
-            "开始测试时再请求缺失权限，进入漫游页仍保持静态安全渲染",
+        "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
+            "无线漫游入口回退到轻量稳定页面，进入页面不读 Wi‑Fi、不请求权限",
+            "点击开始测试后再检查权限和 Wi‑Fi，避免页面首帧异常退回桌面",
             "版本号同步为 v0.9.17 build100"
         ),
         "v0.9.15 · 设备识别 / IPv6 / WOL 自测" to listOf(
@@ -3394,7 +3394,157 @@ fun LoadLatencyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("负载
 fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可用性", "公网出口 / 双栈 / AAAA / ASN", onBack) { Ipv6TestTool(prefs) }
 @Composable
 fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) {
-    WifiRoamingTool(prefs)
+    WifiRoamingToolEmergencyStable(prefs)
+}
+
+@Composable
+fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
+    var status by remember { mutableStateOf("等待测试") }
+    var targetMode by remember { mutableStateOf("路由器+外网") }
+    var wanTarget by remember { mutableStateOf("223.5.5.5") }
+    var sampleMode by remember { mutableStateOf("标准250ms") }
+    var sampleMs by remember { mutableStateOf("250") }
+    var timeoutMs by remember { mutableStateOf("1000") }
+    var job by remember { mutableStateOf<Job?>(null) }
+
+    val interval = sampleMs.toIntOrNull()?.coerceIn(100, 5000) ?: when (sampleMode) {
+        "高频100ms" -> 100
+        "低频500ms" -> 500
+        else -> 250
+    }
+    val timeout = timeoutMs.toIntOrNull()?.coerceIn(300, 5000) ?: 1000
+    val effectiveTarget = remember(targetMode, wanTarget) {
+        when (targetMode) {
+            "仅外网" -> wanTarget.trim().ifBlank { "223.5.5.5" }
+            else -> "网关"
+        }
+    }
+    val latest = samples.lastOrNull()
+    val validSamples = remember(samples) { samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" } }
+    val roamCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid } }
+    val lostCount = remember(samples) { samples.count { it.lost } }
+    val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
+    val events = remember(samples) { buildRoamingEventChain(samples, -70, 10, 3, 150, 2) }
+
+    DisposableEffect(Unit) {
+        onDispose { job?.cancel() }
+    }
+
+    ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi，不弹权限；点击开始后才检测。", null, Color(0xFF2563EB)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
+            RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
+            RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f)) { targetMode = "仅外网" }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("外网", Modifier.width(52.dp), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f))
+            OutlinedTextField(
+                value = wanTarget,
+                onValueChange = { wanTarget = it.trim().take(64) },
+                enabled = targetMode != "仅路由器",
+                singleLine = true,
+                leadingIcon = { FieldIconBox(Icons.Rounded.Public, Color(0xFF2563EB)) },
+                textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold),
+                colors = labOutlinedColors(),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.weight(1f).height(58.dp)
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TinyParamInputIcon("采样ms", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("高频100ms", "标准250ms", "低频500ms").forEach { mode ->
+                RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f)) {
+                    sampleMode = mode
+                    sampleMs = when (mode) { "高频100ms" -> "100"; "低频500ms" -> "500"; else -> "250" }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = { samples = emptyList(); status = "已清空" },
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.weight(.8f).height(52.dp)
+            ) { Text("清空", fontSize = 13.sp, fontWeight = FontWeight.Black) }
+            Button(
+                onClick = {
+                    if (running) {
+                        job?.cancel(); running = false; status = "已停止"
+                    } else {
+                        val hasPerm = runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
+                        if (!hasPerm) {
+                            Toast.makeText(ctx, "请先在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
+                            status = "缺少定位/附近设备权限，无法读取 Wi‑Fi 漫游信息"
+                            return@Button
+                        }
+                        if (!isWifiConnected(ctx)) {
+                            Toast.makeText(ctx, "请连接 Wi‑Fi 后再开始漫游测试", Toast.LENGTH_SHORT).show()
+                            status = "未连接 Wi‑Fi，无法开始漫游测试"
+                            return@Button
+                        }
+                        samples = emptyList(); running = true; status = "采集中..."
+                        job = scope.launch {
+                            while (currentCoroutineContext().isActive) {
+                                val sample = runCatching { readWifiSample(ctx, effectiveTarget, timeout, false) }
+                                    .getOrElse {
+                                        val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                                        WifiSample(now, "unknown", "", -127, null, true)
+                                    }
+                                samples = (samples + sample).takeLast(1200)
+                                val okRssi = sample.rssi > -120
+                                val latestLoss = samples.count { it.lost }
+                                val latestValid = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
+                                val latestRoam = latestValid.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
+                                status = if (okRssi) "采样 ${samples.size} 次 · 漫游 $latestRoam 次 · 丢包 $latestLoss" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss"
+                                delay(interval.toLong())
+                            }
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(18.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
+                modifier = Modifier.weight(1.3f).height(52.dp)
+            ) {
+                Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (running) "停止测试" else "开始测试", fontSize = 13.2.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+
+    ExpressiveCard("实时结果", status, null, Color(0xFF16A34A)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.weight(1f))
+            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.weight(1f))
+            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.weight(1f))
+            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.weight(1f))
+        }
+        RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
+        RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
+        RoamPlainInfo("速率", buildRoamRateText(latest))
+        if (samples.isEmpty()) {
+            Text("点击开始测试后生成 RSSI、延迟、丢包和 AP 切换记录。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), lineHeight = 18.sp)
+        } else {
+            Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .94f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .08f))) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("漫游图表", fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                        Spacer(Modifier.weight(1f))
+                        Text("轻量稳定模式", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
+                    }
+                    LabRoamCharts(samples, running = running, events = events, modifier = Modifier.fillMaxWidth())
+                }
+            }
+            Text("漫游事件", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+            RoamEventTimeline(events.takeLast(8))
+        }
+    }
 }
 @Composable
 fun MtuScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("MTU 检测", "路径 MTU · 分片探测", onBack) { MtuTool(prefs) }
