@@ -40,6 +40,10 @@ fun inferDeviceTypeRule(d: DeviceItem): DeviceTypeRule {
     val text = deviceFingerprintText(d)
     if (text.isBlank()) return deviceTypeById("unknown")
 
+    // 名称/备注是用户和路由器给出的“设备身份”，优先级高于 SSID、AP 名称、MAC 厂商和 Hub 旧分类。
+    // 典型修复：设备名 iPad 不能因为连接到 @Ruijie-s8067 就被误判成路由/AP。
+    strongNameType(d)?.let { return it }
+
     var best = deviceTypeById("unknown")
     var bestScore = 0
     for (rule in DEVICE_TYPE_RULES) {
@@ -62,6 +66,27 @@ fun inferDeviceTypeRule(d: DeviceItem): DeviceTypeRule {
         return deviceTypeById("unknown")
     }
     return best
+}
+
+private fun strongNameType(d: DeviceItem): DeviceTypeRule? {
+    val nameText = listOf(d.remark, d.name, d.hostName)
+        .joinToString(" ")
+        .lowercase(Locale.getDefault())
+
+    if (nameText.isBlank()) return null
+    return when {
+        listOf("ipad", "matepad", "galaxy tab", "xiaoxin pad", "redmi pad", "mi pad", "pad", "平板").any { nameText.contains(it) } -> deviceTypeById("tablet")
+        listOf("iphone", "手机", "pixel", "oneplus", "oppo", "vivo", "iqoo", "realme", "meizu", "nubia").any { nameText.contains(it) } -> deviceTypeById("phone")
+        listOf("macbook", "matebook", "magicbook", "redmibook", "laptop", "notebook", "笔记本").any { nameText.contains(it) } -> deviceTypeById("laptop")
+        listOf("mac mini", "macmini", "mini pc", "minipc", "nuc", "迷你主机", "小主机").any { nameText.contains(it) } -> deviceTypeById("mini_pc")
+        listOf("desktop", "台式", "台式机").any { nameText.contains(it) } -> deviceTypeById("desktop")
+        listOf("dh4300", "dh4300plus", "dx4600", "nas", "群晖", "威联通", "绿联", "极空间", "飞牛").any { nameText.contains(it) } -> deviceTypeById("nas")
+        listOf("soundbox", "miaisoundbox", "小爱", "天猫精灵", "音箱", "音响", "speaker").any { nameText.contains(it) } -> deviceTypeById("speaker")
+        listOf("热水器", "water heater").any { nameText.contains(it) } -> deviceTypeById("water_heater")
+        listOf("空调", "aircon", "air conditioner").any { nameText.contains(it) } -> deviceTypeById("aircon")
+        listOf("路由器", "router", "openwrt", "istoreos", "be72", "rg-", "reyee", "ruijie", "unifi").any { nameText.contains(it) } -> deviceTypeById("router")
+        else -> null
+    }
 }
 
 private fun scoreDeviceRule(text: String, rule: DeviceTypeRule): Int {
@@ -89,18 +114,15 @@ private fun containsToken(text: String, token: String): Boolean {
 }
 
 private fun deviceFingerprintText(d: DeviceItem): String = listOf(
-    d.name,
     d.remark,
-    d.manualType,
-    d.mac,
-    d.ip,
-    d.ssid,
-    d.band,
-    d.connectType,
+    d.name,
     d.hostName,
-    // devType 经常来自旧规则或路由器弱分类，不能直接参与自动识别，否则会把家电误判为路由/AP。
+    d.manualType,
     d.osType,
     d.manufacture,
+    // SSID / 频段 / AP 名称 / connectType 属于“连接信息”，不是设备身份。
+    // 不能参与类型识别，否则 iPad 连接 @Ruijie-s8067 会被误识别为路由/AP。
+    // devType 也经常来自 Hub 旧规则或路由器弱分类，仅作为展示回填，不参与自动识别。
     d.wolMode
 ).joinToString(" ") { it.lowercase(Locale.getDefault()) }
 

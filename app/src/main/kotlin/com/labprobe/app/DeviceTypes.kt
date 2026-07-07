@@ -5,6 +5,12 @@ import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.Air
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Watch
+import androidx.compose.material.icons.rounded.TabletMac
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.LaptopMac
+import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Fastfood
 import androidx.compose.material.icons.rounded.Kitchen
 import androidx.compose.material.icons.rounded.Laptop
@@ -44,12 +50,12 @@ fun deviceTypeIcon(iconKey: String): ImageVector = when (iconKey) {
     "ap" -> Icons.Rounded.Wifi
     "ont" -> Icons.Rounded.Router
     "nas" -> Icons.Rounded.Storage
-    "desktop" -> Icons.Rounded.Computer
-    "mini_pc" -> Icons.Rounded.Computer
-    "laptop" -> Icons.Rounded.Laptop
-    "phone" -> Icons.Rounded.Devices
-    "tablet" -> Icons.Rounded.Devices
-    "watch" -> Icons.Rounded.Devices
+    "desktop" -> Icons.Rounded.DesktopWindows
+    "mini_pc" -> Icons.Rounded.Memory
+    "laptop" -> Icons.Rounded.LaptopMac
+    "phone" -> Icons.Rounded.PhoneAndroid
+    "tablet" -> Icons.Rounded.TabletMac
+    "watch" -> Icons.Rounded.Watch
     "tv" -> Icons.Rounded.Tv
     "tv_box" -> Icons.Rounded.Tv
     "projector" -> Icons.Rounded.Tv
@@ -97,16 +103,17 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("desktop", "pc", "workstation", "主机", "台式", "台式机", "windows", "win-", "win11", "deskt"),
         brands = listOf("华硕", "asus", "asustek", "联想", "lenovo", "戴尔", "dell", "惠普", "hp", "hewlett", "微星", "msi", "技嘉", "gigabyte", "七彩虹", "colorful", "神舟", "hasee", "机械革命", "mechrevo", "机械师", "machenike", "雷蛇", "razer")),
     DeviceTypeRule("mini_pc", "迷你主机", "mini_pc", Color(0xFF2563EB), wolDefault = true, priority = 89,
-        keywords = listOf("mini pc", "minipc", "mini-pc", "nuc", "beelink", "minisforum", "迷你主机", "小主机", "畅网", "倍控"),
+        keywords = listOf("mini pc", "minipc", "mini-pc", "nuc", "beelink", "minisforum", "mac mini", "macmini", "迷你主机", "小主机", "畅网", "倍控"),
         brands = listOf("零刻", "beelink", "铭凡", "minisforum", "英特尔", "intel", "华硕", "asus", "联想", "lenovo", "惠普", "hp", "戴尔", "dell", "华为", "huawei", "小米", "mi", "七彩虹", "colorful", "畅网", "倍控")),
     DeviceTypeRule("laptop", "笔记本电脑", "laptop", Color(0xFF3B82F6), wolDefault = false, priority = 85,
         keywords = listOf("laptop", "notebook", "macbook", "book", "笔记本", "matebook", "magicbook", "redmibook", "vaio"),
         brands = listOf("华为", "huawei", "荣耀", "honor", "小米", "mi", "xiaomi", "红米", "redmi", "苹果", "apple", "宏碁", "acer", "vaio", "三星", "samsung", "lg", "火影", "firebat")),
-    DeviceTypeRule("phone", "手机", "phone", Color(0xFF22C55E), priority = 86,
+    DeviceTypeRule("phone", "手机", "phone", Color(0xFF22C55E), priority = 92,
         keywords = listOf("iphone", "android", "phone", "mobile", "mate", "pura", "reno", "find", "iqoo", "vivo", "oppo", "realme", "oneplus", "galaxy", "pixel", "手机", "nubia", "meizu"),
         brands = listOf("apple", "iphone", "huawei", "honor", "xiaomi", "redmi", "samsung", "oppo", "vivo", "iqoo", "realme", "oneplus", "魅族", "meizu", "努比亚", "nubia", "google pixel", "pixel")),
-    DeviceTypeRule("tablet", "平板", "tablet", Color(0xFF64748B), priority = 84,
-        keywords = listOf("ipad", "tablet", "pad", "平板"), brands = listOf("apple", "huawei", "honor", "xiaomi", "samsung", "lenovo")),
+    DeviceTypeRule("tablet", "平板", "tablet", Color(0xFF64748B), priority = 93,
+        keywords = listOf("ipad", "ipad pro", "ipad air", "ipad mini", "tablet", "pad", "matepad", "honor pad", "xiaoxin pad", "redmi pad", "mi pad", "galaxy tab", "tab ", "平板"),
+        brands = listOf("apple", "苹果", "huawei", "华为", "honor", "荣耀", "xiaomi", "小米", "redmi", "红米", "samsung", "三星", "lenovo", "联想")),
     DeviceTypeRule("watch", "智能手表", "watch", Color(0xFF8B5CF6), priority = 84,
         keywords = listOf("watch", "wear", "band", "手表", "手环", "amazfit", "garmin", "suunto", "coros", "polar", "小天才", "米兔"),
         brands = listOf("amazfit", "华米", "huawei", "华为", "小米", "oppo", "vivo", "iqoo", "garmin", "佳明", "suunto", "颂拓", "coros", "高驰", "polar", "博能", "小天才", "360", "米兔")),
@@ -221,7 +228,7 @@ fun normalizeDeviceTypeToken(raw: String): String {
         s.contains("光猫") || s.contains("ont") || s.contains("onu") || s.contains("gpon") -> "ont"
         s.contains("路由") || s.contains("网关") || s == "ap" || s.contains("无线ap") -> "router"
         s.contains("手机") || s.contains("iphone") -> "phone"
-        s.contains("平板") || s.contains("ipad") -> "tablet"
+        s.contains("平板") || s.contains("ipad") || s.contains("matepad") || s.contains("galaxy tab") || s.contains("pad") -> "tablet"
         s.contains("手表") || s.contains("手环") || s.contains("watch") -> "watch"
         s.contains("电视盒") || s.contains("机顶盒") || s.contains("tv box") -> "tv_box"
         s.contains("音箱") || s.contains("音响") || s.contains("speaker") -> "speaker"

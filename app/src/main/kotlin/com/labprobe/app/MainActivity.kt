@@ -2919,10 +2919,11 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var editingDevice by remember { mutableStateOf(false) }
-    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType) { inferDeviceProfile(d) }
+    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType, d.ssid, d.band, d.rssi, d.rxrate) { inferDeviceProfile(d) }
+    val wifi = remember(d.ssid, d.band, d.rssi, d.rxrate, d.connectType) { hasWifiInfo(d) }
     ExpressiveCard(
         title = d.remark.ifBlank { d.name.ifBlank { d.mac } },
-        subtitle = listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · "),
+        subtitle = if (wifi) listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ") else "",
         icon = profile.icon,
         accent = profile.accent,
         headerAction = {
@@ -2975,40 +2976,85 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem) {
 @Composable
 fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
     val ctx = LocalContext.current
-    val ip4 = cleanApiText(d.ip).ifBlank { "--" }
+    val ip4 = cleanApiText(d.ip).ifBlank { cleanApiText(d.lastKnownIp()) }.ifBlank { "--" }
     val v6 = d.ipv6.filter { it.isNotBlank() }.distinct()
     val wifi = hasWifiInfo(d)
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
-            val v6Full = bestIpv6ForDisplay(v6)
-            val v6Text = v6Full.ifBlank { "--" }.let { if (it == "--") it else shortIpv6(it) + if (v6.size > 1) " +${v6.size - 1}" else "" }
-            DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6Full, allowScroll = true)
-        }
         if (wifi) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
+                val v6Full = bestIpv6ForDisplay(v6)
+                val v6Text = v6Full.ifBlank { "--" }.let { if (it == "--") it else shortIpv6(it) + if (v6.size > 1) " +${v6.size - 1}" else "" }
+                DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6Full, allowScroll = true)
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val radio = listOf(d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "--" }
                 DeviceMiniMetric("链路", radio, Icons.Rounded.Wifi, Color(0xFF22C55E), Modifier.weight(1f), copyValue = radio.takeIf { it != "--" }.orEmpty(), allowScroll = true)
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
                 DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFFF59E0B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true)
             }
+            DeviceFooterLine(d = d, profile = profile, showTime = true)
         } else {
-            DeviceMiniMetric("连接", "有线设备", Icons.Rounded.SettingsEthernet, Color(0xFF64748B), Modifier.fillMaxWidth(), copyValue = "有线设备", allowScroll = false)
-        }
-        val timeText = if (d.online) {
-            listOfNotNull(cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" }, cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }).joinToString(" · ")
-        } else {
-            listOfNotNull(cleanApiText(d.offlineAt).takeIf { it.isNotBlank() }?.let { "离线 $it" }, cleanApiText(d.lastSeenAt).takeIf { it.isNotBlank() }?.let { "最后 $it" }).joinToString(" · ")
-        }.ifBlank { if (d.online) "在线信息待刷新" else "离线 · 暂无历史详情" }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = RoundedCornerShape(14.dp), color = profile.accent.copy(alpha = .10f)) {
-                Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(timeText, Modifier.weight(1f).horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Clip)
+            WiredDeviceInfo(d = d, profile = profile, ip4 = ip4, ipv6List = v6)
         }
         if (v6.size > 1) {
             Text("IPv6 共 ${v6.size} 个：${v6.take(2).joinToString(" · ") { shortIpv6(it) }}${if (v6.size > 2) " · …" else ""}", Modifier.clickable { copy(ctx, v6.joinToString("\n")) }.horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
+private fun DeviceItem.lastKnownIp(): String = ip
+
+@Composable
+fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ipv6List: List<String>) {
+    val v6Full = bestIpv6ForDisplay(ipv6List)
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
+            DeviceMiniMetric("MAC", d.mac.ifBlank { "--" }, Icons.Rounded.SettingsEthernet, Color(0xFF64748B), Modifier.weight(1f), copyValue = d.mac, allowScroll = true)
+        }
+        DeviceMiniMetric(
+            label = "IPv6",
+            value = v6Full.ifBlank { "--" },
+            icon = Icons.Rounded.SettingsEthernet,
+            color = Color(0xFF06B6D4),
+            modifier = Modifier.fillMaxWidth(),
+            copyValue = v6Full,
+            allowScroll = true
+        )
+        DeviceFooterLine(d = d, profile = profile, showTime = false)
+    }
+}
+
+@Composable
+fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Boolean) {
+    val timeText = if (showTime) {
+        if (d.online) {
+            listOfNotNull(
+                cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
+            ).joinToString(" · ")
+        } else {
+            listOfNotNull(
+                cleanApiText(d.offlineAt).takeIf { it.isNotBlank() }?.let { "离线 $it" },
+                cleanApiText(d.lastSeenAt).takeIf { it.isNotBlank() }?.let { "最后 $it" }
+            ).joinToString(" · ")
+        }
+    } else ""
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Surface(shape = RoundedCornerShape(14.dp), color = profile.accent.copy(alpha = .10f)) {
+            Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        }
+        Spacer(Modifier.width(8.dp))
+        Surface(shape = RoundedCornerShape(14.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFFFE4E6)) {
+            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        }
+        if (timeText.isNotBlank()) {
+            Spacer(Modifier.width(8.dp))
+            Text(timeText, Modifier.weight(1f).horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Clip)
+        } else {
+            Spacer(Modifier.weight(1f))
         }
     }
 }
