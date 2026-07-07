@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.zIndex
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
@@ -757,6 +758,65 @@ class AppPrefs(context: Context) {
     }
 
     fun clearTraceHistory() { sp.edit().putString("trace_history_v1", "[]").apply() }
+
+    fun roamingReports(): List<RoamingReport> {
+        val raw = sp.getString("roaming_reports_v1", "[]") ?: "[]"
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val ev = o.optJSONArray("events")
+                RoamingReport(
+                    id = o.optLong("id", i.toLong()),
+                    time = o.optString("time"),
+                    ssid = o.optString("ssid"),
+                    targetMode = o.optString("targetMode"),
+                    sampleMode = o.optString("sampleMode"),
+                    durationSec = o.optInt("durationSec"),
+                    sampleCount = o.optInt("sampleCount"),
+                    gatewayMinMs = o.optNullableInt("gatewayMinMs"),
+                    gatewayMaxMs = o.optNullableInt("gatewayMaxMs"),
+                    gatewayAvgMs = o.optNullableInt("gatewayAvgMs"),
+                    rssiBestDbm = o.optNullableInt("rssiBestDbm"),
+                    rssiWorstDbm = o.optNullableInt("rssiWorstDbm"),
+                    rssiAvgDbm = o.optNullableInt("rssiAvgDbm"),
+                    speedMaxMbps = o.optNullableInt("speedMaxMbps"),
+                    speedMinMbps = o.optNullableInt("speedMinMbps"),
+                    speedAvgMbps = o.optNullableInt("speedAvgMbps"),
+                    roamCount = o.optInt("roamCount"),
+                    longestBreakMs = o.optNullableInt("longestBreakMs"),
+                    lossNearRoam = o.optInt("lossNearRoam"),
+                    stickyScore = o.optInt("stickyScore"),
+                    bestCandidateGap = o.optNullableInt("bestCandidateGap"),
+                    qualityScore = o.optInt("qualityScore"),
+                    qualityLabel = o.optString("qualityLabel"),
+                    conclusion = o.optString("conclusion"),
+                    events = if (ev == null) emptyList() else (0 until ev.length()).map { idx -> ev.optString(idx) }.filter { it.isNotBlank() }
+                )
+            }
+        }.getOrDefault(emptyList()).take(20)
+    }
+
+    fun addRoamingReport(report: RoamingReport) {
+        val arr = JSONArray()
+        (listOf(report) + roamingReports()).distinctBy { it.id }.take(20).forEach { r ->
+            arr.put(r.toJson())
+        }
+        sp.edit().putString("roaming_reports_v1", arr.toString()).apply()
+    }
+
+    fun deleteRoamingReport(id: Long) {
+        val arr = JSONArray()
+        roamingReports().filterNot { it.id == id }.take(20).forEach { arr.put(it.toJson()) }
+        sp.edit().putString("roaming_reports_v1", arr.toString()).apply()
+    }
+
+    fun clearRoamingReports() { sp.edit().putString("roaming_reports_v1", "[]").apply() }
+
+    fun roamingReportsKb(): Int {
+        val raw = sp.getString("roaming_reports_v1", "[]") ?: "[]"
+        return ((raw.toByteArray(Charsets.UTF_8).size + 1023) / 1024).coerceAtLeast(1)
+    }
 }
 
 data class DnsRecord(val value: String, val type: String, val source: String, val operator: String = "")
@@ -3371,6 +3431,34 @@ data class RoamQualitySummary(
     val stickyScore: Int
 )
 
+data class RoamingReport(
+    val id: Long,
+    val time: String,
+    val ssid: String,
+    val targetMode: String,
+    val sampleMode: String,
+    val durationSec: Int,
+    val sampleCount: Int,
+    val gatewayMinMs: Int?,
+    val gatewayMaxMs: Int?,
+    val gatewayAvgMs: Int?,
+    val rssiBestDbm: Int?,
+    val rssiWorstDbm: Int?,
+    val rssiAvgDbm: Int?,
+    val speedMaxMbps: Int?,
+    val speedMinMbps: Int?,
+    val speedAvgMbps: Int?,
+    val roamCount: Int,
+    val longestBreakMs: Int?,
+    val lossNearRoam: Int,
+    val stickyScore: Int,
+    val bestCandidateGap: Int?,
+    val qualityScore: Int,
+    val qualityLabel: String,
+    val conclusion: String,
+    val events: List<String>
+)
+
 data class DnsQualityRow(val server: String, val ms: Long?, val a: String, val aaaa: String, val note: String)
 data class ServiceTarget(val name: String, val host: String, val port: Int, val protocol: String)
 
@@ -3607,15 +3695,19 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     var status by remember { mutableStateOf("等待测试") }
     var targetMode by remember { mutableStateOf("路由器+外网") }
     var wanTarget by remember { mutableStateOf("223.5.5.5") }
-    var sampleMode by remember { mutableStateOf("标准1s") }
-    var sampleMs by remember { mutableStateOf("1000") }
+    var sampleMode by remember { mutableStateOf("标准250ms") }
+    var sampleMs by remember { mutableStateOf("250") }
     var timeoutMs by remember { mutableStateOf("1000") }
+    var scanMs by remember { mutableStateOf("1500") }
     var weakRssiThreshold by remember { mutableStateOf("-70") }
     var candidateGapDb by remember { mutableStateOf("10") }
     var triggerSeconds by remember { mutableStateOf("3") }
     var highLatencyMs by remember { mutableStateOf("150") }
     var lossTriggerCount by remember { mutableStateOf("2") }
     var advancedOpen by remember { mutableStateOf(false) }
+    var roamView by remember { mutableStateOf("main") }
+    var selectedReport by remember { mutableStateOf<RoamingReport?>(null) }
+    var reportHistory by remember { mutableStateOf(prefs.roamingReports()) }
     var job by remember { mutableStateOf<Job?>(null) }
     var requestedOnEnter by remember { mutableStateOf(false) }
     var hasRoamPermissions by remember { mutableStateOf(hasRequiredWifiRoamingPermissions(ctx)) }
@@ -3630,12 +3722,13 @@ fun WifiRoamingTool(prefs: AppPrefs) {
         }
     }
 
-    val interval = sampleMs.toIntOrNull()?.coerceIn(300, 5000) ?: when (sampleMode) {
-        "高频500ms" -> 500
-        "低频2s" -> 2000
-        else -> 1000
+    val interval = sampleMs.toIntOrNull()?.coerceIn(80, 5000) ?: when (sampleMode) {
+        "高频100ms" -> 100
+        "低频500ms" -> 500
+        else -> 250
     }
-    val timeout = timeoutMs.toIntOrNull()?.coerceIn(300, 5000) ?: 1000
+    val timeout = timeoutMs.toIntOrNull()?.coerceIn(150, 5000) ?: 1000
+    val scanInterval = scanMs.toIntOrNull()?.coerceIn(500, 10000) ?: 1500
     val weakThreshold = weakRssiThreshold.toIntOrNull()?.coerceIn(-90, -45) ?: -70
     val candidateGap = candidateGapDb.toIntOrNull()?.coerceIn(3, 35) ?: 10
     val triggerSec = triggerSeconds.toIntOrNull()?.coerceIn(1, 15) ?: 3
@@ -3658,6 +3751,29 @@ fun WifiRoamingTool(prefs: AppPrefs) {
         buildRoamingEventChain(samples, weakThreshold, candidateGap, triggerSec, highLatency, lossTrigger)
     }
     val quality = remember(samples, events, stickyScore) { buildRoamingQuality(samples, events, stickyScore) }
+    val currentReport = remember(samples, events, quality, targetMode, sampleMode, stickyScore) {
+        buildRoamingReport(samples, events, quality, targetMode, sampleMode, stickyScore)
+    }
+
+    BackHandler(enabled = roamView != "main") {
+        roamView = "main"
+        selectedReport = null
+    }
+    if (roamView == "history") {
+        RoamingReportHistoryScreen(
+            reports = reportHistory,
+            storageKb = prefs.roamingReportsKb(),
+            onBack = { roamView = "main" },
+            onOpen = { selectedReport = it; roamView = "report" },
+            onDelete = { id -> prefs.deleteRoamingReport(id); reportHistory = prefs.roamingReports() },
+            onClear = { prefs.clearRoamingReports(); reportHistory = emptyList() }
+        )
+        return
+    }
+    selectedReport?.takeIf { roamView == "report" }?.let { report ->
+        RoamingReportDetailScreen(report = report, onBack = { roamView = "history" })
+        return
+    }
 
     ExpressiveCard("漫游配置", null, null, Color(0xFF2563EB)) {
         Text("目标", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f))
@@ -3686,10 +3802,11 @@ fun WifiRoamingTool(prefs: AppPrefs) {
         }
         Text("采样模式", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            listOf("标准1s", "高频500ms", "低频2s").forEach { mode ->
+            listOf("标准250ms", "高频100ms", "低频500ms").forEach { mode ->
                 RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f)) {
                     sampleMode = mode
-                    sampleMs = when (mode) { "高频500ms" -> "500"; "低频2s" -> "2000"; else -> "1000" }
+                    sampleMs = when (mode) { "高频100ms" -> "100"; "低频500ms" -> "500"; else -> "250" }
+                    scanMs = when (mode) { "高频100ms" -> "1000"; "低频500ms" -> "3000"; else -> "1500" }
                 }
             }
         }
@@ -3719,12 +3836,16 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                     CompactRoamInput("高延迟", highLatencyMs, { highLatencyMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Speed, Modifier.weight(1f), "ms")
                     CompactRoamInput("丢包", lossTriggerCount, { lossTriggerCount = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Warning, Modifier.weight(1f), "个")
                 }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CompactRoamInput("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
+                    CompactRoamInput("AP扫描", scanMs, { scanMs = it.filter { c -> c.isDigit() }.take(5) }, Icons.Rounded.Radar, Modifier.weight(1f), "ms")
+                }
             }
         }
         if (!hasRoamPermissions) RoamPermissionHint(false)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             OutlinedButton(
-                onClick = { status = "漫游历史将在后续版本接入" },
+                onClick = { reportHistory = prefs.roamingReports(); roamView = "history" },
                 shape = RoundedCornerShape(17.dp),
                 modifier = Modifier.weight(.78f).height(46.dp)
             ) { Text("历史", fontSize = 12.2.sp, fontWeight = FontWeight.Black) }
@@ -3746,9 +3867,13 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                         }
                         samples = emptyList(); running = true; status = "采集中..."
                         job = scope.launch {
+                            var lastScanAt = 0L
                             while (currentCoroutineContext().isActive) {
-                                val info = readWifiSample(ctx, effectiveTarget, timeout)
-                                samples = (samples + info).takeLast(1800)
+                                val nowMs = SystemClock.elapsedRealtime()
+                                val requestScan = nowMs - lastScanAt >= scanInterval
+                                if (requestScan) lastScanAt = nowMs
+                                val info = readWifiSample(ctx, effectiveTarget, timeout, requestScan)
+                                samples = (samples + info).takeLast(3600)
                                 val latestLoss = samples.count { it.lost }
                                 val latestRoam = samples.filter { it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
                                     .zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
@@ -3770,24 +3895,39 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     }
 
     ExpressiveCard("实时结果", status, null, Color(0xFF16A34A), headerAction = {
-        TextButton(onClick = { status = "漫游历史将在后续版本接入" }) { Text("历史", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+        TextButton(onClick = { reportHistory = prefs.roamingReports(); roamView = "history" }) { Text("历史", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
         if (running) TextButton(onClick = { job?.cancel(); running = false; status = "已停止" }) { Text("停止", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF64748B)) }
     }) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            RoamMiniStat("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—", Color(0xFF2563EB), Modifier.weight(1f))
-            RoamMiniStat("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), Modifier.weight(1f))
-            RoamMiniStat("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            RoamMiniStat("候选AP", latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—", Color(0xFF0EA5E9), Modifier.weight(1f))
-            RoamMiniStat("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", Color(0xFF7C3AED), Modifier.weight(1f))
-            RoamMiniStat("粘AP", "$stickyScore", Color(0xFFEF4444), Modifier.weight(1f))
-            RoamMiniStat("漫游", "${roamCount}", Color(0xFF7C3AED), Modifier.weight(1f))
-        }
+        RoamMetricStrip(
+            listOf(
+                RoamMetric("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—", Color(0xFF2563EB), 110.dp),
+                RoamMetric("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), 82.dp),
+                RoamMetric("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), 78.dp),
+                RoamMetric("候选AP", latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—", Color(0xFF0EA5E9), 82.dp),
+                RoamMetric("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", Color(0xFF7C3AED), 72.dp),
+                RoamMetric("粘AP", "$stickyScore", Color(0xFFEF4444), 72.dp),
+                RoamMetric("漫游", "${roamCount}", Color(0xFF7C3AED), 72.dp)
+            )
+        )
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
         RoamPlainInfo("候选", latest?.candidateBssid?.takeIf { it.isNotBlank() }?.let { "$it · ${latest.candidateRssi}dBm" } ?: "—")
         RoamPlainInfo("速率", buildRoamRateText(latest))
         RoamQualityCard(quality)
+        if (samples.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { selectedReport = currentReport; roamView = "report" },
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.weight(1f).height(40.dp)
+                ) { Text("查看总结", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+                Button(
+                    onClick = { prefs.addRoamingReport(currentReport); reportHistory = prefs.roamingReports(); status = "测试总结已保存 · ${reportHistory.size}/20" },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                    modifier = Modifier.weight(1f).height(40.dp)
+                ) { Text("保存报告", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+            }
+        }
         Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .94f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .08f))) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -4848,6 +4988,219 @@ fun buildRoamRateText(sample: WifiSample?): String {
     if (sample.txMbps > 0) parts += "Tx ${sample.txMbps}Mbps"
     if (sample.rxMbps > 0) parts += "Rx ${sample.rxMbps}Mbps"
     return parts.joinToString(" · ").ifBlank { "—" }
+}
+
+
+data class RoamMetric(val label: String, val value: String, val color: Color, val minWidth: Dp)
+
+@Composable
+fun RoamMetricStrip(items: List<RoamMetric>) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        items.forEach { item ->
+            RoamMiniStat(item.label, item.value, item.color, Modifier.widthIn(min = item.minWidth))
+        }
+    }
+}
+
+fun JSONObject.optNullableInt(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
+
+fun RoamingReport.toJson(): JSONObject {
+    val ev = JSONArray()
+    events.take(80).forEach { ev.put(it) }
+    return JSONObject()
+        .put("id", id)
+        .put("time", time)
+        .put("ssid", ssid)
+        .put("targetMode", targetMode)
+        .put("sampleMode", sampleMode)
+        .put("durationSec", durationSec)
+        .put("sampleCount", sampleCount)
+        .put("gatewayMinMs", gatewayMinMs ?: JSONObject.NULL)
+        .put("gatewayMaxMs", gatewayMaxMs ?: JSONObject.NULL)
+        .put("gatewayAvgMs", gatewayAvgMs ?: JSONObject.NULL)
+        .put("rssiBestDbm", rssiBestDbm ?: JSONObject.NULL)
+        .put("rssiWorstDbm", rssiWorstDbm ?: JSONObject.NULL)
+        .put("rssiAvgDbm", rssiAvgDbm ?: JSONObject.NULL)
+        .put("speedMaxMbps", speedMaxMbps ?: JSONObject.NULL)
+        .put("speedMinMbps", speedMinMbps ?: JSONObject.NULL)
+        .put("speedAvgMbps", speedAvgMbps ?: JSONObject.NULL)
+        .put("roamCount", roamCount)
+        .put("longestBreakMs", longestBreakMs ?: JSONObject.NULL)
+        .put("lossNearRoam", lossNearRoam)
+        .put("stickyScore", stickyScore)
+        .put("bestCandidateGap", bestCandidateGap ?: JSONObject.NULL)
+        .put("qualityScore", qualityScore)
+        .put("qualityLabel", qualityLabel)
+        .put("conclusion", conclusion)
+        .put("events", ev)
+}
+
+fun buildRoamingReport(
+    samples: List<WifiSample>,
+    events: List<RoamEvent>,
+    quality: RoamQualitySummary,
+    targetMode: String,
+    sampleMode: String,
+    stickyScore: Int
+): RoamingReport {
+    val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+    val rssi = samples.map { it.rssi }.filter { it > -120 }
+    val lat = samples.mapNotNull { it.latency }
+    val speeds = samples.map { it.linkMbps }.filter { it > 0 }
+    val duration = samples.size.coerceAtLeast(1)
+    val roamCount = events.count { it.title == "AP 切换" }
+    val lossNear = events.filter { it.title == "AP 切换" }.sumOf { e ->
+        Regex("丢包\s*(\d+)").find(e.detail)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+    }
+    val bestGap = samples.map { it.rssiGapDb }.filter { it > 0 }.maxOrNull()
+    val longestBreak = estimateLongestBreakMs(samples)
+    val conclusion = when {
+        samples.isEmpty() -> "暂无有效样本。"
+        roamCount == 0 && stickyScore <= 10 && (quality.lossCount == 0) -> "本次未发生漫游，当前连接稳定。"
+        roamCount == 0 && stickyScore > 35 -> "本次未切换 AP，但存在粘 AP 倾向，建议检查 AP 漫游阈值与覆盖重叠。"
+        quality.score >= 85 -> "漫游质量优秀，切换过程对业务影响较小。"
+        quality.score >= 70 -> "漫游质量良好，存在轻微抖动或少量异常。"
+        quality.score >= 55 -> "漫游质量一般，建议结合事件链查看高延迟或丢包位置。"
+        else -> "漫游质量较差，存在明显断流、粘 AP 或高延迟问题。"
+    }
+    return RoamingReport(
+        id = System.currentTimeMillis(),
+        time = now,
+        ssid = samples.lastOrNull()?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "未知 SSID",
+        targetMode = targetMode,
+        sampleMode = sampleMode,
+        durationSec = duration,
+        sampleCount = samples.size,
+        gatewayMinMs = lat.minOrNull(),
+        gatewayMaxMs = lat.maxOrNull(),
+        gatewayAvgMs = if (lat.isNotEmpty()) lat.average().roundToInt() else null,
+        rssiBestDbm = rssi.maxOrNull(),
+        rssiWorstDbm = rssi.minOrNull(),
+        rssiAvgDbm = if (rssi.isNotEmpty()) rssi.average().roundToInt() else null,
+        speedMaxMbps = speeds.maxOrNull(),
+        speedMinMbps = speeds.minOrNull(),
+        speedAvgMbps = if (speeds.isNotEmpty()) speeds.average().roundToInt() else null,
+        roamCount = roamCount,
+        longestBreakMs = longestBreak,
+        lossNearRoam = lossNear,
+        stickyScore = stickyScore,
+        bestCandidateGap = bestGap,
+        qualityScore = quality.score,
+        qualityLabel = quality.label,
+        conclusion = conclusion,
+        events = events.takeLast(30).map { "${it.time}  ${it.title}：${it.detail}" }
+    )
+}
+
+fun estimateLongestBreakMs(samples: List<WifiSample>): Int? {
+    var run = 0
+    var longest = 0
+    samples.forEach { s ->
+        run = if (s.lost) run + 1 else 0
+        if (run > longest) longest = run
+    }
+    return if (longest > 0) longest * 250 else null
+}
+
+@Composable
+fun RoamingReportHistoryScreen(
+    reports: List<RoamingReport>,
+    storageKb: Int,
+    onBack: () -> Unit,
+    onOpen: (RoamingReport) -> Unit,
+    onDelete: (Long) -> Unit,
+    onClear: () -> Unit
+) {
+    var expandedIds by remember { mutableStateOf(setOf<Long>()) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.Rounded.ArrowBack, null) }
+            Column(Modifier.weight(1f)) {
+                Text("漫游历史", fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                Text("${reports.size}/20 条 · 占用 ${storageKb}KB", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
+            }
+            if (reports.isNotEmpty()) TextButton(onClick = onClear) { Text("清空", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+        }
+        if (reports.isEmpty()) {
+            ExpressiveCard("暂无历史", "测试结束后点击保存报告，会在这里保留最近 20 条。", Icons.Rounded.History, Color(0xFF2563EB)) {
+                Text("历史记录可折叠、可删除。保存的是结构化摘要，不保存完整原始采样，避免占用过大。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 17.sp)
+            }
+        } else {
+            reports.forEach { report ->
+                val expanded = expandedIds.contains(report.id)
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha=.96f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.10f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(report.ssid, fontSize = 14.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${report.time} · ${report.sampleMode} · ${report.sampleCount}样本", fontSize = 10.6.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.54f), maxLines = 1)
+                            }
+                            Text("${report.qualityScore} ${report.qualityLabel}", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (report.qualityScore >= 85) Color(0xFF16A34A) else Color(0xFFF59E0B))
+                            IconButton(onClick = { expandedIds = if (expanded) expandedIds - report.id else expandedIds + report.id }, modifier = Modifier.size(32.dp)) {
+                                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, Modifier.size(18.dp))
+                            }
+                        }
+                        AnimatedVisibility(expanded) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(report.conclusion, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f), lineHeight = 16.sp)
+                                Text("延迟 ${report.gatewayMinMs?.let { "${it}ms" } ?: "--"}/${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"}/${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"} · RSSI ${report.rssiBestDbm ?: "--"}/${report.rssiWorstDbm ?: "--"}/${report.rssiAvgDbm ?: "--"}dBm · 漫游 ${report.roamCount} 次 · 粘AP ${report.stickyScore}", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), lineHeight = 15.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(onClick = { onOpen(report) }, modifier = Modifier.weight(1f).height(38.dp), shape = RoundedCornerShape(14.dp)) { Text("查看总结", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+                                    OutlinedButton(onClick = { onDelete(report.id) }, modifier = Modifier.weight(1f).height(38.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444))) { Text("删除", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RoamingReportDetailScreen(report: RoamingReport, onBack: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.Rounded.ArrowBack, null) }
+            Column(Modifier.weight(1f)) {
+                Text("测试总结", fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                Text("${report.ssid} · ${report.time}", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        ExpressiveCard("总览", "评分 ${report.qualityScore} · ${report.qualityLabel}", Icons.Rounded.FactCheck, Color(0xFF16A34A)) {
+            RoamingReportLine("网关延迟", "最小${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}")
+            RoamingReportLine("外网延迟", if (report.targetMode.contains("外网")) "同目标模式记录于网关延迟列" else "未启用外网目标")
+            RoamingReportLine("信号RSSI", "最强${report.rssiBestDbm?.let { "${it}dBm" } ?: "--"} / 最弱${report.rssiWorstDbm?.let { "${it}dBm" } ?: "--"} / 平均${report.rssiAvgDbm?.let { "${it}dBm" } ?: "--"}")
+            RoamingReportLine("协商速率", "最高${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
+            RoamingReportLine("漫游切换", "${report.roamCount}次 · 最长${report.longestBreakMs?.let { "${it}ms" } ?: "—"} · 切换附近丢包${report.lossNearRoam}")
+            RoamingReportLine("粘AP分析", "Sticky ${report.stickyScore} · 最高候选差${report.bestCandidateGap?.let { "${it}dB" } ?: "--"}")
+            Text(report.conclusion, fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f), lineHeight = 17.sp)
+        }
+        ExpressiveCard("事件链", "最多显示最近 30 条关键事件", Icons.Rounded.Timeline, Color(0xFF7C3AED)) {
+            if (report.events.isEmpty()) Text("暂无事件。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.60f))
+            report.events.forEach { line ->
+                Text(line, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.66f), lineHeight = 15.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun RoamingReportLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, Modifier.width(72.dp), fontSize = 11.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
+        Text(value, Modifier.weight(1f), fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, lineHeight = 17.sp)
+    }
 }
 
 fun calculateStickyScore(samples: List<WifiSample>, weakThreshold: Int, candidateGap: Int): Int {
@@ -7626,7 +7979,7 @@ fun isWifiConnected(ctx: Context): Boolean {
     return info != null && info.networkId != -1 && ssid.isNotBlank() && ssid != "<unknown ssid>" && bssid.isNotBlank() && bssid != "02:00:00:00:00:00"
 }
 
-suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutMs: Int = 800): WifiSample = withContext(Dispatchers.IO) {
+suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutMs: Int = 800, requestScan: Boolean = false): WifiSample = withContext(Dispatchers.IO) {
     val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     val info = wifi?.connectionInfo
@@ -7637,6 +7990,7 @@ suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutM
     val frequencyMHz = runCatching { info?.frequency ?: 0 }.getOrDefault(0)
     val txMbps = runCatching { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info?.txLinkSpeedMbps ?: 0 else 0 }.getOrDefault(0)
     val rxMbps = runCatching { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info?.rxLinkSpeedMbps ?: 0 else 0 }.getOrDefault(0)
+    if (requestScan) runCatching { wifi?.startScan() }
     val scanResults = runCatching { wifi?.scanResults.orEmpty() }.getOrDefault(emptyList())
     val sameSsidCandidates = scanResults
         .asSequence()

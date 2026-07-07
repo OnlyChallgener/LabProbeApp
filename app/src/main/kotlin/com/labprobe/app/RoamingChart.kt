@@ -137,10 +137,10 @@ private fun PingStyleRoamChart(
             Box(Modifier.fillMaxSize()) {
                 Text(
                     title,
-                    modifier = Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 6.dp).zIndex(5f),
-                    fontSize = 10.8.sp,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(end = 8.dp, top = 6.dp).zIndex(5f),
+                    fontSize = 10.4.sp,
                     fontWeight = FontWeight.Black,
-                    color = scheme.onSurface.copy(alpha = .78f),
+                    color = scheme.onSurface.copy(alpha = .58f),
                     maxLines = 1
                 )
                 if (validValues.isEmpty()) {
