@@ -140,13 +140,13 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 106
+    const val CODE = 107
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.17 build106 · 漫游稳定功能恢复" to listOf(
-            "基于 build104 稳定源码恢复漫游总结、保存报告和历史二级页面",
-            "进入页面仍不读 Wi‑Fi、不扫周边 AP、不弹权限，避免退回桌面",
-            "速率行支持横向滑动，保留 RSSI / BSSID / 延迟 / 丢包 / AP切换基础测试"
+        "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
+            "无线漫游入口回退到轻量稳定页面，进入页面不读 Wi‑Fi、不请求权限",
+            "点击开始测试后再检查权限和 Wi‑Fi，避免页面首帧异常退回桌面",
+            "版本号同步为 v0.9.17 build100"
         ),
         "v0.9.15 · 设备识别 / IPv6 / WOL 自测" to listOf(
             "终端卡片新增自动设备类型识别：手机、平板、电脑、NAS、路由、电视、打印机、摄像头、音箱、IoT 等",
@@ -3410,9 +3410,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     var sampleMs by remember { mutableStateOf("250") }
     var timeoutMs by remember { mutableStateOf("1000") }
     var job by remember { mutableStateOf<Job?>(null) }
-    var roamView by remember { mutableStateOf("main") }
-    var selectedReport by remember { mutableStateOf<RoamingReport?>(null) }
-    var reportHistory by remember { mutableStateOf(prefs.roamingReports()) }
+    var showCurrentSummary by remember { mutableStateOf(false) }
 
     val interval = sampleMs.toIntOrNull()?.coerceIn(100, 5000) ?: when (sampleMode) {
         "高频100ms" -> 100
@@ -3432,59 +3430,40 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val lostCount = remember(samples) { samples.count { it.lost } }
     val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
     val events = remember(samples) { buildRoamingEventChain(samples, -70, 10, 3, 150, 2) }
-    // build106 稳定版不启用周边 AP 扫描，因此候选 AP / 粘 AP 先保持安全值。
-    // 后续可在高级参数里单独做“启用候选 AP 扫描”，默认关闭。
-    val stickyScore = 0
-    val quality = remember(samples, events) { buildRoamingQuality(samples, events, stickyScore) }
+    val quality = remember(samples, events) { buildRoamingQuality(samples, events, 0) }
     val currentReport = remember(samples, events, quality, targetMode, sampleMode) {
-        buildRoamingReport(samples, events, quality, targetMode, sampleMode, stickyScore)
+        if (samples.isEmpty()) null else buildRoamingReport(samples, events, quality, targetMode, sampleMode, 0)
     }
 
     DisposableEffect(Unit) {
         onDispose { job?.cancel() }
     }
 
-    if (roamView == "history") {
-        RoamingReportHistoryScreen(
-            reports = reportHistory,
-            storageKb = prefs.roamingReportsKb(),
-            onBack = { roamView = "main" },
-            onOpen = { selectedReport = it; roamView = "report" },
-            onDelete = { id -> prefs.deleteRoamingReport(id); reportHistory = prefs.roamingReports() },
-            onClear = { prefs.clearRoamingReports(); reportHistory = emptyList() }
-        )
-        return
-    }
-    if (roamView == "report") {
-        RoamingReportDetailScreen(report = selectedReport ?: currentReport, onBack = { roamView = if (selectedReport == null) "main" else "history" })
-        return
-    }
-
-    ExpressiveCard("漫游配置", "稳定功能模式：进入页面不读取 Wi‑Fi、不扫周边 AP、不弹权限；点击开始后才检测。", null, Color(0xFF2563EB)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+    ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi，不弹权限；点击开始后才检测。", null, Color(0xFF2563EB)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
             RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
             RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f)) { targetMode = "仅外网" }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("外网", Modifier.width(44.dp), fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f))
+            Text("外网", Modifier.width(52.dp), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f))
             OutlinedTextField(
                 value = wanTarget,
                 onValueChange = { wanTarget = it.trim().take(64) },
                 enabled = targetMode != "仅路由器",
                 singleLine = true,
                 leadingIcon = { FieldIconBox(Icons.Rounded.Public, Color(0xFF2563EB)) },
-                textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold),
                 colors = labOutlinedColors(),
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.weight(1f).height(52.dp)
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.weight(1f).height(58.dp)
             )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TinyParamInputIcon("采样ms", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
             TinyParamInputIcon("超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("高频100ms", "标准250ms", "低频500ms").forEach { mode ->
                 RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f)) {
                     sampleMode = mode
@@ -3492,17 +3471,12 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
-                onClick = { samples = emptyList(); status = "已清空" },
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.weight(.7f).height(46.dp)
-            ) { Text("清空", fontSize = 12.sp, fontWeight = FontWeight.Black) }
-            OutlinedButton(
-                onClick = { reportHistory = prefs.roamingReports(); roamView = "history" },
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.weight(.75f).height(46.dp)
-            ) { Text("历史", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+                onClick = { samples = emptyList(); status = "已清空"; showCurrentSummary = false },
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.weight(.8f).height(52.dp)
+            ) { Text("清空", fontSize = 13.sp, fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
                     if (running) {
@@ -3538,50 +3512,27 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         }
                     }
                 },
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
-                modifier = Modifier.weight(1.2f).height(46.dp)
+                modifier = Modifier.weight(1.3f).height(52.dp)
             ) {
-                Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(17.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(if (running) "停止" else "开始测试", fontSize = 12.2.sp, fontWeight = FontWeight.Black)
+                Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (running) "停止测试" else "开始测试", fontSize = 13.2.sp, fontWeight = FontWeight.Black)
             }
         }
     }
 
-    ExpressiveCard("实时结果", status, null, Color(0xFF16A34A), headerAction = {
-        TextButton(onClick = { reportHistory = prefs.roamingReports(); roamView = "history" }) { Text("历史", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
-        if (running) TextButton(onClick = { job?.cancel(); running = false; status = "已停止" }) { Text("停止", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF64748B)) }
-    }) {
-        RoamMetricStrip(
-            listOf(
-                RoamMetric("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—", Color(0xFF2563EB), 108.dp),
-                RoamMetric("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), 78.dp),
-                RoamMetric("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), 78.dp),
-                RoamMetric("丢包", lossRate, Color(0xFF64748B), 72.dp),
-                RoamMetric("漫游", "$roamCount", Color(0xFF7C3AED), 72.dp),
-                RoamMetric("粘AP", "未启用", Color(0xFFEF4444), 86.dp)
-            )
-        )
+    ExpressiveCard("实时结果", status, null, Color(0xFF16A34A)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.weight(1f))
+            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.weight(1f))
+            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.weight(1f))
+            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.weight(1f))
+        }
         RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
         RoamPlainInfo("速率", buildRoamRateText(latest))
-        if (samples.isNotEmpty()) {
-            RoamQualityCard(quality)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { selectedReport = currentReport; roamView = "report" },
-                    shape = RoundedCornerShape(15.dp),
-                    modifier = Modifier.weight(1f).height(38.dp)
-                ) { Text("查看总结", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
-                Button(
-                    onClick = { prefs.addRoamingReport(currentReport); reportHistory = prefs.roamingReports(); status = "测试总结已保存 · ${reportHistory.size}/20" },
-                    shape = RoundedCornerShape(15.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
-                    modifier = Modifier.weight(1f).height(38.dp)
-                ) { Text("保存报告", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
-            }
-        }
         if (samples.isEmpty()) {
             Text("点击开始测试后生成 RSSI、延迟、丢包和 AP 切换记录。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), lineHeight = 18.sp)
         } else {
@@ -3590,17 +3541,46 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("漫游图表", fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.weight(1f))
-                        Text("稳定模式 · 不扫候选AP", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
+                        Text("轻量稳定模式", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
                     }
                     LabRoamCharts(samples, running = running, events = events, modifier = Modifier.fillMaxWidth())
                 }
             }
-            Text("漫游事件链", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
-            RoamEventTimeline(events.takeLast(12))
+            RoamQualityCard(quality)
+            currentReport?.let { report ->
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("当前测试总结", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                                Text("不进入三级页面；仅在当前页折叠展示", fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f))
+                            }
+                            TextButton(onClick = { showCurrentSummary = !showCurrentSummary }) {
+                                Text(if (showCurrentSummary) "收起" else "展开", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+                            }
+                        }
+                        AnimatedVisibility(showCurrentSummary) {
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                RoamingReportLine("网关延迟", "最小${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}")
+                                RoamingReportLine("信号RSSI", "最强${report.rssiBestDbm?.let { "${it}dBm" } ?: "--"} / 最弱${report.rssiWorstDbm?.let { "${it}dBm" } ?: "--"} / 平均${report.rssiAvgDbm?.let { "${it}dBm" } ?: "--"}")
+                                RoamingReportLine("协商速率", "最高${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
+                                RoamingReportLine("漫游切换", "${report.roamCount}次 · 最长${report.longestBreakMs?.let { "${it}ms" } ?: "—"} · 切换附近丢包${report.lossNearRoam}")
+                                Text(report.conclusion, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), lineHeight = 16.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            Text("漫游事件", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
+            RoamEventTimeline(events.takeLast(8))
         }
     }
 }
-
 @Composable
 fun MtuScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("MTU 检测", "路径 MTU · 分片探测", onBack) { MtuTool(prefs) }
 @Composable
@@ -4217,14 +4197,7 @@ private fun RoamPlainInfo(label: String, value: String) {
                 .horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                value,
-                fontSize = 12.2.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .80f),
-                maxLines = 1,
-                overflow = TextOverflow.Visible
-            )
+            Text(value, fontSize = 12.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .80f), maxLines = 1)
         }
     }
 }
