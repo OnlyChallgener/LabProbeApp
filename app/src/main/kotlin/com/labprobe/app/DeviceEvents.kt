@@ -27,7 +27,11 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 devType = n.devType.ifBlank { o.devType },
                 osType = n.osType.ifBlank { o.osType },
                 hostName = n.hostName.ifBlank { o.hostName },
-                wolMode = n.wolMode.ifBlank { o.wolMode }
+                wolMode = n.wolMode.ifBlank { o.wolMode },
+                connectType = n.connectType.ifBlank { o.connectType },
+                remark = n.remark.ifBlank { o.remark },
+                manualType = n.manualType.ifBlank { o.manualType },
+                wolEnabledOverride = n.wolEnabledOverride ?: o.wolEnabledOverride
             )
         } else n
     }.toMutableList()

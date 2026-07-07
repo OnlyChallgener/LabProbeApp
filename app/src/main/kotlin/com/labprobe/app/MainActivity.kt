@@ -417,6 +417,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("cache_online_devices", v).apply()
     var cacheEvents: String get() = sp.getString("cache_events", "") ?: ""
         set(v) = sp.edit().putString("cache_events", v).apply()
+    var wolDevicesJson: String get() = sp.getString("wol_devices_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("wol_devices_v1", v).apply()
     var lastRefresh: String get() = sp.getString("last_refresh", "") ?: ""
         set(v) = sp.edit().putString("last_refresh", v).apply()
 
@@ -834,6 +836,7 @@ class AppState(private val prefs: AppPrefs) {
     var devices by mutableStateOf(parseDeviceArray(prefs.cacheDevices))
     var onlineDevices by mutableStateOf(parseDeviceArray(prefs.cacheOnlineDevices))
     var events by mutableStateOf(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)))
+    var wolDevices by mutableStateOf(parseWolDevices(prefs.wolDevicesJson))
     var loading by mutableStateOf(false)
     var hubConnected by mutableStateOf(prefs.lastRefresh.isNotBlank() && prefs.hub.isNotBlank())
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
@@ -881,15 +884,17 @@ class AppState(private val prefs: AppPrefs) {
         val devOnline = api.getDevices(true)
         val evs = normalizeDeviceEvents(api.getEvents())
         status = stRoot
-        val mergedDevices = mergeDeviceCache(devices, devWatched)
+        val devOnlineWithIpv6 = mergeIpv6NeighborsFromStatus(stRoot, devOnline)
+        val devWatchedWithIpv6 = mergeIpv6NeighborsFromStatus(stRoot, devWatched)
+        val mergedDevices = mergeDeviceCache(devices, devWatchedWithIpv6)
         devices = mergedDevices
-        onlineDevices = devOnline
+        onlineDevices = devOnlineWithIpv6
         events = evs
         prefs.cacheStatus = stRoot.toString()
         // 保存合并后的关注终端缓存，而不是只保存 Hub 本次返回值。
         // 这样离线设备在 Hub 短时间字段缺失、APP 重启后，仍能保留最后 IP / SSID / 频段 / 速率 / 信号。
         prefs.cacheDevices = JSONArray(mergedDevices.map { it.toJson() }).toString()
-        prefs.cacheOnlineDevices = JSONArray(devOnline.map { it.toJson() }).toString()
+        prefs.cacheOnlineDevices = JSONArray(devOnlineWithIpv6.map { it.toJson() }).toString()
         prefs.cacheEvents = JSONArray(evs.map { it.toJson() }).toString()
         prefs.lastRefresh = nowClock()
         hubConnected = true
@@ -918,6 +923,53 @@ class AppState(private val prefs: AppPrefs) {
         message = msg
         if (sent <= 0) throw RuntimeException(lastError?.message ?: msg)
         return msg
+    }
+
+    suspend fun wakeMac(ctx: Context, mac: String): String {
+        val clean = cleanMac(mac)
+        if (!isValidMac(clean)) throw RuntimeException("MAC 地址无效，无法 WOL")
+        val device = (onlineDevices + devices).firstOrNull { it.mac.equals(clean, ignoreCase = true) } ?: DeviceItem(
+            name = clean,
+            mac = clean,
+            online = false,
+            ip = "",
+            ssid = "",
+            band = "",
+            rssi = "",
+            rxrate = "",
+            onlineSince = "",
+            offlineAt = "",
+            onlineDurationText = "",
+            lastSeenAt = "",
+            wolMode = "on"
+        )
+        return wakeDevice(ctx, device)
+    }
+
+    fun addOrUpdateWolDevice(item: WolDeviceConfig) {
+        val clean = cleanMac(item.mac)
+        if (!isValidMac(clean)) {
+            message = "MAC 地址无效，未保存 WOL 设备"
+            return
+        }
+        val fixed = item.copy(mac = clean, id = item.id.ifBlank { clean }, typeId = normalizeDeviceTypeToken(item.typeId).ifBlank { item.typeId.ifBlank { "desktop" } }, updatedAt = System.currentTimeMillis())
+        wolDevices = (listOf(fixed) + wolDevices.filterNot { it.mac.equals(clean, ignoreCase = true) }).take(80)
+        prefs.wolDevicesJson = wolDevicesToJson(wolDevices)
+        message = "已保存 WOL 设备：${fixed.remark.ifBlank { fixed.mac }}"
+    }
+
+    fun toggleWolDevice(mac: String, enabled: Boolean) {
+        val clean = cleanMac(mac)
+        wolDevices = wolDevices.map { if (it.mac.equals(clean, ignoreCase = true)) it.copy(enabled = enabled, updatedAt = System.currentTimeMillis()) else it }
+        prefs.wolDevicesJson = wolDevicesToJson(wolDevices)
+        message = if (enabled) "已启用 WOL" else "已关闭 WOL"
+    }
+
+    fun deleteWolDevice(mac: String) {
+        val clean = cleanMac(mac)
+        wolDevices = wolDevices.filterNot { it.mac.equals(clean, ignoreCase = true) }
+        prefs.wolDevicesJson = wolDevicesToJson(wolDevices)
+        message = "已删除 WOL 设备"
     }
 
     suspend fun deleteEvent(event: EventItem) {
@@ -2815,18 +2867,24 @@ fun StatusPill(label: String, value: String, color: Color) {
 
 @Composable
 fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
-    var onlineMode by remember { mutableStateOf(false) }
-    val list = if (onlineMode) state.onlineDevices else state.devices
-    val wolCount = remember(list) { list.count { !it.online && inferDeviceProfile(it).wolCandidate } }
-    ExpressiveCard("终端同步", "${if (onlineMode) "全部在线" else "关注设备"} · ${list.size} 台 · WOL候选 $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
+    var mode by remember { mutableStateOf("watch") }
+    val list = if (mode == "online") state.onlineDevices else state.devices
+    val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
+    val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
+    ExpressiveCard("终端同步", "${if (mode == "online") "全部在线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") state.wolDevices.size else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !onlineMode, onClick = { onlineMode = false }, label = { Text("关注", fontSize = 12.sp) })
-            FilterChip(selected = onlineMode, onClick = { onlineMode = true }, label = { Text("全部在线", fontSize = 12.sp) })
+            FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
+            FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("全部在线", fontSize = 12.sp) })
+            FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
         }
-        Text("按 MAC 归并 IPv4 / IPv6；手机、平板、手表默认隐藏 WOL，PC / NAS 离线时显示唤醒。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text("按 MAC 归并 IPv4 / IPv6；WOL 页共享在线列表状态，不单独连续 Ping。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
-    list.forEach { d -> DeviceSmartCard(state, d) }
+    if (mode == "wol") {
+        WolManagementPanel(state)
+    } else {
+        list.forEach { d -> DeviceSmartCard(state, d) }
+    }
 }
 
 
@@ -2835,7 +2893,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
-    val profile = remember(d.name, d.mac, d.devType, d.manufacture, d.osType, d.hostName, d.wolMode) { inferDeviceProfile(d) }
+    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.devType, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType) { inferDeviceProfile(d) }
     ExpressiveCard(
         title = d.name.ifBlank { d.mac },
         subtitle = listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · "),
@@ -2881,17 +2939,23 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
     val ctx = LocalContext.current
     val ip4 = cleanApiText(d.ip).ifBlank { "--" }
     val v6 = d.ipv6.filter { it.isNotBlank() }.distinct()
+    val wifi = hasWifiInfo(d)
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip))
-            val v6Text = v6.firstOrNull()?.let { shortIpv6(it) + if (v6.size > 1) " +${v6.size - 1}" else "" } ?: "--"
-            DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6.firstOrNull().orEmpty())
+            DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
+            val v6Full = bestIpv6ForDisplay(v6)
+            val v6Text = v6Full.ifBlank { "--" }.let { if (it == "--") it else shortIpv6(it) + if (v6.size > 1) " +${v6.size - 1}" else "" }
+            DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6Full, allowScroll = true)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val radio = listOf(d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "--" }
-            DeviceMiniMetric("链路", radio, Icons.Rounded.Wifi, Color(0xFF22C55E), Modifier.weight(1f), copyValue = radio.takeIf { it != "--" }.orEmpty())
-            val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
-            DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFFF59E0B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty())
+        if (wifi) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val radio = listOf(d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "--" }
+                DeviceMiniMetric("链路", radio, Icons.Rounded.Wifi, Color(0xFF22C55E), Modifier.weight(1f), copyValue = radio.takeIf { it != "--" }.orEmpty(), allowScroll = true)
+                val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
+                DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFFF59E0B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true)
+            }
+        } else {
+            DeviceMiniMetric("连接", "有线设备", Icons.Rounded.SettingsEthernet, Color(0xFF64748B), Modifier.fillMaxWidth(), copyValue = "有线设备", allowScroll = false)
         }
         val timeText = if (d.online) {
             listOfNotNull(cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" }, cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }).joinToString(" · ")
@@ -2906,13 +2970,14 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
             Text(timeText, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (v6.size > 1) {
-            Text("IPv6 共 ${v6.size} 个：${v6.take(2).joinToString(" · ") { shortIpv6(it) }}${if (v6.size > 2) " · …" else ""}", Modifier.clickable { copy(ctx, v6.joinToString("\n")) }, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("IPv6 共 ${v6.size} 个：${v6.take(2).joinToString(" · ") { shortIpv6(it) }}${if (v6.size > 2) " · …" else ""}", Modifier.clickable { copy(ctx, v6.joinToString("\n")) }.horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
 
+
 @Composable
-fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "") {
+fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false) {
     val ctx = LocalContext.current
     Surface(modifier = modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))) {
         Row(Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2922,11 +2987,13 @@ fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Col
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f)) {
                 Text(label, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
-                Text(value, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val textModifier = if (allowScroll && value != "--") Modifier.horizontalScroll(rememberScrollState()) else Modifier
+                Text(value, modifier = textModifier, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
             }
         }
     }
 }
+
 
 @Composable
 fun DeviceLine(d: DeviceItem, details: Boolean = false) {

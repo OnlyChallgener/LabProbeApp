@@ -21,7 +21,11 @@ data class DeviceItem(
     val devType: String = "",
     val osType: String = "",
     val hostName: String = "",
-    val wolMode: String = ""
+    val wolMode: String = "",
+    val connectType: String = "",
+    val remark: String = "",
+    val manualType: String = "",
+    val wolEnabledOverride: Boolean? = null
 )
 
 data class DeviceVisualProfile(

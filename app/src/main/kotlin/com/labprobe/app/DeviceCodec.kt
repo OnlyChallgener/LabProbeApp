@@ -60,6 +60,13 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
         addAll(f("ipv6").split(DEVICE_VALUE_SPLIT))
         addAll(f("ipv6Address").split(DEVICE_VALUE_SPLIT))
         addAll(f("lastIpv6").split(DEVICE_VALUE_SPLIT))
+        addAll(f("globalIpv6").split(DEVICE_VALUE_SPLIT))
+        addAll(f("globalIPv6").split(DEVICE_VALUE_SPLIT))
+        addAll(f("ndpIpv6").split(DEVICE_VALUE_SPLIT))
+        addAll(f("ndpIPv6").split(DEVICE_VALUE_SPLIT))
+        addAll(jsonStringList(o, "ipv6Addrs"))
+        addAll(jsonStringList(o, "ipv6Addresses"))
+        addAll(jsonStringList(o, "addresses"))
     }
         .map { it.substringBefore('/').trim() }
         .map(::cleanApiText)
@@ -85,7 +92,11 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
         devType = f("devType").ifBlank { f("deviceType") }.ifBlank { f("type") },
         osType = f("osType").ifBlank { f("os") },
         hostName = f("hostName").ifBlank { f("hostname") },
-        wolMode = f("wolMode").ifBlank { f("wol") }.ifBlank { f("wolCapable") }
+        wolMode = f("wolMode").ifBlank { f("wol") }.ifBlank { f("wolCapable") },
+        connectType = f("connectType").ifBlank { f("connType") }.ifBlank { f("connectionType") },
+        remark = f("remark").ifBlank { f("note") },
+        manualType = f("manualType").ifBlank { f("deviceTypeManual") }.ifBlank { f("typeManual") },
+        wolEnabledOverride = boolOrNull(o, "wolEnabled").orElse(boolOrNull(o, "manualWol")).orElse(boolOrNull(o, "wolSwitch"))
     )
 }
 
@@ -117,6 +128,10 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
     .put("osType", osType)
     .put("hostName", hostName)
     .put("wolMode", wolMode)
+    .put("connectType", connectType)
+    .put("remark", remark)
+    .put("manualType", manualType)
+    .put("wolEnabled", wolEnabledOverride ?: JSONObject.NULL)
 
 fun EventItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
@@ -135,3 +150,21 @@ fun EventItem.toJson(): JSONObject = JSONObject()
     .put("offlineAt", offlineAt)
     .put("onlineDurationText", onlineDurationText)
     .put("mac", mac)
+
+
+private fun boolOrNull(o: JSONObject, key: String): Boolean? {
+    if (!o.has(key) || o.isNull(key)) return null
+    val raw = o.opt(key) ?: return null
+    return when (raw) {
+        is Boolean -> raw
+        is Number -> raw.toInt() != 0
+        is String -> when (raw.trim().lowercase()) {
+            "1", "true", "yes", "on", "enable", "enabled", "支持", "开启" -> true
+            "0", "false", "no", "off", "disable", "disabled", "不支持", "关闭" -> false
+            else -> null
+        }
+        else -> null
+    }
+}
+
+private fun Boolean?.orElse(other: Boolean?): Boolean? = this ?: other
