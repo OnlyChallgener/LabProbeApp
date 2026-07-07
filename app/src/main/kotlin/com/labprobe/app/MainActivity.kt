@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 108
+    const val CODE = 109
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
@@ -1567,7 +1567,7 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 }
 
 
-private val ParamFieldHeight = 58.dp
+private val ParamFieldHeight = 52.dp
 private val ParamFieldRadius = 18.dp
 
 @Composable
@@ -1673,9 +1673,9 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
 @Composable
 fun FieldIconBox(icon: ImageVector, accent: Color = Color(0xFF2563EB)) {
     Box(
-        Modifier.size(30.dp).clip(RoundedCornerShape(11.dp)).background(accent.copy(alpha = .11f)),
+        Modifier.size(28.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = .11f)),
         contentAlignment = Alignment.Center
-    ) { Icon(icon, null, Modifier.size(17.dp), tint = accent) }
+    ) { Icon(icon, null, Modifier.size(16.dp), tint = accent) }
 }
 
 @Composable
@@ -3523,8 +3523,8 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 leadingIcon = { FieldIconBox(Icons.Rounded.Public, Color(0xFF2563EB)) },
                 textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold),
                 colors = labOutlinedColors(),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.weight(1f).height(58.dp)
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.weight(1f).height(52.dp)
             )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -3542,14 +3542,16 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { samples = emptyList(); status = "已清空"; showCurrentSummary = false },
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.weight(.72f).height(46.dp)
-            ) { Text("清空", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+                shape = RoundedCornerShape(15.dp),
+                modifier = Modifier.weight(1f).height(42.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+            ) { Text("清空", fontSize = 11.6.sp, fontWeight = FontWeight.Black) }
             OutlinedButton(
                 onClick = { refreshRoamingHistory(); showHistorySheet = true },
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.weight(.78f).height(46.dp)
-            ) { Text("历史", fontSize = 12.sp, fontWeight = FontWeight.Black) }
+                shape = RoundedCornerShape(15.dp),
+                modifier = Modifier.weight(1f).height(42.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+            ) { Text("历史", fontSize = 11.6.sp, fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
                     if (running) {
@@ -3585,23 +3587,27 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         }
                     }
                 },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(15.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
-                modifier = Modifier.weight(1.35f).height(46.dp)
+                modifier = Modifier.weight(1f).height(42.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
             ) {
-                Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (running) "停止测试" else "开始测试", fontSize = 13.2.sp, fontWeight = FontWeight.Black)
+                Text(if (running) "停止测试" else "开始测试", fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
     }
 
     ExpressiveCard("实时结果", status, null, Color(0xFF16A34A)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.weight(1f))
-            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.weight(1f))
-            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.weight(1f))
-            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.weight(1f))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.width(88.dp))
+            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.width(88.dp))
+            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.width(88.dp))
+            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.width(88.dp))
         }
         RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
@@ -4256,13 +4262,13 @@ private fun RoamPermissionHint(granted: Boolean) {
 @Composable
 private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
-        modifier = modifier.height(46.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(17.dp),
+        modifier = modifier.height(42.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(15.dp),
         color = if (selected) Color(0xFF2563EB).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
         border = BorderStroke(1.dp, if (selected) Color(0xFF2563EB).copy(alpha = .38f) else MaterialTheme.colorScheme.outline.copy(alpha = .14f))
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(text, fontSize = 12.2.sp, fontWeight = FontWeight.Black, color = if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -4952,14 +4958,14 @@ fun PingStats(points: List<PingPoint>) {
 @Composable
 fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.heightIn(min = 58.dp),
-        shape = RoundedCornerShape(18.dp),
+        modifier = modifier.height(50.dp),
+        shape = RoundedCornerShape(16.dp),
         color = color.copy(alpha = .06f),
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
     ) {
-        Column(Modifier.padding(horizontal = 9.dp, vertical = 7.dp), verticalArrangement = Arrangement.Center) {
-            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
+            Text(label, fontSize = 9.4.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 12.0.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
