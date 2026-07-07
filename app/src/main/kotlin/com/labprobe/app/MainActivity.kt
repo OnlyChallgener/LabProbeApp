@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 102
+    const val CODE = 103
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
@@ -3519,16 +3519,16 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     CompactRoamInputSmall("弱信号", weakRssiThreshold, { weakRssiThreshold = sanitizeSignedNumber(it).take(4) }, Icons.Rounded.Wifi, Modifier.weight(1f), "dBm")
-                    CompactRoamInputSmall("候选差", candidateGapDb, { candidateGapDb = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.CompareArrows, Modifier.weight(1f), "dB")
+                    CompactRoamInputSmall("候选差", candidateGapDb, { candidateGapDb = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Wifi, Modifier.weight(1f), "dB")
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    CompactRoamInputSmall("触发", triggerSeconds, { triggerSeconds = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "s")
+                    CompactRoamInputSmall("触发", triggerSeconds, { triggerSeconds = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Schedule, Modifier.weight(1f), "s")
                     CompactRoamInputSmall("高延迟", highLatencyMs, { highLatencyMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Speed, Modifier.weight(1f), "ms")
                     CompactRoamInputSmall("丢包", lossTriggerCount, { lossTriggerCount = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Warning, Modifier.weight(1f), "个")
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     CompactRoamInputSmall("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
-                    CompactRoamInputSmall("AP扫描", scanMs, { scanMs = it.filter { c -> c.isDigit() }.take(5) }, Icons.Rounded.Radar, Modifier.weight(1f), "ms")
+                    CompactRoamInputSmall("AP扫描", scanMs, { scanMs = it.filter { c -> c.isDigit() }.take(5) }, Icons.Rounded.Wifi, Modifier.weight(1f), "ms")
                 }
             }
         }
@@ -3814,7 +3814,7 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
         }
         CompactIconHistoryInput("URL", "https://...", url, { url = it }, "speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
             TinyInfoParam("停止", "峰值稳定", Icons.Rounded.Info, blue, Modifier.weight(1f))
         }
         PillButton(if (running) "峰值测速中..." else "开始峰值测速", Icons.Rounded.PlayArrow, enabled = !running, accent = blue) {
@@ -3868,7 +3868,7 @@ fun LanSpeedTool(prefs: AppPrefs) {
     ExpressiveCard("局域网配置", "需要路由器 / NAS 提供 HTTP 大文件或 Homebox 下载地址。", Icons.Rounded.SettingsEthernet, blue) {
         CompactIconHistoryInput("服务地址", "http://192.168.5.1:8989/download", url, { url = it }, "lan_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
             TinyInfoParam("模式", "下载峰值", Icons.Rounded.Speed, blue, Modifier.weight(1f))
         }
         PillButton(if (running) "局域网测速中..." else "开始局域网测速", Icons.Rounded.PlayArrow, enabled = !running, accent = blue) {
@@ -3919,7 +3919,7 @@ fun LoadLatencyTool(prefs: AppPrefs) {
         CompactIconHistoryInput("下载URL", "https://...", url, { url = it }, "load_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             TinyHistoryParamInputIcon("Ping目标", "223.5.5.5", pingTarget, { pingTarget = it }, "load_ping_target", prefs, Icons.Rounded.Router, KeyboardType.Text, Modifier.weight(1f))
-            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
         }
         PillButton(if (running) "负载测试中..." else "开始负载延迟", Icons.Rounded.PlayArrow, enabled = !running, accent = accent) {
             scope.launch {
@@ -4084,16 +4084,16 @@ fun WifiRoamingTool(prefs: AppPrefs) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CompactRoamInput("弱信号", weakRssiThreshold, { weakRssiThreshold = sanitizeSignedNumber(it).take(4) }, Icons.Rounded.Wifi, Modifier.weight(1f), "dBm")
-                    CompactRoamInput("候选差", candidateGapDb, { candidateGapDb = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.CompareArrows, Modifier.weight(1f), "dB")
+                    CompactRoamInput("候选差", candidateGapDb, { candidateGapDb = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Wifi, Modifier.weight(1f), "dB")
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CompactRoamInput("触发", triggerSeconds, { triggerSeconds = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "s")
+                    CompactRoamInput("触发", triggerSeconds, { triggerSeconds = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Schedule, Modifier.weight(1f), "s")
                     CompactRoamInput("高延迟", highLatencyMs, { highLatencyMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Speed, Modifier.weight(1f), "ms")
                     CompactRoamInput("丢包", lossTriggerCount, { lossTriggerCount = it.filter { c -> c.isDigit() }.take(2) }, Icons.Rounded.Warning, Modifier.weight(1f), "个")
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CompactRoamInput("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
-                    CompactRoamInput("AP扫描", scanMs, { scanMs = it.filter { c -> c.isDigit() }.take(5) }, Icons.Rounded.Radar, Modifier.weight(1f), "ms")
+                    CompactRoamInput("AP扫描", scanMs, { scanMs = it.filter { c -> c.isDigit() }.take(5) }, Icons.Rounded.Wifi, Modifier.weight(1f), "ms")
                 }
             }
         }
@@ -4245,6 +4245,126 @@ private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifie
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(text, fontSize = 12.2.sp, fontWeight = FontWeight.Black, color = if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+
+@Composable
+private fun RoamSegmentButtonCompact(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        modifier = modifier.height(42.dp).clip(RoundedCornerShape(15.dp)).clickable(onClick = onClick),
+        shape = RoundedCornerShape(15.dp),
+        color = if (selected) Color(0xFF2563EB).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+        border = BorderStroke(1.dp, if (selected) Color(0xFF2563EB).copy(alpha = .38f) else MaterialTheme.colorScheme.outline.copy(alpha = .12f))
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(text, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun RoamAddressInput(value: String, onValueChange: (String) -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.height(46.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = if (enabled) MaterialTheme.colorScheme.surface.copy(alpha = .94f) else MaterialTheme.colorScheme.surface.copy(alpha = .56f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .13f))
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(27.dp).clip(RoundedCornerShape(11.dp)).background(Color(0xFF2563EB).copy(alpha=.10f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Public, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
+            }
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                enabled = enabled,
+                singleLine = true,
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactRoamInputSmall(label: String, value: String, onValueChange: (String) -> Unit, icon: ImageVector, modifier: Modifier = Modifier, suffix: String = "") {
+    Surface(
+        modifier = modifier.height(48.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .12f))
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(24.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF2563EB).copy(alpha=.10f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(13.dp), tint = Color(0xFF2563EB))
+            }
+            Spacer(Modifier.width(6.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f), maxLines = 1)
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (suffix.isNotBlank()) Text(suffix, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.48f), maxLines = 1)
+        }
+    }
+}
+
+@Composable
+fun LabRoamCharts(samples: List<WifiSample>, running: Boolean, events: List<RoamEvent>, modifier: Modifier = Modifier) {
+    val validRssi = samples.filter { it.rssi > -120 }
+    val rssiValues = validRssi.map { it.rssi.toDouble() }
+    val rssiMinRaw = (rssiValues.minOrNull() ?: -90.0)
+    val rssiMaxRaw = (rssiValues.maxOrNull() ?: -30.0)
+    val rssiSpan = (rssiMaxRaw - rssiMinRaw).coerceAtLeast(6.0)
+    val rssiMin = (rssiMinRaw - rssiSpan * .25).coerceAtLeast(-100.0)
+    val rssiMax = (rssiMaxRaw + rssiSpan * .25).coerceAtMost(-10.0)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                Text("信号强度 dBm", fontSize = 10.6.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
+            }
+            SelectableLineChart(
+                values = rssiValues,
+                minY = rssiMin,
+                maxY = rssiMax,
+                color = Color(0xFF16A34A),
+                empty = "无可用 RSSI",
+                yFormat = { it.roundToInt().toString() },
+                pointLabels = validRssi.map { "${it.time}
+RSSI ${it.rssi} dBm
+BSSID ${it.bssid}" },
+                modifier = Modifier.fillMaxWidth().height(172.dp)
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                Text("漫游延迟 ms", fontSize = 10.6.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
+            }
+            val latencySamples = samples.filter { it.latency != null }
+            SelectableLineChart(
+                values = latencySamples.mapNotNull { it.latency?.toDouble() },
+                minY = 0.0,
+                maxY = niceLatencyMax(latencySamples.mapNotNull { it.latency }.maxOrNull() ?: 80).toDouble(),
+                color = Color(0xFF2563EB),
+                empty = "等待延迟样本",
+                yFormat = { it.roundToInt().toString() },
+                pointLabels = latencySamples.map { "${it.time}
+延迟 ${it.latency ?: 0} ms
+丢包 ${if (it.lost) "是" else "否"}" },
+                modifier = Modifier.fillMaxWidth().height(172.dp)
+            )
         }
     }
 }
@@ -4403,15 +4523,15 @@ fun PingTool(prefs: AppPrefs) {
             if (showPort) {
                 TinyParamInputIcon("端口", port, { port = it; prefs.pingPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
             } else {
-                TinyParamSelectIcon("间隔", interval, listOf("25", "30", "50", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "ms")
+                TinyParamSelectIcon("间隔", interval, listOf("25", "30", "50", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("次数", count, listOf("200", "500", "1000", "2000"), { count = it; prefs.pingCount = it }, Icons.Rounded.Repeat, Modifier.weight(1f))
             if (showPort) {
-                TinyParamSelectIcon("间隔", interval, listOf("25", "30", "50", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), "ms")
+                TinyParamSelectIcon("间隔", interval, listOf("25", "30", "50", "100", "200", "500", "1000"), { interval = it; prefs.pingInterval = it }, Icons.Rounded.Schedule, Modifier.weight(1f), "ms")
             }
-            TinyParamSelectIcon("超时", timeout, listOf("自动", "300", "500", "800", "1000", "1500", "3000"), { timeout = it; prefs.pingTimeout = it }, Icons.Rounded.HourglassEmpty, Modifier.weight(1f), if (timeout == "自动") "" else "ms")
+            TinyParamSelectIcon("超时", timeout, listOf("自动", "300", "500", "800", "1000", "1500", "3000"), { timeout = it; prefs.pingTimeout = it }, Icons.Rounded.Schedule, Modifier.weight(1f), if (timeout == "自动") "" else "ms")
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = {
@@ -5696,7 +5816,7 @@ fun TcpTool(prefs: AppPrefs) {
         CompactIconHistoryInput("主机", "net86.dynv6.net / 240e::1", host, { host = it; prefs.tcpHost = it }, "port_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.tcpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.tcpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.tcpTimeout = it }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
@@ -5758,7 +5878,7 @@ fun UdpTool(prefs: AppPrefs) {
         Text(udpTemplateSpec(template).note, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), lineHeight = 15.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.udpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.udpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.udpTimeout = it }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
         }
         PillButton("开始 UDP 探测", Icons.Rounded.Waves, accent = Color(0xFF06B6D4)) {
             scope.launch {
@@ -5830,7 +5950,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
         CompactIconHistoryInput("服务器", defaultNatServer(mode).host, host, { host = it }, "nat_server_$mode", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.natTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.natTimeout = it }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.natIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
@@ -6024,7 +6144,7 @@ fun TraceTool(prefs: AppPrefs) {
             TinyParamInputIcon("跳数", maxHops, { maxHops = it; prefs.traceMaxHops = it }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.traceTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.traceTimeout = it }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
             TinyInfoParam("说明", "实时过程", Icons.Rounded.Info, Color(0xFF2563EB), Modifier.weight(1f))
         }
         PillButton(if (running) "追踪中" else "开始追踪", Icons.Rounded.AltRoute, accent = Color(0xFF2563EB)) {
