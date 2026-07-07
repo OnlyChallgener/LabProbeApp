@@ -32,7 +32,8 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
         accent = rule.accent,
         wolCandidate = wol,
         confidence = confidence,
-        note = note
+        note = note,
+        iconKey = rule.iconKey
     )
 }
 
@@ -80,7 +81,7 @@ private fun strongNameType(d: DeviceItem): DeviceTypeRule? {
         listOf("macbook", "matebook", "magicbook", "redmibook", "laptop", "notebook", "笔记本").any { nameText.contains(it) } -> deviceTypeById("laptop")
         listOf("mac mini", "macmini", "mini pc", "minipc", "nuc", "迷你主机", "小主机").any { nameText.contains(it) } -> deviceTypeById("mini_pc")
         listOf("desktop", "台式", "台式机").any { nameText.contains(it) } -> deviceTypeById("desktop")
-        listOf("dh4300", "dh4300plus", "dx4600", "nas", "群晖", "威联通", "绿联", "极空间", "飞牛").any { nameText.contains(it) } -> deviceTypeById("nas")
+        listOf("nas", "群晖", "威联通", "极空间", "飞牛").any { nameText.contains(it) } || ugreenNasModelTokens.any { nameText.contains(it) } -> deviceTypeById("nas")
         listOf("soundbox", "miaisoundbox", "小爱", "天猫精灵", "音箱", "音响", "speaker").any { nameText.contains(it) } -> deviceTypeById("speaker")
         listOf("热水器", "water heater").any { nameText.contains(it) } -> deviceTypeById("water_heater")
         listOf("空调", "aircon", "air conditioner").any { nameText.contains(it) } -> deviceTypeById("aircon")

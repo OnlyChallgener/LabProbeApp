@@ -96,7 +96,8 @@ fun buildWolRuntimes(configs: List<WolDeviceConfig>, sharedDevices: List<DeviceI
             accent = type.accent,
             wolCandidate = cfg.enabled,
             confidence = 99,
-            note = if (cfg.enabled) "WOL 手动设备" else "WOL 已关闭"
+            note = if (cfg.enabled) "WOL 手动设备" else "WOL 已关闭",
+            iconKey = type.iconKey
         )
         WolDeviceRuntime(
             config = cfg,
