@@ -7,6 +7,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
+import android.app.Activity
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Build
@@ -18,6 +20,7 @@ import android.system.OsConstants
 import android.system.StructPollfd
 import android.content.Intent
 import androidx.core.content.FileProvider
+import androidx.core.app.ActivityCompat
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -3716,21 +3719,14 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     var selectedReport by remember { mutableStateOf<RoamingReport?>(null) }
     var reportHistory by remember { mutableStateOf(prefs.roamingReports()) }
     var job by remember { mutableStateOf<Job?>(null) }
-    var requestedOnEnter by remember { mutableStateOf(false) }
-    var hasRoamPermissions by remember { mutableStateOf(false) }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
-        status = if (hasRoamPermissions) "权限已就绪" else "缺少必要权限，下次进入漫游测试页会再次提醒"
-    }
+    var hasRoamPermissions by remember { mutableStateOf(safeHasWifiRoamingPermissions(ctx)) }
+
+    // 进入页面只渲染 UI，不自动弹系统权限、不注册 ActivityResult 请求。
+    // 部分国产系统/定制 ROM 在路由动画或首帧期间拉起权限页，会把 APP 切到后台。
+    // 因此权限只在用户点击“开始测试”时使用 ActivityCompat.requestPermissions 请求。
     LaunchedEffect(Unit) {
-        // 只做权限状态检查，不在进入页面时直接拉起系统权限弹窗。
-        // 部分国产系统在页面切换/首帧期间调用 ActivityResultLauncher 会直接导致闪退。
-        delay(420)
-        hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
-        if (!hasRoamPermissions && !requestedOnEnter) {
-            requestedOnEnter = true
-            status = "需要定位/Wi‑Fi 权限；点击开始测试后会自动请求"
-        }
+        hasRoamPermissions = safeHasWifiRoamingPermissions(ctx)
+        if (!hasRoamPermissions) status = "需要定位/Wi‑Fi 权限；点击开始测试后会请求"
     }
 
     val interval = sampleMs.toIntOrNull()?.coerceIn(80, 5000) ?: when (sampleMode) {
@@ -3865,13 +3861,17 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                     if (running) {
                         job?.cancel(); running = false; status = "已停止"
                     } else {
-                        hasRoamPermissions = hasRequiredWifiRoamingPermissions(ctx)
+                        hasRoamPermissions = safeHasWifiRoamingPermissions(ctx)
                         if (!hasRoamPermissions) {
                             status = "缺少必要权限，已请求授权"
-                            val missing = missingWifiRoamingPermissions(ctx)
-                            if (missing.isNotEmpty()) {
-                                runCatching { permissionLauncher.launch(missing) }
+                            val missing = safeMissingWifiRoamingPermissions(ctx)
+                            val activity = ctx.findActivity()
+                            if (missing.isNotEmpty() && activity != null) {
+                                runCatching { ActivityCompat.requestPermissions(activity, missing, 9701) }
                                     .onFailure { status = "权限请求启动失败：${it.javaClass.simpleName}" }
+                            } else {
+                                Toast.makeText(ctx, "请在系统设置中允许定位/Wi‑Fi权限", Toast.LENGTH_SHORT).show()
+                                status = "无法自动请求权限，请到系统设置中开启定位/Wi‑Fi权限"
                             }
                             return@Button
                         }
@@ -7970,6 +7970,18 @@ suspend fun runDownloadTemplateTest(url: String, durationSec: Int, onTick: suspe
     val note = if (stopByPeak) "峰值稳定，自动停止：${formatTraffic(total)} · 峰值 ${String.format(Locale.US, "%.1f Mbps", peak)}" else "完成：${formatTraffic(total)} · 峰值 ${String.format(Locale.US, "%.1f Mbps", peak)}"
     SpeedTestResult(avg, peak, total, (elapsed/1000).toInt(), note)
 }
+
+fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+fun safeMissingWifiRoamingPermissions(ctx: Context): Array<String> =
+    runCatching { missingWifiRoamingPermissions(ctx) }.getOrDefault(emptyArray())
+
+fun safeHasWifiRoamingPermissions(ctx: Context): Boolean =
+    runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
 
 fun requiredWifiRoamingPermissions(): Array<String> {
     val perms = mutableListOf(

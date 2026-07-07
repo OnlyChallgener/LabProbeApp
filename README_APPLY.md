@@ -1,20 +1,23 @@
-# LabProbe v0.9.17 build94 · roaming crash hotfix
+# build98 完整覆盖说明
 
-覆盖：
+这是完整工程覆盖包，不是小补丁。
 
-```bash
-cp app/src/main/kotlin/com/labprobe/app/MainActivity.kt ./app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-cp app/src/main/AndroidManifest.xml ./app/src/main/AndroidManifest.xml
-cp app/build.gradle.kts ./app/build.gradle.kts
-cp RELEASE_v0.9.17_build94.md ./RELEASE_v0.9.17_build94.md
-```
+推荐做法：
 
-提交：
+1. 备份 D:\Github\LabProbeApp
+2. 删除或覆盖 D:\Github\LabProbeApp 内全部文件
+3. 将本压缩包内 LabProbeApp-main 文件夹里的所有内容复制到 D:\Github\LabProbeApp
+4. 执行：
 
 ```bash
+cd /d/Github/LabProbeApp
+git status
 git add .
-git commit -m "fix roaming screen crash on enter"
+git commit -m "fix roaming entry safe permission request"
+git pull --rebase origin main
 git push origin main
-git tag v0.9.17-build94
-git push origin v0.9.17-build94
+git tag v0.9.17-build98
+git push origin v0.9.17-build98
 ```
+
+如果 tag 已存在，先删除再重打。
