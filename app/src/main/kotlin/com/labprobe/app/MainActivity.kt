@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 109
+    const val CODE = 110
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
@@ -3410,6 +3410,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     var sampleMode by remember { mutableStateOf("标准250ms") }
     var sampleMs by remember { mutableStateOf("250") }
     var timeoutMs by remember { mutableStateOf("1000") }
+    var enableCandidateScan by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
     var showCurrentSummary by remember { mutableStateOf(false) }
     var showHistorySheet by remember { mutableStateOf(false) }
@@ -3434,10 +3435,11 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val roamCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid } }
     val lostCount = remember(samples) { samples.count { it.lost } }
     val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
-    val events = remember(samples) { buildRoamingEventChain(samples, -70, 10, 3, 150, 2) }
-    val quality = remember(samples, events) { buildRoamingQuality(samples, events, 0) }
-    val currentReport = remember(samples, events, quality, targetMode, sampleMode) {
-        if (samples.isEmpty()) null else buildRoamingReport(samples, events, quality, targetMode, sampleMode, 0)
+    val stickyScore = remember(samples, enableCandidateScan) { if (enableCandidateScan) calculateStickyScore(samples, -70, 10) else 0 }
+    val events = remember(samples, enableCandidateScan) { buildRoamingEventChain(samples, -70, if (enableCandidateScan) 10 else 999, 3, 150, 2) }
+    val quality = remember(samples, events, stickyScore) { buildRoamingQuality(samples, events, stickyScore) }
+    val currentReport = remember(samples, events, quality, targetMode, sampleMode, stickyScore) {
+        if (samples.isEmpty()) null else buildRoamingReport(samples, events, quality, targetMode, sampleMode, stickyScore)
     }
 
     fun refreshRoamingHistory() {
@@ -3507,7 +3509,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         }
     }
 
-    ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi，不弹权限；点击开始后才检测。", null, Color(0xFF2563EB)) {
+    ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi；候选 AP 扫描需手动开启。", null, Color(0xFF2563EB)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
             RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
@@ -3539,6 +3541,11 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 }
             }
         }
+        CandidateScanToggle(
+            enabled = enableCandidateScan,
+            onChange = { enableCandidateScan = it },
+            modifier = Modifier.fillMaxWidth()
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { samples = emptyList(); status = "已清空"; showCurrentSummary = false },
@@ -3571,7 +3578,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         samples = emptyList(); running = true; status = "采集中..."
                         job = scope.launch {
                             while (currentCoroutineContext().isActive) {
-                                val sample = runCatching { readWifiSample(ctx, effectiveTarget, timeout, false) }
+                                val sample = runCatching { readWifiSample(ctx, effectiveTarget, timeout, enableCandidateScan) }
                                     .getOrElse {
                                         val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                                         WifiSample(now, "unknown", "", -127, null, true)
@@ -3581,7 +3588,8 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                 val latestLoss = samples.count { it.lost }
                                 val latestValid = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
                                 val latestRoam = latestValid.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
-                                status = if (okRssi) "采样 ${samples.size} 次 · 漫游 $latestRoam 次 · 丢包 $latestLoss" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss"
+                                val scanText = if (enableCandidateScan) " · 候选扫描开" else " · 候选扫描关"
+                                status = if (okRssi) "采样 ${samples.size} 次 · 漫游 $latestRoam 次 · 丢包 $latestLoss$scanText" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss$scanText"
                                 delay(interval.toLong())
                             }
                         }
@@ -3608,9 +3616,16 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.width(88.dp))
             StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.width(88.dp))
             StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.width(88.dp))
+            StatChip("候选AP", if (enableCandidateScan) latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—" else "关闭", Color(0xFF0EA5E9), Modifier.width(96.dp))
+            StatChip("差值", if (enableCandidateScan) latest?.rssiGapDb?.takeIf { it > 0 }?.let { "${it}dB" } ?: "—" else "关闭", Color(0xFFF97316), Modifier.width(82.dp))
         }
         RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
+        if (enableCandidateScan) {
+            RoamPlainInfo("候选", latest?.candidateBssid?.takeIf { it.isNotBlank() }?.let { "$it · ${latest.candidateRssi}dBm · 强 ${latest.rssiGapDb}dB" } ?: "未发现同 SSID 候选 AP")
+        } else {
+            RoamPlainInfo("候选", "候选 AP 扫描关闭")
+        }
         RoamPlainInfo("速率", buildRoamRateText(latest))
         if (samples.isEmpty()) {
             Text("点击开始测试后生成 RSSI、延迟、丢包和 AP 切换记录。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), lineHeight = 18.sp)
@@ -4255,6 +4270,35 @@ private fun RoamPermissionHint(granted: Boolean) {
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f),
                 lineHeight = 15.sp
             )
+        }
+    }
+}
+
+@Composable
+private fun CandidateScanToggle(enabled: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = if (enabled) Color(0xFFEFF6FF) else MaterialTheme.colorScheme.surface.copy(alpha = .74f),
+        border = BorderStroke(1.dp, if (enabled) Color(0xFF93C5FD) else MaterialTheme.colorScheme.outline.copy(alpha = .12f))
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            FieldIconBox(Icons.Rounded.Wifi, if (enabled) Color(0xFF2563EB) else Color(0xFF64748B))
+            Column(Modifier.weight(1f)) {
+                Text("候选 AP 扫描", fontSize = 12.2.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    if (enabled) "测试中读取 scanResults，用于候选 AP / 差值 / 粘 AP 判断" else "默认关闭，不读取 scanResults；开启后才扫描候选 AP",
+                    fontSize = 10.2.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f),
+                    lineHeight = 13.sp
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = onChange)
         }
     }
 }
@@ -8307,8 +8351,12 @@ suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutM
     val frequencyMHz = runCatching { info?.frequency ?: 0 }.getOrDefault(0)
     val txMbps = runCatching { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info?.txLinkSpeedMbps ?: 0 else 0 }.getOrDefault(0)
     val rxMbps = runCatching { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info?.rxLinkSpeedMbps ?: 0 else 0 }.getOrDefault(0)
-    if (requestScan) runCatching { wifi?.startScan() }
-    val scanResults = runCatching { wifi?.scanResults.orEmpty() }.getOrDefault(emptyList())
+    val scanResults = if (requestScan) {
+        runCatching { wifi?.startScan() }
+        runCatching { wifi?.scanResults.orEmpty() }.getOrDefault(emptyList())
+    } else {
+        emptyList()
+    }
     val sameSsidCandidates = scanResults
         .asSequence()
         .filter { it.SSID?.trim().orEmpty() == ssid && it.BSSID?.lowercase(Locale.US).orEmpty() != bssid && it.level > -120 }
