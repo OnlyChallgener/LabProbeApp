@@ -221,60 +221,63 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
     val selectedRule = deviceTypeRuleForInput(typeId)
     val validMac = isValidMac(cleanMac(mac))
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "添加 WOL 设备" else "编辑 WOL 设备", fontWeight = FontWeight.Black) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(
-                    value = remark,
-                    onValueChange = { remark = it },
-                    label = { Text("备注名称") },
-                    placeholder = { Text("例如：绿联 DH4300") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
-                OutlinedTextField(
-                    value = mac,
-                    onValueChange = { mac = it.uppercase() },
-                    label = { Text("MAC 地址") },
-                    placeholder = { Text("6C:1F:F7:76:71:04") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
-                    isError = mac.isNotBlank() && !validMac,
-                    supportingText = { Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    DeviceTypeIconPreview(selectedRule, 44)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(selectedRule.label, fontSize = 13.sp, fontWeight = FontWeight.Black)
-                        Text(if (enabled) "启用 WOL，离线时可唤醒" else "关闭 WOL，仅记录设备", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
-                    }
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+    LabBottomSheet(onDismiss = onDismiss) {
+        Text(if (initial == null) "添加 WOL 设备" else "编辑 WOL 设备", fontWeight = FontWeight.Black, fontSize = 20.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+            OutlinedTextField(
+                value = remark,
+                onValueChange = { remark = it },
+                label = { Text("备注名称") },
+                placeholder = { Text("例如：绿联 DH4300") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
+            OutlinedTextField(
+                value = mac,
+                onValueChange = { mac = it.uppercase() },
+                label = { Text("MAC 地址") },
+                placeholder = { Text("6C:1F:F7:76:71:04") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
+                isError = mac.isNotBlank() && !validMac,
+                supportingText = { Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                DeviceTypeIconPreview(selectedRule, 44)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(selectedRule.label, fontSize = 13.sp, fontWeight = FontWeight.Black)
+                    Text(if (enabled) "启用 WOL，离线时可唤醒" else "关闭 WOL，仅记录设备", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
                 }
+                Switch(checked = enabled, onCheckedChange = { enabled = it })
             }
-        },
-        confirmButton = {
-            TextButton(enabled = validMac, onClick = {
-                val clean = cleanMac(mac)
-                onSave(
-                    WolDeviceConfig(
-                        id = initial?.id ?: clean,
-                        remark = remark.trim().ifBlank { selectedRule.label },
-                        mac = clean,
-                        typeId = normalizeDeviceTypeToken(typeId).ifBlank { typeId.trim() },
-                        enabled = enabled,
-                        createdAt = initial?.createdAt ?: System.currentTimeMillis(),
-                        updatedAt = System.currentTimeMillis()
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", fontWeight = FontWeight.Black) }
+            Button(
+                enabled = validMac,
+                onClick = {
+                    val clean = cleanMac(mac)
+                    onSave(
+                        WolDeviceConfig(
+                            id = initial?.id ?: clean,
+                            remark = remark.trim().ifBlank { selectedRule.label },
+                            mac = clean,
+                            typeId = normalizeDeviceTypeToken(typeId).ifBlank { typeId.trim() },
+                            enabled = enabled,
+                            createdAt = initial?.createdAt ?: System.currentTimeMillis(),
+                            updatedAt = System.currentTimeMillis()
+                        )
                     )
-                )
-            }) { Text("保存", fontWeight = FontWeight.Black) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = selectedRule.accent)
+            ) { Text("保存", fontWeight = FontWeight.Black) }
+        }
+        Spacer(Modifier.heightIn(min = 8.dp))
+    }
 }
 
 @Composable

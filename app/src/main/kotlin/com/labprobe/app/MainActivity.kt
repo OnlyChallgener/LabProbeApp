@@ -1308,7 +1308,7 @@ fun ExpressiveCard(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(5.dp, shape, clip = false),
+            .shadow(1.dp, shape, clip = false),
         shape = shape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         tonalElevation = 0.dp,
@@ -2894,11 +2894,13 @@ fun StatusPill(label: String, value: String, color: Color) {
 @Composable
 fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
     var mode by remember { mutableStateOf("watch") }
+    var detailMac by remember { mutableStateOf<String?>(null) }
     val list = if (mode == "online") state.onlineDevices else state.devices
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
     val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
+    val detailDevice = remember(detailMac, shared) { detailMac?.let { mac -> shared.firstOrNull { it.mac.equals(mac, ignoreCase = true) } } }
     ExpressiveCard("终端同步", "${if (mode == "online") "全部在线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") state.wolDevices.size else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
             FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("全部在线", fontSize = 12.sp) })
             FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
@@ -2908,13 +2910,14 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell
     if (mode == "wol") {
         WolManagementPanel(state)
     } else {
-        list.forEach { d -> DeviceSmartCard(state, d) }
+        list.forEach { d -> DeviceSmartCard(state, d, onOpenDetails = { detailMac = d.mac }) }
     }
+    detailDevice?.let { d -> LabDeviceDetailSheet(state = state, device = d, onDismiss = { detailMac = null }) }
 }
 
 
 @Composable
-fun DeviceSmartCard(state: AppState, d: DeviceItem) {
+fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = {}) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -2935,7 +2938,8 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem) {
                     Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
                 }
             }
-        }
+        },
+        modifier = Modifier.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
     ) {
         DeviceSmartInfo(d, profile)
         if (!d.online && profile.wolCandidate) {
@@ -3085,68 +3089,7 @@ fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Col
 
 @Composable
 fun DeviceOverrideEditDialog(device: DeviceItem, state: AppState, onDismiss: () -> Unit) {
-    val override = remember(device.mac, state.deviceOverrides) { overrideForDevice(device, state.deviceOverrides) }
-    var remark by remember(override) { mutableStateOf(override.remark.ifBlank { device.remark.ifBlank { device.name } }) }
-    var typeInput by remember(override) { mutableStateOf(override.typeId.ifBlank { inferDeviceProfile(device).type }) }
-    var wolOverride by remember(override) { mutableStateOf(override.wolEnabledOverride) }
-    val rule = deviceTypeRuleForInput(typeInput)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("编辑设备", fontWeight = FontWeight.Black) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(
-                    value = remark,
-                    onValueChange = { remark = it },
-                    label = { Text("备注名称") },
-                    placeholder = { Text("例如：海尔电热水器 / 美的空调 / 绿联 DH4300") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                EditableDeviceTypeField(
-                    value = typeInput,
-                    onChange = { typeInput = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = "设备类型（可输入/点箭头选择）"
-                )
-                OutlinedTextField(
-                    value = cleanMac(device.mac),
-                    onValueChange = {},
-                    label = { Text("MAC 地址") },
-                    readOnly = true,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Surface(shape = RoundedCornerShape(18.dp), color = rule.accent.copy(alpha = .08f), border = BorderStroke(1.dp, rule.accent.copy(alpha = .12f))) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        DeviceTypeIconPreview(rule, 42)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("图标预览：${rule.label}", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                            Text("保存后按 MAC 本地覆盖，不受 Hub 旧分类影响", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 2)
-                        }
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("WOL 候选", fontWeight = FontWeight.Black, fontSize = 13.sp)
-                        Text("不确定可保持自动；NAS/台式/迷你主机建议开启", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
-                    }
-                    FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
-                    Spacer(Modifier.width(6.dp))
-                    Switch(checked = wolOverride ?: rule.wolDefault, onCheckedChange = { wolOverride = it })
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                state.saveDeviceOverride(device.mac, remark, typeInput, wolOverride)
-                onDismiss()
-            }) { Text("保存", fontWeight = FontWeight.Black) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
+    LabDeviceEditSheet(device = device, state = state, onDismiss = onDismiss)
 }
 
 @Composable
@@ -4005,7 +3948,7 @@ fun PingTool(prefs: AppPrefs) {
 fun PingLatencyCard(points: List<PingPoint>, accent: Color, onHistory: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
+        modifier = Modifier.fillMaxWidth().shadow(1.dp, shape, clip = false),
         shape = shape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         tonalElevation = 0.dp,

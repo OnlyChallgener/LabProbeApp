@@ -97,8 +97,9 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         brands = listOf("华为", "huawei", "中兴", "zte", "贝尔", "alcatel", "烽火", "fiberhome", "友华", "九联", "九洲", "兆能", "创维", "星网锐捷")
     ),
     DeviceTypeRule("nas", "NAS", "nas", Color(0xFF0EA5E9), wolDefault = true, priority = 96,
-        keywords = listOf("nas", "storage", "truenas", "unraid", "dh4300", "dh4300plus", "dx4600", "fs6706", "私有云", "网络存储", "飞牛", "fnos"),
-        brands = listOf("群晖", "synology", "威联通", "qnap", "极空间", "zspace", "绿联", "ugreen", "铁威马", "terramaster", "飞牛")),
+        keywords = listOf("nas", "storage", "truenas", "unraid", "fs6706", "私有云", "网络存储", "飞牛", "fnos", "dh2100+", "dh2600", "dh2300", "dh4300", "dh4300plus", "dx4600", "dx4600pro", "dxp2800", "dxp4800", "dxp4800plus", "dxp4800gt", "dxp480tplus", "dxp6800plus", "dxp6800pro", "dxp6800ultra", "dxp8800", "dxp8800plus", "dxp8800pro", "dxp8800ultra"),
+        // 绿联是综合品牌，不能仅凭 UGREEN / 绿联判断 NAS；这里只用具体 NAS 型号判断。
+        brands = listOf("群晖", "synology", "威联通", "qnap", "极空间", "zspace", "铁威马", "terramaster", "飞牛")),
     DeviceTypeRule("desktop", "台式电脑", "desktop", Color(0xFF2563EB), wolDefault = true, priority = 88,
         keywords = listOf("desktop", "pc", "workstation", "主机", "台式", "台式机", "windows", "win-", "win11", "deskt"),
         brands = listOf("华硕", "asus", "asustek", "联想", "lenovo", "戴尔", "dell", "惠普", "hp", "hewlett", "微星", "msi", "技嘉", "gigabyte", "七彩虹", "colorful", "神舟", "hasee", "机械革命", "mechrevo", "机械师", "machenike", "雷蛇", "razer")),
@@ -212,6 +213,13 @@ fun selectableDeviceTypes(): List<DeviceTypeRule> = DEVICE_TYPE_RULES
     .filter { it.id != "unknown" && it.id != "iot" }
     .distinctBy { it.id }
 
+val ugreenNasModelTokens = listOf(
+    "dh2100+", "dh2600", "dh2300", "dh4300", "dh4300plus",
+    "dx4600", "dx4600pro", "dxp2800", "dxp4800", "dxp4800plus",
+    "dxp4800gt", "dxp480tplus", "dxp6800plus", "dxp6800pro",
+    "dxp6800ultra", "dxp8800", "dxp8800plus", "dxp8800pro", "dxp8800ultra"
+)
+
 fun normalizeDeviceTypeToken(raw: String): String {
     val s = raw.trim().lowercase(Locale.getDefault())
     if (s.isBlank()) return ""
@@ -221,7 +229,7 @@ fun normalizeDeviceTypeToken(raw: String): String {
         if (rule.aliases.any { it.lowercase(Locale.getDefault()) == s }) return rule.id
     }
     return when {
-        s.contains("nas") || s.contains("群晖") || s.contains("绿联") || s.contains("威联通") || s.contains("极空间") || s.contains("飞牛") -> "nas"
+        s.contains("nas") || s.contains("群晖") || s.contains("威联通") || s.contains("极空间") || s.contains("飞牛") || ugreenNasModelTokens.any { s.contains(it) } -> "nas"
         s.contains("迷你") || s.contains("mini") || s.contains("零刻") || s.contains("铭凡") || s.contains("畅网") || s.contains("倍控") -> "mini_pc"
         s.contains("台式") || s == "pc" || s.contains("主机") -> "desktop"
         s.contains("笔记") || s.contains("laptop") || s.contains("macbook") -> "laptop"
