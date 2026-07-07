@@ -3692,7 +3692,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
             StatChip("协商速率", latest?.linkMbps?.takeIf { it > 0 }?.let { "${it}Mbps" } ?: "--", Color(0xFF0EA5E9), Modifier.weight(1f))
             StatChip("漫游", "${roamCount}次", Color(0xFF7C3AED), Modifier.weight(1f))
         }
-        LabRoamCharts(samples, modifier = Modifier.fillMaxWidth())
+        LabRoamCharts(samples, running = running, modifier = Modifier.fillMaxWidth())
         if (samples.isEmpty()) {
             Text("开始后会记录 RSSI、网关延迟、丢包和 BSSID 切换事件。", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.60f))
         } else {
@@ -4401,38 +4401,6 @@ fun LabSpeedChart(points: List<SpeedSample>, modifier: Modifier = Modifier) {
         modifier = modifier
     )
 }
-
-@Composable
-fun LabRoamCharts(samples: List<WifiSample>, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("信号强度 dBm", fontSize = 13.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.78f))
-        val rssiSamples = samples.filter { it.rssi > -120 }
-        SelectableLineChart(
-            values = rssiSamples.map { it.rssi.toDouble() },
-            minY = -90.0,
-            maxY = -30.0,
-            color = Color(0xFF16A34A),
-            empty = "无可用 RSSI",
-            yFormat = { it.roundToInt().toString() },
-            pointLabels = rssiSamples.map { "${it.time}\nRSSI ${it.rssi} dBm\nBSSID ${it.bssid.ifBlank { "未知" }}\n协商 ${if (it.linkMbps > 0) "${it.linkMbps}Mbps" else "--"}" },
-            modifier = Modifier.fillMaxWidth().height(220.dp)
-        )
-        Text("延迟 ms", fontSize = 13.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.78f))
-        val latencySamples = samples.filter { it.latency != null }
-        val maxLat = niceLatencyMax((latencySamples.mapNotNull { it.latency }.maxOrNull() ?: 30))
-        SelectableLineChart(
-            values = latencySamples.mapNotNull { it.latency?.toDouble() },
-            minY = 0.0,
-            maxY = maxLat.toDouble(),
-            color = Color(0xFF2563EB),
-            empty = "等待延迟样本",
-            yFormat = { it.roundToInt().toString() },
-            pointLabels = latencySamples.map { "${it.time}\n延迟 ${it.latency ?: 0} ms\n丢包 ${if (it.lost) "是" else "否"}\nBSSID ${it.bssid.ifBlank { "未知" }}" },
-            modifier = Modifier.fillMaxWidth().height(220.dp)
-        )
-    }
-}
-
 
 @Composable
 fun LabLatencyOnlyChart(samples: List<WifiSample>, modifier: Modifier = Modifier) {
