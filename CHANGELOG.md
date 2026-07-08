@@ -1,5 +1,10 @@
 # LabProbe 更新日志
 
+## v0.9.17 build119
+- 修复 build118 双 Ping 波形编译失败：将本地 ping helper 改为 suspend，允许调用 suspend pingOnceAddress。
+- 不改漫游波形、双 Ping、Wi-Fi 切换逻辑。
+
+
 ## v0.9.17 build118
 - 漫游延迟图在“路由器+外网”模式下显示网关/外网两条波形。
 - 丢包标记进一步改成底部超短超细红线，避免遮挡延迟波形。

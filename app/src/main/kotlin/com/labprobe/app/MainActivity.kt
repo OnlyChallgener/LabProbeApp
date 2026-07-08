@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 118
+    const val CODE = 119
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build118 · 漫游波形细化 / 双 Ping" to listOf(
@@ -8422,7 +8422,7 @@ suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutM
     val wanTarget = if (combinedTarget) rawTarget.substringAfter("|").trim().ifBlank { "223.5.5.5" } else rawTarget
     val wantGateway = combinedTarget || rawTarget == "网关" || rawTarget.equals("gateway", true)
     val wantWan = combinedTarget || (!rawTarget.equals("网关", true) && !rawTarget.equals("gateway", true))
-    fun pingTargetOnce(host: String): Int? = if (host.isNotBlank() && host != "0.0.0.0") {
+    suspend fun pingTargetOnce(host: String): Int? = if (host.isNotBlank() && host != "0.0.0.0") {
         runCatching { pingOnceAddress(InetAddress.getByName(host), timeoutMs.coerceIn(300, 5000)) }.getOrNull()
     } else null
     val gatewayLatency = if (wantGateway) pingTargetOnce(gateway) else null
