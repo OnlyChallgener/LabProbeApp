@@ -140,9 +140,15 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 116
+    const val CODE = 117
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.17 build117 · 漫游波形与 Wi‑Fi 切换修复" to listOf(
+            "设置页移除外观说明卡，浅色模式作为固定默认能力，不再占用页面空间",
+            "漫游图表丢包改为底部短红线，事件竖线改为图内短标记，避免红线贯穿全图",
+            "手动切换 Wi‑Fi 记录为独立 Wi‑Fi 切换事件，并在事件链中显示 SSID/BSSID 变化",
+            "漫游统计继续区分 AP 漫游与 Wi‑Fi 切换，避免把人工切换误算成自动漫游"
+        ),
         "v0.9.17 build116 · 清理基线 / 浅色固定 / 漫游波形" to listOf(
             "统一版本来源为 AppVersion + Gradle versionCode，修复更新检测显示远端旧版本的问题",
             "彻底移除深色/黑夜模式入口和主题判断，界面固定浅色淡蓝白",
@@ -3296,6 +3302,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val latest = samples.lastOrNull()
     val validSamples = remember(samples) { samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" } }
     val roamCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid } }
+    val wifiSwitchCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid } }
     val lostCount = remember(samples) { samples.count { it.lost } }
     val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
     val stickyEnabled = enableCandidateScan && candidateScanMode != "关闭"
@@ -3466,8 +3473,9 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                 val latestLoss = samples.count { it.lost }
                                 val latestValid = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
                                 val latestRoam = latestValid.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
+                                val latestWifiSwitch = latestValid.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid }
                                 val scanText = if (enableCandidateScan) " · 候选扫描${candidateScanMode}" else " · 候选扫描关"
-                                status = if (okRssi) "采样 ${samples.size} 次 · 漫游 $latestRoam 次 · 丢包 $latestLoss$scanText" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss$scanText"
+                                status = if (okRssi) "采样 ${samples.size} 次 · AP漫游 $latestRoam 次 · Wi‑Fi切换 $latestWifiSwitch 次 · 丢包 $latestLoss$scanText" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss$scanText"
                                 delay(interval.toLong())
                             }
                         }
@@ -3928,6 +3936,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     val latest = samples.lastOrNull()
     val validSamples = remember(samples) { samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" } }
     val roamCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid } }
+    val wifiSwitchCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid } }
     val lostCount = remember(samples) { samples.count { it.lost } }
     val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
     val stickyScore = remember(samples, weakThreshold, candidateGap) { calculateStickyScore(samples, weakThreshold, candidateGap) }
@@ -4067,9 +4076,10 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                                 val info = readWifiSample(ctx, effectiveTarget, timeout, requestScan)
                                 samples = (samples + info).takeLast(3600)
                                 val latestLoss = samples.count { it.lost }
-                                val latestRoam = samples.filter { it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
-                                    .zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
-                                status = "采样 ${samples.size} · 漫游 $latestRoam · 丢包 $latestLoss · 粘AP ${calculateStickyScore(samples, weakThreshold, candidateGap)}"
+                                val latestValid = samples.filter { it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
+                                val latestRoam = latestValid.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
+                                val latestWifiSwitch = latestValid.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid }
+                                status = "采样 ${samples.size} · AP漫游 $latestRoam · Wi‑Fi切换 $latestWifiSwitch · 丢包 $latestLoss · 粘AP ${calculateStickyScore(samples, weakThreshold, candidateGap)}"
                                 delay(interval.toLong())
                             }
                         }
@@ -5598,7 +5608,17 @@ fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candid
         if (stickyRun == triggerSeconds.coerceAtLeast(1)) {
             events += RoamEvent(idx, s.time, "疑似粘 AP", "连续 ${triggerSeconds}s 存在更强候选 AP，但仍停留在 ${s.bssid.takeLast(8)}", "bad")
         }
-        if (validBssid && lastBssid.isNotBlank() && s.ssid == lastSsid && s.bssid != lastBssid) {
+        if (validBssid && lastBssid.isNotBlank() && lastSsid.isNotBlank() && s.ssid != lastSsid) {
+            val lossNear = samples.subList((idx - 3).coerceAtLeast(0), (idx + 2).coerceAtMost(samples.size)).count { it.lost }
+            val latency = s.latency?.let { " · 恢复 ${it}ms" } ?: " · 等待 Ping 恢复"
+            events += RoamEvent(
+                idx,
+                s.time,
+                "Wi-Fi 切换",
+                "${lastSsid.ifBlank { "未知" }} / ${lastBssid.takeLast(8)} → ${s.ssid.ifBlank { "未知" }} / ${s.bssid.takeLast(8)}$latency · 丢包 $lossNear",
+                if (lossNear == 0) "info" else "warn"
+            )
+        } else if (validBssid && lastBssid.isNotBlank() && s.ssid == lastSsid && s.bssid != lastBssid) {
             val lossNear = samples.subList((idx - 2).coerceAtLeast(0), (idx + 1).coerceAtMost(samples.size)).count { it.lost }
             val latency = s.latency?.let { " · 恢复 ${it}ms" } ?: " · 等待 Ping 恢复"
             events += RoamEvent(idx, s.time, "AP 切换", "${lastBssid.takeLast(8)} → ${s.bssid.takeLast(8)}$latency · 丢包 $lossNear", if (lossNear == 0) "good" else "warn")
@@ -6849,7 +6869,6 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         PillButton("保存设置", Icons.Rounded.Save, accent = Color(0xFF2563EB)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
-    ExpressiveCard("外观", "已固定浅色淡蓝白界面，避免系统深色模式影响图表和卡片。", Icons.Rounded.Palette, Color(0xFF2563EB)) { Text("浅色模式已固定 · 不再跟随系统深色模式", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 18.sp) }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
     ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, Color(0xFF7C3AED)) {
         PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = Color(0xFF7C3AED)) {

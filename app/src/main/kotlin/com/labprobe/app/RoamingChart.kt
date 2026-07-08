@@ -193,7 +193,10 @@ private fun PingStyleRoamChart(
                                 "good" -> Color(0xFF16A34A)
                                 else -> Color(0xFF7C3AED)
                             }
-                            drawLine(color.copy(alpha = .30f), Offset(x, plotTop), Offset(x, plotBottom), strokeWidth = 1f)
+                            // 事件标记只画图内短线，避免贯穿整张图造成压迫感。
+                            val markerTop = plotTop + 5.dp.toPx()
+                            val markerBottom = (plotTop + 28.dp.toPx()).coerceAtMost(plotBottom - 5.dp.toPx())
+                            drawLine(color.copy(alpha = .34f), Offset(x, markerTop), Offset(x, markerBottom), strokeWidth = 1f, cap = StrokeCap.Round)
                         }
                         val lineItems = values.mapNotNull { item -> item.value?.let { item to Offset(xFor(item.index), yFor(it)) } }
                         val linePoints = lineItems.map { it.second }
@@ -222,11 +225,14 @@ private fun PingStyleRoamChart(
                         values.forEach { item ->
                             if (item.isLoss) {
                                 val x = xFor(item.index)
+                                // 丢包只保留底部短红线，作为“断点”提示，不再贯穿到顶部。
+                                val lossTop = (plotBottom - 16.dp.toPx()).coerceAtLeast(plotTop + 4.dp.toPx())
+                                val lossBottom = plotBottom - 4.dp.toPx()
                                 drawLine(
                                     Color(0xFFEF4444),
-                                    Offset(x, plotTop + 2.dp.toPx()),
-                                    Offset(x, plotBottom - 2.dp.toPx()),
-                                    strokeWidth = 1.15.dp.toPx(),
+                                    Offset(x, lossTop),
+                                    Offset(x, lossBottom),
+                                    strokeWidth = 1.2.dp.toPx(),
                                     cap = StrokeCap.Round
                                 )
                             }
