@@ -52,13 +52,13 @@ fun LabMiniDeviceIcon(
             val key = iconKey.lowercase()
             val body = Color(0xFFF8FAFC)
             val edge = Color(0xFFCBD5E1)
-            val dark = Color(0xFF334155)
+            val ink = Color(0xFF334155)
             val soft = accent.copy(alpha = 0.22f)
             val stroke = Stroke(width = w * 0.055f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             fun rr(x: Float, y: Float, ww: Float, hh: Float, r: Float, color: Color = body, style: androidx.compose.ui.graphics.drawscope.DrawStyle = androidx.compose.ui.graphics.drawscope.Fill) {
                 drawRoundRect(color, topLeft = Offset(x, y), size = Size(ww, hh), cornerRadius = CornerRadius(r, r), style = style)
             }
-            fun line(a: Offset, b: Offset, color: Color = dark, sw: Float = w * 0.055f) {
+            fun line(a: Offset, b: Offset, color: Color = ink, sw: Float = w * 0.055f) {
                 drawLine(color, a, b, strokeWidth = sw, cap = StrokeCap.Round)
             }
             fun port(x: Float, y: Float, ww: Float = w * .105f, hh: Float = h * .07f) {
@@ -172,7 +172,7 @@ fun LabMiniDeviceIcon(
                 "camera", "doorbell" -> {
                     drawCircle(body, radius = w*.32f, center = Offset(w*.50f,h*.50f))
                     drawCircle(edge, radius = w*.32f, center = Offset(w*.50f,h*.50f), style = Stroke(w*.035f))
-                    drawCircle(dark.copy(alpha=.18f), radius = w*.20f, center = Offset(w*.50f,h*.50f))
+                    drawCircle(ink.copy(alpha=.18f), radius = w*.20f, center = Offset(w*.50f,h*.50f))
                     drawCircle(accent.copy(alpha=.75f), radius = w*.10f, center = Offset(w*.50f,h*.50f))
                     drawCircle(Color.White.copy(alpha=.8f), radius = w*.025f, center = Offset(w*.46f,h*.45f))
                 }
@@ -226,8 +226,8 @@ fun LabMiniDeviceIcon(
                 "socket" -> {
                     rr(w*.22f,h*.18f,w*.56f,h*.56f,w*.12f)
                     rr(w*.22f,h*.18f,w*.56f,h*.56f,w*.12f, edge, Stroke(w*.035f))
-                    drawCircle(dark.copy(alpha=.40f), radius = w*.025f, center = Offset(w*.42f,h*.46f))
-                    drawCircle(dark.copy(alpha=.40f), radius = w*.025f, center = Offset(w*.58f,h*.46f))
+                    drawCircle(ink.copy(alpha=.40f), radius = w*.025f, center = Offset(w*.42f,h*.46f))
+                    drawCircle(ink.copy(alpha=.40f), radius = w*.025f, center = Offset(w*.58f,h*.46f))
                     line(Offset(w*.50f,h*.54f), Offset(w*.50f,h*.64f), accent.copy(alpha=.45f), w*.025f)
                 }
                 else -> {

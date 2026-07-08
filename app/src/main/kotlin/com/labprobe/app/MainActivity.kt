@@ -140,189 +140,23 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 115
+    const val CODE = 116
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.17 build112 · 淡蓝白背景与漫游紧凑观感" to listOf(
-            "全局背景改为淡蓝白过渡，去掉底部蓝黄渐变，状态栏颜色与页面顶部无感衔接",
-            "漫游实时结果小卡片改为自适应等宽布局，缩短卡片高度并收紧标题/数字间距",
-            "漫游采样/超时输入框进一步压缩，配置区整体更紧凑"
+        "v0.9.17 build116 · 清理基线 / 浅色固定 / 漫游波形" to listOf(
+            "统一版本来源为 AppVersion + Gradle versionCode，修复更新检测显示远端旧版本的问题",
+            "彻底移除深色/黑夜模式入口和主题判断，界面固定浅色淡蓝白",
+            "漫游实时小卡改为一行式布局，标题与数值同排，避免裁字",
+            "漫游图表改为波形图：RSSI 阶梯波形、延迟尖峰波形、丢包红色竖条",
+            "Wi-Fi 手动切换后续单独记录为 Wi-Fi 切换事件，不混入 AP 漫游次数"
         ),
-        "v0.9.17 build101 · 漫游入口稳定回退" to listOf(
-            "无线漫游入口回退到轻量稳定页面，进入页面不读 Wi‑Fi、不请求权限",
-            "点击开始测试后再检查权限和 Wi‑Fi，避免页面首帧异常退回桌面",
-            "版本号同步为 v0.9.17 build100"
+        "v0.9.17 build115 · 稳定回退" to listOf(
+            "回退到稳定漫游入口，保证可覆盖安装和可进入测试页面",
+            "暂不启用风险较高的手动 Wi-Fi 切换统计改动"
         ),
-        "v0.9.15 · 设备识别 / IPv6 / WOL 自测" to listOf(
-            "终端卡片新增自动设备类型识别：手机、平板、电脑、NAS、路由、电视、打印机、摄像头、音箱、IoT 等",
-            "设备列表支持显示 IPv6 地址，多地址自动折叠为主 IPv6 + 数量提示，点击可复制",
-            "离线 PC / NAS 等候选设备显示 WOL 唤醒按钮，手机、平板、手表默认隐藏，减少误触"
-        ),
-        "v0.9.15 · 自动更新闭环与 Ping 图表热修" to listOf(
-            "补齐 GitHub Release 更新闭环：启动自动检查、更新卡片、立即更新、后台下载、忽略本版、小红点",
-            "更新下载显示包大小、进度、网速、失败原因；网速过慢时提示建议使用代理网络",
-            "Ping 图表优化 Y 轴自适应区间，减少上方大留白；底部统计栏缩小字号和间距"
-        ),
-        "v0.9.15 · Posix Ping 引擎自测" to listOf(
-            "ICMP 优先使用 android.system.Os 无特权 SOCK_DGRAM Socket，失败自动降级系统 ping",
-            "单协程 Os.poll 事件驱动，高频采样按 pacing 发包，减少 Runtime.exec 与 UI 调度误差",
-            "加入 Jacobson/Karels 动态 RTO、最近 50 RTT FIFO 抖动统计，波形图 Y 轴固定不被曲线覆盖"
-        ),
-        "v0.9.15 · Ping 图表与调度热修" to listOf(
-            "Ping 波形图 Y 轴固定随视口显示，X/Y 数字更小更贴边，图形区域更大",
-            "抖动改为最近 50 个成功 RTT 的 FIFO 相邻差平均，超时不参与计算",
-            "ICMP 单进程采样减少 APP 调度造成的伪超时，后台/息屏时使用 WakeLock 尽量保持测试连续"
-        ),
-        "v0.9.15 · Ping 波形与高频采样热修" to listOf(
-            "默认 Ping 次数改为 1000，补充 200/500/2000 下拉选项",
-            "ICMP 保持单进程 ping 高频采样，TCP/HTTP 使用原生 Socket/OkHttp；图表改为可横向滑动波形",
-            "超时支持自动匹配间隔，统计增加抖动/超时，低延迟网关场景自适应 Y 轴避免直线"
-        ),
-        "v0.9.15 · Hub/工具页联动热修" to listOf(
-            "工具页卡片改为图标与标题并排，描述独立一行，卡片更紧凑但不遮挡",
-            "网络状态运营商跟随 IPv4/IPv6 出口变化异步重新识别，避免旧运营商残留",
-            "每日概览与每日总结继续使用规范化事件统计，过滤重复离线和在线 0 秒异常事件"
-        ),
-        "v0.9.15 · 拖拽阴影热修" to listOf(
-            "移除拖拽外层矩形阴影，修复长按卡片时方形边角和底部长横杠",
-            "拖拽时仅保留圆角卡片投影，排序标签阴影同步减弱"
-        ),
-        "v0.9.15 · 设备事件去重热修" to listOf(
-            "终端事件按 MAC / 名称快照做状态机去重，离线后继续离线不再重复显示",
-            "离线在线时长优先按 offlineAt - onlineSince 固化计算，避免历史刷新后时长倒退",
-            "同一设备连续离线增加冷却保护，事件列表只保留真实状态变化"
-        ),
-        "v0.9.15 · 测速体系/DNS/图表热修" to listOf(
-            "测速拆分为峰值外网测速、局域网测速和负载延迟测试，逻辑更清晰",
-            "DNS 解析增加本机 DNS 小开关，支持系统解析和本机 DNS 显示",
-            "测速与漫游图表 Y 轴数字加粗放大，提升可读性"
-        ),
-        "v0.9.15 · IPv6/峰值测速/漫游图表测试版" to listOf(
-            "新增 IPv6 可用性测试：IPv4/IPv6 出口、AAAA、IPv6 Ping、IPv6 TCP 443 与优先级判断",
-            "模板测速改为峰值测速逻辑，连续稳定后自动停止；图表支持点击曲线点显示数值",
-            "无线漫游增加指定 Ping 目标、丢包率、协商速率；RSSI/延迟曲线支持点选数值",
-            "优化拖动卡片悬浮圆角阴影，图表轴数字改深色半粗体，减少看不清问题"
-        ),
-        "v0.9.15 · 个人测试功能扩展" to listOf(
-            "移除一键自测入口，新增模板测速、无线漫游、MTU/分片、DNS质量和服务监控五个独立工具",
-            "新增页面采用紧凑双列参数框与科技蓝图标，输入框保留足够高度和内边距，避免文字被遮挡",
-            "模板测速默认只做下载吞吐自测；无线漫游显示 SSID/BSSID/RSSI、延迟、丢包与漫游事件；MTU/DNS质量/服务监控用于个人测试"
-        ),
-        "v0.9.15 · 左滑删除显示热修" to listOf(
-            "修复 SSH 执行结果和路由追踪历史未滑动也显示删除按钮的问题",
-            "删除背景仅在左滑展开时显示，默认状态不再透出红色删除按钮",
-            "保留 Ping 顶部工具栏紧凑化、SSH 局部复制和追踪历史功能"
-        ),
-        "v0.9.15 · Ping/SSH/追踪体验热修" to listOf(
-            "Ping 延迟图表顶部工具栏缩矮，标题、胶囊和历史按钮更紧凑",
-            "SSH 完整输出弹窗支持局部选择复制，左滑删除状态自动回收",
-            "路由追踪支持实时过程显示与 15 条历史记录，历史可展开、复制、左滑删除"
-        ),
-        "v0.9.15 · DNS/UDP/SSH 体验热修" to listOf(
-            "DNS 解析运营商识别改为统一快速判断，IPv6 前缀会立即显示电信/联通/移动",
-            "UDP 模板切换自动填入默认目标和端口，右上角新增恢复默认按钮",
-            "SSH 执行结果最多保留 6 条，支持左滑单条删除、长按复制、点击查看完整输出"
-        ),
-        "v0.9.15 · Traceroute 与 SSH 记录热修" to listOf(
-            "新增路由追踪功能，支持追踪域名解析后的 IPv4 / IPv6 路径",
-            "SSH 命令下拉保存最近 6 条，执行结果最多保留 5 条并支持点击复制真实输出",
-            "DNS / TCP / UDP / NAT / SSH 配置框统一修复高度和双列对齐，避免文字被遮挡"
-        ),
-        "v0.9.15 · 工具页与更新入口热修" to listOf(
-            "版本信息卡新增检测更新按钮，支持读取 GitHub Releases 最新版本",
-            "网络状态 IPv4/IPv6 胶囊可跳转 DNS 解析，运营商增加本地快速推断",
-            "DNS/端口/UDP/SSH 页面统一为科技蓝双列紧凑参数风格"
-        ),
-        "v0.9.15 · 网络/NAT重构热修" to listOf(
-            "工具页网络状态卡改为 6 项：IPv4 出口、IPv6、本地 IP、运营商、优先级、NAT 类型",
-            "NAT 检测拆分 RFC5780 行为发现与 RFC3489 TEST 1-4，支持服务器列表和历史记录",
-            "端口测试与 UDP 探测拆分独立页面，避免两个入口共用同一逻辑"
-        ),
-        "v0.9.15 · 固定签名热修" to listOf(
-            "GitHub Actions 支持固定 keystore 签名，避免每次构建签名变化导致无法覆盖安装",
-            "debug 与 release 构建可共用同一把 Labprobe 上传签名，只要 versionCode 递增即可直接升级",
-            "未配置签名密钥时继续 fallback 到默认 debug 签名，并在 Actions 中明确警告"
-        ),
-        "v0.9.15 · NAT 行为检测与工具页重构" to listOf(
-            "新增 NAT 行为检测页面，按 RFC3489 传统 TEST 1/2/3/4 展示基础映射、换地址回包、换端口回包和映射一致性",
-            "STUN 解析支持 MAPPED-ADDRESS、XOR-MAPPED-ADDRESS、CHANGED-ADDRESS、OTHER-ADDRESS，结果同时显示映射行为、过滤行为与传统分类",
-            "工具页改为 One UI 2列磁贴布局，移除 整张卡片可直接进入 提示，并加入网络状态概览卡",
-            "NAT 结果明确区分基础 STUN 与增强 STUN，服务器不支持 Changed/Other Address 时不再误判完整 NAT 类型"
-        ),
-        "v0.9.15 · 延迟测试视觉与稳定性热修" to listOf(
-            "延迟测试页面标题再缩小，图表卡片标题改为 延迟，减少拥挤和省略号",
-            "停止按钮统一科技蓝，参数与图表视觉继续贴近 One UI 卡片风格",
-            "Y 轴固定最多 5 个点位，低延迟场景按 0/30/60/90/120 展示，X 轴继续使用真实时间",
-            "ICMP 高频采样增加进程取消回收与 IPv6 ping 命令回退，提升测试稳定性"
-        ),
-        "v0.9.15 · 延迟测试 One UI 强化" to listOf(
-            "Ping 页面升级为延迟测试：支持 ICMP / TCP Connect / HTTP HEAD / HTTP GET",
-            "新增 IPv6 优先、IPv4 优先、仅 IPv6、仅 IPv4 与 DNS A/AAAA 策略",
-            "所有参数框加入科技蓝小图标，页面标题与卡片高度继续收敛",
-            "历史记录弹窗保存最近 10 次测试汇总，支持折叠查看与空间占用显示",
-            "图表固定 1 秒聚合展示，原始数据实时采集，X 轴继续使用真实耗时"
-        ),
-        "v0.9.15 · Ping 真实耗时热修" to listOf(
-            "Ping 曲线 X 轴改为真实墙钟耗时，不再按 次数 × 设定间隔 假算 9 秒",
-            "30ms 高频采样优先使用单进程 ping -i 连续采样，避免每次启动 ping 进程造成 50 秒级拖慢",
-            "设备不支持 ping -i 高频参数时自动回退逐次 ping，但仍按真实耗时绘制与统计",
-            "日志增加 @实际秒数，底部统计增加耗时，方便和系统秒表核对"
-        ),
-        "v0.9.15 · 交互顺滑与每日同步" to listOf(
-            "首页今日概览改为优先读取每日总结接口，和记录页每日总结保持同一天数据",
-            "首页卡片改为整张卡可点：终端 / VPN / 出口 / 今日概览无需再点小按钮",
-            "长按拖动改为先浮起、跟手移动，松手后再排序，避免中途突然跳位",
-            "记录页左滑删除加入回弹和收起动画，删除前有短暂消隐过渡",
-            "设置与输入框继续白底化，减少灰底感"
-        ),
-        "v0.9.14 · 编译修复" to listOf(
-            "修复 graphicsLayer 导入错误导致的 Kotlin 编译失败",
-            "保留 v0.9.13 的顶部白色导航、隐私模式和首页拖拽排序",
-            "Hub 仍继续使用 v0.7.2"
-        ),
-        "v0.9.13 · One UI 精修与隐私模式" to listOf(
-            "顶部导航白底化，设置与下拉框继续统一 One UI 质感",
-            "VPN/STUN 钥匙图标可切换隐私模式，截图时隐藏公网地址",
-            "首页今日概览只统计当天事件，避免继续显示昨天数据",
-            "首页卡片支持长按浮起拖动排序，松手后自动保存顺序",
-            "二级页面继续收敛为白卡、轻阴影、小色块点缀"
-        ),
-        "v0.9.12 · 编译修复与分体刷新按钮" to listOf(
-            "修复 Kotlin 编译失败：移除不兼容的 using 动画扩展",
-            "右上角刷新按钮改为分体按钮：左侧立即刷新，右侧小三角打开刷新间隔",
-            "刷新下拉保留手动 / 3S / 10S / 20S，白底圆角菜单风格统一"
-        ),
-        "v0.9.11 · One UI 全页面统一与轻动画" to listOf(
-            "终端、工具、记录、我的、每日总结统一使用浅色渐变背景与白色大圆角卡片",
-            "页面切换改为 120ms 轻淡入淡出，取消大幅滑动和弹跳",
-            "工具入口、事件流、设置与关于卡片统一 One UI 质感",
-            "保留顶部胶囊导航在标题下方，不遮挡状态栏"
-        ),
-        "v0.9.10 · 顶部导航与刷新菜单修复" to listOf(
-            "顶部图标导航回到标题下方，不再遮挡系统状态栏",
-            "刷新按钮改为 One UI 圆角下拉菜单：立即刷新 / 手动 / 3S / 10S / 20S",
-            "顶部导航第二个图标改为路由器图标",
-            "主页面导航统一放在页面标题和内容卡片之间，保持 Samsung Health 式结构"
-        ),
-        "v0.9.9 · One UI 大统一版" to listOf(
-            "顶部图标胶囊导航替代底部栏",
-            "首页卡片联动跳转：终端、Hub、出口 Ping",
-            "版本号弹窗显示最近版本，并支持跳转 GitHub",
-            "关于页统一读取当前版本，避免版本号错乱",
-            "全页面收敛为白色大圆角卡片，减少色块重叠"
-        ),
-        "v0.9.8 · One UI 首页预览" to listOf(
-            "首页改成浅色渐变背景与仪表盘卡片",
-            "新增网络健康得分、终端在线、VPN/STUN 小卡",
-            "保留 OpenVPN / Lucky 首页兜底显示逻辑"
-        ),
-        "v0.9.7 · 地址状态修复" to listOf(
-            "修复记录和总结有 OpenVPN / Lucky，但首页不显示",
-            "从 Hub 当前状态和最近事件补齐 VPN/STUN 地址"
-        ),
-        "v0.9.6 · 事件与左滑修复" to listOf(
-            "修复记录页左滑删除状态继承，避免误删",
-            "Webhook 地址按服务名显示，不再固定 Lucky"
+        "v0.9.17 build113 · 背景与状态栏修复" to listOf(
+            "全局背景调整为淡蓝白过渡，状态栏与页面顶部无感衔接",
+            "漫游小卡和配置区做紧凑化调整"
         )
     )
 }
@@ -352,13 +186,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = AppPrefs(this)
-        applyLabProbeSystemBars(prefs.dark)
+        applyLabProbeSystemBars()
         setContent { LabProbeApp(prefs) }
     }
 }
 
-fun Activity.applyLabProbeSystemBars(dark: Boolean) {
-    // build113：让页面背景绘制到状态栏后面，避免状态栏与页面出现黑色/硬分界线。
+fun Activity.applyLabProbeSystemBars() {
+    // build116：固定浅色模式，页面背景绘制到状态栏后面，避免系统栏与页面出现硬分界线。
     runCatching { androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false) }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
@@ -367,24 +201,15 @@ fun Activity.applyLabProbeSystemBars(dark: Boolean) {
     }
     runCatching {
         val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-        controller.isAppearanceLightStatusBars = !dark
+        controller.isAppearanceLightStatusBars = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            controller.isAppearanceLightNavigationBars = !dark
+            controller.isAppearanceLightNavigationBars = true
         }
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        var flags = window.decorView.systemUiVisibility
-        flags = if (dark) {
-            flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-        } else {
-            flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-        }
+        var flags = window.decorView.systemUiVisibility or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            flags = if (dark) {
-                flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
-            } else {
-                flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-            }
+            flags = flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
         window.decorView.systemUiVisibility = flags
     }
@@ -398,8 +223,6 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("token", v.trim()).apply()
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
-    var dark: Boolean get() = sp.getBoolean("dark", false)
-        set(v) = sp.edit().putBoolean("dark", v).apply()
     var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
     var ignoredUpdateCode: Int get() = sp.getInt("ignored_update_code", 0)
@@ -1120,13 +943,12 @@ class AppState(private val prefs: AppPrefs) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LabProbeApp(prefs: AppPrefs) {
-    var dark by remember { mutableStateOf(prefs.dark) }
     var route by remember { mutableStateOf("home") }
     var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
     val state = remember { AppState(prefs) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    LaunchedEffect(dark) { context.findActivity()?.applyLabProbeSystemBars(dark) }
+    LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
     var latestUpdate by remember { mutableStateOf<GitHubUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateChecking by remember { mutableStateOf(false) }
@@ -1178,15 +1000,15 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
 
     val light = lightColorScheme(
-        primary = Color(0xFF2D63D8), secondary = Color(0xFF7C3AED), tertiary = Color(0xFFF59E0B),
-        background = Color(0xFFF4F8FF), surface = Color(0xFFFFFFFF), onSurface = Color(0xFF101827)
-    )
-    val darkScheme = darkColorScheme(
-        primary = Color(0xFF74A7FF), secondary = Color(0xFFA98BFF), tertiary = Color(0xFFFFC567),
-        background = Color(0xFF090D18), surface = Color(0xFF111827), onSurface = Color(0xFFEFF6FF)
+        primary = Color(0xFF2D63D8),
+        secondary = Color(0xFF7C3AED),
+        tertiary = Color(0xFFF59E0B),
+        background = Color(0xFFF4F8FF),
+        surface = Color(0xFFFFFFFF),
+        onSurface = Color(0xFF101827)
     )
 
-    MaterialTheme(colorScheme = if (dark) darkScheme else light, typography = LabTypography) {
+    MaterialTheme(colorScheme = light, typography = LabTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "events", "settings")
         val navTitles = listOf("总览", "终端", "工具", "记录", "我的")
         val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
@@ -1229,7 +1051,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
-                        "settings" -> SettingsScreen(prefs, state, dark, autoRefresh, { dark = it; prefs.dark = it }, { autoRefresh = it; prefs.autoRefresh = it }, topNav)
+                        "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, topNav)
                         "tool_ping" -> PingScreen(prefs) { route = "tools" }
                         "tool_dns" -> DnsScreen(prefs) { route = "tools" }
                         "tool_port" -> PortProbeScreen(prefs) { route = "tools" }
@@ -1278,26 +1100,14 @@ fun LabProbeApp(prefs: AppPrefs) {
 
 @Composable
 fun Modifier.appBackground(): Modifier {
-    val isDark = MaterialTheme.colorScheme.background.red < 0.1f
-    val brush = if (isDark) {
-        Brush.verticalGradient(
-            listOf(
-                Color(0xFF0B1020),
-                Color(0xFF111827),
-                Color(0xFF1A1628),
-                Color(0xFF0B1020)
-            )
+    val brush = Brush.verticalGradient(
+        listOf(
+            Color(0xFFEAF5FF),
+            Color(0xFFF4F9FF),
+            Color(0xFFFBFDFF),
+            Color(0xFFFFFFFF)
         )
-    } else {
-        Brush.verticalGradient(
-            listOf(
-                Color(0xFFEAF5FF),
-                Color(0xFFF4F9FF),
-                Color(0xFFFBFDFF),
-                Color(0xFFFFFFFF)
-            )
-        )
-    }
+    )
     return background(brush)
 }
 
@@ -5114,14 +4924,34 @@ fun PingStats(points: List<PingPoint>) {
 @Composable
 fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.height(44.dp),
+        modifier = modifier.height(46.dp).widthIn(min = 92.dp),
         shape = RoundedCornerShape(15.dp),
         color = color.copy(alpha = .06f),
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
     ) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 4.dp), verticalArrangement = Arrangement.Center) {
-            Text(label, fontSize = 9.0.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 11.4.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                label,
+                fontSize = 9.8.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f),
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.weight(.82f, fill = false)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                value,
+                fontWeight = FontWeight.Black,
+                color = color,
+                fontSize = 13.2.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier.weight(1f, fill = false)
+            )
         }
     }
 }
@@ -7004,7 +6834,7 @@ fun recentSevenDates(): List<String> {
 }
 
 @Composable
-fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh: String, onDark: (Boolean) -> Unit, onAuto: (String) -> Unit, topNav: @Composable () -> Unit) = ScreenShell("我的", "Hub · 自动刷新 · 主题", topNav = topNav) {
+fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, topNav: @Composable () -> Unit) = ScreenShell("我的", "Hub · 自动刷新 · 浅色界面", topNav = topNav) {
     var hub by remember { mutableStateOf(prefs.hub) }
     var token by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
@@ -7019,7 +6849,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, dark: Boolean, autoRefresh:
         PillButton("保存设置", Icons.Rounded.Save, accent = Color(0xFF2563EB)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }
         PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
     }
-    ExpressiveCard("主题", "更少大色块，蓝 / 紫 / 琥珀 / 青色分区。", Icons.Rounded.Palette, Color(0xFFF59E0B)) { PillButton(if (dark) "切换到浅色" else "切换到黑夜", Icons.Rounded.DarkMode, accent = Color(0xFFF59E0B)) { onDark(!dark) } }
+    ExpressiveCard("外观", "已固定浅色淡蓝白界面，避免系统深色模式影响图表和卡片。", Icons.Rounded.Palette, Color(0xFF2563EB)) { Text("浅色模式已固定 · 不再跟随系统深色模式", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 18.sp) }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
     ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, Color(0xFF7C3AED)) {
         PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = Color(0xFF7C3AED)) {

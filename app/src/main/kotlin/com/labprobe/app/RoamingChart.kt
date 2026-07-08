@@ -195,7 +195,8 @@ private fun PingStyleRoamChart(
                             }
                             drawLine(color.copy(alpha = .30f), Offset(x, plotTop), Offset(x, plotBottom), strokeWidth = 1f)
                         }
-                        val linePoints = values.mapNotNull { item -> item.value?.let { Offset(xFor(item.index), yFor(it)) } }
+                        val lineItems = values.mapNotNull { item -> item.value?.let { item to Offset(xFor(item.index), yFor(it)) } }
+                        val linePoints = lineItems.map { it.second }
                         if (linePoints.size >= 2) {
                             val path = Path().apply {
                                 moveTo(plotLeft, linePoints.first().y)
@@ -203,19 +204,31 @@ private fun PingStyleRoamChart(
                                 for (i in 1 until linePoints.size) {
                                     val p0 = linePoints[i - 1]
                                     val p1 = linePoints[i]
-                                    val cx = (p0.x + p1.x) / 2f
-                                    cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
+                                    if (title.contains("信号")) {
+                                        // RSSI 是离散采样值，用阶梯波形保留突变，不做平滑。
+                                        lineTo(p1.x, p0.y)
+                                        lineTo(p1.x, p1.y)
+                                    } else {
+                                        // 延迟图用尖峰折线，保留瞬时抖动/高延迟，不用 cubic 平滑。
+                                        lineTo(p1.x, p1.y)
+                                    }
                                 }
                                 lineTo(plotRight, linePoints.last().y)
                             }
-                            drawPath(path, accent, style = Stroke(width = 1.6f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                            drawPath(path, accent, style = Stroke(width = 1.35f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                         } else if (linePoints.size == 1) {
                             drawCircle(accent, radius = 1.8.dp.toPx(), center = linePoints.first())
                         }
                         values.forEach { item ->
                             if (item.isLoss) {
                                 val x = xFor(item.index)
-                                drawLine(Color(0xFFEF4444), Offset(x, plotBottom - 11.dp.toPx()), Offset(x, plotBottom - 2.dp.toPx()), strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round)
+                                drawLine(
+                                    Color(0xFFEF4444),
+                                    Offset(x, plotTop + 2.dp.toPx()),
+                                    Offset(x, plotBottom - 2.dp.toPx()),
+                                    strokeWidth = 1.15.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
                             }
                         }
                     }
