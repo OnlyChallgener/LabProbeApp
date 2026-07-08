@@ -140,14 +140,14 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 117
+    const val CODE = 118
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.17 build117 · 漫游波形与 Wi‑Fi 切换修复" to listOf(
-            "设置页移除外观说明卡，浅色模式作为固定默认能力，不再占用页面空间",
-            "漫游图表丢包改为底部短红线，事件竖线改为图内短标记，避免红线贯穿全图",
-            "手动切换 Wi‑Fi 记录为独立 Wi‑Fi 切换事件，并在事件链中显示 SSID/BSSID 变化",
-            "漫游统计继续区分 AP 漫游与 Wi‑Fi 切换，避免把人工切换误算成自动漫游"
+        "v0.9.17 build118 · 漫游波形细化 / 双 Ping" to listOf(
+            "路由器+外网模式下，延迟图同时显示网关与外网两条波形",
+            "丢包标记改为底部超短超细红线，AP/Wi‑Fi 切换线从底部连接到当时波形点",
+            "实时结果小卡改为横向自适应单行布局，避免 ms/% 等数值被截断",
+            "Wi‑Fi 切换事件详情改为多行展示，SSID、BSSID、恢复耗时和丢包信息更完整"
         ),
         "v0.9.17 build116 · 清理基线 / 浅色固定 / 漫游波形" to listOf(
             "统一版本来源为 AppVersion + Gradle versionCode，修复更新检测显示远端旧版本的问题",
@@ -3296,7 +3296,8 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val effectiveTarget = remember(targetMode, wanTarget) {
         when (targetMode) {
             "仅外网" -> wanTarget.trim().ifBlank { "223.5.5.5" }
-            else -> "网关"
+            "仅路由器" -> "网关"
+            else -> "网关+外网|${wanTarget.trim().ifBlank { "223.5.5.5" }}"
         }
     }
     val latest = samples.lastOrNull()
@@ -3493,13 +3494,13 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
 
     ExpressiveCard("实时结果", if (samples.isEmpty()) status else "$status · 测试 ${formatSecondsCompact((samples.size * interval / 1000).coerceAtLeast(1))}", null, Color(0xFF16A34A)) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.weight(1f))
-            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.weight(1f))
-            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.weight(1f))
-            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.weight(1f))
+            StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.widthIn(min = 76.dp))
+            StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.widthIn(min = 82.dp))
+            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.widthIn(min = 82.dp))
+            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.widthIn(min = 76.dp))
         }
         if (enableCandidateScan) {
             Row(
@@ -3601,6 +3602,10 @@ data class WifiSample(
     val rssi: Int,
     val latency: Int?,
     val lost: Boolean,
+    val gatewayLatency: Int? = null,
+    val wanLatency: Int? = null,
+    val gatewayLost: Boolean = false,
+    val wanLost: Boolean = false,
     val linkMbps: Int = 0,
     val frequencyMHz: Int = 0,
     val txMbps: Int = 0,
@@ -3929,7 +3934,8 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     val effectiveTarget = remember(targetMode, wanTarget) {
         when (targetMode) {
             "仅外网" -> wanTarget.trim().ifBlank { "223.5.5.5" }
-            else -> "网关"
+            "仅路由器" -> "网关"
+            else -> "网关+外网|${wanTarget.trim().ifBlank { "223.5.5.5" }}"
         }
     }
 
@@ -4934,33 +4940,33 @@ fun PingStats(points: List<PingPoint>) {
 @Composable
 fun StatChip(label: String, value: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.height(46.dp).widthIn(min = 92.dp),
-        shape = RoundedCornerShape(15.dp),
+        modifier = modifier.height(42.dp).widthIn(min = 72.dp),
+        shape = RoundedCornerShape(14.dp),
         color = color.copy(alpha = .06f),
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .08f))
     ) {
         Row(
-            Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 label,
-                fontSize = 9.8.sp,
+                fontSize = 9.4.sp,
+                lineHeight = 10.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f),
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
-                modifier = Modifier.weight(.82f, fill = false)
+                softWrap = false
             )
             Spacer(Modifier.width(4.dp))
             Text(
                 value,
                 fontWeight = FontWeight.Black,
                 color = color,
-                fontSize = 13.2.sp,
+                fontSize = 13.0.sp,
+                lineHeight = 14.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Clip,
-                modifier = Modifier.weight(1f, fill = false)
+                softWrap = false
             )
         }
     }
@@ -5177,7 +5183,7 @@ fun RoamEventTimeline(events: List<RoamEvent>) {
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f)) {
                         Text("${event.time}  ${event.title}", fontSize = 11.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(event.detail, fontSize = 10.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(event.detail, fontSize = 10.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 4, lineHeight = 14.sp)
                     }
                 }
             }
@@ -5615,7 +5621,7 @@ fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candid
                 idx,
                 s.time,
                 "Wi-Fi 切换",
-                "${lastSsid.ifBlank { "未知" }} / ${lastBssid.takeLast(8)} → ${s.ssid.ifBlank { "未知" }} / ${s.bssid.takeLast(8)}$latency · 丢包 $lossNear",
+                "${lastSsid.ifBlank { "未知" }} → ${s.ssid.ifBlank { "未知" }}\n${lastBssid.takeLast(8)} → ${s.bssid.takeLast(8)}\n${latency.removePrefix(" · ")} · 丢包 $lossNear",
                 if (lossNear == 0) "info" else "warn"
             )
         } else if (validBssid && lastBssid.isNotBlank() && s.ssid == lastSsid && s.bssid != lastBssid) {
@@ -8411,15 +8417,37 @@ suspend fun readWifiSample(ctx: Context, pingTarget: String = "网关", timeoutM
     val candidateRssi = bestCandidate?.level ?: -127
     val rssiGap = if (candidateRssi > -120 && rssi > -120) candidateRssi - rssi else 0
     val gateway = runCatching { intToIp(wifi?.dhcpInfo?.gateway ?: 0) }.getOrDefault("")
-    val target = pingTarget.trim().ifBlank { "网关" }.let { if (it == "网关" || it.equals("gateway", true)) gateway else it }
-    val latency = if (target.isNotBlank() && target != "0.0.0.0") runCatching { pingOnceAddress(InetAddress.getByName(target), timeoutMs.coerceIn(300, 5000)) }.getOrNull() else null
+    val rawTarget = pingTarget.trim().ifBlank { "网关" }
+    val combinedTarget = rawTarget.startsWith("网关+外网|")
+    val wanTarget = if (combinedTarget) rawTarget.substringAfter("|").trim().ifBlank { "223.5.5.5" } else rawTarget
+    val wantGateway = combinedTarget || rawTarget == "网关" || rawTarget.equals("gateway", true)
+    val wantWan = combinedTarget || (!rawTarget.equals("网关", true) && !rawTarget.equals("gateway", true))
+    fun pingTargetOnce(host: String): Int? = if (host.isNotBlank() && host != "0.0.0.0") {
+        runCatching { pingOnceAddress(InetAddress.getByName(host), timeoutMs.coerceIn(300, 5000)) }.getOrNull()
+    } else null
+    val gatewayLatency = if (wantGateway) pingTargetOnce(gateway) else null
+    val wanLatency = if (wantWan) pingTargetOnce(wanTarget) else null
+    val latency = when {
+        combinedTarget -> wanLatency ?: gatewayLatency
+        wantGateway -> gatewayLatency
+        else -> wanLatency
+    }
+    val lost = when {
+        combinedTarget -> gatewayLatency == null && wanLatency == null
+        wantGateway -> gatewayLatency == null
+        else -> wanLatency == null
+    }
     WifiSample(
         time = now,
         ssid = ssid,
         bssid = bssid,
         rssi = rssi,
         latency = latency,
-        lost = latency == null,
+        lost = lost,
+        gatewayLatency = gatewayLatency,
+        wanLatency = wanLatency,
+        gatewayLost = wantGateway && gatewayLatency == null,
+        wanLost = wantWan && wanLatency == null,
         linkMbps = linkMbps,
         frequencyMHz = frequencyMHz,
         txMbps = txMbps,

@@ -36,8 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.roundToInt
 
 private data class RoamChartValue(val index: Int, val value: Double?, val isLoss: Boolean = false)
@@ -54,11 +52,36 @@ fun LabRoamCharts(
             RoamChartValue(index, sample.rssi.takeIf { it > -120 }?.toDouble(), false)
         }
     }
-    val latencyValues = remember(samples) {
+    val gatewayLatencyValues = remember(samples) {
+        samples.mapIndexed { index, sample ->
+            RoamChartValue(index, sample.gatewayLatency?.toDouble(), sample.gatewayLost)
+        }
+    }
+    val wanLatencyValues = remember(samples) {
+        samples.mapIndexed { index, sample ->
+            RoamChartValue(index, sample.wanLatency?.toDouble(), sample.wanLost)
+        }
+    }
+    val fallbackLatencyValues = remember(samples) {
         samples.mapIndexed { index, sample ->
             RoamChartValue(index, sample.latency?.toDouble(), sample.lost)
         }
     }
+    val hasGateway = gatewayLatencyValues.any { it.value != null }
+    val hasWan = wanLatencyValues.any { it.value != null }
+    val primaryLatency = when {
+        hasGateway -> gatewayLatencyValues
+        hasWan -> wanLatencyValues
+        else -> fallbackLatencyValues
+    }
+    val secondaryLatency = if (hasGateway && hasWan) wanLatencyValues else emptyList()
+    val latencyLegend = when {
+        hasGateway && hasWan -> "网关 / 外网"
+        hasGateway -> "网关"
+        hasWan -> "外网"
+        else -> "轻量稳定模式"
+    }
+
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PingStyleRoamChart(
             title = "信号强度 dBm",
@@ -73,10 +96,13 @@ fun LabRoamCharts(
         )
         PingStyleRoamChart(
             title = "漫游延迟 ms",
-            values = latencyValues,
+            subtitle = latencyLegend,
+            values = primaryLatency,
+            secondaryValues = secondaryLatency,
             events = events,
             running = running,
             accent = Color(0xFF2563EB),
+            secondaryAccent = Color(0xFF7C3AED),
             emptyText = "等待延迟样本",
             defaultRange = 0.0 to 100.0,
             floor = 0.0,
@@ -97,16 +123,20 @@ private fun PingStyleRoamChart(
     defaultRange: Pair<Double, Double>,
     modifier: Modifier = Modifier,
     floor: Double? = null,
-    yFormatter: (Double) -> String
+    yFormatter: (Double) -> String,
+    subtitle: String = "",
+    secondaryValues: List<RoamChartValue> = emptyList(),
+    secondaryAccent: Color = Color(0xFF7C3AED)
 ) {
     val scrollState = rememberScrollState()
     val scheme = MaterialTheme.colorScheme
-    val validValues = remember(values) { values.mapNotNull { it.value } }
-    val axisValues = remember(values) { values.takeLast(360).mapNotNull { it.value }.ifEmpty { validValues } }
+    val combinedValues = remember(values, secondaryValues) { values + secondaryValues }
+    val validValues = remember(combinedValues) { combinedValues.mapNotNull { it.value } }
+    val axisValues = remember(combinedValues) { combinedValues.takeLast(360).mapNotNull { it.value }.ifEmpty { validValues } }
     val range = remember(axisValues, defaultRange, floor) { roamNiceRange(axisValues, defaultRange, floor) }
     val yMin = range.first
     val yMax = range.second.coerceAtLeast(yMin + 1.0)
-    val totalSamples = values.size.coerceAtLeast(1)
+    val totalSamples = maxOf(values.size, secondaryValues.size, 1)
 
     BoxWithConstraints(
         modifier = modifier
@@ -117,14 +147,14 @@ private fun PingStyleRoamChart(
         val baseWidth = maxWidth
         val plotViewportWidth = (baseWidth - axisWidth).coerceAtLeast(120.dp)
         val extraWidth = when {
-            values.size <= 80 -> 0.dp
-            values.size <= 300 -> ((values.size - 80) * 1.0f).dp
-            values.size <= 1000 -> (220 + (values.size - 300) * .42f).dp
-            else -> (520 + (values.size - 1000) * .20f).dp
+            totalSamples <= 80 -> 0.dp
+            totalSamples <= 300 -> ((totalSamples - 80) * 1.0f).dp
+            totalSamples <= 1000 -> (220 + (totalSamples - 300) * .42f).dp
+            else -> (520 + (totalSamples - 1000) * .20f).dp
         }
         val chartWidth = (plotViewportWidth + extraWidth).coerceAtLeast(plotViewportWidth)
-        LaunchedEffect(values.size, running) {
-            if (running && values.size > 60) scrollState.scrollTo(scrollState.maxValue)
+        LaunchedEffect(totalSamples, running) {
+            if (running && totalSamples > 60) scrollState.scrollTo(scrollState.maxValue)
         }
         Surface(
             shape = RoundedCornerShape(14.dp),
@@ -136,9 +166,9 @@ private fun PingStyleRoamChart(
         ) {
             Box(Modifier.fillMaxSize()) {
                 Text(
-                    title,
+                    if (subtitle.isBlank()) title else "$title  ·  $subtitle",
                     modifier = Modifier.align(Alignment.TopEnd).padding(end = 8.dp, top = 6.dp).zIndex(5f),
-                    fontSize = 10.4.sp,
+                    fontSize = 10.2.sp,
                     fontWeight = FontWeight.Black,
                     color = scheme.onSurface.copy(alpha = .58f),
                     maxLines = 1
@@ -185,54 +215,72 @@ private fun PingStyleRoamChart(
                             val ratio = if (totalSamples <= 1) .5f else (index.toFloat() / (totalSamples - 1).toFloat()).coerceIn(0f, 1f)
                             return plotLeft + ratio * plotW
                         }
+                        fun pointForEvent(index: Int): Offset? {
+                            val primary = values.getOrNull(index)?.value
+                            val secondary = secondaryValues.getOrNull(index)?.value
+                            val value = primary ?: secondary
+                            return value?.let { Offset(xFor(index), yFor(it)) }
+                        }
+                        fun drawWave(items: List<RoamChartValue>, color: Color, isRssi: Boolean, widthPx: Float) {
+                            val linePoints = items.mapNotNull { item -> item.value?.let { Offset(xFor(item.index), yFor(it)) } }
+                            if (linePoints.size >= 2) {
+                                val path = Path().apply {
+                                    moveTo(plotLeft, linePoints.first().y)
+                                    lineTo(linePoints.first().x, linePoints.first().y)
+                                    for (i in 1 until linePoints.size) {
+                                        val p0 = linePoints[i - 1]
+                                        val p1 = linePoints[i]
+                                        if (isRssi) {
+                                            lineTo(p1.x, p0.y)
+                                            lineTo(p1.x, p1.y)
+                                        } else {
+                                            lineTo(p1.x, p1.y)
+                                        }
+                                    }
+                                    lineTo(plotRight, linePoints.last().y)
+                                }
+                                drawPath(path, color, style = Stroke(width = widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                            } else if (linePoints.size == 1) {
+                                drawCircle(color, radius = 1.6.dp.toPx(), center = linePoints.first())
+                            }
+                        }
+
+                        drawWave(values, accent, title.contains("信号"), 1.25f)
+                        if (secondaryValues.any { it.value != null }) {
+                            drawWave(secondaryValues, secondaryAccent.copy(alpha = .82f), false, 1.05f)
+                        }
+
                         events.forEach { event ->
-                            val x = xFor(event.index.coerceIn(0, totalSamples - 1))
+                            if (event.title.contains("丢包")) return@forEach
+                            val point = pointForEvent(event.index.coerceIn(0, totalSamples - 1)) ?: return@forEach
                             val color = when (event.level) {
                                 "bad" -> Color(0xFFEF4444)
                                 "warn" -> Color(0xFFF59E0B)
                                 "good" -> Color(0xFF16A34A)
                                 else -> Color(0xFF7C3AED)
                             }
-                            // 事件标记只画图内短线，避免贯穿整张图造成压迫感。
-                            val markerTop = plotTop + 5.dp.toPx()
-                            val markerBottom = (plotTop + 28.dp.toPx()).coerceAtMost(plotBottom - 5.dp.toPx())
-                            drawLine(color.copy(alpha = .34f), Offset(x, markerTop), Offset(x, markerBottom), strokeWidth = 1f, cap = StrokeCap.Round)
+                            val bottom = plotBottom - 2.dp.toPx()
+                            val top = point.y.coerceIn(plotTop + 2.dp.toPx(), plotBottom - 3.dp.toPx())
+                            drawLine(
+                                color.copy(alpha = .24f),
+                                Offset(point.x, bottom),
+                                Offset(point.x, top),
+                                strokeWidth = 0.65.dp.toPx(),
+                                cap = StrokeCap.Round
+                            )
                         }
-                        val lineItems = values.mapNotNull { item -> item.value?.let { item to Offset(xFor(item.index), yFor(it)) } }
-                        val linePoints = lineItems.map { it.second }
-                        if (linePoints.size >= 2) {
-                            val path = Path().apply {
-                                moveTo(plotLeft, linePoints.first().y)
-                                lineTo(linePoints.first().x, linePoints.first().y)
-                                for (i in 1 until linePoints.size) {
-                                    val p0 = linePoints[i - 1]
-                                    val p1 = linePoints[i]
-                                    if (title.contains("信号")) {
-                                        // RSSI 是离散采样值，用阶梯波形保留突变，不做平滑。
-                                        lineTo(p1.x, p0.y)
-                                        lineTo(p1.x, p1.y)
-                                    } else {
-                                        // 延迟图用尖峰折线，保留瞬时抖动/高延迟，不用 cubic 平滑。
-                                        lineTo(p1.x, p1.y)
-                                    }
-                                }
-                                lineTo(plotRight, linePoints.last().y)
-                            }
-                            drawPath(path, accent, style = Stroke(width = 1.35f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                        } else if (linePoints.size == 1) {
-                            drawCircle(accent, radius = 1.8.dp.toPx(), center = linePoints.first())
-                        }
-                        values.forEach { item ->
+
+                        combinedValues.forEach { item ->
                             if (item.isLoss) {
                                 val x = xFor(item.index)
-                                // 丢包只保留底部短红线，作为“断点”提示，不再贯穿到顶部。
-                                val lossTop = (plotBottom - 16.dp.toPx()).coerceAtLeast(plotTop + 4.dp.toPx())
-                                val lossBottom = plotBottom - 4.dp.toPx()
+                                // 丢包使用底部超短超细红线，只做断点提示，不遮挡波形。
+                                val lossBottom = plotBottom - 2.dp.toPx()
+                                val lossTop = lossBottom - 3.2.dp.toPx()
                                 drawLine(
-                                    Color(0xFFEF4444),
+                                    Color(0xFFEF4444).copy(alpha = .72f),
                                     Offset(x, lossTop),
                                     Offset(x, lossBottom),
-                                    strokeWidth = 1.2.dp.toPx(),
+                                    strokeWidth = 0.72.dp.toPx(),
                                     cap = StrokeCap.Round
                                 )
                             }
