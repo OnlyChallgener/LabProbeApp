@@ -140,7 +140,7 @@ private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
     const val NAME = "0.9.17"
-    const val CODE = 112
+    const val CODE = 113
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
         "v0.9.17 build112 · 淡蓝白背景与漫游紧凑观感" to listOf(
@@ -358,9 +358,19 @@ class MainActivity : ComponentActivity() {
 }
 
 fun Activity.applyLabProbeSystemBars(dark: Boolean) {
+    // build113：让页面背景绘制到状态栏后面，避免状态栏与页面出现黑色/硬分界线。
+    runCatching { androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false) }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        window.statusBarColor = android.graphics.Color.rgb(235, 245, 255)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.rgb(248, 251, 255)
+    }
+    runCatching {
+        val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !dark
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            controller.isAppearanceLightNavigationBars = !dark
+        }
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
         var flags = window.decorView.systemUiVisibility
@@ -1200,18 +1210,20 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
 
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background
+            containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { pad ->
-            Box(Modifier.fillMaxSize().padding(pad).appBackground()) {
-                AnimatedContent(
-                    targetState = route,
-                    label = "route",
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(120)) togetherWith
-                            fadeOut(animationSpec = tween(90))
-                    }
-                ) { r ->
-                    when (r) {
+            Box(Modifier.fillMaxSize().appBackground()) {
+                Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing)) {
+                    AnimatedContent(
+                        targetState = route,
+                        label = "route",
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(120)) togetherWith
+                                fadeOut(animationSpec = tween(90))
+                        }
+                    ) { r ->
+                        when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "devices" -> DevicesScreen(state, topNav)
                         "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
@@ -1231,7 +1243,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
                         "tool_dns_quality" -> DnsQualityScreen(prefs) { route = "tools" }
                         "tool_service" -> ServiceMonitorScreen(prefs) { route = "tools" }
-                        else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                        }
                     }
                 }
                 if (showUpdateDialog && latestUpdate != null) {
@@ -1278,10 +1291,10 @@ fun Modifier.appBackground(): Modifier {
     } else {
         Brush.verticalGradient(
             listOf(
-                Color(0xFFEBF5FF),
-                Color(0xFFF6FAFF),
-                Color(0xFFFFFFFF),
-                Color(0xFFF8FBFF)
+                Color(0xFFEAF5FF),
+                Color(0xFFF4F9FF),
+                Color(0xFFFBFDFF),
+                Color(0xFFFFFFFF)
             )
         )
     }
@@ -2328,10 +2341,10 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color(0xFFDDEBFF),
-                        Color(0xFFF4F8FF),
-                        Color(0xFFFFF2D2),
-                        Color(0xFFF6F8FC)
+                        Color(0xFFEAF5FF),
+                        Color(0xFFF5FAFF),
+                        Color(0xFFFBFDFF),
+                        Color(0xFFFFFFFF)
                     )
                 )
             )
@@ -4270,12 +4283,12 @@ fun WifiRoamingTool(prefs: AppPrefs) {
         RoamMetricStrip(
             listOf(
                 RoamMetric("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—", Color(0xFF2563EB), 110.dp),
-                RoamMetric("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), 82.dp),
-                RoamMetric("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), 78.dp),
-                RoamMetric("候选AP", latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—", Color(0xFF0EA5E9), 82.dp),
-                RoamMetric("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", Color(0xFF7C3AED), 72.dp),
-                RoamMetric("粘AP", "$stickyScore", Color(0xFFEF4444), 72.dp),
-                RoamMetric("漫游", "${roamCount}", Color(0xFF7C3AED), 72.dp)
+                RoamMetric("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), 92.dp),
+                RoamMetric("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), 92.dp),
+                RoamMetric("候选AP", latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—", Color(0xFF0EA5E9), 96.dp),
+                RoamMetric("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", Color(0xFF7C3AED), 84.dp),
+                RoamMetric("粘AP", "$stickyScore", Color(0xFFEF4444), 84.dp),
+                RoamMetric("漫游", "${roamCount}", Color(0xFF7C3AED), 84.dp)
             )
         )
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
@@ -5335,15 +5348,41 @@ fun RoamEventTimeline(events: List<RoamEvent>) {
 @Composable
 fun RoamMiniStat(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.heightIn(min = 48.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = color.copy(alpha = .055f),
-        border = BorderStroke(1.dp, color.copy(alpha = .085f))
+        modifier = modifier.height(60.dp),
+        shape = RoundedCornerShape(17.dp),
+        color = color.copy(alpha = .060f),
+        border = BorderStroke(1.dp, color.copy(alpha = .095f))
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.Center) {
-            Text(label, fontSize = 9.3.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), fontWeight = FontWeight.Bold, maxLines = 1)
-            Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                Text(value, fontWeight = FontWeight.Black, color = color, fontSize = 11.6.sp, maxLines = 1)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 9.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                label,
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .54f),
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+            Spacer(Modifier.height(3.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    value,
+                    fontWeight = FontWeight.Black,
+                    color = color,
+                    fontSize = 16.2.sp,
+                    lineHeight = 18.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     }
@@ -5458,7 +5497,8 @@ fun RoamMetricStrip(items: List<RoamMetric>) {
         Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         items.forEach { item ->
             RoamMiniStat(item.label, item.value, item.color, Modifier.widthIn(min = item.minWidth))
