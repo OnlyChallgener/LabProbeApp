@@ -40,7 +40,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -72,16 +71,17 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,6 +89,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
@@ -3245,21 +3246,19 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
     val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 26.dp else 21.dp)
     Box(
         modifier = modifier
-            .shadow(2.dp, shape, clip = false)
             .clip(shape)
             .background(
-                Brush.linearGradient(
+                Brush.verticalGradient(
                     listOf(
-                        Color.White.copy(alpha = .96f),
-                        item.color.copy(alpha = .13f),
-                        item.color.copy(alpha = .075f)
+                        Color.White.copy(alpha = .94f),
+                        item.color.copy(alpha = .085f)
                     )
                 )
             )
-            .border(1.dp, item.color.copy(alpha = .12f), shape)
+            .border(1.dp, item.color.copy(alpha = .10f), shape)
             .clickable { onClick() }
     ) {
-        ToolTileBackdrop(item, layout)
+        ToolTileBackdrop(item)
         Box(
             Modifier
                 .fillMaxSize()
@@ -3274,12 +3273,12 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
                     ) {
                         Text(item.title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1)
                         Spacer(Modifier.height(7.dp))
-                        ToolAssetIcon(item.iconRes, 88.dp)
+                        ToolAssetIcon(item.iconRes, 96.dp)
                     }
                 }
                 ToolTileLayout.Compact -> {
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        ToolAssetIcon(item.iconRes, 49.dp)
+                        ToolAssetIcon(item.iconRes, 52.dp)
                         Spacer(Modifier.height(3.dp))
                         Text(item.title, fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -3292,7 +3291,7 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
                     ) {
                         Text(item.title, fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.width(12.dp))
-                        ToolAssetIcon(item.iconRes, 55.dp)
+                        ToolAssetIcon(item.iconRes, 48.dp)
                     }
                 }
             }
@@ -3301,23 +3300,16 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
 }
 
 @Composable
-fun ToolTileBackdrop(item: ToolMosaicItem, layout: ToolTileLayout) {
-    val watermarkSize = when (layout) {
-        ToolTileLayout.Prominent -> 154.dp
-        ToolTileLayout.Compact -> 86.dp
-        ToolTileLayout.Wide -> 112.dp
-    }
-    Box(Modifier.fillMaxSize()) {
-        Canvas(Modifier.fillMaxSize()) {
+fun ToolTileBackdrop(item: ToolMosaicItem) {
+    Canvas(Modifier.fillMaxSize()) {
             val accent = item.color
             val thin = 1.25.dp.toPx()
             val medium = 2.dp.toPx()
             val motifCenter = Offset(size.width * .78f, size.height * .72f)
             val motifRadius = size.minDimension * .42f
 
-            drawCircle(accent.copy(alpha = .055f), motifRadius, motifCenter)
-            drawCircle(Color.White.copy(alpha = .62f), motifRadius * .72f, motifCenter, style = Stroke(thin))
-            drawCircle(accent.copy(alpha = .08f), motifRadius * .44f, motifCenter, style = Stroke(thin))
+            drawCircle(accent.copy(alpha = .045f), motifRadius * 1.30f, Offset(size.width * .92f, size.height * .88f))
+            drawCircle(accent.copy(alpha = .055f), motifRadius * .46f, motifCenter, style = Stroke(thin))
 
             when (item.route) {
                 "tool_ping", "tool_dns_quality", "tool_service" -> {
@@ -3329,7 +3321,7 @@ fun ToolTileBackdrop(item: ToolMosaicItem, layout: ToolTileLayout) {
                         lineTo(size.width * .58f, size.height * .64f)
                         lineTo(size.width * .96f, size.height * .64f)
                     }
-                    drawPath(wave, accent.copy(alpha = .13f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(wave, accent.copy(alpha = .105f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
                 "tool_trace", "tool_roam", "tool_ipv6" -> {
                     val points = listOf(
@@ -3338,16 +3330,16 @@ fun ToolTileBackdrop(item: ToolMosaicItem, layout: ToolTileLayout) {
                         Offset(size.width * .58f, size.height * .70f),
                         Offset(size.width * .86f, size.height * .34f)
                     )
-                    points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .12f), a, b, medium, StrokeCap.Round) }
+                    points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .10f), a, b, medium, StrokeCap.Round) }
                     points.forEach { point ->
-                        drawCircle(Color.White.copy(alpha = .76f), 5.dp.toPx(), point)
-                        drawCircle(accent.copy(alpha = .18f), 3.dp.toPx(), point)
+                        drawCircle(Color.White.copy(alpha = .72f), 4.5.dp.toPx(), point)
+                        drawCircle(accent.copy(alpha = .15f), 2.7.dp.toPx(), point)
                     }
                 }
                 "tool_port", "tool_udp", "tool_mtu", "tool_nat" -> {
                     repeat(3) { index ->
                         drawArc(
-                            color = accent.copy(alpha = .08f + index * .025f),
+                            color = accent.copy(alpha = .065f + index * .018f),
                             startAngle = 205f,
                             sweepAngle = 245f,
                             useCenter = false,
@@ -3360,39 +3352,29 @@ fun ToolTileBackdrop(item: ToolMosaicItem, layout: ToolTileLayout) {
                 else -> {
                     repeat(4) { index ->
                         drawCircle(
-                            accent.copy(alpha = .075f + index * .015f),
+                            accent.copy(alpha = .065f + index * .014f),
                             3.dp.toPx(),
                             Offset(size.width * (.13f + index * .16f), size.height * (.76f - (index % 2) * .16f))
                         )
                     }
                 }
             }
-        }
-        Image(
-            painter = painterResource(item.iconRes),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .size(watermarkSize)
-                .graphicsLayer {
-                    alpha = .075f
-                    rotationZ = -8f
-                    translationX = 14.dp.toPx()
-                    translationY = 12.dp.toPx()
-                }
-        )
     }
 }
 
 @Composable
 fun ToolAssetIcon(iconRes: Int, size: Dp, modifier: Modifier = Modifier) {
-    Image(
-        painter = painterResource(iconRes),
-        contentDescription = null,
-        contentScale = ContentScale.Fit,
-        modifier = modifier.size(size)
-    )
+    val bitmap = ImageBitmap.imageResource(iconRes)
+    Canvas(modifier.size(size)) {
+        drawImage(
+            image = bitmap,
+            srcOffset = IntOffset.Zero,
+            srcSize = IntSize(bitmap.width, bitmap.height),
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(this.size.width.roundToInt(), this.size.height.roundToInt()),
+            filterQuality = FilterQuality.High
+        )
+    }
 }
 
 @Composable
