@@ -2964,13 +2964,13 @@ fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
         shadowElevation = 1.dp
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(13.dp)
+            Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("今日设备上网流量占比排行榜", fontSize = 15.sp, fontWeight = FontWeight.Black)
-                    Text("按设备今日上传与下载总量统计", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f))
+                    Text("今日设备上网流量占比排行榜", fontSize = 14.5.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black)
+                    Text("按设备今日上传与下载总量统计", fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f))
                 }
                 TrafficSortButton("升序", selected = !descending) { descending = false }
                 Spacer(Modifier.width(4.dp))
@@ -3091,15 +3091,16 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                 Text(rank.toString(), color = rankColor, fontSize = 12.sp, fontWeight = FontWeight.Black)
             }
         }
-        Spacer(Modifier.width(9.dp))
-        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 43)
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Spacer(Modifier.width(7.dp))
+        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 37)
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     device.remark.ifBlank { device.name.ifBlank { device.mac } },
                     Modifier.weight(1f),
-                    fontSize = 13.5.sp,
+                    fontSize = 13.sp,
+                    lineHeight = 15.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -3108,31 +3109,31 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                 Surface(shape = RoundedCornerShape(99.dp), color = if (device.online) Color(0xFF22C55E).copy(alpha = .11f) else Color(0xFF94A3B8).copy(alpha = .11f)) {
                     Text(
                         if (device.online) "在线" else "离线",
-                        Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         color = if (device.online) Color(0xFF16A34A) else Color(0xFF64748B),
-                        fontSize = 9.sp,
+                        fontSize = 8.8.sp,
                         fontWeight = FontWeight.Black
                     )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.ArrowDownward, null, tint = Color(0xFF0EA5E9), modifier = Modifier.size(13.dp))
-                Text(formatTraffic(item.downloadBytes), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
-                Spacer(Modifier.width(8.dp))
+                Text(formatTraffic(item.downloadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                Spacer(Modifier.width(7.dp))
                 Icon(Icons.Rounded.ArrowUpward, null, tint = Color(0xFF22C55E), modifier = Modifier.size(13.dp))
-                Text(formatTraffic(item.uploadBytes), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                Text(formatTraffic(item.uploadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
             }
             Text(
                 if (device.online) cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线：$it" } ?: "在线" else "离线",
-                fontSize = 9.5.sp,
-                lineHeight = 11.sp,
+                fontSize = 9.2.sp,
+                lineHeight = 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f).height(5.dp).clip(CircleShape).background(Color(0xFFE8EEF4))) {
+                Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(Color(0xFFE8EEF4))) {
                     Box(
                         Modifier.fillMaxHeight().fillMaxWidth(progress).clip(CircleShape).background(
                             Brush.horizontalGradient(listOf(Color(0xFF5EEAD4), Color(0xFF2DD4BF)))
@@ -3140,7 +3141,7 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                Text("$percent%", modifier = Modifier.width(31.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+                Text("$percent%", modifier = Modifier.width(29.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontSize = 10.sp, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -3215,27 +3216,24 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
     val ip4 = cleanApiText(d.ip).ifBlank { cleanApiText(d.lastKnownIp()) }.ifBlank { "--" }
     val v6Pick = remember(d.ipv6, d.ipv6Candidates) { d.pickIpv6() }
     val wifi = hasWifiInfo(d)
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         if (wifi) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
                 val v6Full = v6Pick.best.orEmpty()
                 val v6Text = v6Full.takeIf { it.isNotBlank() }?.let(::shortIpv6) ?: "--"
                 DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6Full, allowScroll = true)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val radio = listOf(d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "--" }
                 DeviceMiniMetric("链路", radio, Icons.Rounded.Wifi, Color(0xFF22C55E), Modifier.weight(1f), copyValue = radio.takeIf { it != "--" }.orEmpty(), allowScroll = true)
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
                 DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFF64748B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true, valueColor = deviceSignalValueColor(d.rssi))
             }
             DeviceTodayTrafficBar(d)
-            DeviceFooterLine(d = d, profile = profile, showTime = true)
+            DeviceFooterLine(d = d, showTime = true)
         } else {
-            WiredDeviceInfo(d = d, profile = profile, ip4 = ip4, ipv6Pick = v6Pick)
-        }
-        if (v6Pick.total > 1) {
-            Text(ipv6Summary(v6Pick), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            WiredDeviceInfo(d = d, ip4 = ip4, ipv6Pick = v6Pick)
         }
     }
 }
@@ -3243,10 +3241,10 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
 private fun DeviceItem.lastKnownIp(): String = ip
 
 @Composable
-fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ipv6Pick: Ipv6PickResult) {
+fun WiredDeviceInfo(d: DeviceItem, ip4: String, ipv6Pick: Ipv6PickResult) {
     val v6Full = ipv6Pick.best.orEmpty()
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
             DeviceMiniMetric("MAC", d.mac.ifBlank { "--" }, Icons.Rounded.SettingsEthernet, Color(0xFF64748B), Modifier.weight(1f), copyValue = d.mac, allowScroll = true)
         }
@@ -3260,7 +3258,7 @@ fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ip
             allowScroll = true
         )
         DeviceTodayTrafficBar(d)
-        DeviceFooterLine(d = d, profile = profile, showTime = false)
+        DeviceFooterLine(d = d, showTime = false)
     }
 }
 
@@ -3277,25 +3275,27 @@ fun DeviceTodayTrafficBar(d: DeviceItem) {
         border = BorderStroke(1.dp, Color(0xFF0EA5E9).copy(alpha = .11f))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("今日流量", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
-            DeviceTrafficDirection(
-                label = "上行",
-                value = upload.ifBlank { "--" },
-                icon = Icons.Rounded.ArrowUpward,
-                color = Color(0xFFF59E0B),
-                modifier = Modifier.weight(1f)
-            )
-            Box(Modifier.width(1.dp).height(26.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text("今日流量", fontSize = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
+                Spacer(Modifier.width(6.dp))
+                DeviceTrafficDirection(
+                    label = "上行",
+                    value = upload.ifBlank { "--" },
+                    icon = Icons.Rounded.ArrowUpward,
+                    color = Color(0xFFF59E0B),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Box(Modifier.width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)))
             DeviceTrafficDirection(
                 label = "下行",
                 value = download.ifBlank { "--" },
                 icon = Icons.Rounded.ArrowDownward,
                 color = Color(0xFF06B6D4),
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
             )
         }
     }
@@ -3304,19 +3304,19 @@ fun DeviceTodayTrafficBar(d: DeviceItem) {
 @Composable
 private fun DeviceTrafficDirection(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(24.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+        Box(Modifier.size(22.dp).clip(RoundedCornerShape(9.dp)).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(13.dp))
         }
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(5.dp))
         Column(Modifier.weight(1f)) {
-            Text(label, fontSize = 9.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), maxLines = 1)
-            Text(value, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .34f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, fontSize = 8.7.sp, lineHeight = 9.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), maxLines = 1)
+            Text(value, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .34f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
-fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Boolean) {
+fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
     val timeText = if (showTime) {
         if (d.online) {
             listOfNotNull(
@@ -3332,16 +3332,13 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
     } else "有线设备"
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = RoundedCornerShape(14.dp), color = DEVICE_TYPE_BADGE_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-            Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = DEVICE_TYPE_BADGE_CONTENT, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
-        }
         if (timeText.isNotBlank()) {
-            Spacer(Modifier.width(8.dp))
             Text(
                 timeText,
-                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (showTime) .54f else .62f),
-                fontSize = 10.8.sp,
+                fontSize = 10.5.sp,
+                lineHeight = 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Clip
@@ -3357,15 +3354,15 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
 fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false, valueColor: Color? = null) {
     val ctx = LocalContext.current
     Surface(modifier = modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }, shape = RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-        Row(Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(26.dp).clip(RoundedCornerShape(11.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(15.dp))
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(24.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
             }
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
-                Text(label, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
+                Text(label, fontSize = 9.sp, lineHeight = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
                 val textModifier = if (allowScroll && value != "--") Modifier.horizontalScroll(rememberScrollState()) else Modifier
-                Text(value, modifier = textModifier, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else valueColor ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
+                Text(value, modifier = textModifier, fontSize = 10.7.sp, lineHeight = 12.5.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else valueColor ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
             }
         }
     }

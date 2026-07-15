@@ -59,11 +59,11 @@ private val DEVICE_TYPE_GROUP_ORDER = listOf(
 )
 
 private fun deviceTypeCategory(id: String): String = when (id) {
-    "phone", "tablet", "laptop", "desktop", "tv", "speaker", "camera", "printer" -> "常用设备"
+    "phone", "tablet", "laptop", "desktop", "tv", "smart_display", "speaker", "camera", "printer" -> "常用设备"
     "nas", "mini_pc", "server", "industrial" -> "计算机与存储"
-    "router", "soft_router", "ap", "network_switch", "ont" -> "网络设备"
+    "router", "soft_router", "ap", "network_switch", "network_device", "ont" -> "网络设备"
     "projector", "tv_box", "set_top_box", "game_console" -> "影音设备"
-    "lock", "sensor", "switch", "socket", "light", "curtain", "doorbell", "remote", "aircon_controller", "iot" -> "智能家居"
+    "lock", "sensor", "switch", "socket", "light", "curtain", "doorbell", "remote", "aircon_controller", "smart_panel", "reading_pen", "iot" -> "智能家居"
     "watch", "child_watch" -> "可穿戴"
     "unknown" -> "其他"
     else -> "生活家电"
@@ -82,6 +82,7 @@ fun deviceTypeIcon(iconKey: String): ImageVector = when (iconKey) {
     "router" -> Icons.Rounded.Router
     "ap" -> Icons.Rounded.Wifi
     "ont" -> Icons.Rounded.Router
+    "network_device" -> Icons.Rounded.Router
     "nas" -> Icons.Rounded.Storage
     "desktop" -> Icons.Rounded.DesktopWindows
     "mini_pc" -> Icons.Rounded.Memory
@@ -91,11 +92,13 @@ fun deviceTypeIcon(iconKey: String): ImageVector = when (iconKey) {
     "watch" -> Icons.Rounded.Watch
     "child_watch" -> Icons.Rounded.Watch
     "tv" -> Icons.Rounded.Tv
+    "smart_display" -> Icons.Rounded.Tv
     "tv_box" -> Icons.Rounded.Tv
     "set_top_box" -> Icons.Rounded.Tv
     "game_console" -> Icons.Rounded.Devices
     "projector" -> Icons.Rounded.Tv
     "speaker" -> Icons.Rounded.Speaker
+    "smart_panel" -> Icons.Rounded.Devices
     "camera" -> Icons.Rounded.Videocam
     "doorbell" -> Icons.Rounded.Videocam
     "lock" -> Icons.Rounded.Lock
@@ -108,13 +111,18 @@ fun deviceTypeIcon(iconKey: String): ImageVector = when (iconKey) {
     "floor_aircon", "aircon_controller" -> Icons.Rounded.AcUnit
     "fridge" -> Icons.Rounded.Kitchen
     "washer" -> Icons.Rounded.LocalLaundryService
-    "heater", "room_heater" -> Icons.Rounded.WaterDrop
+    "heater", "water_heater", "room_heater" -> Icons.Rounded.WaterDrop
     "hood" -> Icons.Rounded.Air
     "cooker" -> Icons.Rounded.Fastfood
     "dishwasher" -> Icons.Rounded.WaterDrop
+    "air_fryer" -> Icons.Rounded.Fastfood
+    "pressure_cooker" -> Icons.Rounded.Fastfood
+    "humidifier" -> Icons.Rounded.WaterDrop
+    "air_purifier" -> Icons.Rounded.Air
     "purifier" -> Icons.Rounded.WaterDrop
     "rice" -> Icons.Rounded.Fastfood
     "cleaner" -> Icons.Rounded.SmartToy
+    "reading_pen" -> Icons.Rounded.SmartToy
     "toilet" -> Icons.Rounded.WaterDrop
     "scale" -> Icons.Rounded.Scale
     "printer" -> Icons.Rounded.Print
@@ -138,6 +146,10 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         id = "ont", label = "光猫", iconKey = "ont", accent = Color(0xFF0EA5E9), priority = 90,
         keywords = listOf("ont", "onu", "modem", "gpon", "epon", "光猫", "光纤猫"),
         brands = listOf("华为", "huawei", "中兴", "zte", "贝尔", "alcatel", "烽火", "fiberhome", "友华", "九联", "九洲", "兆能", "创维", "星网锐捷")
+    ),
+    DeviceTypeRule(
+        id = "network_device", label = "网络设备", iconKey = "network_device", accent = Color(0xFF06B6D4), priority = 72,
+        keywords = listOf("network device", "network appliance", "网络设备", "网关设备", "边缘网关")
     ),
     DeviceTypeRule("nas", "NAS", "nas", Color(0xFF0EA5E9), wolDefault = true, priority = 96,
         keywords = listOf("nas", "storage", "truenas", "unraid", "fs6706", "私有云", "网络存储", "飞牛", "fnos", "dh2100+", "dh2600", "dh2300", "dh4300", "dh4300plus", "dx4600", "dx4600pro", "dxp2800", "dxp4800", "dxp4800plus", "dxp4800gt", "dxp480tplus", "dxp6800plus", "dxp6800pro", "dxp6800ultra", "dxp8800", "dxp8800plus", "dxp8800pro", "dxp8800ultra"),
@@ -175,8 +187,11 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
     DeviceTypeRule("network_switch", "交换机", "network_switch", Color(0xFF06B6D4), priority = 84,
         keywords = listOf("network switch", "ethernet switch", "交换机", "poe switch")),
 
-    DeviceTypeRule("tv", "电视/智慧屏", "tv", Color(0xFF7C3AED), priority = 78,
-        keywords = listOf("tv", "television", "智慧屏", "电视", "mitv", "hisense-tv"), brands = listOf("海信", "hisense", "tcl", "创维", "skyworth", "小米", "xiaomi", "索尼", "sony", "华为", "huawei")),
+    DeviceTypeRule("tv", "电视", "tv", Color(0xFF7C3AED), priority = 78,
+        keywords = listOf("tv", "television", "电视", "mitv", "hisense-tv"), brands = listOf("海信", "hisense", "tcl", "创维", "skyworth", "小米", "xiaomi", "索尼", "sony", "华为", "huawei"),
+        aliases = listOf("电视/智慧屏")),
+    DeviceTypeRule("smart_display", "智慧屏", "smart_display", Color(0xFF7C3AED), priority = 79,
+        keywords = listOf("smart display", "智慧屏", "智能屏", "带屏音箱", "屏幕音箱")),
     DeviceTypeRule("tv_box", "电视盒子", "tv_box", Color(0xFF7C3AED), priority = 79,
         keywords = listOf("tv box", "tvbox", "box", "电视盒子", "机顶盒", "apple tv", "roku", "fire tv", "天猫魔盒", "小米盒子", "魔百和", "天翼高清", "沃家电视"),
         brands = listOf("海美迪", "亿格瑞", "芝杜", "开博尔", "apple tv", "roku", "fire tv", "当贝盒子", "腾讯极光", "爱奇艺电视果", "天猫魔盒", "小米盒子", "魔百和", "天翼高清", "沃家电视")),
@@ -188,6 +203,8 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("projector", "projection", "投影", "投影仪"), brands = listOf("极米", "xgimi", "当贝", "dangbei", "坚果", "jmgo", "爱普生", "epson", "索尼", "sony", "松下", "panasonic", "明基", "benq")),
     DeviceTypeRule("speaker", "智能音箱", "speaker", Color(0xFF14B8A6), priority = 78,
         keywords = listOf("speaker", "sound", "audio", "homepod", "小爱", "天猫精灵", "音箱", "音响", "xiaomi sound", "miaisoundbox"), brands = listOf("小爱", "天猫精灵", "华为", "索尼", "sony", "xiaomi", "mi", "bose", "jbl", "马歇尔", "marshall", "哈曼卡顿", "harman", "b&o", "bang olufsen")),
+    DeviceTypeRule("smart_panel", "智能面板", "smart_panel", Color(0xFF14B8A6), priority = 70,
+        keywords = listOf("smart panel", "control panel", "智能面板", "中控屏", "场景面板")),
     DeviceTypeRule("camera", "摄像头", "camera", Color(0xFFEF4444), priority = 78,
         keywords = listOf("camera", "cam", "ipc", "nvr", "摄像", "摄像头", "ezviz"), brands = listOf("海康", "hikvision", "萤石", "ezviz", "小米", "360", "tp-link", "tplink", "大华", "dahua", "华为", "huawei")),
     DeviceTypeRule("doorbell", "门铃", "doorbell", Color(0xFFEF4444), priority = 75,
@@ -219,7 +236,7 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("fresh air", "新风"), brands = listOf("松下", "panasonic", "美的", "midea", "小米", "352", "colmo", "大金", "daikin")),
     DeviceTypeRule("washer", "洗衣机", "washer", Color(0xFF0EA5E9), priority = 78,
         keywords = listOf("washer", "washing", "dryer", "洗衣", "洗烘"), brands = listOf("海尔", "小天鹅", "美的", "西门子", "colmo"), aliases = listOf("洗衣/洗烘")),
-    DeviceTypeRule("water_heater", "热水器", "heater", Color(0xFFF97316), priority = 84,
+    DeviceTypeRule("water_heater", "热水器", "water_heater", Color(0xFFF97316), priority = 84,
         keywords = listOf("water heater", "heater", "热水器", "电热水器", "燃气热水器", "热水"), brands = listOf("美的", "midea", "海尔", "haier", "林内", "rinnai", "万和", "vanward")),
     DeviceTypeRule("water_dispenser", "饮水机", "water_dispenser", Color(0xFF0EA5E9), priority = 70,
         keywords = listOf("water dispenser", "饮水机", "饮水器", "即热饮水")),
@@ -247,12 +264,15 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("rice cooker", "电饭煲"), brands = listOf("美的", "苏泊尔", "九阳", "小米")),
     DeviceTypeRule("blender", "破壁机", "rice", Color(0xFFF59E0B), priority = 64,
         keywords = listOf("blender", "破壁机"), brands = listOf("九阳", "美的", "苏泊尔")),
-    DeviceTypeRule("air_fryer", "空气炸锅", "rice", Color(0xFFF59E0B), priority = 64,
+    DeviceTypeRule("air_fryer", "空气炸锅", "air_fryer", Color(0xFFF59E0B), priority = 64,
         keywords = listOf("air fryer", "空气炸锅"), brands = listOf("美的", "九阳", "小熊")),
     DeviceTypeRule("charger", "充电头", "charger", Color(0xFF64748B), priority = 60,
         keywords = listOf("desktop charger", "charger", "charging station", "充电头", "桌面充电器", "多口充电器")),
-    DeviceTypeRule("floor_cleaner", "洗地机", "cleaner", Color(0xFF10B981), priority = 68,
+    DeviceTypeRule("floor_cleaner", "洗地机", "floor_cleaner", Color(0xFF10B981), priority = 68,
         keywords = listOf("floor cleaner", "洗地机"), brands = listOf("追觅", "dreame", "石头", "roborock", "科沃斯", "ecovacs", "添可", "tineco")),
+    DeviceTypeRule("reading_pen", "点读笔", "reading_pen", Color(0xFF14B8A6), priority = 62,
+        keywords = listOf("reading pen", "talking pen", "点读笔", "学习笔", "早教笔", "扫读笔", "词典笔"),
+        brands = listOf("小达人", "洪恩", "有道", "步步高", "作业帮", "阿尔法蛋")),
     DeviceTypeRule("robot_vacuum", "扫地机器人", "cleaner", Color(0xFF10B981), priority = 74,
         keywords = listOf("robot vacuum", "vacuum robot", "扫地", "扫地机器人"), brands = listOf("科沃斯", "ecovacs", "石头", "roborock", "云鲸", "narwal", "小米")),
     DeviceTypeRule("vacuum", "吸尘器", "cleaner", Color(0xFF10B981), priority = 66,
@@ -261,9 +281,9 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("晾衣架", "clothes rack"), brands = listOf("好太太", "邦先生", "小米")),
     DeviceTypeRule("bath_heater", "浴霸", "heater", Color(0xFFF97316), priority = 64,
         keywords = listOf("浴霸"), brands = listOf("奥普", "美的", "欧普")),
-    DeviceTypeRule("air_purifier", "空气净化器", "aircon", Color(0xFF06B6D4), priority = 70,
+    DeviceTypeRule("air_purifier", "空气净化器", "air_purifier", Color(0xFF06B6D4), priority = 70,
         keywords = listOf("air purifier", "空气净化器", "净化器"), brands = listOf("小米", "352", "美的", "飞利浦")),
-    DeviceTypeRule("humidifier", "加湿器", "water", Color(0xFF0EA5E9), priority = 64,
+    DeviceTypeRule("humidifier", "加湿器", "humidifier", Color(0xFF0EA5E9), priority = 64,
         keywords = listOf("humidifier", "加湿器"), brands = listOf("小熊", "美的", "小米")),
     DeviceTypeRule("dehumidifier", "除湿机", "water", Color(0xFF0EA5E9), priority = 64,
         keywords = listOf("dehumidifier", "除湿机"), brands = listOf("美的", "格力", "德业")),
@@ -275,7 +295,7 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("scale", "体脂秤", "体重秤"), brands = listOf("小米", "华为", "云麦"), aliases = listOf("体脂秤")),
     DeviceTypeRule("printer", "打印机", "printer", Color(0xFFF59E0B), wolDefault = false, priority = 74,
         keywords = listOf("printer", "print", "laserjet", "打印", "打印机"), brands = listOf("hp", "canon", "epson", "brother", "惠普", "佳能", "爱普生", "兄弟")),
-    DeviceTypeRule("iot", "IoT", "switch", Color(0xFF10B981), priority = 40,
+    DeviceTypeRule("iot", "IoT", "iot", Color(0xFF10B981), priority = 40,
         keywords = listOf("iot", "smart", "mijia", "miio", "ble", "智能"), aliases = listOf("智能设备")),
     DeviceTypeRule("unknown", "未知设备", "unknown", Color(0xFF64748B), priority = 1)
 )
@@ -316,6 +336,7 @@ fun normalizeDeviceTypeToken(raw: String): String {
         s.contains("软路由") || s.contains("pfsense") || s.contains("opnsense") || s.contains("istoreos") -> "soft_router"
         s == "ap" || s.contains("无线ap") || s.contains("wireless ap") || s.contains("access point") -> "ap"
         s.contains("交换机") || s.contains("network switch") || s.contains("ethernet switch") -> "network_switch"
+        s.contains("网络设备") || s.contains("network device") || s.contains("edge gateway") -> "network_device"
         s.contains("路由") || s.contains("网关") -> "router"
         s.contains("手机") || s.contains("iphone") -> "phone"
         s.contains("平板") || s.contains("ipad") || s.contains("matepad") || s.contains("galaxy tab") || s.contains("pad") -> "tablet"
@@ -333,12 +354,16 @@ fun normalizeDeviceTypeToken(raw: String): String {
         s.contains("空调") -> "aircon"
         s.contains("冰箱") -> "fridge"
         s.contains("洗衣") || s.contains("洗烘") -> "washer"
-        s.contains("电视") || s.contains("智慧屏") -> "tv"
+        s.contains("智慧屏") || s.contains("智能屏") || s.contains("smart display") || s.contains("中控屏") -> "smart_display"
+        s.contains("智能面板") || s.contains("场景面板") || s.contains("smart panel") || s.contains("control panel") -> "smart_panel"
+        s.contains("电视") -> "tv"
         s.contains("投影") -> "projector"
         s.contains("灯") -> "light"
         s.contains("摄像") || s.contains("camera") -> "camera"
         s.contains("打印") || s.contains("printer") -> "printer"
         s.contains("扫地") -> "robot_vacuum"
+        s.contains("洗地机") || s.contains("floor cleaner") -> "floor_cleaner"
+        s.contains("点读笔") || s.contains("学习笔") || s.contains("早教笔") || s.contains("扫读笔") || s.contains("词典笔") || s.contains("reading pen") || s.contains("talking pen") -> "reading_pen"
         s.contains("饮水") -> "water_dispenser"
         s.contains("微波炉") -> "microwave"
         s.contains("电压力锅") || s.contains("压力锅") -> "pressure_cooker"

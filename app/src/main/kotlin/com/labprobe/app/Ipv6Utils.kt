@@ -54,6 +54,32 @@ fun isUlaIpv6(ip: String): Boolean = ipv6Bytes(ip)?.let { (it[0].toInt() and 0xF
 
 fun isGlobalIpv6(ip: String): Boolean = ipv6Bytes(ip)?.let { (it[0].toInt() and 0xE0) == 0x20 } == true
 
+private fun isRejectedIpv6State(state: String?): Boolean {
+    val normalized = state.orEmpty().trim().lowercase(Locale.ROOT)
+    return normalized == "failed" ||
+        normalized == "incomplete" ||
+        normalized == "noarp" ||
+        normalized.contains("failed") ||
+        normalized.contains("incomplete")
+}
+
+private fun ipv6StateRank(state: String?): Int {
+    if (isRejectedIpv6State(state)) return 0
+    val normalized = state.orEmpty().trim().lowercase(Locale.ROOT)
+    return when {
+        normalized.contains("reachable") -> 4
+        normalized.contains("delay") || normalized.contains("probe") -> 3
+        normalized.contains("stale") || normalized.contains("permanent") -> 2
+        else -> 1
+    }
+}
+
+private fun ipv6ScopeRank(ip: String): Int = when {
+    isGlobalIpv6(ip) -> 2
+    isUlaIpv6(ip) -> 1
+    else -> 0
+}
+
 private fun isLoopbackIpv6(ip: String): Boolean = ipv6Bytes(ip)?.let { bytes ->
     bytes.take(15).all { it.toInt() == 0 } && bytes[15].toInt() == 1
 } == true
@@ -83,6 +109,7 @@ fun isSuspectedTemporaryIpv6(ip: String, source: String? = null): Boolean {
 
 fun scoreIpv6(ip: String, state: String? = null, source: String? = null): Int {
     val normalized = normalizeIpv6(ip) ?: return Int.MIN_VALUE
+    if (isRejectedIpv6State(state)) return Int.MIN_VALUE
     val base = when {
         isGlobalIpv6(normalized) -> 100
         isUlaIpv6(normalized) -> 40
@@ -131,12 +158,23 @@ fun mergeIpv6Candidates(vararg groups: List<Ipv6AddressCandidate>): List<Ipv6Add
         if (old == null) {
             merged[normalized] = candidate
         } else {
-            val preferred = if (scoreIpv6(candidate.address, candidate.state, candidate.source) > scoreIpv6(old.address, old.state, old.source)) candidate else old
+            val oldRejected = isRejectedIpv6State(old.state)
+            val candidateRejected = isRejectedIpv6State(candidate.state)
+            val preferred = when {
+                oldRejected && ipv6StateRank(candidate.state) > 1 -> candidate
+                candidateRejected && ipv6StateRank(old.state) > 1 -> old
+                oldRejected -> old
+                candidateRejected -> candidate
+                scoreIpv6(candidate.address, candidate.state, candidate.source) > scoreIpv6(old.address, old.state, old.source) -> candidate
+                else -> old
+            }
             merged[normalized] = preferred.copy(lastSeenAt = listOfNotNull(old.lastSeenAt, candidate.lastSeenAt).maxOrNull())
         }
     }
     return merged.values.sortedWith(
-        compareByDescending<Ipv6AddressCandidate> { scoreIpv6(it.address, it.state, it.source) }
+        compareByDescending<Ipv6AddressCandidate> { ipv6ScopeRank(it.address) }
+            .thenByDescending { ipv6StateRank(it.state) }
+            .thenByDescending { scoreIpv6(it.address, it.state, it.source) }
             .thenByDescending { it.lastSeenAt ?: 0L }
             .thenBy { it.address }
     )
@@ -145,12 +183,14 @@ fun mergeIpv6Candidates(vararg groups: List<Ipv6AddressCandidate>): List<Ipv6Add
 fun pickBestIpv6(addresses: List<String>, candidates: List<Ipv6AddressCandidate> = emptyList()): Ipv6PickResult {
     val rawCandidates = candidates + addresses.map { Ipv6AddressCandidate(it) }
     val normalized = mergeIpv6Candidates(rawCandidates)
-    val eligible = normalized.filterNot { isInvalidIpv6(it.address) }
+    val eligible = normalized.filterNot { isInvalidIpv6(it.address) || isRejectedIpv6State(it.state) }
     val latest = eligible.mapNotNull { it.lastSeenAt }.maxOrNull()
     val best = eligible.maxWithOrNull(
-        compareBy<Ipv6AddressCandidate> {
-            scoreIpv6(it.address, it.state, it.source) + if (latest != null && it.lastSeenAt == latest) 5 else 0
-        }.thenBy { it.lastSeenAt ?: 0L }.thenBy { it.address }
+        compareBy<Ipv6AddressCandidate> { ipv6ScopeRank(it.address) }
+            .thenBy { ipv6StateRank(it.state) }
+            .thenBy { scoreIpv6(it.address, it.state, it.source) + if (latest != null && it.lastSeenAt == latest) 5 else 0 }
+            .thenBy { it.lastSeenAt ?: 0L }
+            .thenBy { it.address }
     )
     return Ipv6PickResult(
         best = best?.address,

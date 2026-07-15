@@ -21,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -143,6 +144,11 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
     val wolManaged = remember(device.mac, state.wolDevices) { state.wolDevices.any { it.enabled && it.mac.equals(device.mac, ignoreCase = true) } }
     val ip4 = cleanApiText(device.ip).ifBlank { "--" }
     val v6 = remember(device.ipv6, device.ipv6Candidates) { device.pickIpv6().best.orEmpty() }
+    val signal = remember(device.rssi) {
+        cleanApiText(device.rssi).takeIf { it.isNotBlank() }?.let {
+            if (it.endsWith("dBm", ignoreCase = true)) it else "$it dBm"
+        } ?: "--"
+    }
     val wifi = hasWifiInfo(device)
     var editing by remember { mutableStateOf(false) }
     LabBottomSheet(onDismiss = onDismiss) {
@@ -165,7 +171,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
             LabSection("无线") {
                 LabInfoRow("SSID", cleanApiText(device.ssid).ifBlank { "--" }, accent = Color(0xFF22C55E))
                 LabInfoRow("频段", cleanApiText(device.band).ifBlank { "--" }, accent = Color(0xFF22C55E))
-                LabInfoRow("信号", cleanApiText(device.rssi).ifBlank { "--" }, accent = Color(0xFFF59E0B))
+                LabInfoRow("信号", signal, accent = Color(0xFFF59E0B))
                 LabInfoRow("速率", cleanApiText(device.rxrate).ifBlank { "--" }, accent = Color(0xFF22C55E))
             }
         }
@@ -180,8 +186,11 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
         if (totalUpload.isNotBlank() || totalDownload.isNotBlank()) {
             LabSection("实时总流量") {
                 Text("路由器本次开机以来累计", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f))
-                LabInfoRow("上行", totalUpload.ifBlank { "--" }, copyable = false, accent = Color(0xFFF59E0B))
-                LabInfoRow("下行", totalDownload.ifBlank { "--" }, copyable = false, accent = Color(0xFF06B6D4))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    DetailTrafficValue("上行", totalUpload.ifBlank { "--" }, Color(0xFFF59E0B), Modifier.weight(1f))
+                    VerticalDivider(Modifier.height(32.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .08f))
+                    DetailTrafficValue("下行", totalDownload.ifBlank { "--" }, Color(0xFF06B6D4), Modifier.weight(1f))
+                }
             }
         }
         if (profile.wolCandidate || wolManaged) {
@@ -217,4 +226,21 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
         Spacer(Modifier.height(8.dp))
     }
     if (editing) LabDeviceEditSheet(device = device, state = state, onDismiss = { editing = false })
+}
+
+@Composable
+private fun DetailTrafficValue(label: String, value: String, accent: Color, modifier: Modifier = Modifier) {
+    Row(modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = accent)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            value,
+            modifier = Modifier.weight(1f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Black,
+            color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
