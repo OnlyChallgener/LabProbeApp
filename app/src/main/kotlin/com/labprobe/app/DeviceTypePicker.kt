@@ -56,6 +56,8 @@ fun EditableDeviceTypeField(
             },
             label = { Text(label) },
             singleLine = true,
+            shape = RoundedCornerShape(18.dp),
+            colors = labOutlinedColors(),
             trailingIcon = {
                 IconButton(onClick = { expanded = true }) {
                     Icon(Icons.Rounded.ArrowDropDown, null)

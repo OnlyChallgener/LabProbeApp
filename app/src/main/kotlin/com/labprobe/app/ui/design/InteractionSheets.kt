@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,28 +49,36 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
     LabBottomSheet(onDismiss = onDismiss) {
         Text("编辑设备", fontWeight = FontWeight.Black, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            OutlinedTextField(
-                value = remark,
-                onValueChange = { remark = it },
-                label = { Text("备注名称") },
-                placeholder = { Text("例如：海尔电热水器 / 美的空调 / 绿联 DH4300") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            EditableDeviceTypeField(
-                value = typeInput,
-                onChange = { typeInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = "设备类型（可输入/点箭头选择）"
-            )
-            OutlinedTextField(
-                value = cleanMac(device.mac),
-                onValueChange = {},
-                label = { Text("MAC 地址") },
-                readOnly = true,
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Surface(shape = RoundedCornerShape(22.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
+                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    OutlinedTextField(
+                        value = remark,
+                        onValueChange = { remark = it },
+                        label = { Text("备注名称") },
+                        placeholder = { Text("例如：海尔电热水器 / 美的空调 / 绿联 DH4300") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        colors = labOutlinedColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    EditableDeviceTypeField(
+                        value = typeInput,
+                        onChange = { typeInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = "设备类型（可输入/点箭头选择）"
+                    )
+                    OutlinedTextField(
+                        value = cleanMac(device.mac),
+                        onValueChange = {},
+                        label = { Text("MAC 地址") },
+                        readOnly = true,
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        colors = labOutlinedColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     DeviceTypeIconPreview(rule, 42)
