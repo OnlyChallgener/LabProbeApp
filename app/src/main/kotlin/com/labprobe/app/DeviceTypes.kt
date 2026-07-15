@@ -108,20 +108,21 @@ fun deviceTypeIcon(iconKey: String): ImageVector = when (iconKey) {
     "light", "ceiling_light", "living_room_light", "bedside_lamp", "desk_lamp", "floor_lamp", "light_strip" -> Icons.Rounded.Lightbulb
     "curtain" -> Icons.Rounded.Sensors
     "aircon" -> Icons.Rounded.AcUnit
+    "fresh_air" -> Icons.Rounded.Air
     "floor_aircon", "aircon_controller" -> Icons.Rounded.AcUnit
     "fridge" -> Icons.Rounded.Kitchen
     "washer" -> Icons.Rounded.LocalLaundryService
     "heater", "water_heater", "gas_water_heater", "room_heater", "bath_heater" -> Icons.Rounded.WaterDrop
     "hood" -> Icons.Rounded.Air
-    "cooker" -> Icons.Rounded.Fastfood
+    "smart_stove" -> Icons.Rounded.Fastfood
     "dishwasher" -> Icons.Rounded.WaterDrop
     "air_fryer" -> Icons.Rounded.Fastfood
-    "pressure_cooker" -> Icons.Rounded.Fastfood
+    "pressure_cooker", "blender" -> Icons.Rounded.Fastfood
     "humidifier" -> Icons.Rounded.WaterDrop
     "air_purifier" -> Icons.Rounded.Air
     "purifier" -> Icons.Rounded.WaterDrop
     "rice" -> Icons.Rounded.Fastfood
-    "cleaner" -> Icons.Rounded.SmartToy
+    "cleaner", "vacuum" -> Icons.Rounded.SmartToy
     "reading_pen" -> Icons.Rounded.SmartToy
     "toilet" -> Icons.Rounded.WaterDrop
     "scale" -> Icons.Rounded.Scale
@@ -216,7 +217,7 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("doorbell", "门铃"), brands = listOf("小米", "萤石", "360")),
     DeviceTypeRule("lock", "智能门锁", "lock", Color(0xFF0F766E), priority = 75,
         keywords = listOf("lock", "door lock", "门锁"), brands = listOf("凯迪仕", "德施曼", "小米", "萤石")),
-    DeviceTypeRule("sensor", "传感器", "switch", Color(0xFF10B981), priority = 66,
+    DeviceTypeRule("sensor", "传感器", "sensor", Color(0xFF10B981), priority = 66,
         keywords = listOf("sensor", "contact", "motion", "门窗传感器", "传感器"), brands = listOf("aqara", "小米", "欧瑞博", "orvibo")),
     DeviceTypeRule("switch", "智能开关", "switch", Color(0xFF10B981), priority = 66,
         keywords = listOf("switch", "开关"), brands = listOf("欧普", "小米", "aqara", "欧瑞博", "orvibo")),
@@ -249,7 +250,7 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("floor air conditioner", "立式空调", "柜机空调", "空调柜机")),
     DeviceTypeRule("fridge", "冰箱", "fridge", Color(0xFF0EA5E9), priority = 80,
         keywords = listOf("fridge", "refrigerator", "冰箱"), brands = listOf("海尔", "haier", "美的", "midea", "容声", "ronshen", "卡萨帝", "casarte", "西门子", "siemens", "colmo")),
-    DeviceTypeRule("fresh_air", "新风", "aircon", Color(0xFF06B6D4), priority = 76,
+    DeviceTypeRule("fresh_air", "新风", "fresh_air", Color(0xFF06B6D4), priority = 76,
         keywords = listOf("fresh air", "新风"), brands = listOf("松下", "panasonic", "美的", "midea", "小米", "352", "colmo", "大金", "daikin")),
     DeviceTypeRule("washer", "洗衣机", "washer", Color(0xFF0EA5E9), priority = 78,
         keywords = listOf("washer", "washing", "dryer", "洗衣", "洗烘"), brands = listOf("海尔", "小天鹅", "美的", "西门子", "colmo"), aliases = listOf("洗衣/洗烘")),
@@ -268,21 +269,19 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("fan", "风扇", "电风扇", "循环扇")),
     DeviceTypeRule("hood", "抽油烟机", "hood", Color(0xFFF59E0B), priority = 68,
         keywords = listOf("hood", "油烟机", "烟机"), brands = listOf("方太", "fotile", "老板", "robam", "美的", "华帝"), aliases = listOf("油烟机")),
-    DeviceTypeRule("cooker", "灶具", "cooker", Color(0xFFF97316), priority = 68,
-        keywords = listOf("cooker", "stove", "灶具", "燃气灶"), brands = listOf("方太", "老板", "美的")),
     DeviceTypeRule("smart_stove", "智能灶", "smart_stove", Color(0xFFF97316), priority = 70,
-        keywords = listOf("smart stove", "智能灶", "智能燃气灶")),
+        keywords = listOf("smart stove", "智能灶", "智能燃气灶", "cooker", "stove", "灶具", "燃气灶")),
     DeviceTypeRule("pressure_cooker", "电压力锅", "pressure_cooker", Color(0xFFF59E0B), priority = 67,
         keywords = listOf("pressure cooker", "电压力锅", "压力锅")),
     DeviceTypeRule("dishwasher", "洗碗机", "dishwasher", Color(0xFF0EA5E9), priority = 68,
         keywords = listOf("dishwasher", "洗碗机"), brands = listOf("美的", "海尔", "西门子", "老板")),
-    DeviceTypeRule("oven", "蒸烤箱", "cooker", Color(0xFFF97316), priority = 68,
+    DeviceTypeRule("oven", "蒸烤箱", "smart_stove", Color(0xFFF97316), priority = 68,
         keywords = listOf("oven", "steam", "蒸烤箱", "烤箱"), brands = listOf("美的", "方太", "老板")),
     DeviceTypeRule("water_purifier", "净水器", "purifier", Color(0xFF0EA5E9), priority = 70,
         keywords = listOf("purifier", "water purifier", "净水", "净水器"), brands = listOf("安吉尔", "沁园", "美的", "海尔")),
     DeviceTypeRule("rice_cooker", "电饭煲", "rice", Color(0xFFF59E0B), priority = 66,
         keywords = listOf("rice cooker", "电饭煲"), brands = listOf("美的", "苏泊尔", "九阳", "小米")),
-    DeviceTypeRule("blender", "破壁机", "rice", Color(0xFFF59E0B), priority = 64,
+    DeviceTypeRule("blender", "破壁机", "blender", Color(0xFFF59E0B), priority = 64,
         keywords = listOf("blender", "破壁机"), brands = listOf("九阳", "美的", "苏泊尔")),
     DeviceTypeRule("air_fryer", "空气炸锅", "air_fryer", Color(0xFFF59E0B), priority = 64,
         keywords = listOf("air fryer", "空气炸锅"), brands = listOf("美的", "九阳", "小熊")),
@@ -295,7 +294,7 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         brands = listOf("小达人", "洪恩", "有道", "步步高", "作业帮", "阿尔法蛋")),
     DeviceTypeRule("robot_vacuum", "扫地机器人", "cleaner", Color(0xFF10B981), priority = 74,
         keywords = listOf("robot vacuum", "vacuum robot", "扫地", "扫地机器人"), brands = listOf("科沃斯", "ecovacs", "石头", "roborock", "云鲸", "narwal", "小米")),
-    DeviceTypeRule("vacuum", "吸尘器", "cleaner", Color(0xFF10B981), priority = 66,
+    DeviceTypeRule("vacuum", "吸尘器", "vacuum", Color(0xFF10B981), priority = 66,
         keywords = listOf("vacuum", "吸尘"), brands = listOf("戴森", "dyson", "追觅", "dreame", "美的")),
     DeviceTypeRule("dryer", "电动晾衣架", "dryer", Color(0xFF22C55E), priority = 64,
         keywords = listOf("晾衣架", "clothes rack"), brands = listOf("好太太", "邦先生", "小米")),
@@ -374,6 +373,7 @@ fun normalizeDeviceTypeToken(raw: String): String {
         s.contains("热水") -> "water_heater"
         s.contains("空调控制器") || s.contains("空调伴侣") -> "aircon_controller"
         s.contains("立式空调") || s.contains("柜机空调") -> "floor_aircon"
+        s.contains("新风") || s.contains("fresh air") -> "fresh_air"
         s.contains("空调") -> "aircon"
         s.contains("冰箱") -> "fridge"
         s.contains("洗衣") || s.contains("洗烘") -> "washer"
@@ -397,8 +397,12 @@ fun normalizeDeviceTypeToken(raw: String): String {
         s.contains("饮水") -> "water_dispenser"
         s.contains("微波炉") -> "microwave"
         s.contains("电压力锅") || s.contains("压力锅") -> "pressure_cooker"
+        s.contains("破壁机") || s.contains("blender") -> "blender"
+        s.contains("灶具") || s.contains("燃气灶") || s.contains("智能灶") || s.contains("smart stove") || s.contains("stove") || s.contains("cooker") -> "smart_stove"
         s.contains("晾衣架") || s.contains("clothes rack") -> "dryer"
         s.contains("除湿机") || s.contains("dehumidifier") -> "dehumidifier"
+        s.contains("智能马桶") || s.contains("马桶") || s.contains("toilet") -> "toilet"
+        s.contains("吸尘") || s.contains("vacuum") -> "vacuum"
         s.contains("取暖器") || s.contains("电暖器") || s.contains("暖风机") -> "room_heater"
         s.contains("风扇") || s.contains("循环扇") -> "fan"
         s.contains("遥控器") -> "remote"

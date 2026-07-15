@@ -32,7 +32,8 @@ fun deviceIconDrawable(iconKey: String): Int = when (iconKey.trim().lowercase())
     "set_top_box" -> R.drawable.device_set_top_box
     "speaker" -> R.drawable.device_smart_speaker
     "smart_panel" -> R.drawable.device_smart_panel
-    "aircon", "fresh_air" -> R.drawable.device_air_conditioner
+    "aircon" -> R.drawable.device_air_conditioner
+    "fresh_air" -> R.drawable.device_fresh_air
     "floor_aircon" -> R.drawable.device_floor_air_conditioner
     "humidifier", "water" -> R.drawable.device_humidifier
     "air_purifier" -> R.drawable.device_air_purifier
@@ -49,11 +50,13 @@ fun deviceIconDrawable(iconKey: String): Int = when (iconKey.trim().lowercase())
     "dryer" -> R.drawable.device_clothes_dryer
     "dishwasher" -> R.drawable.device_dishwasher
     "air_fryer" -> R.drawable.device_air_fryer
-    "pressure_cooker", "rice", "rice_cooker", "blender" -> R.drawable.device_pressure_cooker
+    "pressure_cooker", "rice", "rice_cooker" -> R.drawable.device_pressure_cooker
+    "blender" -> R.drawable.device_blender
     "hood", "range_hood" -> R.drawable.device_range_hood
     "cooker", "smart_stove", "oven" -> R.drawable.device_smart_stove
     "floor_cleaner" -> R.drawable.device_floor_cleaner
-    "cleaner", "robot_vacuum", "vacuum" -> R.drawable.device_robot_vacuum
+    "cleaner", "robot_vacuum" -> R.drawable.device_robot_vacuum
+    "vacuum" -> R.drawable.device_vacuum
     "reading_pen" -> R.drawable.device_reading_pen
     "scale" -> R.drawable.device_scale
     "lock" -> R.drawable.device_smart_lock
@@ -71,6 +74,7 @@ fun deviceIconDrawable(iconKey: String): Int = when (iconKey.trim().lowercase())
     "floor_lamp" -> R.drawable.device_floor_lamp
     "light_strip" -> R.drawable.device_light_strip
     "curtain" -> R.drawable.device_smart_curtain
-    "iot", "toilet" -> R.drawable.device_iot
+    "iot" -> R.drawable.device_iot
+    "toilet" -> R.drawable.device_smart_toilet
     else -> R.drawable.device_unknown
 }

@@ -177,6 +177,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        sheetGesturesEnabled = !scrollable,
         shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
         containerColor = MaterialTheme.colorScheme.surface
     ) {

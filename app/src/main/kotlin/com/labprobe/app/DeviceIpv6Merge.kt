@@ -29,6 +29,7 @@ private fun collectIpv6Neighbors(root: Any?): List<Ipv6NeighborHit> {
     val out = mutableListOf<Ipv6NeighborHit>()
     fun walk(value: Any?) {
         when (value) {
+            is String -> readNeighborText(value, out)
             is JSONObject -> {
                 val maybeArray = value.optJSONArray("ipv6_neighbors")
                     ?: value.optJSONArray("ipv6Neighbors")
@@ -51,6 +52,24 @@ private fun collectIpv6Neighbors(root: Any?): List<Ipv6NeighborHit> {
     }
     walk(root)
     return out.distinctBy { it.mac + "|" + it.candidate.address + "|" + it.candidate.state + "|" + it.candidate.source }
+}
+
+private fun readNeighborText(text: String, out: MutableList<Ipv6NeighborHit>) {
+    if (!text.contains("lladdr", ignoreCase = true) || !text.contains(":")) return
+    val linePattern = Regex(
+        "^\\s*([0-9a-fA-F:]+)\\s+dev\\s+\\S+.*?\\blladdr\\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\\b(.*)$",
+        RegexOption.IGNORE_CASE
+    )
+    val statePattern = Regex("\\b(REACHABLE|STALE|DELAY|PROBE|FAILED|INCOMPLETE|PERMANENT|NOARP)\\b", RegexOption.IGNORE_CASE)
+    text.lineSequence().forEach { line ->
+        val match = linePattern.find(line) ?: return@forEach
+        val normalized = normalizeIpv6(match.groupValues[1]) ?: return@forEach
+        val mac = cleanMac(match.groupValues[2])
+        if (mac.isBlank()) return@forEach
+        val tail = match.groupValues.getOrNull(3).orEmpty()
+        val state = statePattern.findAll(tail).lastOrNull()?.value.orEmpty()
+        out += Ipv6NeighborHit(mac, Ipv6AddressCandidate(normalized, state, "ndp text"))
+    }
 }
 
 private fun readNeighborArray(arr: JSONArray, out: MutableList<Ipv6NeighborHit>) {

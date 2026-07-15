@@ -7105,23 +7105,24 @@ fun shortTime(t: String): String = if (t.length >= 19) t.substring(11, 19) else 
 fun formatDurationText(raw: String): String {
     val s = raw.trim()
     if (s.isBlank() || s == "-" || s.lowercase(Locale.getDefault()) == "null") return ""
-    val normalized = s.replace("时", "小时")
+    val normalized = s
+        .replace("小小时", "小时")
+        .replace(Regex("(?<!小)时"), "小时")
     parseDurationSeconds(normalized)?.let { seconds ->
-        if (seconds >= 86400L) return compactDurationFromSeconds(seconds)
+        return compactDurationFromSeconds(seconds)
     }
-    if ("小时" in normalized || "天" in normalized) return normalized
     Regex("^(\\d+)分(\\d+)秒$").find(s)?.let {
         val totalMin = it.groupValues[1].toIntOrNull() ?: 0
         val sec = it.groupValues[2].toIntOrNull() ?: 0
         val h = totalMin / 60
         val m = totalMin % 60
-        return buildString { if (h > 0) append(h).append("小时"); if (m > 0 || h == 0) append(m).append("分"); append(sec).append("秒") }
+        return compactDurationFromSeconds(h * 3600L + m * 60L + sec)
     }
     Regex("^(\\d+)分$").find(s)?.let {
         val totalMin = it.groupValues[1].toIntOrNull() ?: 0
         val h = totalMin / 60
         val m = totalMin % 60
-        return if (h > 0) "${h}小时${m}分" else "${m}分"
+        return compactDurationFromSeconds(h * 3600L + m * 60L)
     }
     return normalized
 }
