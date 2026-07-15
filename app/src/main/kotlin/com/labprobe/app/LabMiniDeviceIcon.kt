@@ -66,7 +66,7 @@ fun LabMiniDeviceIcon(
             }
 
             when (key) {
-                "router" -> {
+                "router", "soft_router" -> {
                     line(Offset(w*.22f,h*.24f), Offset(w*.18f,h*.02f), accent.copy(alpha=.65f), w*.045f)
                     line(Offset(w*.78f,h*.24f), Offset(w*.82f,h*.02f), accent.copy(alpha=.65f), w*.045f)
                     rr(w*.14f,h*.30f,w*.72f,h*.42f,w*.12f)
@@ -88,7 +88,7 @@ fun LabMiniDeviceIcon(
                     for (i in 0..2) drawCircle(accent.copy(alpha=.75f), radius = w*.032f, center = Offset(w*.39f,h*(.28f+i*.16f)))
                     port(w*.54f,h*.28f); port(w*.54f,h*.44f); port(w*.54f,h*.60f)
                 }
-                "nas" -> {
+                "nas", "server", "industrial" -> {
                     rr(w*.18f,h*.10f,w*.64f,h*.78f,w*.10f)
                     rr(w*.18f,h*.10f,w*.64f,h*.78f,w*.10f, edge, Stroke(w*.035f))
                     val bayW = w*.18f
@@ -134,14 +134,14 @@ fun LabMiniDeviceIcon(
                     rr(w*.12f,h*.24f,w*.76f,h*.48f,w*.08f, edge, Stroke(w*.035f))
                     drawCircle(accent.copy(alpha=.65f), radius = w*.021f, center = Offset(w*.82f,h*.48f))
                 }
-                "watch" -> {
+                "watch", "child_watch" -> {
                     rr(w*.36f,h*.20f,w*.28f,h*.50f,w*.10f)
                     rr(w*.36f,h*.20f,w*.28f,h*.50f,w*.10f, edge, Stroke(w*.03f))
                     line(Offset(w*.50f,h*.08f), Offset(w*.50f,h*.20f), edge, w*.09f)
                     line(Offset(w*.50f,h*.70f), Offset(w*.50f,h*.84f), edge, w*.09f)
                     drawCircle(accent.copy(alpha=.55f), radius = w*.065f, center = Offset(w*.50f,h*.45f))
                 }
-                "switch" -> {
+                "switch", "network_switch" -> {
                     rr(w*.10f,h*.30f,w*.80f,h*.34f,w*.055f)
                     rr(w*.10f,h*.30f,w*.80f,h*.34f,w*.055f, edge, Stroke(w*.03f))
                     for (row in 0..1) for (i in 0..5) port(w*(.20f+i*.10f), h*(.40f+row*.11f), w*.055f, h*.045f)
@@ -153,12 +153,12 @@ fun LabMiniDeviceIcon(
                     rr(w*.27f,h*.58f,w*.46f,h*.22f,w*.035f, Color(0xFFE2E8F0))
                     drawCircle(accent, radius = w*.028f, center = Offset(w*.72f,h*.47f))
                 }
-                "tv", "tv_box", "projector" -> {
+                "tv", "tv_box", "set_top_box", "projector" -> {
                     if (key == "projector") {
                         rr(w*.18f,h*.34f,w*.64f,h*.28f,w*.08f)
                         rr(w*.18f,h*.34f,w*.64f,h*.28f,w*.08f, edge, Stroke(w*.035f))
                         drawCircle(accent.copy(alpha=.55f), radius = w*.07f, center = Offset(w*.34f,h*.48f))
-                    } else if (key == "tv_box") {
+                    } else if (key == "tv_box" || key == "set_top_box") {
                         rr(w*.22f,h*.30f,w*.56f,h*.34f,w*.08f)
                         rr(w*.22f,h*.30f,w*.56f,h*.34f,w*.08f, edge, Stroke(w*.035f))
                         line(Offset(w*.38f,h*.48f), Offset(w*.62f,h*.48f), accent.copy(alpha=.45f), w*.05f)
@@ -183,7 +183,7 @@ fun LabMiniDeviceIcon(
                     drawCircle(accent.copy(alpha=.55f), radius = w*.075f, center = Offset(w*.50f,h*.42f))
                     line(Offset(w*.40f,h*.68f), Offset(w*.60f,h*.68f), accent.copy(alpha=.35f), w*.035f)
                 }
-                "aircon" -> {
+                "aircon", "aircon_controller" -> {
                     rr(w*.13f,h*.22f,w*.74f,h*.28f,w*.08f)
                     rr(w*.13f,h*.22f,w*.74f,h*.28f,w*.08f, edge, Stroke(w*.03f))
                     line(Offset(w*.24f,h*.57f), Offset(w*.76f,h*.57f), accent.copy(alpha=.35f), w*.035f)
@@ -229,6 +229,62 @@ fun LabMiniDeviceIcon(
                     drawCircle(ink.copy(alpha=.40f), radius = w*.025f, center = Offset(w*.42f,h*.46f))
                     drawCircle(ink.copy(alpha=.40f), radius = w*.025f, center = Offset(w*.58f,h*.46f))
                     line(Offset(w*.50f,h*.54f), Offset(w*.50f,h*.64f), accent.copy(alpha=.45f), w*.025f)
+                }
+                "floor_aircon" -> {
+                    rr(w*.30f,h*.08f,w*.40f,h*.78f,w*.08f)
+                    rr(w*.30f,h*.08f,w*.40f,h*.78f,w*.08f, edge, Stroke(w*.035f))
+                    line(Offset(w*.30f,h*.42f), Offset(w*.70f,h*.42f), edge, w*.025f)
+                    line(Offset(w*.39f,h*.54f), Offset(w*.61f,h*.54f), accent.copy(alpha=.36f), w*.035f)
+                    drawCircle(accent, radius = w*.027f, center = Offset(w*.61f,h*.22f))
+                }
+                "water_dispenser", "purifier" -> {
+                    rr(w*.29f,h*.10f,w*.42f,h*.76f,w*.09f)
+                    rr(w*.29f,h*.10f,w*.42f,h*.76f,w*.09f, edge, Stroke(w*.035f))
+                    rr(w*.36f,h*.24f,w*.28f,h*.22f,w*.04f, Color(0xFFE2E8F0))
+                    line(Offset(w*.50f,h*.45f), Offset(w*.50f,h*.57f), accent, w*.045f)
+                    drawCircle(accent.copy(alpha=.35f), radius = w*.045f, center = Offset(w*.50f,h*.67f))
+                }
+                "microwave", "cooker", "smart_stove", "pressure_cooker", "rice" -> {
+                    rr(w*.16f,h*.24f,w*.68f,h*.46f,w*.08f)
+                    rr(w*.16f,h*.24f,w*.68f,h*.46f,w*.08f, edge, Stroke(w*.035f))
+                    rr(w*.23f,h*.32f,w*.40f,h*.28f,w*.045f, accent.copy(alpha=.14f))
+                    drawCircle(accent, radius = w*.025f, center = Offset(w*.73f,h*.39f))
+                    drawCircle(edge, radius = w*.025f, center = Offset(w*.73f,h*.51f))
+                }
+                "room_heater", "fan", "hood" -> {
+                    rr(w*.20f,h*.18f,w*.60f,h*.58f,w*.12f)
+                    rr(w*.20f,h*.18f,w*.60f,h*.58f,w*.12f, edge, Stroke(w*.035f))
+                    drawCircle(accent.copy(alpha=.16f), radius = w*.19f, center = Offset(w*.50f,h*.47f))
+                    for (angle in 0..2) {
+                        val dx = if (angle == 0) 0f else if (angle == 1) w*.10f else -w*.10f
+                        val dy = if (angle == 0) -h*.10f else h*.07f
+                        drawCircle(accent.copy(alpha=.58f), radius = w*.06f, center = Offset(w*.50f + dx,h*.47f + dy))
+                    }
+                }
+                "remote" -> {
+                    rr(w*.32f,h*.10f,w*.36f,h*.76f,w*.10f)
+                    rr(w*.32f,h*.10f,w*.36f,h*.76f,w*.10f, edge, Stroke(w*.035f))
+                    drawCircle(accent, radius = w*.045f, center = Offset(w*.50f,h*.28f))
+                    port(w*.40f,h*.48f,w*.20f,h*.06f)
+                    port(w*.40f,h*.61f,w*.20f,h*.06f)
+                }
+                "charger" -> {
+                    // 正面多口桌面充电器轮廓，不含任何厂商 Logo 或文字。
+                    rr(w*.14f,h*.28f,w*.72f,h*.42f,w*.10f)
+                    rr(w*.14f,h*.28f,w*.72f,h*.42f,w*.10f, edge, Stroke(w*.035f))
+                    port(w*.25f,h*.40f,w*.13f,h*.09f)
+                    port(w*.44f,h*.40f,w*.13f,h*.09f)
+                    port(w*.63f,h*.40f,w*.10f,h*.09f)
+                    drawCircle(accent, radius = w*.025f, center = Offset(w*.76f,h*.59f))
+                    line(Offset(w*.26f,h*.77f), Offset(w*.74f,h*.77f), accent.copy(alpha=.18f), w*.07f)
+                }
+                "game_console" -> {
+                    rr(w*.14f,h*.30f,w*.72f,h*.36f,w*.16f)
+                    rr(w*.14f,h*.30f,w*.72f,h*.36f,w*.16f, edge, Stroke(w*.035f))
+                    line(Offset(w*.31f,h*.43f), Offset(w*.31f,h*.55f), ink, w*.04f)
+                    line(Offset(w*.25f,h*.49f), Offset(w*.37f,h*.49f), ink, w*.04f)
+                    drawCircle(accent, radius = w*.035f, center = Offset(w*.66f,h*.44f))
+                    drawCircle(accent.copy(alpha=.65f), radius = w*.035f, center = Offset(w*.73f,h*.53f))
                 }
                 else -> {
                     rr(w*.18f,h*.18f,w*.64f,h*.64f,w*.16f)

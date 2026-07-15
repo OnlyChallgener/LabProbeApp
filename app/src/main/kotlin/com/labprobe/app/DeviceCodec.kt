@@ -82,6 +82,7 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
         remark = f("remark").ifBlank { f("note") },
         manualType = f("manualType").ifBlank { f("deviceTypeManual") }.ifBlank { f("typeManual") },
         wolEnabledOverride = boolOrNull(o, "wolEnabled").orElse(boolOrNull(o, "manualWol")).orElse(boolOrNull(o, "wolSwitch")),
+        followedOverride = boolOrNull(o, "followed"),
         todayUpload = trafficValue(
             o,
             flatKeys = listOf("todayUpload", "todayUp", "todayUploadTraffic", "todayUpTraffic", "todayTx", "todayTxBytes", "dailyUpload", "dailyUp", "dayUpload", "dayUp", "today_upload", "today_up", "today_tx"),
@@ -273,6 +274,7 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
     .put("remark", remark)
     .put("manualType", manualType)
     .put("wolEnabled", wolEnabledOverride ?: JSONObject.NULL)
+    .put("followed", followedOverride ?: JSONObject.NULL)
     .put("todayUpload", todayUpload)
     .put("todayDownload", todayDownload)
     .put("totalUpload", totalUpload)

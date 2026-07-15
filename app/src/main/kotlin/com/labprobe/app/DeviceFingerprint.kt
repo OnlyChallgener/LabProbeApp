@@ -29,7 +29,7 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
         type = rule.id,
         label = rule.label,
         icon = deviceTypeIcon(rule.iconKey),
-        accent = rule.accent,
+        accent = DEVICE_ICON_ACCENT,
         wolCandidate = wol,
         confidence = confidence,
         note = note,
@@ -76,16 +76,20 @@ private fun strongNameType(d: DeviceItem): DeviceTypeRule? {
 
     if (nameText.isBlank()) return null
     return when {
+        listOf("儿童手表", "电话手表", "小天才", "米兔").any { nameText.contains(it) } -> deviceTypeById("child_watch")
         listOf("ipad", "matepad", "galaxy tab", "xiaoxin pad", "redmi pad", "mi pad", "pad", "平板").any { nameText.contains(it) } -> deviceTypeById("tablet")
         listOf("iphone", "手机", "pixel", "oneplus", "oppo", "vivo", "iqoo", "realme", "meizu", "nubia").any { nameText.contains(it) } -> deviceTypeById("phone")
         listOf("macbook", "matebook", "magicbook", "redmibook", "laptop", "notebook", "笔记本").any { nameText.contains(it) } -> deviceTypeById("laptop")
         listOf("mac mini", "macmini", "mini pc", "minipc", "nuc", "迷你主机", "小主机").any { nameText.contains(it) } -> deviceTypeById("mini_pc")
         listOf("desktop", "台式", "台式机").any { nameText.contains(it) } -> deviceTypeById("desktop")
+        listOf("server", "服务器", "proxmox", "esxi").any { nameText.contains(it) } -> deviceTypeById("server")
+        listOf("industrial pc", "工控机").any { nameText.contains(it) } -> deviceTypeById("industrial")
         listOf("nas", "群晖", "威联通", "极空间", "飞牛").any { nameText.contains(it) } || ugreenNasModelTokens.any { nameText.contains(it) } -> deviceTypeById("nas")
         listOf("soundbox", "miaisoundbox", "小爱", "天猫精灵", "音箱", "音响", "speaker").any { nameText.contains(it) } -> deviceTypeById("speaker")
         listOf("热水器", "water heater").any { nameText.contains(it) } -> deviceTypeById("water_heater")
         listOf("空调", "aircon", "air conditioner").any { nameText.contains(it) } -> deviceTypeById("aircon")
-        listOf("路由器", "router", "openwrt", "istoreos", "be72", "rg-", "reyee", "ruijie", "unifi").any { nameText.contains(it) } -> deviceTypeById("router")
+        listOf("软路由", "openwrt", "istoreos", "pfsense", "opnsense").any { nameText.contains(it) } -> deviceTypeById("soft_router")
+        listOf("路由器", "router", "be72", "rg-", "reyee", "ruijie", "unifi").any { nameText.contains(it) } -> deviceTypeById("router")
         else -> null
     }
 }

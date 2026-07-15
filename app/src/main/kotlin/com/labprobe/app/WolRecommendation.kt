@@ -9,7 +9,7 @@ data class WolRecommendation(
 )
 
 private val STRONG_WOL_TYPES = setOf("nas", "desktop", "mini_pc", "laptop", "industrial", "server", "workstation", "soft_router")
-private val OPTIONAL_WOL_TYPES = setOf("printer", "tv")
+private val OPTIONAL_WOL_TYPES = setOf("printer", "tv", "tv_box", "set_top_box")
 
 fun wolRecommendationForDeviceType(type: String?): WolRecommendation {
     val raw = type.orEmpty().trim().lowercase(Locale.ROOT)

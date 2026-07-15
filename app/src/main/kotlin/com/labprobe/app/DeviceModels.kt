@@ -27,6 +27,7 @@ data class DeviceItem(
     val remark: String = "",
     val manualType: String = "",
     val wolEnabledOverride: Boolean? = null,
+    val followedOverride: Boolean? = null,
     val todayUpload: String = "",
     val todayDownload: String = "",
     val totalUpload: String = "",

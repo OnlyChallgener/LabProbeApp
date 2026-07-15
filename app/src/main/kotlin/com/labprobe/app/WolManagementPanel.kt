@@ -345,6 +345,7 @@ private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceIt
         remark = fresh.remark.ifBlank { old.remark },
         manualType = fresh.manualType.ifBlank { old.manualType },
         wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride,
+        followedOverride = fresh.followedOverride ?: old.followedOverride,
         todayUpload = fresh.todayUpload.ifBlank { old.todayUpload },
         todayDownload = fresh.todayDownload.ifBlank { old.todayDownload },
         totalUpload = fresh.totalUpload.ifBlank { old.totalUpload },

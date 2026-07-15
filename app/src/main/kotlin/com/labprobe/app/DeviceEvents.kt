@@ -39,6 +39,7 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 remark = n.remark.ifBlank { o.remark },
                 manualType = n.manualType.ifBlank { o.manualType },
                 wolEnabledOverride = n.wolEnabledOverride ?: o.wolEnabledOverride,
+                followedOverride = n.followedOverride ?: o.followedOverride,
                 todayUpload = n.todayUpload.ifBlank { o.todayUpload },
                 todayDownload = n.todayDownload.ifBlank { o.todayDownload },
                 totalUpload = n.totalUpload.ifBlank { o.totalUpload },

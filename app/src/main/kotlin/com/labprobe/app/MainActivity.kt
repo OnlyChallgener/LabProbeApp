@@ -837,7 +837,12 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         status = stRoot
         val devOnlineWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devOnline), deviceOverrides)
         val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
-        val mergedDevices = applyDeviceOverrides(mergeDeviceCache(devices, devWatchedWithIpv6), deviceOverrides)
+        val mergedDevices = preserveFollowedDeviceSnapshots(
+            base = mergeDeviceCache(devices, devWatchedWithIpv6),
+            previous = devices,
+            online = devOnlineWithIpv6,
+            overrides = deviceOverrides
+        )
         devices = mergedDevices
         onlineDevices = devOnlineWithIpv6
         events = evs
@@ -864,17 +869,25 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         message = "Hub 设置已变更，请测试或刷新"
     }
 
-    fun saveDeviceOverride(mac: String, remark: String, typeInput: String, wolEnabledOverride: Boolean?) {
+    fun saveDeviceOverride(
+        mac: String,
+        remark: String,
+        typeInput: String,
+        wolEnabledOverride: Boolean?,
+        followedOverride: Boolean? = null
+    ) {
         val clean = cleanMac(mac)
         if (!isValidMac(clean)) {
             message = "MAC 地址无效，未保存设备备注"
             return
         }
         val normalizedType = normalizeDeviceTypeToken(typeInput).ifBlank { typeInput.trim() }
+        val previous = deviceOverrides.firstOrNull { it.mac.equals(clean, ignoreCase = true) }
         val item = DeviceOverrideConfig(
             mac = clean,
             remark = remark.trim(),
             typeId = normalizedType,
+            followedOverride = followedOverride ?: previous?.followedOverride,
             wolEnabledOverride = wolEnabledOverride,
             updatedAt = System.currentTimeMillis()
         )
@@ -882,7 +895,28 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         prefs.deviceOverridesJson = deviceOverridesToJson(deviceOverrides)
         devices = applyDeviceOverrides(devices, deviceOverrides)
         onlineDevices = applyDeviceOverrides(onlineDevices, deviceOverrides)
+        if (item.followedOverride == true) {
+            val snapshot = (onlineDevices + devices).firstOrNull { it.mac.equals(clean, ignoreCase = true) }
+            if (snapshot != null) {
+                devices = listOf(snapshot) + devices.filterNot { it.mac.equals(clean, ignoreCase = true) }
+            }
+        }
+        prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
         message = "已保存设备备注：${item.remark.ifBlank { clean }}"
+    }
+
+    fun deleteDeviceOverride(mac: String) {
+        val clean = cleanMac(mac)
+        deviceOverrides = deviceOverrides.filterNot { it.mac.equals(clean, ignoreCase = true) }
+        prefs.deviceOverridesJson = deviceOverridesToJson(deviceOverrides)
+        devices = devices.map { d ->
+            if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
+        }
+        onlineDevices = onlineDevices.map { d ->
+            if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
+        }
+        prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
+        message = "已删除设备本地设置"
     }
 
     suspend fun wakeDevice(ctx: Context, device: DeviceItem): String {
@@ -2170,7 +2204,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         buildVpnRowsForHome(data, nasV6, state.events)
     }
     val onlineCount = state.onlineDevices.size
-    val watchedCount = state.devices.size
+    val watchedCount = remember(state.devices) { followedDeviceList(state.devices).size }
     val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
     val vpnOk = vpnRows.isNotEmpty()
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
@@ -2854,11 +2888,12 @@ fun StatusPill(label: String, value: String, color: Color) {
 fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
     var mode by remember { mutableStateOf("watch") }
     var detailMac by remember { mutableStateOf<String?>(null) }
-    val list = if (mode == "online") state.onlineDevices else state.devices
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
+    val followed = remember(shared) { followedDeviceList(shared) }
+    val list = if (mode == "online") state.onlineDevices else followed
     val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
     val detailDevice = remember(detailMac, shared) { detailMac?.let { mac -> shared.firstOrNull { it.mac.equals(mac, ignoreCase = true) } } }
-    ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") state.wolDevices.size else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
+    ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
             FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线终端", fontSize = 12.sp) })
@@ -3129,11 +3164,11 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         iconKey = profile.iconKey,
         headerAction = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = profile.accent.copy(alpha = .10f)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Edit, null, tint = profile.accent, modifier = Modifier.size(15.dp)) }
+                androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = DEVICE_ICON_ACCENT.copy(alpha = .11f)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Edit, null, tint = DEVICE_ICON_ACCENT, modifier = Modifier.size(15.dp)) }
                 }
-                Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFFFE4E6)) {
-                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+                Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)) {
+                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFF64748B), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
                 }
             }
         },
@@ -3142,7 +3177,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         DeviceSmartInfo(d, profile)
         if (!d.online && wolManaged) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(Modifier.weight(1f), shape = RoundedCornerShape(18.dp), color = profile.accent.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, profile.accent.copy(alpha = .14f))) {
+                Surface(Modifier.weight(1f), shape = RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
                     Text("已加入 WOL 管理 · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
@@ -3192,7 +3227,7 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
                 val radio = listOf(d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "--" }
                 DeviceMiniMetric("链路", radio, Icons.Rounded.Wifi, Color(0xFF22C55E), Modifier.weight(1f), copyValue = radio.takeIf { it != "--" }.orEmpty(), allowScroll = true)
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
-                DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFFF59E0B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true)
+                DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFF64748B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true, valueColor = deviceSignalValueColor(d.rssi))
             }
             DeviceTodayTrafficBar(d)
             DeviceFooterLine(d = d, profile = profile, showTime = true)
@@ -3297,8 +3332,8 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
     } else "有线设备"
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = RoundedCornerShape(14.dp), color = profile.accent.copy(alpha = .10f)) {
-            Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        Surface(shape = RoundedCornerShape(14.dp), color = DEVICE_TYPE_BADGE_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
+            Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = DEVICE_TYPE_BADGE_CONTENT, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
         }
         if (timeText.isNotBlank()) {
             Spacer(Modifier.width(8.dp))
@@ -3319,9 +3354,9 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
 
 
 @Composable
-fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false) {
+fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false, valueColor: Color? = null) {
     val ctx = LocalContext.current
-    Surface(modifier = modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))) {
+    Surface(modifier = modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }, shape = RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
         Row(Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(26.dp).clip(RoundedCornerShape(11.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = color, modifier = Modifier.size(15.dp))
@@ -3330,9 +3365,18 @@ fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Col
             Column(Modifier.weight(1f)) {
                 Text(label, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
                 val textModifier = if (allowScroll && value != "--") Modifier.horizontalScroll(rememberScrollState()) else Modifier
-                Text(value, modifier = textModifier, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
+                Text(value, modifier = textModifier, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else valueColor ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
             }
         }
+    }
+}
+
+private fun deviceSignalValueColor(raw: String): Color {
+    val dbm = Regex("-?\\d+").find(cleanApiText(raw))?.value?.toIntOrNull() ?: return Color(0xFF334155)
+    return when {
+        dbm <= -85 -> Color(0xFFDC2626)
+        dbm <= -70 -> Color(0xFFF59E0B)
+        else -> Color(0xFF334155)
     }
 }
 

@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,15 +40,11 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
     val managedWol = remember(device.mac, state.wolDevices) { state.wolDevices.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) } }
     var remark by remember(override) { mutableStateOf(override.remark.ifBlank { device.remark.ifBlank { device.name } }) }
     var typeInput by remember(override) { mutableStateOf(override.typeId.ifBlank { inferDeviceProfile(device).type }) }
+    var followed by remember(override) { mutableStateOf(override.followedOverride ?: device.followedOverride ?: false) }
     var wolOverride by remember(override, managedWol?.enabled) { mutableStateOf(override.wolEnabledOverride ?: managedWol?.enabled) }
     val rule = deviceTypeRuleForInput(typeInput)
     val normalizedType = normalizeDeviceTypeToken(typeInput).ifBlank { typeInput.trim() }
     val recommendation = if (normalizedType.isBlank() || normalizedType == "unknown" || normalizedType == "router") wolRecommendationForDevice(device, typeInput) else wolRecommendationForDeviceType(typeInput)
-    val wolAccent = when (recommendation.confidence) {
-        "strong" -> Color(0xFF8B5CF6)
-        "optional" -> Color(0xFFF59E0B)
-        else -> Color(0xFF64748B)
-    }
     LabBottomSheet(onDismiss = onDismiss) {
         Text("编辑设备", fontWeight = FontWeight.Black, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
@@ -73,7 +70,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = rule.accent.copy(alpha = .08f), border = BorderStroke(1.dp, rule.accent.copy(alpha = .12f))) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     DeviceTypeIconPreview(rule, 42)
                     Spacer(Modifier.width(10.dp))
@@ -83,19 +80,26 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     }
                 }
             }
-            Surface(
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-                color = wolAccent.copy(alpha = if (recommendation.confidence == "not_recommended") .045f else .075f),
-                border = BorderStroke(1.dp, wolAccent.copy(alpha = .11f))
-            ) {
-                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("加入 WOL 管理", fontWeight = FontWeight.Black, fontSize = 13.sp, color = if (recommendation.confidence == "not_recommended") MaterialTheme.colorScheme.onSurface.copy(alpha = .70f) else MaterialTheme.colorScheme.onSurface)
-                        Text(recommendation.reason, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 3)
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text("设备管理", fontWeight = FontWeight.Black, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("添加到关注", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text("关注后可在“关注”页快速查看", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 2)
+                        }
+                        Switch(checked = followed, onCheckedChange = { followed = it })
                     }
-                    FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
-                    Spacer(Modifier.width(6.dp))
-                    Switch(checked = wolOverride ?: recommendation.recommended, onCheckedChange = { wolOverride = it })
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .07f))
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("加入 WOL 管理", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(recommendation.reason, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 3)
+                        }
+                        FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
+                        Spacer(Modifier.width(6.dp))
+                        Switch(checked = wolOverride ?: recommendation.recommended, onCheckedChange = { wolOverride = it })
+                    }
                 }
             }
         }
@@ -106,7 +110,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     val selectedWol = wolOverride ?: recommendation.recommended
                     val clean = cleanMac(device.mac)
                     val savedType = normalizedType.ifBlank { "unknown" }
-                    state.saveDeviceOverride(clean, remark, savedType, selectedWol)
+                    state.saveDeviceOverride(clean, remark, savedType, selectedWol, followed)
                     if (isValidMac(clean)) {
                         val existing = state.wolDevices.firstOrNull { it.mac.equals(clean, ignoreCase = true) }
                         if (existing != null) {
@@ -126,7 +130,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     onDismiss()
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = rule.accent)
+                colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }
         Spacer(Modifier.height(8.dp))
