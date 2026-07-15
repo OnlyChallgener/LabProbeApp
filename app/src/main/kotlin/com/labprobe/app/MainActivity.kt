@@ -297,6 +297,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("cache_online_devices", v).apply()
     var cacheEvents: String get() = sp.getString("cache_events", "") ?: ""
         set(v) = sp.edit().putString("cache_events", v).apply()
+    var eventNotificationBaselineReady: Boolean get() = sp.getBoolean("event_notification_baseline_ready", false)
+        set(v) = sp.edit().putBoolean("event_notification_baseline_ready", v).apply()
     var wolDevicesJson: String get() = sp.getString("wol_devices_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("wol_devices_v1", v).apply()
     var deviceOverridesJson: String get() = sp.getString("device_overrides_v1", "[]") ?: "[]"
@@ -772,7 +774,8 @@ data class NatRunResult(
     val serverUsed: String? = null
 )
 
-class AppState(private val prefs: AppPrefs) {
+class AppState(private val prefs: AppPrefs, context: Context) {
+    private val appContext = context.applicationContext
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
     var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
     var devices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), deviceOverrides))
@@ -821,6 +824,7 @@ class AppState(private val prefs: AppPrefs) {
     }
 
     private suspend fun fetchData(api: HubApi) {
+        val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
         val stRoot = api.getStatus()
         val devWatched = api.getDevices(false)
         val devOnline = api.getDevices(true)
@@ -832,6 +836,13 @@ class AppState(private val prefs: AppPrefs) {
         devices = mergedDevices
         onlineDevices = devOnlineWithIpv6
         events = evs
+        if (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty()) {
+            val newEvents = evs.filter { eventNotificationIdentity(it) !in previousEventKeys }
+            EventNotificationCenter.notifyNewEvents(appContext, newEvents)
+        } else {
+            // 首次成功同步只建立基线，避免安装后把整段历史一次性弹出。
+        }
+        prefs.eventNotificationBaselineReady = true
         prefs.cacheStatus = stRoot.toString()
         // 保存合并后的关注终端缓存，而不是只保存 Hub 本次返回值。
         // 这样离线设备在 Hub 短时间字段缺失、APP 重启后，仍能保留最后 IP / SSID / 频段 / 速率 / 信号。
@@ -951,9 +962,10 @@ class AppState(private val prefs: AppPrefs) {
 fun LabProbeApp(prefs: AppPrefs) {
     var route by remember { mutableStateOf("home") }
     var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
-    val state = remember { AppState(prefs) }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val state = remember { AppState(prefs, context) }
+    val scope = rememberCoroutineScope()
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
     var latestUpdate by remember { mutableStateOf<GitHubUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -984,6 +996,12 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
 
     LaunchedEffect(Unit) {
+        EventNotificationCenter.ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         state.refreshAll()
         delay(1500L)
         updateChecking = true
@@ -3117,35 +3135,36 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
-    ToolGroupLabel("网络检测")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
-        ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
-        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
-    }
-
-    ToolGroupLabel("解析与公网")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("DNS解析", "A/AAAA/归属", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
-        ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("NAT检测", "RFC5780 / 3489", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
-        ToolHubTile("DNS质量", "多DNS延迟", Icons.Rounded.TravelExplore, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_dns_quality") }
-    }
-
-    ToolGroupLabel("设备与链路")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("无线漫游", "RSSI/AP切换", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f)) { open("tool_roam") }
-        ToolHubTile("MTU检测", "分片/路径MTU", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_mtu") }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
-        ToolHubTile("服务监控", "TCP/UDP可达", Icons.Rounded.Public, Color(0xFFF59E0B), Modifier.weight(1f)) { open("tool_service") }
-    }
+    ToolMosaicSection(
+        title = "网络检测",
+        items = listOf(
+            ToolMosaicItem("延迟测试", Icons.Rounded.Speed, Color(0xFF3B6EEA), "tool_ping"),
+            ToolMosaicItem("端口测试", Icons.Rounded.SettingsEthernet, Color(0xFF00A9D6), "tool_port"),
+            ToolMosaicItem("路由追踪", Icons.Rounded.AltRoute, Color(0xFF5269E8), "tool_trace"),
+            ToolMosaicItem("UDP探测", Icons.Rounded.SyncAlt, Color(0xFF00B8C8), "tool_udp")
+        ),
+        open = open
+    )
+    ToolMosaicSection(
+        title = "解析与公网",
+        items = listOf(
+            ToolMosaicItem("DNS解析", Icons.Rounded.Dns, Color(0xFF426DE6), "tool_dns"),
+            ToolMosaicItem("IPv6可用性", Icons.Rounded.SettingsEthernet, Color(0xFF00AFC8), "tool_ipv6"),
+            ToolMosaicItem("NAT检测", Icons.Rounded.Router, Color(0xFF8B5CF6), "tool_nat"),
+            ToolMosaicItem("DNS质量", Icons.Rounded.TravelExplore, Color(0xFF9B59F6), "tool_dns_quality")
+        ),
+        open = open
+    )
+    ToolMosaicSection(
+        title = "设备与链路",
+        items = listOf(
+            ToolMosaicItem("无线漫游", Icons.Rounded.Wifi, Color(0xFF20B879), "tool_roam"),
+            ToolMosaicItem("MTU检测", Icons.Rounded.SettingsEthernet, Color(0xFF00A9D6), "tool_mtu"),
+            ToolMosaicItem("SSH命令", Icons.Rounded.Terminal, Color(0xFF66758E), "tool_ssh"),
+            ToolMosaicItem("服务监控", Icons.Rounded.Public, Color(0xFFF5A000), "tool_service")
+        ),
+        open = open
+    )
 }
 
 @Composable
@@ -3170,46 +3189,121 @@ fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Co
     }
 }
 
-@Composable
-fun ToolGroupLabel(text: String) {
-    Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 0.dp))
-}
+data class ToolMosaicItem(
+    val title: String,
+    val icon: ImageVector,
+    val color: Color,
+    val route: String
+)
 
 @Composable
-fun ToolHubTile(title: String, subtitle: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun ToolMosaicSection(title: String, items: List<ToolMosaicItem>, open: (String) -> Unit) {
+    if (items.size < 4) return
     Surface(
-        modifier = modifier
-            .height(96.dp)
-            .shadow(3.dp, RoundedCornerShape(24.dp), clip = false)
-            .clip(RoundedCornerShape(24.dp))
-            .clickable { onClick() },
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(30.dp), clip = false),
+        shape = RoundedCornerShape(30.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .92f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 13.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(15.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                    Icon(icon, null, tint = color, modifier = Modifier.size(19.dp))
-                }
-                Spacer(Modifier.width(9.dp))
-                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.height(8.dp))
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text(
-                subtitle,
-                fontSize = 10.6.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(start = 2.dp)
             )
+            Row(Modifier.fillMaxWidth().height(176.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                ToolMosaicTile(
+                    item = items[0],
+                    modifier = Modifier.weight(1.05f).fillMaxHeight(),
+                    layout = ToolTileLayout.Prominent,
+                    onClick = { open(items[0].route) }
+                )
+                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        ToolMosaicTile(items[1], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[1].route) }
+                        ToolMosaicTile(items[2], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[2].route) }
+                    }
+                    ToolMosaicTile(items[3], Modifier.weight(.82f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
+                }
+            }
         }
+    }
+}
+
+enum class ToolTileLayout { Prominent, Compact, Wide }
+
+@Composable
+fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLayout, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 26.dp else 21.dp)
+    Surface(
+        modifier = modifier
+            .shadow(2.dp, shape, clip = false)
+            .clip(shape)
+            .clickable { onClick() },
+        shape = shape,
+        color = item.color.copy(alpha = .055f),
+        border = BorderStroke(1.dp, item.color.copy(alpha = .12f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color.White.copy(alpha = .78f), item.color.copy(alpha = .08f), Color.White.copy(alpha = .48f))
+                    )
+                )
+                .padding(if (layout == ToolTileLayout.Compact) 8.dp else 12.dp)
+        ) {
+            when (layout) {
+                ToolTileLayout.Prominent -> {
+                    Text(item.title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 2, lineHeight = 18.sp)
+                    SkeuomorphicToolIcon(item.icon, item.color, 62.dp, Modifier.align(Alignment.BottomCenter))
+                }
+                ToolTileLayout.Compact -> {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        SkeuomorphicToolIcon(item.icon, item.color, 39.dp)
+                        Spacer(Modifier.height(5.dp))
+                        Text(item.title, fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 2, lineHeight = 13.sp, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                ToolTileLayout.Wide -> {
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.title, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        SkeuomorphicToolIcon(item.icon, item.color, 44.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SkeuomorphicToolIcon(icon: ImageVector, color: Color, size: Dp, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(size * .36f)
+    Box(
+        modifier
+            .size(size)
+            .shadow(6.dp, shape, clip = false)
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(Color.White, color.copy(alpha = .18f), color.copy(alpha = .36f))))
+            .border(1.dp, Color.White.copy(alpha = .92f), shape),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .padding(size * .13f)
+                .size(size * .23f)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = .76f))
+        )
+        Icon(icon, null, tint = color, modifier = Modifier.size(size * .52f))
     }
 }
 
@@ -6447,7 +6541,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
 }, topNav = topNav) {
     val scope = rememberCoroutineScope()
     var openedSwipeId by remember { mutableStateOf<Int?>(null) }
-    ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+    ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
     state.events.forEach { e ->
         key(e.id) {
             EventCompactCard(
