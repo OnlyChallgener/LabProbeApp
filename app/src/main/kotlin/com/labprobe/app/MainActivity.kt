@@ -2954,6 +2954,7 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
                 DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFFF59E0B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true)
             }
+            DeviceTodayTrafficBar(d)
             DeviceFooterLine(d = d, profile = profile, showTime = true)
         } else {
             WiredDeviceInfo(d = d, profile = profile, ip4 = ip4, ipv6List = v6)
@@ -2983,7 +2984,59 @@ fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ip
             copyValue = v6Full,
             allowScroll = true
         )
+        DeviceTodayTrafficBar(d)
         DeviceFooterLine(d = d, profile = profile, showTime = false)
+    }
+}
+
+@Composable
+fun DeviceTodayTrafficBar(d: DeviceItem) {
+    val upload = cleanApiText(d.todayUpload)
+    val download = cleanApiText(d.todayDownload)
+    if (upload.isBlank() && download.isBlank()) return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(17.dp),
+        color = Color(0xFF0EA5E9).copy(alpha = .055f),
+        border = BorderStroke(1.dp, Color(0xFF0EA5E9).copy(alpha = .11f))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("今日流量", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
+            DeviceTrafficDirection(
+                label = "上行",
+                value = upload.ifBlank { "--" },
+                icon = Icons.Rounded.ArrowUpward,
+                color = Color(0xFFF59E0B),
+                modifier = Modifier.weight(1f)
+            )
+            Box(Modifier.width(1.dp).height(26.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)))
+            DeviceTrafficDirection(
+                label = "下行",
+                value = download.ifBlank { "--" },
+                icon = Icons.Rounded.ArrowDownward,
+                color = Color(0xFF06B6D4),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceTrafficDirection(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(24.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+        }
+        Spacer(Modifier.width(6.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 9.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), maxLines = 1)
+            Text(value, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .34f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
