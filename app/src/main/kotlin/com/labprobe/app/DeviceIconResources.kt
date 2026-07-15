@@ -5,17 +5,25 @@ import androidx.annotation.DrawableRes
 @DrawableRes
 fun deviceIconDrawable(iconKey: String): Int = when (iconKey.trim().lowercase()) {
     "phone" -> R.drawable.device_phone
+    "iphone" -> R.drawable.device_iphone
+    "huawei_phone" -> R.drawable.device_huawei_phone
     "tablet" -> R.drawable.device_tablet
     "laptop" -> R.drawable.device_laptop
-    "desktop", "mini_pc", "server", "industrial", "game_console" -> R.drawable.device_desktop
+    "desktop", "game_console" -> R.drawable.device_desktop
+    "mini_pc" -> R.drawable.device_mini_pc
+    "server" -> R.drawable.device_server
+    "industrial" -> R.drawable.device_industrial_pc
     "nas" -> R.drawable.device_nas
     "watch" -> R.drawable.device_smart_watch
     "child_watch" -> R.drawable.device_child_watch
-    "router", "ap" -> R.drawable.device_router
+    "router" -> R.drawable.device_router
+    "ap" -> R.drawable.device_ap
     "network_switch" -> R.drawable.device_network_switch
     "soft_router" -> R.drawable.device_soft_router
-    "ont", "network_device" -> R.drawable.device_network_device
-    "camera", "doorbell" -> R.drawable.device_camera
+    "ont" -> R.drawable.device_ont
+    "network_device" -> R.drawable.device_network_device
+    "camera" -> R.drawable.device_camera
+    "doorbell" -> R.drawable.device_doorbell
     "printer" -> R.drawable.device_printer
     "tv" -> R.drawable.device_tv
     "smart_display" -> R.drawable.device_smart_display
@@ -27,14 +35,18 @@ fun deviceIconDrawable(iconKey: String): Int = when (iconKey.trim().lowercase())
     "aircon", "fresh_air" -> R.drawable.device_air_conditioner
     "floor_aircon" -> R.drawable.device_floor_air_conditioner
     "humidifier", "water" -> R.drawable.device_humidifier
-    "air_purifier", "dehumidifier" -> R.drawable.device_air_purifier
-    "room_heater", "bath_heater" -> R.drawable.device_heater
+    "air_purifier" -> R.drawable.device_air_purifier
+    "dehumidifier" -> R.drawable.device_dehumidifier
+    "room_heater" -> R.drawable.device_heater
+    "bath_heater" -> R.drawable.device_bath_heater
     "fan", "hair_dryer" -> R.drawable.device_fan
     "water_dispenser", "purifier", "water_purifier" -> R.drawable.device_water_dispenser
     "microwave" -> R.drawable.device_microwave
     "water_heater", "heater" -> R.drawable.device_water_heater
+    "gas_water_heater" -> R.drawable.device_gas_water_heater
     "fridge" -> R.drawable.device_fridge
-    "washer", "dryer" -> R.drawable.device_washer
+    "washer" -> R.drawable.device_washer
+    "dryer" -> R.drawable.device_clothes_dryer
     "dishwasher" -> R.drawable.device_dishwasher
     "air_fryer" -> R.drawable.device_air_fryer
     "pressure_cooker", "rice", "rice_cooker", "blender" -> R.drawable.device_pressure_cooker
@@ -46,10 +58,19 @@ fun deviceIconDrawable(iconKey: String): Int = when (iconKey.trim().lowercase())
     "scale" -> R.drawable.device_scale
     "lock" -> R.drawable.device_smart_lock
     "socket" -> R.drawable.device_smart_socket
-    "switch", "sensor" -> R.drawable.device_smart_switch
+    "switch" -> R.drawable.device_smart_switch
+    "sensor" -> R.drawable.device_sensor
     "remote" -> R.drawable.device_remote
     "aircon_controller" -> R.drawable.device_ac_controller
     "charger" -> R.drawable.device_charger
-    "iot", "light", "curtain", "toilet" -> R.drawable.device_iot
+    "light" -> R.drawable.device_smart_light
+    "ceiling_light" -> R.drawable.device_ceiling_light
+    "living_room_light" -> R.drawable.device_living_room_light
+    "bedside_lamp" -> R.drawable.device_bedside_lamp
+    "desk_lamp" -> R.drawable.device_desk_lamp
+    "floor_lamp" -> R.drawable.device_floor_lamp
+    "light_strip" -> R.drawable.device_light_strip
+    "curtain" -> R.drawable.device_smart_curtain
+    "iot", "toilet" -> R.drawable.device_iot
     else -> R.drawable.device_unknown
 }

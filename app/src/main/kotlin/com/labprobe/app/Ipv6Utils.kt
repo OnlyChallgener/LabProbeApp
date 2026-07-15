@@ -80,6 +80,14 @@ private fun ipv6ScopeRank(ip: String): Int = when {
     else -> 0
 }
 
+private fun isVerifiedNeighborIpv6(candidate: Ipv6AddressCandidate): Boolean {
+    val sourceText = candidate.source.lowercase(Locale.ROOT)
+    val fromNeighborTable = sourceText.contains("ndp") ||
+        sourceText.contains("neighbor") ||
+        sourceText.contains("neigh")
+    return fromNeighborTable && ipv6StateRank(candidate.state) > 1
+}
+
 private fun isLoopbackIpv6(ip: String): Boolean = ipv6Bytes(ip)?.let { bytes ->
     bytes.take(15).all { it.toInt() == 0 } && bytes[15].toInt() == 1
 } == true
@@ -184,8 +192,9 @@ fun pickBestIpv6(addresses: List<String>, candidates: List<Ipv6AddressCandidate>
     val rawCandidates = candidates + addresses.map { Ipv6AddressCandidate(it) }
     val normalized = mergeIpv6Candidates(rawCandidates)
     val eligible = normalized.filterNot { isInvalidIpv6(it.address) || isRejectedIpv6State(it.state) }
+    val pickPool = eligible.filter(::isVerifiedNeighborIpv6).ifEmpty { eligible }
     val latest = eligible.mapNotNull { it.lastSeenAt }.maxOrNull()
-    val best = eligible.maxWithOrNull(
+    val best = pickPool.maxWithOrNull(
         compareBy<Ipv6AddressCandidate> { ipv6ScopeRank(it.address) }
             .thenBy { ipv6StateRank(it.state) }
             .thenBy { scoreIpv6(it.address, it.state, it.source) + if (latest != null && it.lastSeenAt == latest) 5 else 0 }

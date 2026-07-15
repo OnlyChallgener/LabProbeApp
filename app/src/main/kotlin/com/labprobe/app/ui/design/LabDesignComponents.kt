@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.AssistChip
@@ -158,8 +160,20 @@ fun LabActionChip(text: String, color: Color, modifier: Modifier = Modifier, onC
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LabBottomSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scrollState = rememberScrollState()
+    val contentModifier = if (scrollable) {
+        Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.88f)
+            .verticalScroll(scrollState)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -167,9 +181,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() ->
         containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+            contentModifier,
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content
         )

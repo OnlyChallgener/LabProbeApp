@@ -21,7 +21,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -151,7 +150,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
     }
     val wifi = hasWifiInfo(device)
     var editing by remember { mutableStateOf(false) }
-    LabBottomSheet(onDismiss = onDismiss) {
+    LabBottomSheet(onDismiss = onDismiss, scrollable = true) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             LabIconBox(profile.icon, profile.accent, sizeDp = 48, iconKey = profile.iconKey)
             Spacer(Modifier.width(11.dp))
@@ -188,7 +187,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
                 Text("路由器本次开机以来累计", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     DetailTrafficValue("上行", totalUpload.ifBlank { "--" }, Color(0xFFF59E0B), Modifier.weight(1f))
-                    VerticalDivider(Modifier.height(32.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .08f))
+                    Spacer(Modifier.width(1.dp))
                     DetailTrafficValue("下行", totalDownload.ifBlank { "--" }, Color(0xFF06B6D4), Modifier.weight(1f))
                 }
             }

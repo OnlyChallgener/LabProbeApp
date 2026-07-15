@@ -2640,7 +2640,7 @@ fun HealthDeviceLine(d: DeviceItem) {
             Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
-                    cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                    cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
                     cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
                 ).joinToString(" · ")
             } else {
@@ -3124,7 +3124,7 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                 Text(formatTraffic(item.uploadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
             }
             Text(
-                if (device.online) cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线：$it" } ?: "在线" else "离线",
+                if (device.online) cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线：${formatDurationText(it)}" } ?: "在线" else "离线",
                 fontSize = 9.2.sp,
                 lineHeight = 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -3159,7 +3159,11 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
     val wolManaged = remember(d.mac, state.wolDevices) { state.wolDevices.any { it.enabled && it.mac.equals(d.mac, ignoreCase = true) } }
     ExpressiveCard(
         title = d.remark.ifBlank { d.name.ifBlank { d.mac } },
-        subtitle = if (wifi) listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ") else "",
+        subtitle = if (wifi) {
+            listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ")
+        } else {
+            listOf(profile.label, "有线设备").filter { it.isNotBlank() }.joinToString(" · ")
+        },
         icon = profile.icon,
         accent = profile.accent,
         iconKey = profile.iconKey,
@@ -3289,7 +3293,7 @@ fun DeviceTodayTrafficBar(d: DeviceItem) {
                     modifier = Modifier.weight(1f)
                 )
             }
-            Box(Modifier.width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)))
+            Spacer(Modifier.width(1.dp))
             DeviceTrafficDirection(
                 label = "下行",
                 value = download.ifBlank { "--" },
@@ -3320,7 +3324,7 @@ fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
     val timeText = if (showTime) {
         if (d.online) {
             listOfNotNull(
-                cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
                 cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
             ).joinToString(" · ")
         } else {
@@ -3329,7 +3333,7 @@ fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
                 cleanApiText(d.lastSeenAt).takeIf { it.isNotBlank() }?.let { "最后 $it" }
             ).joinToString(" · ")
         }
-    } else "有线设备"
+    } else ""
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         if (timeText.isNotBlank()) {
@@ -3396,7 +3400,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
             if (details) {
                 val parts = if (d.online) {
                     listOfNotNull(
-                        cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                        cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
                         cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
                     )
                 } else {
@@ -7101,7 +7105,11 @@ fun shortTime(t: String): String = if (t.length >= 19) t.substring(11, 19) else 
 fun formatDurationText(raw: String): String {
     val s = raw.trim()
     if (s.isBlank() || s == "-" || s.lowercase(Locale.getDefault()) == "null") return ""
-    if ("小时" in s || "天" in s) return s
+    val normalized = s.replace("时", "小时")
+    parseDurationSeconds(normalized)?.let { seconds ->
+        if (seconds >= 86400L) return compactDurationFromSeconds(seconds)
+    }
+    if ("小时" in normalized || "天" in normalized) return normalized
     Regex("^(\\d+)分(\\d+)秒$").find(s)?.let {
         val totalMin = it.groupValues[1].toIntOrNull() ?: 0
         val sec = it.groupValues[2].toIntOrNull() ?: 0
@@ -7115,7 +7123,20 @@ fun formatDurationText(raw: String): String {
         val m = totalMin % 60
         return if (h > 0) "${h}小时${m}分" else "${m}分"
     }
-    return s.replace("时", "小时")
+    return normalized
+}
+
+private fun compactDurationFromSeconds(seconds: Long): String {
+    val days = seconds / 86400L
+    val hours = (seconds % 86400L) / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    val rest = seconds % 60L
+    return buildString {
+        if (days > 0) append(days).append("天")
+        if (hours > 0) append(hours).append("小时")
+        if (minutes > 0) append(minutes).append("分")
+        if (isEmpty()) append(rest).append("秒")
+    }
 }
 
 
@@ -7270,7 +7291,7 @@ fun DailyDeviceSummaryRow(o: JSONObject) {
     val detailParts = mutableListOf<String>()
     if (o.has("online")) detailParts += "上线 ${o.optInt("online", 0)} 次"
     if (o.has("offline")) detailParts += "下线 ${o.optInt("offline", 0)} 次"
-    cleanApiText(o.optString("onlineDurationText")).takeIf { it.isNotBlank() }?.let { detailParts += "在线 $it" }
+    cleanApiText(o.optString("onlineDurationText")).takeIf { it.isNotBlank() }?.let { detailParts += "在线 ${formatDurationText(it)}" }
     cleanApiText(o.optString("lastIp")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     cleanApiText(o.optString("lastSignal")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     val fallbackDetail = lines.drop(1).joinToString(" · ")
