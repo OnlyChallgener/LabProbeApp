@@ -306,34 +306,48 @@ private fun IconButtonLite(icon: androidx.compose.ui.graphics.vector.ImageVector
 
 fun mergeSharedDeviceState(watched: List<DeviceItem>, online: List<DeviceItem>): List<DeviceItem> {
     val map = linkedMapOf<String, DeviceItem>()
-    watched.forEach { if (it.mac.isNotBlank()) map[it.mac.lowercase()] = it }
+    watched.forEach { if (it.mac.isNotBlank()) map[cleanMac(it.mac)] = it }
     online.forEach { d ->
         if (d.mac.isBlank()) return@forEach
-        val old = map[d.mac.lowercase()]
-        map[d.mac.lowercase()] = if (old == null) d else mergePreferFreshDevice(old, d)
+        val key = cleanMac(d.mac)
+        val old = map[key]
+        map[key] = if (old == null) d else mergePreferFreshDevice(old, d)
     }
     return map.values.toList()
 }
 
-private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem = fresh.copy(
-    name = fresh.name.ifBlank { old.name },
-    ip = fresh.ip.ifBlank { old.ip },
-    ssid = fresh.ssid.ifBlank { old.ssid },
-    band = fresh.band.ifBlank { old.band },
-    rssi = fresh.rssi.ifBlank { old.rssi },
-    rxrate = fresh.rxrate.ifBlank { old.rxrate },
-    onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
-    offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
-    onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
-    lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
-    ipv6 = (fresh.ipv6 + old.ipv6).distinct(),
-    manufacture = fresh.manufacture.ifBlank { old.manufacture },
-    devType = fresh.devType.ifBlank { old.devType },
-    osType = fresh.osType.ifBlank { old.osType },
-    hostName = fresh.hostName.ifBlank { old.hostName },
-    wolMode = fresh.wolMode.ifBlank { old.wolMode },
-    connectType = fresh.connectType.ifBlank { old.connectType },
-    remark = fresh.remark.ifBlank { old.remark },
-    manualType = fresh.manualType.ifBlank { old.manualType },
-    wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride
-)
+private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem {
+    val mergedIpv6 = mergeIpv6Candidates(
+        fresh.ipv6Candidates,
+        fresh.ipv6.map { Ipv6AddressCandidate(it) },
+        old.ipv6Candidates,
+        old.ipv6.map { Ipv6AddressCandidate(it) }
+    ).take(24)
+    return fresh.copy(
+        name = fresh.name.ifBlank { old.name },
+        ip = fresh.ip.ifBlank { old.ip },
+        ssid = fresh.ssid.ifBlank { old.ssid },
+        band = fresh.band.ifBlank { old.band },
+        rssi = fresh.rssi.ifBlank { old.rssi },
+        rxrate = fresh.rxrate.ifBlank { old.rxrate },
+        onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
+        offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
+        onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
+        lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
+        ipv6 = mergedIpv6.map { it.address },
+        ipv6Candidates = mergedIpv6,
+        manufacture = fresh.manufacture.ifBlank { old.manufacture },
+        devType = fresh.devType.ifBlank { old.devType },
+        osType = fresh.osType.ifBlank { old.osType },
+        hostName = fresh.hostName.ifBlank { old.hostName },
+        wolMode = fresh.wolMode.ifBlank { old.wolMode },
+        connectType = fresh.connectType.ifBlank { old.connectType },
+        remark = fresh.remark.ifBlank { old.remark },
+        manualType = fresh.manualType.ifBlank { old.manualType },
+        wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride,
+        todayUpload = fresh.todayUpload.ifBlank { old.todayUpload },
+        todayDownload = fresh.todayDownload.ifBlank { old.todayDownload },
+        totalUpload = fresh.totalUpload.ifBlank { old.totalUpload },
+        totalDownload = fresh.totalDownload.ifBlank { old.totalDownload }
+    )
+}

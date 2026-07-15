@@ -13,7 +13,8 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
     }
 
     val manualWol = d.wolEnabledOverride
-    val wol = manualWol ?: rule.wolDefault
+    val recommendation = wolRecommendationForDevice(d, rule.id)
+    val wol = manualWol ?: recommendation.recommended
     val confidence = when {
         d.manualType.isNotBlank() -> 98
         rule.id == "unknown" -> 52
@@ -22,8 +23,7 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
     val note = when {
         manualWol == true -> "已手动启用 WOL"
         manualWol == false -> "已手动关闭 WOL"
-        rule.wolDefault -> "${rule.label} 默认作为 WOL 候选"
-        else -> "${rule.label} 默认不显示 WOL"
+        else -> recommendation.reason
     }
     return DeviceVisualProfile(
         type = rule.id,
@@ -139,9 +139,4 @@ fun hasWifiInfo(d: DeviceItem): Boolean {
 
 fun connectionLabel(d: DeviceItem): String = if (hasWifiInfo(d)) "无线连接" else "有线设备"
 
-fun bestIpv6ForDisplay(v6: List<String>): String = v6
-    .map { it.substringBefore('/').trim() }
-    .filter { it.contains(':') && !it.startsWith("fe80:", ignoreCase = true) }
-    .distinct()
-    .firstOrNull()
-    .orEmpty()
+fun bestIpv6ForDisplay(v6: List<String>): String = pickBestIpv6(v6).best.orEmpty()

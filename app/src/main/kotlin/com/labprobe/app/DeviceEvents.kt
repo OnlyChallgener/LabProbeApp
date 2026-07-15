@@ -7,11 +7,17 @@ import java.util.Locale
 private const val DEVICE_EVENT_OFFLINE_COOLDOWN_MS = 5 * 60 * 1000L
 
 fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<DeviceItem> {
-    val oldByMac = old.associateBy { it.mac.lowercase(Locale.getDefault()) }
-    val freshKeys = fresh.map { it.mac.lowercase(Locale.getDefault()) }.toSet()
+    val oldByMac = old.associateBy { cleanMac(it.mac) }
+    val freshKeys = fresh.map { cleanMac(it.mac) }.toSet()
     val merged = fresh.map { n ->
-        val o = oldByMac[n.mac.lowercase(Locale.getDefault())]
+        val o = oldByMac[cleanMac(n.mac)]
         if (!n.online && o != null) {
+            val mergedIpv6 = mergeIpv6Candidates(
+                n.ipv6Candidates,
+                n.ipv6.map { Ipv6AddressCandidate(it) },
+                o.ipv6Candidates,
+                o.ipv6.map { Ipv6AddressCandidate(it) }
+            ).take(24)
             n.copy(
                 ip = n.ip.ifBlank { o.ip },
                 ssid = n.ssid.ifBlank { o.ssid },
@@ -22,7 +28,8 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 offlineAt = n.offlineAt.ifBlank { o.offlineAt },
                 onlineDurationText = n.onlineDurationText.ifBlank { o.onlineDurationText },
                 lastSeenAt = n.lastSeenAt.ifBlank { o.lastSeenAt },
-                ipv6 = if (n.ipv6.isNotEmpty()) n.ipv6 else o.ipv6,
+                ipv6 = mergedIpv6.map { it.address },
+                ipv6Candidates = mergedIpv6,
                 manufacture = n.manufacture.ifBlank { o.manufacture },
                 devType = n.devType.ifBlank { o.devType },
                 osType = n.osType.ifBlank { o.osType },
@@ -31,11 +38,15 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 connectType = n.connectType.ifBlank { o.connectType },
                 remark = n.remark.ifBlank { o.remark },
                 manualType = n.manualType.ifBlank { o.manualType },
-                wolEnabledOverride = n.wolEnabledOverride ?: o.wolEnabledOverride
+                wolEnabledOverride = n.wolEnabledOverride ?: o.wolEnabledOverride,
+                todayUpload = n.todayUpload.ifBlank { o.todayUpload },
+                todayDownload = n.todayDownload.ifBlank { o.todayDownload },
+                totalUpload = n.totalUpload.ifBlank { o.totalUpload },
+                totalDownload = n.totalDownload.ifBlank { o.totalDownload }
             )
         } else n
     }.toMutableList()
-    old.filter { !it.online && it.mac.lowercase(Locale.getDefault()) !in freshKeys }.forEach { merged += it }
+    old.filter { !it.online && cleanMac(it.mac) !in freshKeys }.forEach { merged += it }
     return merged
 }
 

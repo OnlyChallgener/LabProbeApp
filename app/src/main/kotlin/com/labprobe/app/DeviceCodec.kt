@@ -2,8 +2,9 @@ package com.labprobe.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
-private val DEVICE_VALUE_SPLIT = Regex("[,\\s]+")
+private val DEVICE_VALUE_SPLIT = Regex("[,;，；\\s]+")
 
 fun parseDeviceArray(json: String): List<DeviceItem> {
     if (json.isBlank()) return emptyList()
@@ -52,27 +53,10 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
     if (o == null) return null
     fun f(k: String): String = cleanApiText(o.optString(k, ""))
 
-    val mac = f("mac")
+    val mac = cleanMac(f("mac"))
     val name = f("name").ifBlank { f("devRecommend") }.ifBlank { f("hostName") }.ifBlank { mac }
-    val ipv6List = buildList {
-        addAll(jsonStringList(o, "ipv6List"))
-        addAll(jsonStringList(o, "ipv6"))
-        addAll(f("ipv6").split(DEVICE_VALUE_SPLIT))
-        addAll(f("ipv6Address").split(DEVICE_VALUE_SPLIT))
-        addAll(f("lastIpv6").split(DEVICE_VALUE_SPLIT))
-        addAll(f("globalIpv6").split(DEVICE_VALUE_SPLIT))
-        addAll(f("globalIPv6").split(DEVICE_VALUE_SPLIT))
-        addAll(f("ndpIpv6").split(DEVICE_VALUE_SPLIT))
-        addAll(f("ndpIPv6").split(DEVICE_VALUE_SPLIT))
-        addAll(jsonStringList(o, "ipv6Addrs"))
-        addAll(jsonStringList(o, "ipv6Addresses"))
-        addAll(jsonStringList(o, "addresses"))
-    }
-        .map { it.substringBefore('/').trim() }
-        .map(::cleanApiText)
-        .filter { it.contains(':') && !it.startsWith("fe80:", ignoreCase = true) }
-        .distinct()
-        .take(6)
+    val ipv6Candidates = collectDeviceIpv6Candidates(o).take(24)
+    val ipv6List = ipv6Candidates.map { it.address }
 
     return DeviceItem(
         name = name,
@@ -88,6 +72,7 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
         onlineDurationText = f("onlineDurationText"),
         lastSeenAt = f("lastSeenAt"),
         ipv6 = ipv6List,
+        ipv6Candidates = ipv6Candidates,
         manufacture = f("manufacture").ifBlank { f("vendor") }.ifBlank { f("oui") },
         devType = f("devType").ifBlank { f("deviceType") }.ifBlank { f("type") },
         osType = f("osType").ifBlank { f("os") },
@@ -96,17 +81,166 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
         connectType = f("connectType").ifBlank { f("connType") }.ifBlank { f("connectionType") },
         remark = f("remark").ifBlank { f("note") },
         manualType = f("manualType").ifBlank { f("deviceTypeManual") }.ifBlank { f("typeManual") },
-        wolEnabledOverride = boolOrNull(o, "wolEnabled").orElse(boolOrNull(o, "manualWol")).orElse(boolOrNull(o, "wolSwitch"))
+        wolEnabledOverride = boolOrNull(o, "wolEnabled").orElse(boolOrNull(o, "manualWol")).orElse(boolOrNull(o, "wolSwitch")),
+        todayUpload = trafficValue(
+            o,
+            flatKeys = listOf("todayUpload", "todayUp", "todayUploadTraffic", "todayUpTraffic", "todayTx", "todayTxBytes", "dailyUpload", "dailyUp", "dayUpload", "dayUp", "today_upload", "today_up", "today_tx"),
+            groupKeys = listOf("todayTraffic", "todayFlow", "dailyTraffic", "dailyFlow", "trafficToday", "today", "今日流量"),
+            directionKeys = listOf("upload", "up", "tx", "upstream", "sent", "send", "uploadBytes", "upBytes", "txBytes", "上行", "上传"),
+            directionLabels = listOf("上行", "上传", "upload", "up", "tx")
+        ),
+        todayDownload = trafficValue(
+            o,
+            flatKeys = listOf("todayDownload", "todayDown", "todayDownloadTraffic", "todayDownTraffic", "todayRx", "todayRxBytes", "dailyDownload", "dailyDown", "dayDownload", "dayDown", "today_download", "today_down", "today_rx"),
+            groupKeys = listOf("todayTraffic", "todayFlow", "dailyTraffic", "dailyFlow", "trafficToday", "today", "今日流量"),
+            directionKeys = listOf("download", "down", "rx", "downstream", "received", "receive", "downloadBytes", "downBytes", "rxBytes", "下行", "下载"),
+            directionLabels = listOf("下行", "下载", "download", "down", "rx")
+        ),
+        totalUpload = trafficValue(
+            o,
+            flatKeys = listOf("totalUpload", "totalUp", "totalUploadTraffic", "totalUpTraffic", "realtimeUpload", "realTimeUpload", "realtimeUp", "realTimeUp", "totalTx", "totalTxBytes", "bootUpload", "bootUp", "total_upload", "total_up", "realtime_upload", "realtime_up"),
+            groupKeys = listOf("realtimeTraffic", "realTimeTraffic", "totalTraffic", "trafficTotal", "realtimeFlow", "realTimeFlow", "totalFlow", "bootTraffic", "currentTraffic", "实时总流量"),
+            directionKeys = listOf("upload", "up", "tx", "upstream", "sent", "send", "uploadBytes", "upBytes", "txBytes", "上行", "上传"),
+            directionLabels = listOf("上行", "上传", "upload", "up", "tx")
+        ),
+        totalDownload = trafficValue(
+            o,
+            flatKeys = listOf("totalDownload", "totalDown", "totalDownloadTraffic", "totalDownTraffic", "realtimeDownload", "realTimeDownload", "realtimeDown", "realTimeDown", "totalRx", "totalRxBytes", "bootDownload", "bootDown", "total_download", "total_down", "realtime_download", "realtime_down"),
+            groupKeys = listOf("realtimeTraffic", "realTimeTraffic", "totalTraffic", "trafficTotal", "realtimeFlow", "realTimeFlow", "totalFlow", "bootTraffic", "currentTraffic", "实时总流量"),
+            directionKeys = listOf("download", "down", "rx", "downstream", "received", "receive", "downloadBytes", "downBytes", "rxBytes", "下行", "下载"),
+            directionLabels = listOf("下行", "下载", "download", "down", "rx")
+        )
     )
 }
 
-private fun jsonStringList(o: JSONObject, key: String): List<String> {
-    val v = o.opt(key) ?: return emptyList()
-    return when (v) {
-        is JSONArray -> (0 until v.length()).mapNotNull { index -> cleanApiText(v.optString(index)).takeIf { it.isNotBlank() } }
-        is String -> v.split(DEVICE_VALUE_SPLIT).map(::cleanApiText).filter { it.isNotBlank() }
-        else -> emptyList()
+private val TRAFFIC_CONTAINER_KEYS = listOf("traffic", "flow", "trafficStats", "flowStats", "statistics", "stats", "流量")
+
+private fun trafficValue(
+    root: JSONObject,
+    flatKeys: List<String>,
+    groupKeys: List<String>,
+    directionKeys: List<String>,
+    directionLabels: List<String>
+): String {
+    scalarValue(root, flatKeys)?.let { return normalizeTrafficValue(it) }
+    groupedTrafficValue(root, groupKeys, directionKeys, directionLabels)?.let { return it }
+
+    TRAFFIC_CONTAINER_KEYS.forEach { containerKey ->
+        val container = root.optJSONObject(containerKey) ?: return@forEach
+        scalarValue(container, flatKeys)?.let { return normalizeTrafficValue(it) }
+        groupedTrafficValue(container, groupKeys, directionKeys, directionLabels)?.let { return it }
     }
+    return ""
+}
+
+private fun groupedTrafficValue(
+    root: JSONObject,
+    groupKeys: List<String>,
+    directionKeys: List<String>,
+    directionLabels: List<String>
+): String? {
+    groupKeys.forEach { groupKey ->
+        val raw = root.opt(groupKey) ?: return@forEach
+        if (raw == JSONObject.NULL) return@forEach
+        if (raw is JSONObject) {
+            scalarValue(raw, directionKeys)?.let { return normalizeTrafficValue(it) }
+        } else if (raw is String) {
+            labeledTrafficValue(raw, directionLabels)?.let { return it }
+        }
+    }
+    return null
+}
+
+private fun scalarValue(root: JSONObject, keys: List<String>): Any? {
+    keys.forEach { key ->
+        if (!root.has(key) || root.isNull(key)) return@forEach
+        val raw = root.opt(key)
+        if (raw is String || raw is Number) return raw
+    }
+    return null
+}
+
+private fun labeledTrafficValue(raw: String, labels: List<String>): String? {
+    val labelPattern = labels.joinToString("|") { Regex.escape(it) }
+    val match = Regex("(?i)(?:$labelPattern)\\s*[:：]?\\s*([0-9]+(?:\\.[0-9]+)?\\s*(?:[KMGT]i?B?|B)?)").find(raw) ?: return null
+    return normalizeTrafficValue(match.groupValues[1])
+}
+
+private fun normalizeTrafficValue(raw: Any): String {
+    val text = cleanApiText(raw.toString()).replace(" ", "")
+    if (text.isBlank()) return ""
+    val numeric = when (raw) {
+        is Number -> raw.toDouble()
+        is String -> text.toDoubleOrNull()?.takeIf { it >= 1024.0 }
+        else -> null
+    }
+    return numeric?.takeIf { it.isFinite() && it >= 0.0 }?.let(::formatTrafficBytesCompact) ?: text
+}
+
+private fun formatTrafficBytesCompact(bytes: Double): String {
+    if (bytes < 1024.0) return "${bytes.toLong()}B"
+    val units = arrayOf("K", "M", "G", "T")
+    var value = bytes
+    var unit = -1
+    while (value >= 1024.0 && unit < units.lastIndex) {
+        value /= 1024.0
+        unit++
+    }
+    return String.format(Locale.US, "%.2f%s", value, units[unit.coerceAtLeast(0)])
+}
+
+private val DEVICE_IPV6_KEYS = listOf(
+    "ipv6List", "ipv6", "ipv6Address", "lastIpv6", "globalIpv6", "globalIPv6",
+    "ndpIpv6", "ndpIPv6", "ipv6Addrs", "ipv6Addresses", "addresses", "ipv6Candidates"
+)
+
+private fun collectDeviceIpv6Candidates(o: JSONObject): List<Ipv6AddressCandidate> {
+    val out = mutableListOf<Ipv6AddressCandidate>()
+    DEVICE_IPV6_KEYS.forEach { key -> readDeviceIpv6Value(o.opt(key), key, out) }
+    return mergeIpv6Candidates(out)
+}
+
+private fun readDeviceIpv6Value(value: Any?, sourceKey: String, out: MutableList<Ipv6AddressCandidate>) {
+    when (value) {
+        null, JSONObject.NULL -> Unit
+        is String -> value.split(DEVICE_VALUE_SPLIT).forEach { raw ->
+            cleanApiText(raw).takeIf { it.contains(':') }?.let { out += Ipv6AddressCandidate(it, source = sourceKey) }
+        }
+        is JSONArray -> for (index in 0 until value.length()) readDeviceIpv6Value(value.opt(index), sourceKey, out)
+        is JSONObject -> {
+            val address = listOf("ip", "ipv6", "address", "value", "addr")
+                .asSequence()
+                .map { cleanApiText(value.optString(it)) }
+                .firstOrNull { it.contains(':') }
+            if (address != null) {
+                val state = cleanApiText(value.optString("state").ifBlank { value.optString("status") }.ifBlank { value.optString("reachability") })
+                var source = cleanApiText(value.optString("source").ifBlank { value.optString("origin") }.ifBlank { value.optString("method") }.ifBlank { value.optString("addressType") }.ifBlank { value.optString("type") }).ifBlank { sourceKey }
+                if (value.optBoolean("temporary", false) || value.optBoolean("privacy", false)) source += " temporary"
+                out += Ipv6AddressCandidate(address, state, source, firstIpv6Timestamp(value))
+            } else {
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val child = value.opt(key)
+                    if (key.contains(':')) {
+                        val meta = child as? JSONObject
+                        val state = if (meta == null) "" else meta.optString("state").ifBlank { meta.optString("status") }
+                        val source = if (meta == null) sourceKey else meta.optString("source").ifBlank { meta.optString("origin") }.ifBlank { sourceKey }
+                        out += Ipv6AddressCandidate(key, state, source, meta?.let(::firstIpv6Timestamp))
+                    } else {
+                        readDeviceIpv6Value(child, key, out)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun firstIpv6Timestamp(o: JSONObject): Long? {
+    listOf("lastSeenAt", "updatedAt", "seenAt", "timestamp", "time", "createdAt").forEach { key ->
+        if (o.has(key) && !o.isNull(key)) parseIpv6Timestamp(o.opt(key))?.let { return it }
+    }
+    return null
 }
 
 fun DeviceItem.toJson(): JSONObject = JSONObject()
@@ -123,6 +257,13 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
     .put("onlineDurationText", onlineDurationText)
     .put("lastSeenAt", lastSeenAt)
     .put("ipv6List", JSONArray(ipv6))
+    .put("ipv6Candidates", JSONArray(ipv6Candidates.map { candidate ->
+        JSONObject()
+            .put("address", candidate.address)
+            .put("state", candidate.state)
+            .put("source", candidate.source)
+            .put("lastSeenAt", candidate.lastSeenAt ?: JSONObject.NULL)
+    }))
     .put("manufacture", manufacture)
     .put("devType", devType)
     .put("osType", osType)
@@ -132,6 +273,10 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
     .put("remark", remark)
     .put("manualType", manualType)
     .put("wolEnabled", wolEnabledOverride ?: JSONObject.NULL)
+    .put("todayUpload", todayUpload)
+    .put("todayDownload", todayDownload)
+    .put("totalUpload", totalUpload)
+    .put("totalDownload", totalDownload)
 
 fun EventItem.toJson(): JSONObject = JSONObject()
     .put("id", id)

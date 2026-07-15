@@ -36,10 +36,18 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Unit) {
     val override = remember(device.mac, state.deviceOverrides) { overrideForDevice(device, state.deviceOverrides) }
+    val managedWol = remember(device.mac, state.wolDevices) { state.wolDevices.firstOrNull { it.mac.equals(device.mac, ignoreCase = true) } }
     var remark by remember(override) { mutableStateOf(override.remark.ifBlank { device.remark.ifBlank { device.name } }) }
     var typeInput by remember(override) { mutableStateOf(override.typeId.ifBlank { inferDeviceProfile(device).type }) }
-    var wolOverride by remember(override) { mutableStateOf(override.wolEnabledOverride) }
+    var wolOverride by remember(override, managedWol?.enabled) { mutableStateOf(override.wolEnabledOverride ?: managedWol?.enabled) }
     val rule = deviceTypeRuleForInput(typeInput)
+    val normalizedType = normalizeDeviceTypeToken(typeInput).ifBlank { typeInput.trim() }
+    val recommendation = if (normalizedType.isBlank() || normalizedType == "unknown" || normalizedType == "router") wolRecommendationForDevice(device, typeInput) else wolRecommendationForDeviceType(typeInput)
+    val wolAccent = when (recommendation.confidence) {
+        "strong" -> Color(0xFF8B5CF6)
+        "optional" -> Color(0xFFF59E0B)
+        else -> Color(0xFF64748B)
+    }
     LabBottomSheet(onDismiss = onDismiss) {
         Text("编辑设备", fontWeight = FontWeight.Black, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
@@ -75,21 +83,46 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("加入 WOL 管理", fontWeight = FontWeight.Black, fontSize = 13.sp)
-                    Text("NAS、台式机、迷你主机建议开启；手机/平板通常关闭。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
+            Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+                color = wolAccent.copy(alpha = if (recommendation.confidence == "not_recommended") .045f else .075f),
+                border = BorderStroke(1.dp, wolAccent.copy(alpha = .11f))
+            ) {
+                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("加入 WOL 管理", fontWeight = FontWeight.Black, fontSize = 13.sp, color = if (recommendation.confidence == "not_recommended") MaterialTheme.colorScheme.onSurface.copy(alpha = .70f) else MaterialTheme.colorScheme.onSurface)
+                        Text(recommendation.reason, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 3)
+                    }
+                    FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
+                    Spacer(Modifier.width(6.dp))
+                    Switch(checked = wolOverride ?: recommendation.recommended, onCheckedChange = { wolOverride = it })
                 }
-                FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
-                Spacer(Modifier.width(6.dp))
-                Switch(checked = wolOverride ?: rule.wolDefault, onCheckedChange = { wolOverride = it })
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
-                    state.saveDeviceOverride(device.mac, remark, typeInput, wolOverride)
+                    val selectedWol = wolOverride ?: recommendation.recommended
+                    val clean = cleanMac(device.mac)
+                    val savedType = normalizedType.ifBlank { "unknown" }
+                    state.saveDeviceOverride(clean, remark, savedType, selectedWol)
+                    if (isValidMac(clean)) {
+                        val existing = state.wolDevices.firstOrNull { it.mac.equals(clean, ignoreCase = true) }
+                        if (existing != null) {
+                            state.addOrUpdateWolDevice(existing.copy(remark = remark.trim(), typeId = savedType, enabled = selectedWol))
+                        } else if (selectedWol) {
+                            state.addOrUpdateWolDevice(
+                                WolDeviceConfig(
+                                    id = clean,
+                                    mac = clean,
+                                    remark = remark.trim().ifBlank { device.name.ifBlank { clean } },
+                                    typeId = savedType,
+                                    enabled = true
+                                )
+                            )
+                        }
+                    }
                     onDismiss()
                 },
                 modifier = Modifier.weight(1f),
@@ -103,8 +136,9 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
 @Composable
 fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> Unit) {
     val profile = remember(device) { inferDeviceProfile(device) }
+    val wolManaged = remember(device.mac, state.wolDevices) { state.wolDevices.any { it.enabled && it.mac.equals(device.mac, ignoreCase = true) } }
     val ip4 = cleanApiText(device.ip).ifBlank { "--" }
-    val v6 = remember(device.ipv6) { bestIpv6ForDisplay(device.ipv6) }
+    val v6 = remember(device.ipv6, device.ipv6Candidates) { device.pickIpv6().best.orEmpty() }
     val wifi = hasWifiInfo(device)
     var editing by remember { mutableStateOf(false) }
     LabBottomSheet(onDismiss = onDismiss) {
@@ -137,31 +171,44 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
             LabInfoRow("厂商", cleanApiText(device.manufacture).ifBlank { "--" }, copyable = false, accent = profile.accent)
             LabInfoRow("主机名", cleanApiText(device.hostName).ifBlank { "--" }, accent = profile.accent)
         }
-        LabSection("能力") {
-            LabInfoRow("WOL", if (profile.wolCandidate) "可加入管理" else "不推荐", copyable = false, accent = Color(0xFF8B5CF6))
-            LabInfoRow("关机", "未配置", copyable = false, accent = Color(0xFF64748B))
-            LabInfoRow("重启", "未配置", copyable = false, accent = Color(0xFF64748B))
+        val totalUpload = cleanApiText(device.totalUpload)
+        val totalDownload = cleanApiText(device.totalDownload)
+        if (totalUpload.isNotBlank() || totalDownload.isNotBlank()) {
+            LabSection("实时总流量") {
+                Text("路由器本次开机以来累计", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f))
+                LabInfoRow("上行", totalUpload.ifBlank { "--" }, copyable = false, accent = Color(0xFFF59E0B))
+                LabInfoRow("下行", totalDownload.ifBlank { "--" }, copyable = false, accent = Color(0xFF06B6D4))
+            }
+        }
+        if (profile.wolCandidate || wolManaged) {
+            LabSection("能力") {
+                LabInfoRow("WOL", if (wolManaged) "已加入管理" else "可加入管理", copyable = false, accent = Color(0xFF8B5CF6))
+                LabInfoRow("关机", "未配置", copyable = false, accent = Color(0xFF64748B))
+                LabInfoRow("重启", "未配置", copyable = false, accent = Color(0xFF64748B))
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = { editing = true }, modifier = Modifier.weight(1f)) { Text("编辑", fontWeight = FontWeight.Black) }
-            Button(
-                onClick = {
-                    val clean = cleanMac(device.mac)
-                    state.addOrUpdateWolDevice(
-                        WolDeviceConfig(
-                            id = clean,
-                            mac = clean,
-                            remark = device.remark.ifBlank { device.name.ifBlank { clean } },
-                            typeId = profile.type,
-                            enabled = true,
-                            updatedAt = System.currentTimeMillis()
+            if (profile.wolCandidate && !wolManaged) {
+                Button(
+                    onClick = {
+                        val clean = cleanMac(device.mac)
+                        state.addOrUpdateWolDevice(
+                            WolDeviceConfig(
+                                id = clean,
+                                mac = clean,
+                                remark = device.remark.ifBlank { device.name.ifBlank { clean } },
+                                typeId = profile.type,
+                                enabled = true,
+                                updatedAt = System.currentTimeMillis()
+                            )
                         )
-                    )
-                },
-                enabled = profile.wolCandidate && isValidMac(device.mac),
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
-            ) { Text("加入WOL", fontWeight = FontWeight.Black) }
+                    },
+                    enabled = isValidMac(device.mac),
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
+                ) { Text("加入WOL", fontWeight = FontWeight.Black) }
+            }
         }
         Spacer(Modifier.height(8.dp))
     }

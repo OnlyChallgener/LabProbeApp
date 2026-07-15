@@ -2878,8 +2878,9 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var editingDevice by remember { mutableStateOf(false) }
-    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType, d.ssid, d.band, d.rssi, d.rxrate) { inferDeviceProfile(d) }
+    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.devType, d.osType, d.hostName, d.wolMode, d.wolEnabledOverride, d.connectType, d.ssid, d.band, d.rssi, d.rxrate) { inferDeviceProfile(d) }
     val wifi = remember(d.ssid, d.band, d.rssi, d.rxrate, d.connectType) { hasWifiInfo(d) }
+    val wolManaged = remember(d.mac, state.wolDevices) { state.wolDevices.any { it.enabled && it.mac.equals(d.mac, ignoreCase = true) } }
     ExpressiveCard(
         title = d.remark.ifBlank { d.name.ifBlank { d.mac } },
         subtitle = if (wifi) listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ") else "",
@@ -2899,10 +2900,10 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         modifier = Modifier.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
     ) {
         DeviceSmartInfo(d, profile)
-        if (!d.online && profile.wolCandidate) {
+        if (!d.online && wolManaged) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(Modifier.weight(1f), shape = RoundedCornerShape(18.dp), color = profile.accent.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, profile.accent.copy(alpha = .14f))) {
-                    Text("${profile.note} · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("已加入 WOL 管理 · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
                     onClick = {
@@ -2936,16 +2937,15 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
 
 @Composable
 fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
-    val ctx = LocalContext.current
     val ip4 = cleanApiText(d.ip).ifBlank { cleanApiText(d.lastKnownIp()) }.ifBlank { "--" }
-    val v6 = d.ipv6.filter { it.isNotBlank() }.distinct()
+    val v6Pick = remember(d.ipv6, d.ipv6Candidates) { d.pickIpv6() }
     val wifi = hasWifiInfo(d)
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         if (wifi) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
-                val v6Full = bestIpv6ForDisplay(v6)
-                val v6Text = v6Full.ifBlank { "--" }.let { if (it == "--") it else shortIpv6(it) + if (v6.size > 1) " +${v6.size - 1}" else "" }
+                val v6Full = v6Pick.best.orEmpty()
+                val v6Text = v6Full.takeIf { it.isNotBlank() }?.let(::shortIpv6) ?: "--"
                 DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6Full, allowScroll = true)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2957,10 +2957,10 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
             DeviceTodayTrafficBar(d)
             DeviceFooterLine(d = d, profile = profile, showTime = true)
         } else {
-            WiredDeviceInfo(d = d, profile = profile, ip4 = ip4, ipv6List = v6)
+            WiredDeviceInfo(d = d, profile = profile, ip4 = ip4, ipv6Pick = v6Pick)
         }
-        if (v6.size > 1) {
-            Text("IPv6 共 ${v6.size} 个：${v6.take(2).joinToString(" · ") { shortIpv6(it) }}${if (v6.size > 2) " · …" else ""}", Modifier.clickable { copy(ctx, v6.joinToString("\n")) }.horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        if (v6Pick.total > 1) {
+            Text(ipv6Summary(v6Pick), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -2968,8 +2968,8 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
 private fun DeviceItem.lastKnownIp(): String = ip
 
 @Composable
-fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ipv6List: List<String>) {
-    val v6Full = bestIpv6ForDisplay(ipv6List)
+fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ipv6Pick: Ipv6PickResult) {
+    val v6Full = ipv6Pick.best.orEmpty()
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
