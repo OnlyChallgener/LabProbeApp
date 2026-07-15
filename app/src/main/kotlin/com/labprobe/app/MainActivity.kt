@@ -3205,34 +3205,34 @@ data class ToolMosaicItem(
 fun ToolMosaicSection(title: String, items: List<ToolMosaicItem>, open: (String) -> Unit) {
     if (items.size < 4) return
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(30.dp), clip = false),
-        shape = RoundedCornerShape(30.dp),
+        modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(27.dp), clip = false),
+        shape = RoundedCornerShape(27.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .92f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(
                 title,
-                fontSize = 16.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(start = 2.dp)
             )
-            Row(Modifier.fillMaxWidth().height(176.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth().height(146.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ToolMosaicTile(
                     item = items[0],
                     modifier = Modifier.weight(1.05f).fillMaxHeight(),
                     layout = ToolTileLayout.Prominent,
                     onClick = { open(items[0].route) }
                 )
-                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ToolMosaicTile(items[1], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[1].route) }
                         ToolMosaicTile(items[2], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[2].route) }
                     }
-                    ToolMosaicTile(items[3], Modifier.weight(.82f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
+                    ToolMosaicTile(items[3], Modifier.weight(.72f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
                 }
             }
         }
@@ -3243,7 +3243,12 @@ enum class ToolTileLayout { Prominent, Compact, Wide }
 
 @Composable
 fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLayout, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 26.dp else 21.dp)
+    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 22.dp else 18.dp)
+    val contentPadding = when (layout) {
+        ToolTileLayout.Prominent -> 8.dp
+        ToolTileLayout.Compact -> 5.dp
+        ToolTileLayout.Wide -> 6.dp
+    }
     Box(
         modifier = modifier
             .clip(shape)
@@ -3262,7 +3267,7 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
         Box(
             Modifier
                 .fillMaxSize()
-                .padding(if (layout == ToolTileLayout.Compact) 7.dp else 11.dp)
+                .padding(contentPadding)
         ) {
             when (layout) {
                 ToolTileLayout.Prominent -> {
@@ -3271,27 +3276,27 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text(item.title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1)
-                        Spacer(Modifier.height(7.dp))
-                        ToolAssetIcon(item.iconRes, 96.dp)
+                        Text(item.title, fontSize = 13.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false)
+                        Spacer(Modifier.height(4.dp))
+                        ToolAssetIcon(item.iconRes, 72.dp)
                     }
                 }
                 ToolTileLayout.Compact -> {
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        ToolAssetIcon(item.iconRes, 52.dp)
-                        Spacer(Modifier.height(3.dp))
-                        Text(item.title, fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        ToolAssetIcon(item.iconRes, 38.dp)
+                        Spacer(Modifier.height(1.dp))
+                        Text(item.title, fontSize = 10.2.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 ToolTileLayout.Wide -> {
                     Row(
-                        Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                        Modifier.fillMaxSize().padding(horizontal = 3.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Text(item.title, fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Spacer(Modifier.width(12.dp))
-                        ToolAssetIcon(item.iconRes, 48.dp)
+                        Text(item.title, fontSize = 12.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(8.dp))
+                        ToolAssetIcon(item.iconRes, 36.dp)
                     }
                 }
             }
@@ -3302,63 +3307,63 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
 @Composable
 fun ToolTileBackdrop(item: ToolMosaicItem) {
     Canvas(Modifier.fillMaxSize()) {
-            val accent = item.color
-            val thin = 1.25.dp.toPx()
-            val medium = 2.dp.toPx()
-            val motifCenter = Offset(size.width * .78f, size.height * .72f)
-            val motifRadius = size.minDimension * .42f
+        val accent = item.color
+        val thin = 1.25.dp.toPx()
+        val medium = 2.dp.toPx()
+        val motifCenter = Offset(size.width * .68f, size.height * .60f)
+        val motifRadius = size.minDimension * .22f
 
-            drawCircle(accent.copy(alpha = .045f), motifRadius * 1.30f, Offset(size.width * .92f, size.height * .88f))
-            drawCircle(accent.copy(alpha = .055f), motifRadius * .46f, motifCenter, style = Stroke(thin))
+        drawCircle(accent.copy(alpha = .04f), motifRadius * 1.45f, motifCenter)
+        drawCircle(accent.copy(alpha = .055f), motifRadius, motifCenter, style = Stroke(thin))
 
-            when (item.route) {
-                "tool_ping", "tool_dns_quality", "tool_service" -> {
-                    val wave = Path().apply {
-                        moveTo(size.width * .04f, size.height * .72f)
-                        lineTo(size.width * .24f, size.height * .72f)
-                        lineTo(size.width * .34f, size.height * .56f)
-                        lineTo(size.width * .45f, size.height * .83f)
-                        lineTo(size.width * .58f, size.height * .64f)
-                        lineTo(size.width * .96f, size.height * .64f)
-                    }
-                    drawPath(wave, accent.copy(alpha = .105f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        when (item.route) {
+            "tool_ping", "tool_dns_quality", "tool_service" -> {
+                val wave = Path().apply {
+                    moveTo(size.width * .08f, size.height * .68f)
+                    lineTo(size.width * .25f, size.height * .68f)
+                    lineTo(size.width * .35f, size.height * .51f)
+                    lineTo(size.width * .46f, size.height * .76f)
+                    lineTo(size.width * .59f, size.height * .59f)
+                    lineTo(size.width * .92f, size.height * .59f)
                 }
-                "tool_trace", "tool_roam", "tool_ipv6" -> {
-                    val points = listOf(
-                        Offset(size.width * .12f, size.height * .76f),
-                        Offset(size.width * .34f, size.height * .48f),
-                        Offset(size.width * .58f, size.height * .70f),
-                        Offset(size.width * .86f, size.height * .34f)
-                    )
-                    points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .10f), a, b, medium, StrokeCap.Round) }
-                    points.forEach { point ->
-                        drawCircle(Color.White.copy(alpha = .72f), 4.5.dp.toPx(), point)
-                        drawCircle(accent.copy(alpha = .15f), 2.7.dp.toPx(), point)
-                    }
-                }
-                "tool_port", "tool_udp", "tool_mtu", "tool_nat" -> {
-                    repeat(3) { index ->
-                        drawArc(
-                            color = accent.copy(alpha = .065f + index * .018f),
-                            startAngle = 205f,
-                            sweepAngle = 245f,
-                            useCenter = false,
-                            topLeft = Offset(size.width * (.10f + index * .07f), size.height * (.16f + index * .06f)),
-                            size = Size(size.minDimension * (1.10f - index * .18f), size.minDimension * (1.10f - index * .18f)),
-                            style = Stroke(thin, cap = StrokeCap.Round)
-                        )
-                    }
-                }
-                else -> {
-                    repeat(4) { index ->
-                        drawCircle(
-                            accent.copy(alpha = .065f + index * .014f),
-                            3.dp.toPx(),
-                            Offset(size.width * (.13f + index * .16f), size.height * (.76f - (index % 2) * .16f))
-                        )
-                    }
+                drawPath(wave, accent.copy(alpha = .105f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+            "tool_trace", "tool_roam", "tool_ipv6" -> {
+                val points = listOf(
+                    Offset(size.width * .17f, size.height * .70f),
+                    Offset(size.width * .36f, size.height * .43f),
+                    Offset(size.width * .58f, size.height * .65f),
+                    Offset(size.width * .81f, size.height * .31f)
+                )
+                points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .10f), a, b, medium, StrokeCap.Round) }
+                points.forEach { point ->
+                    drawCircle(Color.White.copy(alpha = .72f), 4.5.dp.toPx(), point)
+                    drawCircle(accent.copy(alpha = .15f), 2.7.dp.toPx(), point)
                 }
             }
+            "tool_port", "tool_udp", "tool_mtu", "tool_nat" -> {
+                repeat(3) { index ->
+                    drawArc(
+                        color = accent.copy(alpha = .065f + index * .018f),
+                        startAngle = 205f,
+                        sweepAngle = 245f,
+                        useCenter = false,
+                        topLeft = Offset(size.width * (.24f + index * .05f), size.height * (.23f + index * .05f)),
+                        size = Size(size.minDimension * (.62f - index * .10f), size.minDimension * (.62f - index * .10f)),
+                        style = Stroke(thin, cap = StrokeCap.Round)
+                    )
+                }
+            }
+            else -> {
+                repeat(4) { index ->
+                    drawCircle(
+                        accent.copy(alpha = .065f + index * .014f),
+                        3.dp.toPx(),
+                        Offset(size.width * (.18f + index * .15f), size.height * (.69f - (index % 2) * .15f))
+                    )
+                }
+            }
+        }
     }
 }
 
