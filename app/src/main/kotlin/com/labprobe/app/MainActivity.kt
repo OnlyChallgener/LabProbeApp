@@ -1044,13 +1044,15 @@ fun LabProbeApp(prefs: AppPrefs) {
         val normalized = when {
             route.startsWith("tool_") -> "tools"
             route == "daily" -> "events"
+            route == "device_traffic" -> "devices"
             else -> route
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
         val navigate: (String) -> Unit = { target -> route = target }
-        BackHandler(route.startsWith("tool_") || route == "daily") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "device_traffic") {
             route = when (route) {
                 "daily" -> "events"
+                "device_traffic" -> "devices"
                 "tool_nat_history" -> "tool_nat"
                 else -> "tools"
             }
@@ -1076,7 +1078,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                     ) { r ->
                         when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
-                        "devices" -> DevicesScreen(state, topNav)
+                        "devices" -> DevicesScreen(state, topNav) { route = "device_traffic" }
+                        "device_traffic" -> TodayTrafficScreen(state) { route = "devices" }
                         "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
@@ -2848,18 +2851,24 @@ fun StatusPill(label: String, value: String, color: Color) {
 }
 
 @Composable
-fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
+fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
     var mode by remember { mutableStateOf("watch") }
     var detailMac by remember { mutableStateOf<String?>(null) }
     val list = if (mode == "online") state.onlineDevices else state.devices
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
     val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
     val detailDevice = remember(detailMac, shared) { detailMac?.let { mac -> shared.firstOrNull { it.mac.equals(mac, ignoreCase = true) } } }
-    ExpressiveCard("终端同步", "${if (mode == "online") "全部在线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") state.wolDevices.size else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
+    ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") state.wolDevices.size else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
-            FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("全部在线", fontSize = 12.sp) })
+            FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线终端", fontSize = 12.sp) })
             FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
+            FilterChip(
+                selected = false,
+                onClick = onOpenTraffic,
+                label = { Text("今日流量", fontSize = 12.sp) },
+                leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) }
+            )
         }
         Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -2869,6 +2878,237 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell
         list.forEach { d -> DeviceSmartCard(state, d, onOpenDetails = { detailMac = d.mac }) }
     }
     detailDevice?.let { d -> LabDeviceDetailSheet(state = state, device = d, onDismiss = { detailMac = null }) }
+}
+
+private data class TodayTrafficRankItem(
+    val device: DeviceItem,
+    val uploadBytes: Long,
+    val downloadBytes: Long
+) {
+    val totalBytes: Long get() = uploadBytes + downloadBytes
+}
+
+@Composable
+fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
+    title = "今日流量",
+    subtitle = "今日设备上网用量排名",
+    onBack = onBack
+) {
+    var descending by remember { mutableStateOf(true) }
+    val traffic = remember(state.devices, state.onlineDevices) {
+        mergeSharedDeviceState(state.devices, state.onlineDevices)
+            .map { device ->
+                TodayTrafficRankItem(
+                    device = device,
+                    uploadBytes = parseDeviceTrafficBytes(device.todayUpload),
+                    downloadBytes = parseDeviceTrafficBytes(device.todayDownload)
+                )
+            }
+            .filter { item -> item.device.todayUpload.isNotBlank() || item.device.todayDownload.isNotBlank() }
+            .sortedByDescending(TodayTrafficRankItem::totalBytes)
+    }
+    val totalUpload = remember(traffic) { traffic.sumOf(TodayTrafficRankItem::uploadBytes) }
+    val totalDownload = remember(traffic) { traffic.sumOf(TodayTrafficRankItem::downloadBytes) }
+    val totalTraffic = totalUpload + totalDownload
+    val ranked = remember(traffic, descending) {
+        traffic.mapIndexed { index, item -> (index + 1) to item }
+            .let { rankedItems -> if (descending) rankedItems else rankedItems.asReversed() }
+    }
+
+    TodayTrafficSummaryCard(
+        uploadBytes = totalUpload,
+        downloadBytes = totalDownload,
+        onlineCount = traffic.count { it.device.online }
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        shadowElevation = 1.dp
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("今日设备上网流量占比排行榜", fontSize = 15.sp, fontWeight = FontWeight.Black)
+                    Text("按设备今日上传与下载总量统计", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f))
+                }
+                TrafficSortButton("升序", selected = !descending) { descending = false }
+                Spacer(Modifier.width(4.dp))
+                TrafficSortButton("降序", selected = descending) { descending = true }
+            }
+
+            if (ranked.isEmpty()) {
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 34.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        Modifier.size(48.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF14B8A6).copy(alpha = .10f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.DataUsage, null, tint = Color(0xFF14B8A6), modifier = Modifier.size(25.dp))
+                    }
+                    Text("暂无今日流量数据", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                    Text("刷新终端数据后会自动生成用量排名", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp)
+                }
+            } else {
+                ranked.forEachIndexed { index, rankedItem ->
+                    TodayTrafficRankRow(
+                        rank = rankedItem.first,
+                        item = rankedItem.second,
+                        share = if (totalTraffic > 0L) rankedItem.second.totalBytes.toFloat() / totalTraffic.toFloat() else 0f
+                    )
+                    if (index < ranked.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .055f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayTrafficSummaryCard(uploadBytes: Long, downloadBytes: Long, onlineCount: Int) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        shadowElevation = 1.dp
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 17.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(54.dp).clip(RoundedCornerShape(20.dp)).background(
+                    Brush.linearGradient(listOf(Color(0xFF0F766E).copy(alpha = .15f), Color(0xFF14B8A6).copy(alpha = .06f)))
+                ),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF123B4A)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.DataUsage, null, tint = Color(0xFF5EEAD4), modifier = Modifier.size(22.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("今日设备上网总流量", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f))
+                    Spacer(Modifier.weight(1f))
+                    Surface(shape = RoundedCornerShape(99.dp), color = Color(0xFF22C55E).copy(alpha = .11f)) {
+                        Text("$onlineCount 台在线", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color(0xFF16A34A), fontSize = 9.5.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("下载/", fontSize = 12.sp, color = Color(0xFF0EA5E9), fontWeight = FontWeight.Black)
+                    Text(formatTraffic(downloadBytes), fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Spacer(Modifier.width(10.dp))
+                    Box(Modifier.width(1.dp).height(21.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .09f)))
+                    Spacer(Modifier.width(10.dp))
+                    Text("上传/", fontSize = 12.sp, color = Color(0xFF22C55E), fontWeight = FontWeight.Black)
+                    Text(formatTraffic(uploadBytes), fontSize = 18.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrafficSortButton(text: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(99.dp), color = if (selected) Color(0xFF14B8A6).copy(alpha = .12f) else Color.Transparent) {
+        Text(
+            text,
+            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+            color = if (selected) Color(0xFF0F9F93) else MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
+            fontWeight = FontWeight.Black,
+            fontSize = 10.5.sp
+        )
+    }
+}
+
+@Composable
+private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Float) {
+    val device = item.device
+    val profile = remember(device) { inferDeviceProfile(device) }
+    val progress by animateFloatAsState(share.coerceIn(0f, 1f), label = "trafficShare")
+    val percent = (share.coerceIn(0f, 1f) * 100f).roundToInt()
+    val rankColor = when (rank) {
+        1 -> Color(0xFFF59E0B)
+        2 -> Color(0xFF94A3B8)
+        3 -> Color(0xFFF97316)
+        else -> Color(0xFF14B8A6)
+    }
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            modifier = Modifier.size(30.dp),
+            shape = CircleShape,
+            color = rankColor.copy(alpha = if (rank <= 3) .16f else .08f),
+            border = BorderStroke(1.dp, rankColor.copy(alpha = .16f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(rank.toString(), color = rankColor, fontSize = 12.sp, fontWeight = FontWeight.Black)
+            }
+        }
+        Spacer(Modifier.width(9.dp))
+        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 43)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    device.remark.ifBlank { device.name.ifBlank { device.mac } },
+                    Modifier.weight(1f),
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(6.dp))
+                Surface(shape = RoundedCornerShape(99.dp), color = if (device.online) Color(0xFF22C55E).copy(alpha = .11f) else Color(0xFF94A3B8).copy(alpha = .11f)) {
+                    Text(
+                        if (device.online) "在线" else "离线",
+                        Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                        color = if (device.online) Color(0xFF16A34A) else Color(0xFF64748B),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.ArrowDownward, null, tint = Color(0xFF0EA5E9), modifier = Modifier.size(13.dp))
+                Text(formatTraffic(item.downloadBytes), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.Rounded.ArrowUpward, null, tint = Color(0xFF22C55E), modifier = Modifier.size(13.dp))
+                Text(formatTraffic(item.uploadBytes), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+            }
+            Text(
+                if (device.online) cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线：$it" } ?: "在线" else "离线",
+                fontSize = 9.5.sp,
+                lineHeight = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).height(5.dp).clip(CircleShape).background(Color(0xFFE8EEF4))) {
+                    Box(
+                        Modifier.fillMaxHeight().fillMaxWidth(progress).clip(CircleShape).background(
+                            Brush.horizontalGradient(listOf(Color(0xFF5EEAD4), Color(0xFF2DD4BF)))
+                        )
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text("$percent%", modifier = Modifier.width(31.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
 }
 
 
