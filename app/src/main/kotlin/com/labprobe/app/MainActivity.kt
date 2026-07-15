@@ -69,6 +69,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -3242,25 +3243,26 @@ enum class ToolTileLayout { Prominent, Compact, Wide }
 @Composable
 fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLayout, onClick: () -> Unit) {
     val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 26.dp else 21.dp)
-    Surface(
+    Box(
         modifier = modifier
             .shadow(2.dp, shape, clip = false)
             .clip(shape)
-            .clickable { onClick() },
-        shape = shape,
-        color = item.color.copy(alpha = .045f),
-        border = BorderStroke(1.dp, item.color.copy(alpha = .10f)),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color.White.copy(alpha = .96f),
+                        item.color.copy(alpha = .13f),
+                        item.color.copy(alpha = .075f)
+                    )
+                )
+            )
+            .border(1.dp, item.color.copy(alpha = .12f), shape)
+            .clickable { onClick() }
     ) {
+        ToolTileBackdrop(item, layout)
         Box(
             Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        listOf(Color.White.copy(alpha = .86f), item.color.copy(alpha = .075f))
-                    )
-                )
                 .padding(if (layout == ToolTileLayout.Compact) 7.dp else 11.dp)
         ) {
             when (layout) {
@@ -3295,6 +3297,91 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ToolTileBackdrop(item: ToolMosaicItem, layout: ToolTileLayout) {
+    val watermarkSize = when (layout) {
+        ToolTileLayout.Prominent -> 154.dp
+        ToolTileLayout.Compact -> 86.dp
+        ToolTileLayout.Wide -> 112.dp
+    }
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            val accent = item.color
+            val thin = 1.25.dp.toPx()
+            val medium = 2.dp.toPx()
+            val motifCenter = Offset(size.width * .78f, size.height * .72f)
+            val motifRadius = size.minDimension * .42f
+
+            drawCircle(accent.copy(alpha = .055f), motifRadius, motifCenter)
+            drawCircle(Color.White.copy(alpha = .62f), motifRadius * .72f, motifCenter, style = Stroke(thin))
+            drawCircle(accent.copy(alpha = .08f), motifRadius * .44f, motifCenter, style = Stroke(thin))
+
+            when (item.route) {
+                "tool_ping", "tool_dns_quality", "tool_service" -> {
+                    val wave = Path().apply {
+                        moveTo(size.width * .04f, size.height * .72f)
+                        lineTo(size.width * .24f, size.height * .72f)
+                        lineTo(size.width * .34f, size.height * .56f)
+                        lineTo(size.width * .45f, size.height * .83f)
+                        lineTo(size.width * .58f, size.height * .64f)
+                        lineTo(size.width * .96f, size.height * .64f)
+                    }
+                    drawPath(wave, accent.copy(alpha = .13f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                "tool_trace", "tool_roam", "tool_ipv6" -> {
+                    val points = listOf(
+                        Offset(size.width * .12f, size.height * .76f),
+                        Offset(size.width * .34f, size.height * .48f),
+                        Offset(size.width * .58f, size.height * .70f),
+                        Offset(size.width * .86f, size.height * .34f)
+                    )
+                    points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .12f), a, b, medium, StrokeCap.Round) }
+                    points.forEach { point ->
+                        drawCircle(Color.White.copy(alpha = .76f), 5.dp.toPx(), point)
+                        drawCircle(accent.copy(alpha = .18f), 3.dp.toPx(), point)
+                    }
+                }
+                "tool_port", "tool_udp", "tool_mtu", "tool_nat" -> {
+                    repeat(3) { index ->
+                        drawArc(
+                            color = accent.copy(alpha = .08f + index * .025f),
+                            startAngle = 205f,
+                            sweepAngle = 245f,
+                            useCenter = false,
+                            topLeft = Offset(size.width * (.10f + index * .07f), size.height * (.16f + index * .06f)),
+                            size = Size(size.minDimension * (1.10f - index * .18f), size.minDimension * (1.10f - index * .18f)),
+                            style = Stroke(thin, cap = StrokeCap.Round)
+                        )
+                    }
+                }
+                else -> {
+                    repeat(4) { index ->
+                        drawCircle(
+                            accent.copy(alpha = .075f + index * .015f),
+                            3.dp.toPx(),
+                            Offset(size.width * (.13f + index * .16f), size.height * (.76f - (index % 2) * .16f))
+                        )
+                    }
+                }
+            }
+        }
+        Image(
+            painter = painterResource(item.iconRes),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(watermarkSize)
+                .graphicsLayer {
+                    alpha = .075f
+                    rotationZ = -8f
+                    translationX = 14.dp.toPx()
+                    translationY = 12.dp.toPx()
+                }
+        )
     }
 }
 
