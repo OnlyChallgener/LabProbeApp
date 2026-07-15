@@ -40,6 +40,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -76,8 +77,10 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -3138,30 +3141,30 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     ToolMosaicSection(
         title = "网络检测",
         items = listOf(
-            ToolMosaicItem("延迟测试", Icons.Rounded.Speed, Color(0xFF3B6EEA), "tool_ping"),
-            ToolMosaicItem("端口测试", Icons.Rounded.SettingsEthernet, Color(0xFF00A9D6), "tool_port"),
-            ToolMosaicItem("路由追踪", Icons.Rounded.AltRoute, Color(0xFF5269E8), "tool_trace"),
-            ToolMosaicItem("UDP探测", Icons.Rounded.SyncAlt, Color(0xFF00B8C8), "tool_udp")
+            ToolMosaicItem("延迟测试", R.drawable.tool_ping_3d, Color(0xFF3B6EEA), "tool_ping"),
+            ToolMosaicItem("端口测试", R.drawable.tool_port_3d, Color(0xFF00A9D6), "tool_port"),
+            ToolMosaicItem("路由追踪", R.drawable.tool_trace_3d, Color(0xFF5269E8), "tool_trace"),
+            ToolMosaicItem("UDP探测", R.drawable.tool_udp_3d, Color(0xFF00B8C8), "tool_udp")
         ),
         open = open
     )
     ToolMosaicSection(
         title = "解析与公网",
         items = listOf(
-            ToolMosaicItem("DNS解析", Icons.Rounded.Dns, Color(0xFF426DE6), "tool_dns"),
-            ToolMosaicItem("IPv6可用性", Icons.Rounded.SettingsEthernet, Color(0xFF00AFC8), "tool_ipv6"),
-            ToolMosaicItem("NAT检测", Icons.Rounded.Router, Color(0xFF8B5CF6), "tool_nat"),
-            ToolMosaicItem("DNS质量", Icons.Rounded.TravelExplore, Color(0xFF9B59F6), "tool_dns_quality")
+            ToolMosaicItem("DNS解析", R.drawable.tool_dns_3d, Color(0xFF426DE6), "tool_dns"),
+            ToolMosaicItem("IPv6可用性", R.drawable.tool_ipv6_3d, Color(0xFF00AFC8), "tool_ipv6"),
+            ToolMosaicItem("NAT检测", R.drawable.tool_nat_3d, Color(0xFF8B5CF6), "tool_nat"),
+            ToolMosaicItem("DNS质量", R.drawable.tool_dns_quality_3d, Color(0xFF9B59F6), "tool_dns_quality")
         ),
         open = open
     )
     ToolMosaicSection(
         title = "设备与链路",
         items = listOf(
-            ToolMosaicItem("无线漫游", Icons.Rounded.Wifi, Color(0xFF20B879), "tool_roam"),
-            ToolMosaicItem("MTU检测", Icons.Rounded.SettingsEthernet, Color(0xFF00A9D6), "tool_mtu"),
-            ToolMosaicItem("SSH命令", Icons.Rounded.Terminal, Color(0xFF66758E), "tool_ssh"),
-            ToolMosaicItem("服务监控", Icons.Rounded.Public, Color(0xFFF5A000), "tool_service")
+            ToolMosaicItem("无线漫游", R.drawable.tool_roam_3d, Color(0xFF20B879), "tool_roam"),
+            ToolMosaicItem("MTU检测", R.drawable.tool_mtu_3d, Color(0xFF00A9D6), "tool_mtu"),
+            ToolMosaicItem("SSH命令", R.drawable.tool_ssh_3d, Color(0xFF66758E), "tool_ssh"),
+            ToolMosaicItem("服务监控", R.drawable.tool_service_3d, Color(0xFFF5A000), "tool_service")
         ),
         open = open
     )
@@ -3191,7 +3194,7 @@ fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Co
 
 data class ToolMosaicItem(
     val title: String,
-    val icon: ImageVector,
+    val iconRes: Int,
     val color: Color,
     val route: String
 )
@@ -3245,8 +3248,8 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
             .clip(shape)
             .clickable { onClick() },
         shape = shape,
-        color = item.color.copy(alpha = .055f),
-        border = BorderStroke(1.dp, item.color.copy(alpha = .12f)),
+        color = item.color.copy(alpha = .045f),
+        border = BorderStroke(1.dp, item.color.copy(alpha = .10f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
@@ -3255,27 +3258,39 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
                 .fillMaxSize()
                 .background(
                     Brush.linearGradient(
-                        listOf(Color.White.copy(alpha = .78f), item.color.copy(alpha = .08f), Color.White.copy(alpha = .48f))
+                        listOf(Color.White.copy(alpha = .86f), item.color.copy(alpha = .075f))
                     )
                 )
-                .padding(if (layout == ToolTileLayout.Compact) 8.dp else 12.dp)
+                .padding(if (layout == ToolTileLayout.Compact) 7.dp else 11.dp)
         ) {
             when (layout) {
                 ToolTileLayout.Prominent -> {
-                    Text(item.title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 2, lineHeight = 18.sp)
-                    SkeuomorphicToolIcon(item.icon, item.color, 62.dp, Modifier.align(Alignment.BottomCenter))
+                    Column(
+                        Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(item.title, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                        Spacer(Modifier.height(7.dp))
+                        ToolAssetIcon(item.iconRes, 88.dp)
+                    }
                 }
                 ToolTileLayout.Compact -> {
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        SkeuomorphicToolIcon(item.icon, item.color, 39.dp)
-                        Spacer(Modifier.height(5.dp))
-                        Text(item.title, fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 2, lineHeight = 13.sp, overflow = TextOverflow.Ellipsis)
+                        ToolAssetIcon(item.iconRes, 49.dp)
+                        Spacer(Modifier.height(3.dp))
+                        Text(item.title, fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 ToolTileLayout.Wide -> {
-                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(item.title, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        SkeuomorphicToolIcon(item.icon, item.color, 44.dp)
+                    Row(
+                        Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(item.title, fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(12.dp))
+                        ToolAssetIcon(item.iconRes, 55.dp)
                     }
                 }
             }
@@ -3284,27 +3299,13 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
 }
 
 @Composable
-fun SkeuomorphicToolIcon(icon: ImageVector, color: Color, size: Dp, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(size * .36f)
-    Box(
-        modifier
-            .size(size)
-            .shadow(6.dp, shape, clip = false)
-            .clip(shape)
-            .background(Brush.linearGradient(listOf(Color.White, color.copy(alpha = .18f), color.copy(alpha = .36f))))
-            .border(1.dp, Color.White.copy(alpha = .92f), shape),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            Modifier
-                .align(Alignment.TopStart)
-                .padding(size * .13f)
-                .size(size * .23f)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = .76f))
-        )
-        Icon(icon, null, tint = color, modifier = Modifier.size(size * .52f))
-    }
+fun ToolAssetIcon(iconRes: Int, size: Dp, modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(iconRes),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = modifier.size(size)
+    )
 }
 
 @Composable
