@@ -144,10 +144,15 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.21"
-    const val CODE = 123
+    const val NAME = "0.9.22"
+    const val CODE = 124
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.22 build124 · Rust 端口映射" to listOf(
+            "工具页用端口映射替换服务监控，新增 6→4 与 6→6 TCP 四层反代管理",
+            "6→6 支持 MAC + IPv6 后缀动态解析，适应家庭 IPv6 前缀变化",
+            "支持启停、有效期、连接数、上下行流量与近一小时吞吐图"
+        ),
         "v0.9.21 build123 · IPv6 与今日时长修复" to listOf(
             "NAS IPv6 优先尊重 Hub 本机主地址，不再被历史 EUI-64 邻居地址覆盖",
             "今日流量排行显示当天累计在线时长，不再显示设备总在线时长"
@@ -1134,7 +1139,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_roam" -> WifiRoamingScreen(prefs) { route = "tools" }
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
                         "tool_dns_quality" -> DnsQualityScreen(prefs) { route = "tools" }
-                        "tool_service" -> ServiceMonitorScreen(prefs) { route = "tools" }
+                        "tool_portmap" -> PortMappingScreen(prefs) { route = "tools" }
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         }
                     }
@@ -3514,7 +3519,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             ToolMosaicItem("无线漫游", R.drawable.tool_roam_3d, Color(0xFF20B879), "tool_roam"),
             ToolMosaicItem("MTU检测", R.drawable.tool_mtu_3d, Color(0xFF00A9D6), "tool_mtu"),
             ToolMosaicItem("SSH命令", R.drawable.tool_ssh_3d, Color(0xFF66758E), "tool_ssh"),
-            ToolMosaicItem("服务监控", R.drawable.tool_service_3d, Color(0xFFF5A000), "tool_service")
+            ToolMosaicItem("端口映射", R.drawable.tool_portmap_3d, Color(0xFF1677F2), "tool_portmap")
         ),
         open = open
     )
@@ -3665,7 +3670,7 @@ fun ToolTileBackdrop(item: ToolMosaicItem) {
         drawCircle(accent.copy(alpha = .055f), motifRadius, motifCenter, style = Stroke(thin))
 
         when (item.route) {
-            "tool_ping", "tool_dns_quality", "tool_service" -> {
+            "tool_ping", "tool_dns_quality" -> {
                 val wave = Path().apply {
                     moveTo(size.width * .08f, size.height * .68f)
                     lineTo(size.width * .25f, size.height * .68f)
@@ -3689,7 +3694,7 @@ fun ToolTileBackdrop(item: ToolMosaicItem) {
                     drawCircle(accent.copy(alpha = .15f), 2.7.dp.toPx(), point)
                 }
             }
-            "tool_port", "tool_udp", "tool_mtu", "tool_nat" -> {
+            "tool_port", "tool_udp", "tool_mtu", "tool_nat", "tool_portmap" -> {
                 repeat(3) { index ->
                     drawArc(
                         color = accent.copy(alpha = .065f + index * .018f),
@@ -7442,7 +7447,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.21：修复 NAS IPv6 主地址与今日在线时长显示。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.22：新增 Rust 端口映射管理，支持 TCP 6→4 / 6→6 与 IPv6 后缀匹配。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
