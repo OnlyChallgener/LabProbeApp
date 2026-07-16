@@ -71,6 +71,9 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
         offlineAt = f("offlineAt"),
         onlineDurationText = f("onlineDurationText"),
         lastSeenAt = f("lastSeenAt"),
+        todayOnlineDurationSec = o.optLong("todayOnlineDurationSec", 0L).coerceAtLeast(0L),
+        todayOnlineDurationText = f("todayOnlineDurationText"),
+        todayOnlineDate = f("todayOnlineDate"),
         ipv6 = ipv6List,
         ipv6Candidates = ipv6Candidates,
         manufacture = f("manufacture").ifBlank { f("vendor") }.ifBlank { f("oui") },
@@ -191,7 +194,7 @@ private fun formatTrafficBytesCompact(bytes: Double): String {
 }
 
 private val DEVICE_IPV6_KEYS = listOf(
-    "ipv6List", "ipv6", "ipv6Address", "lastIpv6", "globalIpv6", "globalIPv6",
+    "ipv6Records", "ipv6", "ipv6Address", "globalIpv6", "globalIPv6", "ipv6List", "lastIpv6",
     "ndpIpv6", "ndpIPv6", "ipv6Addrs", "ipv6Addresses", "addresses", "ipv6Candidates"
 )
 
@@ -205,7 +208,10 @@ private fun readDeviceIpv6Value(value: Any?, sourceKey: String, out: MutableList
     when (value) {
         null, JSONObject.NULL -> Unit
         is String -> value.split(DEVICE_VALUE_SPLIT).forEach { raw ->
-            cleanApiText(raw).takeIf { it.contains(':') }?.let { out += Ipv6AddressCandidate(it, source = sourceKey) }
+            cleanApiText(raw).takeIf { it.contains(':') }?.let {
+                val primary = sourceKey in setOf("ipv6", "ipv6Address", "globalIpv6", "globalIPv6")
+                out += Ipv6AddressCandidate(it, source = if (primary) "hub_primary" else sourceKey, primary = primary)
+            }
         }
         is JSONArray -> for (index in 0 until value.length()) readDeviceIpv6Value(value.opt(index), sourceKey, out)
         is JSONObject -> {
@@ -217,7 +223,15 @@ private fun readDeviceIpv6Value(value: Any?, sourceKey: String, out: MutableList
                 val state = cleanApiText(value.optString("state").ifBlank { value.optString("status") }.ifBlank { value.optString("reachability") })
                 var source = cleanApiText(value.optString("source").ifBlank { value.optString("origin") }.ifBlank { value.optString("method") }.ifBlank { value.optString("addressType") }.ifBlank { value.optString("type") }).ifBlank { sourceKey }
                 if (value.optBoolean("temporary", false) || value.optBoolean("privacy", false)) source += " temporary"
-                out += Ipv6AddressCandidate(address, state, source, firstIpv6Timestamp(value))
+                out += Ipv6AddressCandidate(
+                    address = address,
+                    state = state,
+                    source = source,
+                    lastSeenAt = firstIpv6Timestamp(value),
+                    primary = value.optBoolean("primary", false),
+                    currentPrefix = value.optBoolean("currentPrefix", false),
+                    historical = value.optBoolean("historical", false)
+                )
             } else {
                 val keys = value.keys()
                 while (keys.hasNext()) {
@@ -227,7 +241,15 @@ private fun readDeviceIpv6Value(value: Any?, sourceKey: String, out: MutableList
                         val meta = child as? JSONObject
                         val state = if (meta == null) "" else meta.optString("state").ifBlank { meta.optString("status") }
                         val source = if (meta == null) sourceKey else meta.optString("source").ifBlank { meta.optString("origin") }.ifBlank { sourceKey }
-                        out += Ipv6AddressCandidate(key, state, source, meta?.let(::firstIpv6Timestamp))
+                        out += Ipv6AddressCandidate(
+                            address = key,
+                            state = state,
+                            source = source,
+                            lastSeenAt = meta?.let(::firstIpv6Timestamp),
+                            primary = meta?.optBoolean("primary", false) ?: false,
+                            currentPrefix = meta?.optBoolean("currentPrefix", false) ?: false,
+                            historical = meta?.optBoolean("historical", false) ?: false
+                        )
                     } else {
                         readDeviceIpv6Value(child, key, out)
                     }
@@ -238,7 +260,7 @@ private fun readDeviceIpv6Value(value: Any?, sourceKey: String, out: MutableList
 }
 
 private fun firstIpv6Timestamp(o: JSONObject): Long? {
-    listOf("lastSeenAt", "updatedAt", "seenAt", "timestamp", "time", "createdAt").forEach { key ->
+    listOf("lastSeen", "lastSeenAt", "lastReachable", "updatedAt", "seenAt", "timestamp", "time", "createdAt").forEach { key ->
         if (o.has(key) && !o.isNull(key)) parseIpv6Timestamp(o.opt(key))?.let { return it }
     }
     return null
@@ -256,7 +278,11 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
     .put("onlineSince", onlineSince)
     .put("offlineAt", offlineAt)
     .put("onlineDurationText", onlineDurationText)
+    .put("todayOnlineDurationSec", todayOnlineDurationSec)
+    .put("todayOnlineDurationText", todayOnlineDurationText)
+    .put("todayOnlineDate", todayOnlineDate)
     .put("lastSeenAt", lastSeenAt)
+    .put("ipv6", pickIpv6().best ?: "")
     .put("ipv6List", JSONArray(ipv6))
     .put("ipv6Candidates", JSONArray(ipv6Candidates.map { candidate ->
         JSONObject()
@@ -264,6 +290,9 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
             .put("state", candidate.state)
             .put("source", candidate.source)
             .put("lastSeenAt", candidate.lastSeenAt ?: JSONObject.NULL)
+            .put("primary", candidate.primary)
+            .put("currentPrefix", candidate.currentPrefix)
+            .put("historical", candidate.historical)
     }))
     .put("manufacture", manufacture)
     .put("devType", devType)

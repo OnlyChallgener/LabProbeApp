@@ -86,7 +86,18 @@ private fun readNeighborArray(arr: JSONArray, out: MutableList<Ipv6NeighborHit>)
             .asSequence()
             .mapNotNull { key -> if (o.has(key) && !o.isNull(key)) parseIpv6Timestamp(o.opt(key)) else null }
             .firstOrNull()
-        out += Ipv6NeighborHit(mac, Ipv6AddressCandidate(normalized, state, source, lastSeen))
+        out += Ipv6NeighborHit(
+            mac,
+            Ipv6AddressCandidate(
+                address = normalized,
+                state = state,
+                source = source,
+                lastSeenAt = lastSeen,
+                primary = o.optBoolean("primary", false),
+                currentPrefix = o.optBoolean("currentPrefix", false),
+                historical = o.optBoolean("historical", false)
+            )
+        )
     }
 }
 

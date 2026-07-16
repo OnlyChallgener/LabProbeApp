@@ -144,10 +144,14 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.17"
-    const val CODE = 119
+    const val NAME = "0.9.21"
+    const val CODE = 123
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.21 build123 · IPv6 与今日时长修复" to listOf(
+            "NAS IPv6 优先尊重 Hub 本机主地址，不再被历史 EUI-64 邻居地址覆盖",
+            "今日流量排行显示当天累计在线时长，不再显示设备总在线时长"
+        ),
         "v0.9.17 build118 · 漫游波形细化 / 双 Ping" to listOf(
             "路由器+外网模式下，延迟图同时显示网关与外网两条波形",
             "丢包标记改为底部超短超细红线，AP/Wi‑Fi 切换线从底部连接到当时波形点",
@@ -3124,7 +3128,13 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                 Text(formatTraffic(item.uploadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
             }
             Text(
-                if (device.online) cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线：${formatDurationText(it)}" } ?: "在线" else "离线",
+                if (device.todayOnlineDate == java.time.LocalDate.now().toString()) {
+                    cleanApiText(device.todayOnlineDurationText).takeIf { it.isNotBlank() }
+                        ?.let { "今日在线：${formatDurationText(it)}" }
+                        ?: device.todayOnlineDurationSec.takeIf { it > 0L }
+                            ?.let { "今日在线：${formatDurationMs(it * 1000L)}" }
+                        ?: "今日在线：0分"
+                } else "今日在线：0分",
                 fontSize = 9.2.sp,
                 lineHeight = 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -7432,7 +7442,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.17：设备识别、IPv6、WOL、漫游测试与轻量图标持续修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.21：修复 NAS IPv6 主地址与今日在线时长显示。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 

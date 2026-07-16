@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 @Composable
 fun WolManagementPanel(state: AppState) {
@@ -322,6 +323,7 @@ fun mergeSharedDeviceState(watched: List<DeviceItem>, online: List<DeviceItem>):
 }
 
 private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem {
+    val oldTodayValid = old.todayOnlineDate == LocalDate.now().toString()
     val mergedIpv6 = mergeIpv6Candidates(
         fresh.ipv6Candidates,
         fresh.ipv6.map { Ipv6AddressCandidate(it) },
@@ -338,6 +340,17 @@ private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceIt
         onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
         offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
         onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
+        todayOnlineDurationSec = when {
+            fresh.todayOnlineDate.isNotBlank() -> fresh.todayOnlineDurationSec
+            oldTodayValid -> old.todayOnlineDurationSec
+            else -> 0L
+        },
+        todayOnlineDurationText = when {
+            fresh.todayOnlineDate.isNotBlank() -> fresh.todayOnlineDurationText
+            oldTodayValid -> old.todayOnlineDurationText
+            else -> ""
+        },
+        todayOnlineDate = fresh.todayOnlineDate.ifBlank { old.todayOnlineDate.takeIf { oldTodayValid }.orEmpty() },
         lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
         ipv6 = mergedIpv6.map { it.address },
         ipv6Candidates = mergedIpv6,

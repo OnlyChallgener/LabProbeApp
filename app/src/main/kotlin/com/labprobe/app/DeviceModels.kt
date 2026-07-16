@@ -31,7 +31,10 @@ data class DeviceItem(
     val todayUpload: String = "",
     val todayDownload: String = "",
     val totalUpload: String = "",
-    val totalDownload: String = ""
+    val totalDownload: String = "",
+    val todayOnlineDurationSec: Long = 0L,
+    val todayOnlineDurationText: String = "",
+    val todayOnlineDate: String = ""
 )
 
 data class DeviceVisualProfile(

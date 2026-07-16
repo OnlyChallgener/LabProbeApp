@@ -1,6 +1,7 @@
 package com.labprobe.app
 
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Calendar
 import java.util.Locale
 
@@ -12,6 +13,7 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
     val merged = fresh.map { n ->
         val o = oldByMac[cleanMac(n.mac)]
         if (!n.online && o != null) {
+            val oldTodayValid = o.todayOnlineDate == LocalDate.now().toString()
             val mergedIpv6 = mergeIpv6Candidates(
                 n.ipv6Candidates,
                 n.ipv6.map { Ipv6AddressCandidate(it) },
@@ -27,6 +29,17 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 onlineSince = n.onlineSince.ifBlank { o.onlineSince },
                 offlineAt = n.offlineAt.ifBlank { o.offlineAt },
                 onlineDurationText = n.onlineDurationText.ifBlank { o.onlineDurationText },
+                todayOnlineDurationSec = when {
+                    n.todayOnlineDate.isNotBlank() -> n.todayOnlineDurationSec
+                    oldTodayValid -> o.todayOnlineDurationSec
+                    else -> 0L
+                },
+                todayOnlineDurationText = when {
+                    n.todayOnlineDate.isNotBlank() -> n.todayOnlineDurationText
+                    oldTodayValid -> o.todayOnlineDurationText
+                    else -> ""
+                },
+                todayOnlineDate = n.todayOnlineDate.ifBlank { o.todayOnlineDate.takeIf { oldTodayValid }.orEmpty() },
                 lastSeenAt = n.lastSeenAt.ifBlank { o.lastSeenAt },
                 ipv6 = mergedIpv6.map { it.address },
                 ipv6Candidates = mergedIpv6,

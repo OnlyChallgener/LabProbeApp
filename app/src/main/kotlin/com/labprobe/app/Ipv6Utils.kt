@@ -9,7 +9,10 @@ data class Ipv6AddressCandidate(
     val address: String,
     val state: String = "",
     val source: String = "",
-    val lastSeenAt: Long? = null
+    val lastSeenAt: Long? = null,
+    val primary: Boolean = false,
+    val currentPrefix: Boolean = false,
+    val historical: Boolean = false
 )
 
 data class Ipv6PickResult(
@@ -105,14 +108,9 @@ fun isSuspectedTemporaryIpv6(ip: String, source: String? = null): Boolean {
     val normalized = normalizeIpv6(ip) ?: return false
     if (!isGlobalIpv6(normalized)) return false
     val sourceText = source.orEmpty().lowercase(Locale.ROOT)
-    if (listOf("temporary", "privacy", "temp", "隐私", "临时").any(sourceText::contains)) return true
-    if (listOf("dhcp", "static", "manual", "stable", "eui").any(sourceText::contains)) return false
-
-    val bytes = ipv6Bytes(normalized) ?: return false
-    val iid = bytes.copyOfRange(8, 16)
-    if ((iid[3].toInt() and 0xFF) == 0xFF && (iid[4].toInt() and 0xFF) == 0xFE) return false
-    if (iid.take(6).all { it.toInt() == 0 }) return false
-    return iid.count { it.toInt() != 0 } >= 4
+    // Stable RFC 7217 addresses also look random. Only explicit metadata may
+    // classify an address as temporary/privacy.
+    return listOf("temporary", "privacy", " temp", "隐私", "临时").any(sourceText::contains)
 }
 
 fun scoreIpv6(ip: String, state: String? = null, source: String? = null): Int {
@@ -145,6 +143,18 @@ fun scoreIpv6(ip: String, state: String? = null, source: String? = null): Int {
     return base + stateScore + sourceScore - if (temporary) 10 else 0
 }
 
+private fun scoreIpv6Candidate(candidate: Ipv6AddressCandidate): Int {
+    var score = scoreIpv6(candidate.address, candidate.state, candidate.source)
+    if (score == Int.MIN_VALUE) return score
+    val sourceText = candidate.source.lowercase(Locale.ROOT)
+    if (candidate.primary || sourceText.contains("hub_primary")) score += 500
+    if (sourceText.contains("hub_local")) score += 250
+    if (candidate.currentPrefix) score += 25
+    if (candidate.historical) score -= 300
+    if (sourceText.contains("crosscheck")) score -= 120
+    return score
+}
+
 fun parseIpv6Timestamp(raw: Any?): Long? {
     if (raw == null) return null
     if (raw is Number) {
@@ -168,21 +178,31 @@ fun mergeIpv6Candidates(vararg groups: List<Ipv6AddressCandidate>): List<Ipv6Add
         } else {
             val oldRejected = isRejectedIpv6State(old.state)
             val candidateRejected = isRejectedIpv6State(candidate.state)
+            val oldHasMetadata = old.source.isNotBlank() || old.state.isNotBlank() || old.primary || old.currentPrefix || old.historical
+            val candidateHasMetadata = candidate.source.isNotBlank() || candidate.state.isNotBlank() || candidate.primary || candidate.currentPrefix || candidate.historical
             val preferred = when {
                 oldRejected && ipv6StateRank(candidate.state) > 1 -> candidate
                 candidateRejected && ipv6StateRank(old.state) > 1 -> old
                 oldRejected -> old
                 candidateRejected -> candidate
-                scoreIpv6(candidate.address, candidate.state, candidate.source) > scoreIpv6(old.address, old.state, old.source) -> candidate
+                oldHasMetadata && !candidateHasMetadata -> old
+                candidateHasMetadata && !oldHasMetadata -> candidate
+                scoreIpv6Candidate(candidate) > scoreIpv6Candidate(old) -> candidate
                 else -> old
             }
-            merged[normalized] = preferred.copy(lastSeenAt = listOfNotNull(old.lastSeenAt, candidate.lastSeenAt).maxOrNull())
+            val currentPrefix = old.currentPrefix || candidate.currentPrefix
+            merged[normalized] = preferred.copy(
+                lastSeenAt = listOfNotNull(old.lastSeenAt, candidate.lastSeenAt).maxOrNull(),
+                primary = old.primary || candidate.primary,
+                currentPrefix = currentPrefix,
+                historical = !currentPrefix && (old.historical || candidate.historical)
+            )
         }
     }
     return merged.values.sortedWith(
         compareByDescending<Ipv6AddressCandidate> { ipv6ScopeRank(it.address) }
             .thenByDescending { ipv6StateRank(it.state) }
-            .thenByDescending { scoreIpv6(it.address, it.state, it.source) }
+            .thenByDescending(::scoreIpv6Candidate)
             .thenByDescending { it.lastSeenAt ?: 0L }
             .thenBy { it.address }
     )
@@ -192,12 +212,13 @@ fun pickBestIpv6(addresses: List<String>, candidates: List<Ipv6AddressCandidate>
     val rawCandidates = candidates + addresses.map { Ipv6AddressCandidate(it) }
     val normalized = mergeIpv6Candidates(rawCandidates)
     val eligible = normalized.filterNot { isInvalidIpv6(it.address) || isRejectedIpv6State(it.state) }
-    val pickPool = eligible.filter(::isVerifiedNeighborIpv6).ifEmpty { eligible }
+    val explicitPrimary = eligible.filter { it.primary && !it.historical }
+    val pickPool = explicitPrimary.ifEmpty { eligible.filter(::isVerifiedNeighborIpv6).ifEmpty { eligible } }
     val latest = eligible.mapNotNull { it.lastSeenAt }.maxOrNull()
     val best = pickPool.maxWithOrNull(
         compareBy<Ipv6AddressCandidate> { ipv6ScopeRank(it.address) }
             .thenBy { ipv6StateRank(it.state) }
-            .thenBy { scoreIpv6(it.address, it.state, it.source) + if (latest != null && it.lastSeenAt == latest) 5 else 0 }
+            .thenBy { scoreIpv6Candidate(it) + if (latest != null && it.lastSeenAt == latest) 5 else 0 }
             .thenBy { it.lastSeenAt ?: 0L }
             .thenBy { it.address }
     )

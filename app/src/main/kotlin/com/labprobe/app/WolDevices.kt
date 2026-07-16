@@ -92,7 +92,10 @@ fun buildWolRuntimes(configs: List<WolDeviceConfig>, sharedDevices: List<DeviceI
             todayUpload = d?.todayUpload ?: "",
             todayDownload = d?.todayDownload ?: "",
             totalUpload = d?.totalUpload ?: "",
-            totalDownload = d?.totalDownload ?: ""
+            totalDownload = d?.totalDownload ?: "",
+            todayOnlineDurationSec = d?.todayOnlineDurationSec ?: 0L,
+            todayOnlineDurationText = d?.todayOnlineDurationText ?: "",
+            todayOnlineDate = d?.todayOnlineDate ?: ""
         )
         val profile = DeviceVisualProfile(
             type = type.id,

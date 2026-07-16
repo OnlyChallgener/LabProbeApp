@@ -1,5 +1,9 @@
 # LabProbe 更新日志
 
+## v0.9.21 build123
+- NAS IPv6 优先使用 Hub 本机实际路由源地址，不再被历史 EUI-64 邻居地址覆盖。
+- 今日流量排行显示当天累计在线时长，不再显示总在线时长。
+
 ## v0.9.17 build119
 - 修复 build118 双 Ping 波形编译失败：将本地 ping helper 改为 suspend，允许调用 suspend pingOnceAddress。
 - 不改漫游波形、双 Ping、Wi-Fi 切换逻辑。
