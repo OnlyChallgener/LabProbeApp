@@ -31,6 +31,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
@@ -144,12 +145,14 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.22"
-    const val CODE = 124
+    const val NAME = "0.9.23"
+    const val CODE = 125
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.22 build124 · Rust 端口映射" to listOf(
-            "工具页用端口映射替换服务监控，新增 6→4 与 6→6 TCP 四层反代管理",
+        "v0.9.23 build125 · 端口映射交互优化" to listOf(
+            "修复端口映射编辑页弹出层偏粉问题，统一为白色卡片弹层",
+            "优化端口映射详情页流量统计与吞吐图，数值更紧凑、曲线更细更顺滑",
+            "工具页三块卡片去标题、缩矮并支持长按拖动排序；出口与路由图标可直达端口映射",
             "6→6 支持 MAC + IPv6 后缀动态解析，适应家庭 IPv6 前缀变化",
             "支持启停、有效期、连接数、上下行流量与近一小时吞吐图"
         ),
@@ -252,6 +255,8 @@ class AppPrefs(context: Context) {
 
     var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"
         set(v) = sp.edit().putString("home_order", v).apply()
+    var toolSectionOrder: String get() = sp.getString("tool_section_order", "net,public,device") ?: "net,public,device"
+        set(v) = sp.edit().putString("tool_section_order", v).apply()
     var privacyMode: Boolean get() = sp.getBoolean("privacy_mode", false)
         set(v) = sp.edit().putBoolean("privacy_mode", v).apply()
 
@@ -2295,7 +2300,13 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             modifier = Modifier.weight(1f).clickable { onNavigate("events") }
                         )
                     }
-                    "exit" -> HealthExitCard(nas, router, privacyMode) { onNavigate("tool_ping") }
+                    "exit" -> HealthExitCard(
+                        nas = nas,
+                        router = router,
+                        privacyMode = privacyMode,
+                        onClick = { onNavigate("tool_ping") },
+                        onIconClick = { onNavigate("tool_portmap") }
+                    )
                     "vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(
                         rows = vpnRows,
                         privacyMode = privacyMode,
@@ -2545,9 +2556,14 @@ fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector
 }
 
 @Composable
-fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color) {
+fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color, onIconClick: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+        val iconModifier = if (onIconClick != null) {
+            Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)).clickable { onIconClick() }
+        } else {
+            Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f))
+        }
+        Box(iconModifier, contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(10.dp))
@@ -2578,9 +2594,9 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 }
 
 @Composable
-fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}) {
+fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
     HealthCard(Modifier.clickable { onClick() }) {
-        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9))
+        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
         Spacer(Modifier.height(13.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
         Spacer(Modifier.height(9.dp))
@@ -3493,36 +3509,119 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
-    ToolMosaicSection(
-        title = "网络检测",
-        items = listOf(
-            ToolMosaicItem("延迟测试", R.drawable.tool_ping_3d, Color(0xFF3B6EEA), "tool_ping"),
-            ToolMosaicItem("端口测试", R.drawable.tool_port_3d, Color(0xFF00A9D6), "tool_port"),
-            ToolMosaicItem("路由追踪", R.drawable.tool_trace_3d, Color(0xFF5269E8), "tool_trace"),
-            ToolMosaicItem("UDP探测", R.drawable.tool_udp_3d, Color(0xFF00B8C8), "tool_udp")
-        ),
-        open = open
-    )
-    ToolMosaicSection(
-        title = "解析与公网",
-        items = listOf(
-            ToolMosaicItem("DNS解析", R.drawable.tool_dns_3d, Color(0xFF426DE6), "tool_dns"),
-            ToolMosaicItem("IPv6可用性", R.drawable.tool_ipv6_3d, Color(0xFF00AFC8), "tool_ipv6"),
-            ToolMosaicItem("NAT检测", R.drawable.tool_nat_3d, Color(0xFF8B5CF6), "tool_nat"),
-            ToolMosaicItem("DNS质量", R.drawable.tool_dns_quality_3d, Color(0xFF9B59F6), "tool_dns_quality")
-        ),
-        open = open
-    )
-    ToolMosaicSection(
-        title = "设备与链路",
-        items = listOf(
-            ToolMosaicItem("无线漫游", R.drawable.tool_roam_3d, Color(0xFF20B879), "tool_roam"),
-            ToolMosaicItem("MTU检测", R.drawable.tool_mtu_3d, Color(0xFF00A9D6), "tool_mtu"),
-            ToolMosaicItem("SSH命令", R.drawable.tool_ssh_3d, Color(0xFF66758E), "tool_ssh"),
-            ToolMosaicItem("端口映射", R.drawable.tool_portmap_3d, Color(0xFF1677F2), "tool_portmap")
-        ),
-        open = open
-    )
+    val toolSections = remember {
+        mapOf(
+            "net" to listOf(
+                ToolMosaicItem("延迟测试", R.drawable.tool_ping_3d, Color(0xFF3B6EEA), "tool_ping"),
+                ToolMosaicItem("端口测试", R.drawable.tool_port_3d, Color(0xFF00A9D6), "tool_port"),
+                ToolMosaicItem("路由追踪", R.drawable.tool_trace_3d, Color(0xFF5269E8), "tool_trace"),
+                ToolMosaicItem("UDP探测", R.drawable.tool_udp_3d, Color(0xFF00B8C8), "tool_udp")
+            ),
+            "public" to listOf(
+                ToolMosaicItem("DNS解析", R.drawable.tool_dns_3d, Color(0xFF426DE6), "tool_dns"),
+                ToolMosaicItem("IPv6可用性", R.drawable.tool_ipv6_3d, Color(0xFF00AFC8), "tool_ipv6"),
+                ToolMosaicItem("NAT检测", R.drawable.tool_nat_3d, Color(0xFF8B5CF6), "tool_nat"),
+                ToolMosaicItem("DNS质量", R.drawable.tool_dns_quality_3d, Color(0xFF9B59F6), "tool_dns_quality")
+            ),
+            "device" to listOf(
+                ToolMosaicItem("无线漫游", R.drawable.tool_roam_3d, Color(0xFF20B879), "tool_roam"),
+                ToolMosaicItem("MTU检测", R.drawable.tool_mtu_3d, Color(0xFF00A9D6), "tool_mtu"),
+                ToolMosaicItem("SSH命令", R.drawable.tool_ssh_3d, Color(0xFF66758E), "tool_ssh"),
+                ToolMosaicItem("端口映射", R.drawable.tool_portmap_3d, Color(0xFF1677F2), "tool_portmap")
+            )
+        )
+    }
+    var toolOrder by remember { mutableStateOf(normalizeToolSectionOrder(prefs.toolSectionOrder)) }
+    fun saveToolOrder(newOrder: List<String>) {
+        val normalized = normalizeToolSectionOrder(newOrder.joinToString(","))
+        toolOrder = normalized
+        prefs.toolSectionOrder = normalized.joinToString(",")
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(220)),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        toolOrder.forEach { key ->
+            val items = toolSections[key] ?: return@forEach
+            ReorderableToolSection(
+                sectionKey = key,
+                order = toolOrder,
+                onOrder = ::saveToolOrder
+            ) {
+                ToolMosaicSection(items = items, open = open)
+            }
+        }
+    }
+}
+
+@Composable
+fun ReorderableToolSection(sectionKey: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
+    var dragging by remember(sectionKey) { mutableStateOf(false) }
+    var dragY by remember(sectionKey) { mutableStateOf(0f) }
+    val scale by animateFloatAsState(if (dragging) 0.982f else 1f, animationSpec = tween(180), label = "tool-section-scale")
+    val thresholdPx = with(LocalDensity.current) { 138.dp.toPx() }
+
+    fun commitOrder() {
+        val current = order.indexOf(sectionKey)
+        if (current < 0) return
+        val steps = (dragY / thresholdPx).roundToInt().coerceIn(-current, order.lastIndex - current)
+        if (steps == 0) return
+        val next = order.toMutableList()
+        val item = next.removeAt(current)
+        next.add((current + steps).coerceIn(0, next.size), item)
+        onOrder(next)
+    }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .zIndex(if (dragging) 6f else 0f)
+            .offset { IntOffset(0, if (dragging) dragY.roundToInt() else 0) }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                alpha = if (dragging) 0.992f else 1f
+                clip = false
+            }
+            .pointerInput(sectionKey, order) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { dragging = true; dragY = 0f },
+                    onDragEnd = {
+                        commitOrder()
+                        dragging = false
+                        dragY = 0f
+                    },
+                    onDragCancel = { dragging = false; dragY = 0f },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        dragY += dragAmount.y
+                    }
+                )
+            }
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .shadow(if (dragging) 10.dp else 0.dp, RoundedCornerShape(25.dp), clip = false)
+        ) { content() }
+        if (dragging) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                shape = RoundedCornerShape(50),
+                color = Color.White.copy(alpha = 0.98f),
+                shadowElevation = 5.dp
+            ) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.OpenWith, null, tint = Color(0xFF1677F2), modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("长按换位", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF1677F2))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -3555,37 +3654,30 @@ data class ToolMosaicItem(
 )
 
 @Composable
-fun ToolMosaicSection(title: String, items: List<ToolMosaicItem>, open: (String) -> Unit) {
+fun ToolMosaicSection(items: List<ToolMosaicItem>, open: (String) -> Unit) {
     if (items.size < 4) return
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(27.dp), clip = false),
-        shape = RoundedCornerShape(27.dp),
+        modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(25.dp), clip = false),
+        shape = RoundedCornerShape(25.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
         border = BorderStroke(1.dp, Color.White.copy(alpha = .92f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(
-                title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(start = 2.dp)
-            )
-            Row(Modifier.fillMaxWidth().height(146.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp)) {
+            Row(Modifier.fillMaxWidth().height(134.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 ToolMosaicTile(
                     item = items[0],
                     modifier = Modifier.weight(1.05f).fillMaxHeight(),
                     layout = ToolTileLayout.Prominent,
                     onClick = { open(items[0].route) }
                 )
-                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         ToolMosaicTile(items[1], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[1].route) }
                         ToolMosaicTile(items[2], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[2].route) }
                     }
-                    ToolMosaicTile(items[3], Modifier.weight(.72f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
+                    ToolMosaicTile(items[3], Modifier.weight(.74f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
                 }
             }
         }
@@ -3596,11 +3688,11 @@ enum class ToolTileLayout { Prominent, Compact, Wide }
 
 @Composable
 fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLayout, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 22.dp else 18.dp)
+    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 21.dp else 17.dp)
     val contentPadding = when (layout) {
-        ToolTileLayout.Prominent -> 8.dp
-        ToolTileLayout.Compact -> 5.dp
-        ToolTileLayout.Wide -> 6.dp
+        ToolTileLayout.Prominent -> 7.dp
+        ToolTileLayout.Compact -> 4.dp
+        ToolTileLayout.Wide -> 5.dp
     }
     Box(
         modifier = modifier
@@ -3629,27 +3721,27 @@ fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLay
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text(item.title, fontSize = 13.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false)
-                        Spacer(Modifier.height(4.dp))
-                        ToolAssetIcon(item.iconRes, 72.dp)
+                        Text(item.title, fontSize = 13.2.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false)
+                        Spacer(Modifier.height(3.dp))
+                        ToolAssetIcon(item.iconRes, 66.dp)
                     }
                 }
                 ToolTileLayout.Compact -> {
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        ToolAssetIcon(item.iconRes, 38.dp)
+                        ToolAssetIcon(item.iconRes, 34.dp)
                         Spacer(Modifier.height(1.dp))
-                        Text(item.title, fontSize = 10.2.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        Text(item.title, fontSize = 9.9.sp, lineHeight = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 ToolTileLayout.Wide -> {
                     Row(
-                        Modifier.fillMaxSize().padding(horizontal = 3.dp),
+                        Modifier.fillMaxSize().padding(horizontal = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Text(item.title, fontSize = 12.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                        Spacer(Modifier.width(8.dp))
-                        ToolAssetIcon(item.iconRes, 36.dp)
+                        Text(item.title, fontSize = 12.sp, lineHeight = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(7.dp))
+                        ToolAssetIcon(item.iconRes, 32.dp)
                     }
                 }
             }
@@ -7391,6 +7483,12 @@ fun todayDateString(): String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault
 
 fun normalizeHomeOrder(raw: String): List<String> {
     val all = listOf("score", "mini", "exit", "vpn", "devices", "today")
+    val parsed = raw.split(",").map { it.trim() }.filter { it in all }.distinct()
+    return (parsed + all.filter { it !in parsed }).take(all.size)
+}
+
+fun normalizeToolSectionOrder(raw: String): List<String> {
+    val all = listOf("net", "public", "device")
     val parsed = raw.split(",").map { it.trim() }.filter { it in all }.distinct()
     return (parsed + all.filter { it !in parsed }).take(all.size)
 }

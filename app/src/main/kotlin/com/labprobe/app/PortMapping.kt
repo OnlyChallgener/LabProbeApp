@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -51,6 +52,8 @@ private val PortCyan = Color(0xFF13B8D4)
 private val PortGreen = Color(0xFF12B981)
 private val PortRed = Color(0xFFEF5350)
 private val PortSlate = Color(0xFF718096)
+private val PortSheetBg = Color(0xFFFFFFFF)
+private val PortPopupBg = Color(0xFFFFFFFF)
 
  data class PortMapRuntime(
     val state: String = "stopped",
@@ -546,7 +549,7 @@ private fun PortMapEditorSheet(
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFFF7FAFE), dragHandle = { BottomSheetDefaults.DragHandle() }) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = PortSheetBg, dragHandle = { BottomSheetDefaults.DragHandle() }) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 34.dp),
             verticalArrangement = Arrangement.spacedBy(11.dp)
@@ -640,24 +643,29 @@ private fun validateDraft(draft: PortMapDraft, range: IntRange): String {
 
 @Composable
 private fun PortMapFormCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = RoundedCornerShape(23.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE9F0F8)), shadowElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    Surface(shape = RoundedCornerShape(22.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE7EEF7)), shadowElevation = 1.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
     }
 }
 
 @Composable
 private fun PortMapTextField(label: String, value: String, hint: String, keyboardType: KeyboardType = KeyboardType.Text, onChange: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(78.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+        Text(label, Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
         OutlinedTextField(
             value = value,
             onValueChange = onChange,
             singleLine = true,
-            placeholder = { Text(hint, fontSize = 11.sp) },
+            placeholder = { Text(hint, fontSize = 10.8.sp) },
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             shape = RoundedCornerShape(15.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold),
-            modifier = Modifier.weight(1f).height(50.dp)
+            textStyle = LocalTextStyle.current.copy(fontSize = 12.3.sp, fontWeight = FontWeight.SemiBold),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = Color.White,
+                unfocusedContainerColor = Color.White,
+                disabledContainerColor = Color.White
+            ),
+            modifier = Modifier.weight(1f).height(48.dp)
         )
     }
 }
@@ -665,7 +673,7 @@ private fun PortMapTextField(label: String, value: String, hint: String, keyboar
 @Composable
 private fun PortMapReadOnlyRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(78.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+        Text(label, Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
         Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PortBlue)
     }
 }
@@ -675,7 +683,7 @@ private fun PortMapReadOnlyRow(label: String, value: String) {
 private fun PortMapChoice(label: String, value: String, options: List<String>, onPick: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(78.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+        Text(label, Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
             OutlinedTextField(
                 value = value,
@@ -684,11 +692,34 @@ private fun PortMapChoice(label: String, value: String, options: List<String>, o
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                 shape = RoundedCornerShape(15.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(50.dp)
+                textStyle = LocalTextStyle.current.copy(fontSize = 12.3.sp, fontWeight = FontWeight.SemiBold),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White,
+                    disabledContainerColor = Color.White
+                ),
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(48.dp)
             )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { item -> DropdownMenuItem(text = { Text(item) }, onClick = { onPick(item); expanded = false }) }
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                containerColor = PortPopupBg,
+                tonalElevation = 0.dp,
+                shadowElevation = 6.dp,
+                shape = RoundedCornerShape(18.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8EEF6))
+            ) {
+                options.forEach { item ->
+                    DropdownMenuItem(
+                        text = { Text(item, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = MenuDefaults.itemColors(
+                            textColor = MaterialTheme.colorScheme.onSurface,
+                            leadingIconColor = MaterialTheme.colorScheme.onSurface,
+                            trailingIconColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        onClick = { onPick(item); expanded = false }
+                    )
+                }
             }
         }
     }
@@ -698,20 +729,36 @@ private fun PortMapChoice(label: String, value: String, options: List<String>, o
 private fun PortMapDevicePicker(devices: List<DeviceItem>, onPick: (DeviceItem) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("目标设备", Modifier.width(78.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
+        Text("目标设备", Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
         Box(Modifier.weight(1f)) {
-            OutlinedButton(onClick = { expanded = true }, shape = RoundedCornerShape(15.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                Icon(Icons.Rounded.Devices, null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("从在线设备填充", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = { expanded = true }, shape = RoundedCornerShape(15.dp), modifier = Modifier.fillMaxWidth().height(46.dp)) {
+                Icon(Icons.Rounded.Devices, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("从在线设备填充", fontSize = 11.3.sp, fontWeight = FontWeight.Bold)
             }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.heightIn(max = 340.dp)) {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.heightIn(max = 340.dp),
+                containerColor = PortPopupBg,
+                tonalElevation = 0.dp,
+                shadowElevation = 6.dp,
+                shape = RoundedCornerShape(18.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8EEF6))
+            ) {
                 devices.forEach { device ->
                     DropdownMenuItem(
                         text = {
-                            Column {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(device.remark.ifBlank { device.name }, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Text("${device.ip} · ${device.mac}", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f))
+                                Text("${device.ip} · ${device.mac}", fontSize = 9.4.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f))
                             }
                         },
+                        colors = MenuDefaults.itemColors(
+                            textColor = MaterialTheme.colorScheme.onSurface,
+                            leadingIconColor = MaterialTheme.colorScheme.onSurface,
+                            trailingIconColor = MaterialTheme.colorScheme.onSurface
+                        ),
                         onClick = { onPick(device); expanded = false }
                     )
                 }
@@ -738,7 +785,7 @@ private fun PortMapDetailSheet(
             delay(10_000)
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFFF7FAFE), dragHandle = { BottomSheetDefaults.DragHandle() }) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = PortSheetBg, dragHandle = { BottomSheetDefaults.DragHandle() }) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 34.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -759,12 +806,12 @@ private fun PortMapDetailSheet(
             }
 
             PortMapFormCard {
-                Text("流量统计", fontSize = 13.5.sp, fontWeight = FontWeight.Black)
-                Row {
+                Text("流量统计", fontSize = 13.sp, fontWeight = FontWeight.Black)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
                     PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
                 }
-                Row {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PortMapBigMetric("当前连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
                     PortMapBigMetric("最大连接", rule.maxConnections.toString(), PortSlate, Modifier.weight(1f))
                 }
@@ -772,10 +819,10 @@ private fun PortMapDetailSheet(
 
             PortMapFormCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = 13.5.sp, fontWeight = FontWeight.Black)
-                    Text("60 秒采样", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f))
+                    Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Black)
+                    Text("60 秒采样", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f))
                 }
-                PortMapTrafficChart(history, Modifier.fillMaxWidth().height(190.dp))
+                PortMapTrafficChart(history, Modifier.fillMaxWidth().height(164.dp))
             }
 
             if (rule.runtime.lastError.isNotBlank()) {
@@ -813,16 +860,24 @@ private fun PortMapDetailSheet(
 @Composable
 private fun PortMapDetailLine(label: String, value: String, color: Color = MaterialTheme.colorScheme.onSurface) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(74.dp), fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontWeight = FontWeight.Bold)
-        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 11.5.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(label, Modifier.width(76.dp), fontSize = 10.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontWeight = FontWeight.Bold)
+        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 11.2.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun PortMapBigMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier.padding(vertical = 4.dp)) {
-        Text(label, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), fontWeight = FontWeight.Bold)
-        Text(value, fontSize = 17.sp, color = color, fontWeight = FontWeight.Black)
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = color.copy(alpha = 0.045f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.10f))
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(1.dp))
+            Text(value, fontSize = 15.2.sp, color = color, fontWeight = FontWeight.Black)
+        }
     }
 }
 
@@ -837,33 +892,67 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
         }.takeLast(60)
     }
     if (rates.size < 2) {
-        Box(modifier.background(Color(0xFFF4F8FC), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
-            Text("等待流量采样", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f), fontSize = 10.5.sp)
+        Box(modifier.background(Color(0xFFF7FAFE), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
+            Text("等待流量采样", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f), fontSize = 10.2.sp)
         }
         return
     }
     val maxValue = rates.maxOf { max(it.second, it.third) }.coerceAtLeast(1f)
-    Canvas(modifier.background(Color(0xFFF7FAFE), RoundedCornerShape(16.dp)).padding(10.dp)) {
+    Canvas(modifier.background(Color(0xFFF8FBFF), RoundedCornerShape(16.dp)).padding(horizontal = 10.dp, vertical = 12.dp)) {
         val w = size.width
         val h = size.height
-        repeat(4) { i ->
-            val y = h * i / 3f
-            drawLine(Color(0xFFCBD5E1).copy(alpha = .35f), Offset(0f, y), Offset(w, y), 1.dp.toPx())
+        val usableHeight = h - 6.dp.toPx()
+
+        repeat(5) { i ->
+            val y = usableHeight * i / 4f
+            drawLine(Color(0xFFCBD5E1).copy(alpha = .26f), Offset(0f, y), Offset(w, y), 0.8.dp.toPx())
         }
-        fun linePath(index: Int): Path = Path().apply {
-            rates.forEachIndexed { i, row ->
-                val value = if (index == 1) row.second else row.third
-                val x = if (rates.lastIndex == 0) 0f else w * i / rates.lastIndex.toFloat()
-                val y = h - (value / maxValue) * (h - 5.dp.toPx())
-                if (i == 0) moveTo(x, y) else lineTo(x, y)
+
+        fun seriesPoints(selector: (Triple<Long, Float, Float>) -> Float): List<Offset> = rates.mapIndexed { i, row ->
+            val value = selector(row)
+            val x = if (rates.lastIndex == 0) 0f else w * i / rates.lastIndex.toFloat()
+            val y = usableHeight - (value / maxValue) * (usableHeight - 2.dp.toPx())
+            Offset(x, y)
+        }
+
+        fun smoothPath(points: List<Offset>): Path = Path().apply {
+            if (points.isEmpty()) return@apply
+            moveTo(points.first().x, points.first().y)
+            if (points.size == 1) return@apply
+            for (i in 1 until points.size) {
+                val prev = points[i - 1]
+                val cur = points[i]
+                val midX = (prev.x + cur.x) / 2f
+                val midY = (prev.y + cur.y) / 2f
+                quadraticBezierTo(prev.x, prev.y, midX, midY)
             }
+            lineTo(points.last().x, points.last().y)
         }
-        drawPath(linePath(1), PortBlue, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
-        drawPath(linePath(2), PortGreen, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+
+        fun areaPath(points: List<Offset>): Path = Path().apply {
+            if (points.isEmpty()) return@apply
+            addPath(smoothPath(points))
+            lineTo(points.last().x, usableHeight)
+            lineTo(points.first().x, usableHeight)
+            close()
+        }
+
+        val upPoints = seriesPoints { it.second }
+        val downPoints = seriesPoints { it.third }
+        val upLine = smoothPath(upPoints)
+        val downLine = smoothPath(downPoints)
+
+        drawPath(areaPath(upPoints), color = PortBlue.copy(alpha = 0.05f))
+        drawPath(areaPath(downPoints), color = PortGreen.copy(alpha = 0.05f))
+        drawPath(upLine, PortBlue, style = Stroke(1.35.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawPath(downLine, PortGreen, style = Stroke(1.35.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+
+        upPoints.lastOrNull()?.let { drawCircle(PortBlue, radius = 2.3.dp.toPx(), center = it) }
+        downPoints.lastOrNull()?.let { drawCircle(PortGreen, radius = 2.3.dp.toPx(), center = it) }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
         ChartLegendDot(PortBlue, "上传")
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(14.dp))
         ChartLegendDot(PortGreen, "下载")
     }
 }
@@ -871,7 +960,7 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
 @Composable
 private fun ChartLegendDot(color: Color, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(7.dp).background(color, CircleShape)); Spacer(Modifier.width(4.dp)); Text(text, fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .5f))
+        Box(Modifier.size(6.dp).background(color, CircleShape)); Spacer(Modifier.width(4.dp)); Text(text, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .5f))
     }
 }
 
