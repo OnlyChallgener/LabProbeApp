@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.AssistChip
@@ -40,6 +43,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+val LAB_POPUP_SURFACE = Color(0xFFFBFEFF)
+val LAB_POPUP_SUBTLE = Color(0xFFF3F8FB)
+val LAB_POPUP_BORDER = Color(0xFFE2ECF3)
+val LAB_POPUP_SCRIM = Color(0xFF0F172A)
+val LAB_POPUP_HANDLE = Color(0xFF1E293B)
+
 @Composable
 fun LabCard(
     modifier: Modifier = Modifier,
@@ -50,8 +59,8 @@ fun LabCard(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = shape,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
-        border = BorderStroke(1.dp, accent.copy(alpha = .08f)),
+        color = LAB_POPUP_SURFACE,
+        border = BorderStroke(1.dp, LAB_POPUP_BORDER),
         shadowElevation = 1.dp,
         tonalElevation = 0.dp
     ) {
@@ -105,8 +114,8 @@ fun LabSection(
         }
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = .72f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = .06f))
+            color = LAB_POPUP_SUBTLE,
+            border = BorderStroke(1.dp, LAB_POPUP_BORDER)
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
         }
@@ -158,18 +167,40 @@ fun LabActionChip(text: String, color: Color, modifier: Modifier = Modifier, onC
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LabBottomSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scrollState = rememberScrollState()
+    val contentModifier = if (scrollable) {
+        Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.88f)
+            .verticalScroll(scrollState)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
-        containerColor = MaterialTheme.colorScheme.surface
+        sheetGesturesEnabled = !scrollable,
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        containerColor = LAB_POPUP_SURFACE,
+        scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 2.dp)
+                    .width(38.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(LAB_POPUP_HANDLE.copy(alpha = .82f))
+            )
+        }
     ) {
         Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+            contentModifier,
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content
         )

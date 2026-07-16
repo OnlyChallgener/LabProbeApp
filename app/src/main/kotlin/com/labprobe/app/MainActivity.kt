@@ -31,6 +31,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
@@ -68,9 +69,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -78,6 +82,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -85,6 +90,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
@@ -139,10 +145,21 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.17"
-    const val CODE = 119
+    const val NAME = "0.9.23"
+    const val CODE = 125
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
+        "v0.9.23 build125 · 端口映射交互优化" to listOf(
+            "修复端口映射编辑页弹出层偏粉问题，统一为白色卡片弹层",
+            "优化端口映射详情页流量统计与吞吐图，数值更紧凑、曲线更细更顺滑",
+            "工具页三块卡片去标题、缩矮并支持长按拖动排序；出口与路由图标可直达端口映射",
+            "6→6 支持 MAC + IPv6 后缀动态解析，适应家庭 IPv6 前缀变化",
+            "支持启停、有效期、连接数、上下行流量与近一小时吞吐图"
+        ),
+        "v0.9.21 build123 · IPv6 与今日时长修复" to listOf(
+            "NAS IPv6 优先尊重 Hub 本机主地址，不再被历史 EUI-64 邻居地址覆盖",
+            "今日流量排行显示当天累计在线时长，不再显示设备总在线时长"
+        ),
         "v0.9.17 build118 · 漫游波形细化 / 双 Ping" to listOf(
             "路由器+外网模式下，延迟图同时显示网关与外网两条波形",
             "丢包标记改为底部超短超细红线，AP/Wi‑Fi 切换线从底部连接到当时波形点",
@@ -238,6 +255,8 @@ class AppPrefs(context: Context) {
 
     var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"
         set(v) = sp.edit().putString("home_order", v).apply()
+    var toolSectionOrder: String get() = sp.getString("tool_section_order", "net,public,device") ?: "net,public,device"
+        set(v) = sp.edit().putString("tool_section_order", v).apply()
     var privacyMode: Boolean get() = sp.getBoolean("privacy_mode", false)
         set(v) = sp.edit().putBoolean("privacy_mode", v).apply()
 
@@ -297,6 +316,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("cache_online_devices", v).apply()
     var cacheEvents: String get() = sp.getString("cache_events", "") ?: ""
         set(v) = sp.edit().putString("cache_events", v).apply()
+    var eventNotificationBaselineReady: Boolean get() = sp.getBoolean("event_notification_baseline_ready", false)
+        set(v) = sp.edit().putBoolean("event_notification_baseline_ready", v).apply()
     var wolDevicesJson: String get() = sp.getString("wol_devices_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("wol_devices_v1", v).apply()
     var deviceOverridesJson: String get() = sp.getString("device_overrides_v1", "[]") ?: "[]"
@@ -772,7 +793,8 @@ data class NatRunResult(
     val serverUsed: String? = null
 )
 
-class AppState(private val prefs: AppPrefs) {
+class AppState(private val prefs: AppPrefs, context: Context) {
+    private val appContext = context.applicationContext
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
     var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
     var devices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), deviceOverrides))
@@ -821,6 +843,7 @@ class AppState(private val prefs: AppPrefs) {
     }
 
     private suspend fun fetchData(api: HubApi) {
+        val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
         val stRoot = api.getStatus()
         val devWatched = api.getDevices(false)
         val devOnline = api.getDevices(true)
@@ -828,10 +851,22 @@ class AppState(private val prefs: AppPrefs) {
         status = stRoot
         val devOnlineWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devOnline), deviceOverrides)
         val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
-        val mergedDevices = applyDeviceOverrides(mergeDeviceCache(devices, devWatchedWithIpv6), deviceOverrides)
+        val mergedDevices = preserveFollowedDeviceSnapshots(
+            base = mergeDeviceCache(devices, devWatchedWithIpv6),
+            previous = devices,
+            online = devOnlineWithIpv6,
+            overrides = deviceOverrides
+        )
         devices = mergedDevices
         onlineDevices = devOnlineWithIpv6
         events = evs
+        if (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty()) {
+            val newEvents = evs.filter { eventNotificationIdentity(it) !in previousEventKeys }
+            EventNotificationCenter.notifyNewEvents(appContext, newEvents)
+        } else {
+            // 首次成功同步只建立基线，避免安装后把整段历史一次性弹出。
+        }
+        prefs.eventNotificationBaselineReady = true
         prefs.cacheStatus = stRoot.toString()
         // 保存合并后的关注终端缓存，而不是只保存 Hub 本次返回值。
         // 这样离线设备在 Hub 短时间字段缺失、APP 重启后，仍能保留最后 IP / SSID / 频段 / 速率 / 信号。
@@ -848,17 +883,25 @@ class AppState(private val prefs: AppPrefs) {
         message = "Hub 设置已变更，请测试或刷新"
     }
 
-    fun saveDeviceOverride(mac: String, remark: String, typeInput: String, wolEnabledOverride: Boolean?) {
+    fun saveDeviceOverride(
+        mac: String,
+        remark: String,
+        typeInput: String,
+        wolEnabledOverride: Boolean?,
+        followedOverride: Boolean? = null
+    ) {
         val clean = cleanMac(mac)
         if (!isValidMac(clean)) {
             message = "MAC 地址无效，未保存设备备注"
             return
         }
         val normalizedType = normalizeDeviceTypeToken(typeInput).ifBlank { typeInput.trim() }
+        val previous = deviceOverrides.firstOrNull { it.mac.equals(clean, ignoreCase = true) }
         val item = DeviceOverrideConfig(
             mac = clean,
             remark = remark.trim(),
             typeId = normalizedType,
+            followedOverride = followedOverride ?: previous?.followedOverride,
             wolEnabledOverride = wolEnabledOverride,
             updatedAt = System.currentTimeMillis()
         )
@@ -866,7 +909,28 @@ class AppState(private val prefs: AppPrefs) {
         prefs.deviceOverridesJson = deviceOverridesToJson(deviceOverrides)
         devices = applyDeviceOverrides(devices, deviceOverrides)
         onlineDevices = applyDeviceOverrides(onlineDevices, deviceOverrides)
+        if (item.followedOverride == true) {
+            val snapshot = (onlineDevices + devices).firstOrNull { it.mac.equals(clean, ignoreCase = true) }
+            if (snapshot != null) {
+                devices = listOf(snapshot) + devices.filterNot { it.mac.equals(clean, ignoreCase = true) }
+            }
+        }
+        prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
         message = "已保存设备备注：${item.remark.ifBlank { clean }}"
+    }
+
+    fun deleteDeviceOverride(mac: String) {
+        val clean = cleanMac(mac)
+        deviceOverrides = deviceOverrides.filterNot { it.mac.equals(clean, ignoreCase = true) }
+        prefs.deviceOverridesJson = deviceOverridesToJson(deviceOverrides)
+        devices = devices.map { d ->
+            if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
+        }
+        onlineDevices = onlineDevices.map { d ->
+            if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
+        }
+        prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
+        message = "已删除设备本地设置"
     }
 
     suspend fun wakeDevice(ctx: Context, device: DeviceItem): String {
@@ -951,9 +1015,10 @@ class AppState(private val prefs: AppPrefs) {
 fun LabProbeApp(prefs: AppPrefs) {
     var route by remember { mutableStateOf("home") }
     var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
-    val state = remember { AppState(prefs) }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val state = remember { AppState(prefs, context) }
+    val scope = rememberCoroutineScope()
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
     var latestUpdate by remember { mutableStateOf<GitHubUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -984,6 +1049,12 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
 
     LaunchedEffect(Unit) {
+        EventNotificationCenter.ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         state.refreshAll()
         delay(1500L)
         updateChecking = true
@@ -1021,13 +1092,15 @@ fun LabProbeApp(prefs: AppPrefs) {
         val normalized = when {
             route.startsWith("tool_") -> "tools"
             route == "daily" -> "events"
+            route == "device_traffic" -> "devices"
             else -> route
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
         val navigate: (String) -> Unit = { target -> route = target }
-        BackHandler(route.startsWith("tool_") || route == "daily") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "device_traffic") {
             route = when (route) {
                 "daily" -> "events"
+                "device_traffic" -> "devices"
                 "tool_nat_history" -> "tool_nat"
                 else -> "tools"
             }
@@ -1053,7 +1126,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                     ) { r ->
                         when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
-                        "devices" -> DevicesScreen(state, topNav)
+                        "devices" -> DevicesScreen(state, topNav) { route = "device_traffic" }
+                        "device_traffic" -> TodayTrafficScreen(state) { route = "devices" }
                         "tools" -> ToolsHomeScreen(prefs, topNav) { route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
@@ -1070,7 +1144,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_roam" -> WifiRoamingScreen(prefs) { route = "tools" }
                         "tool_mtu" -> MtuScreen(prefs) { route = "tools" }
                         "tool_dns_quality" -> DnsQualityScreen(prefs) { route = "tools" }
-                        "tool_service" -> ServiceMonitorScreen(prefs) { route = "tools" }
+                        "tool_portmap" -> PortMappingScreen(prefs) { route = "tools" }
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         }
                     }
@@ -1317,8 +1391,8 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-            tonalElevation = 6.dp,
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
             shadowElevation = 10.dp,
             modifier = Modifier.widthIn(min = 230.dp, max = 340.dp).padding(vertical = 6.dp)
         ) {
@@ -1341,9 +1415,9 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
 
 @Composable
 fun labOutlinedColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = MaterialTheme.colorScheme.surface,
-    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-    disabledContainerColor = MaterialTheme.colorScheme.surface,
+    focusedContainerColor = LAB_POPUP_SURFACE,
+    unfocusedContainerColor = LAB_POPUP_SURFACE,
+    disabledContainerColor = LAB_POPUP_SURFACE,
     focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.58f),
     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.32f),
     focusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -1401,7 +1475,7 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
                 readOnly = true,
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(24.dp),
                 textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
                 colors = labOutlinedColors(),
                 modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
@@ -1409,9 +1483,9 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                shape = RoundedCornerShape(22.dp),
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-                tonalElevation = 6.dp,
+                shape = RoundedCornerShape(24.dp),
+                containerColor = LAB_POPUP_SURFACE,
+                tonalElevation = 0.dp,
                 shadowElevation = 10.dp
             ) {
                 options.forEach { option ->
@@ -1513,9 +1587,9 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(22.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-            tonalElevation = 6.dp,
+            shape = RoundedCornerShape(24.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
             shadowElevation = 10.dp
         ) {
             options.forEach { option ->
@@ -1597,7 +1671,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                 Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
@@ -1682,8 +1756,8 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
-            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(60.dp))
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
+            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(24.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(60.dp))
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
                 options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
             }
         }
@@ -1945,7 +2019,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
             }
         },
         shape = RoundedCornerShape(30.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp
     )
 
@@ -1968,7 +2042,7 @@ fun UpdateDialogCard(
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(30.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp,
         title = { Text(if (info.hasUpdate) "发现新版本" else "版本更新", fontWeight = FontWeight.Black, fontSize = 21.sp) },
         text = {
@@ -2105,8 +2179,8 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(24.dp),
-            containerColor = Color.White.copy(alpha = 0.995f),
-            tonalElevation = 6.dp,
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
             shadowElevation = 10.dp,
             modifier = Modifier.widthIn(min = 156.dp).padding(vertical = 6.dp)
         ) {
@@ -2144,7 +2218,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         buildVpnRowsForHome(data, nasV6, state.events)
     }
     val onlineCount = state.onlineDevices.size
-    val watchedCount = state.devices.size
+    val watchedCount = remember(state.devices) { followedDeviceList(state.devices).size }
     val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
     val vpnOk = vpnRows.isNotEmpty()
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
@@ -2226,7 +2300,13 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             modifier = Modifier.weight(1f).clickable { onNavigate("events") }
                         )
                     }
-                    "exit" -> HealthExitCard(nas, router, privacyMode) { onNavigate("tool_ping") }
+                    "exit" -> HealthExitCard(
+                        nas = nas,
+                        router = router,
+                        privacyMode = privacyMode,
+                        onClick = { onNavigate("tool_ping") },
+                        onIconClick = { onNavigate("tool_portmap") }
+                    )
                     "vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(
                         rows = vpnRows,
                         privacyMode = privacyMode,
@@ -2476,9 +2556,14 @@ fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector
 }
 
 @Composable
-fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color) {
+fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color, onIconClick: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+        val iconModifier = if (onIconClick != null) {
+            Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)).clickable { onIconClick() }
+        } else {
+            Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f))
+        }
+        Box(iconModifier, contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(10.dp))
@@ -2509,9 +2594,9 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 }
 
 @Composable
-fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}) {
+fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
     HealthCard(Modifier.clickable { onClick() }) {
-        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9))
+        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
         Spacer(Modifier.height(13.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
         Spacer(Modifier.height(9.dp))
@@ -2580,7 +2665,7 @@ fun HealthDeviceLine(d: DeviceItem) {
             Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
-                    cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                    cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
                     cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
                 ).joinToString(" · ")
             } else {
@@ -2825,18 +2910,25 @@ fun StatusPill(label: String, value: String, color: Color) {
 }
 
 @Composable
-fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
+fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
     var mode by remember { mutableStateOf("watch") }
     var detailMac by remember { mutableStateOf<String?>(null) }
-    val list = if (mode == "online") state.onlineDevices else state.devices
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
+    val followed = remember(shared) { followedDeviceList(shared) }
+    val list = if (mode == "online") state.onlineDevices else followed
     val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
     val detailDevice = remember(detailMac, shared) { detailMac?.let { mac -> shared.firstOrNull { it.mac.equals(mac, ignoreCase = true) } } }
-    ExpressiveCard("终端同步", "${if (mode == "online") "全部在线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") state.wolDevices.size else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
+    ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
-            FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("全部在线", fontSize = 12.sp) })
+            FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线终端", fontSize = 12.sp) })
             FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
+            FilterChip(
+                selected = false,
+                onClick = onOpenTraffic,
+                label = { Text("今日流量", fontSize = 12.sp) },
+                leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) }
+            )
         }
         Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -2848,6 +2940,244 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit) = ScreenShell
     detailDevice?.let { d -> LabDeviceDetailSheet(state = state, device = d, onDismiss = { detailMac = null }) }
 }
 
+private data class TodayTrafficRankItem(
+    val device: DeviceItem,
+    val uploadBytes: Long,
+    val downloadBytes: Long
+) {
+    val totalBytes: Long get() = uploadBytes + downloadBytes
+}
+
+@Composable
+fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
+    title = "今日流量",
+    subtitle = "今日设备上网用量排名",
+    onBack = onBack
+) {
+    var descending by remember { mutableStateOf(true) }
+    val traffic = remember(state.devices, state.onlineDevices) {
+        mergeSharedDeviceState(state.devices, state.onlineDevices)
+            .map { device ->
+                TodayTrafficRankItem(
+                    device = device,
+                    uploadBytes = parseDeviceTrafficBytes(device.todayUpload),
+                    downloadBytes = parseDeviceTrafficBytes(device.todayDownload)
+                )
+            }
+            .filter { item -> item.device.todayUpload.isNotBlank() || item.device.todayDownload.isNotBlank() }
+            .sortedByDescending(TodayTrafficRankItem::totalBytes)
+    }
+    val totalUpload = remember(traffic) { traffic.sumOf(TodayTrafficRankItem::uploadBytes) }
+    val totalDownload = remember(traffic) { traffic.sumOf(TodayTrafficRankItem::downloadBytes) }
+    val totalTraffic = totalUpload + totalDownload
+    val ranked = remember(traffic, descending) {
+        traffic.mapIndexed { index, item -> (index + 1) to item }
+            .let { rankedItems -> if (descending) rankedItems else rankedItems.asReversed() }
+    }
+
+    TodayTrafficSummaryCard(
+        uploadBytes = totalUpload,
+        downloadBytes = totalDownload,
+        onlineCount = traffic.count { it.device.online }
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        shadowElevation = 1.dp
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("今日设备上网流量占比排行榜", fontSize = 14.5.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black)
+                    Text("按设备今日上传与下载总量统计", fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f))
+                }
+                TrafficSortButton("升序", selected = !descending) { descending = false }
+                Spacer(Modifier.width(4.dp))
+                TrafficSortButton("降序", selected = descending) { descending = true }
+            }
+
+            if (ranked.isEmpty()) {
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 34.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        Modifier.size(48.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF14B8A6).copy(alpha = .10f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.DataUsage, null, tint = Color(0xFF14B8A6), modifier = Modifier.size(25.dp))
+                    }
+                    Text("暂无今日流量数据", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                    Text("刷新终端数据后会自动生成用量排名", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp)
+                }
+            } else {
+                ranked.forEachIndexed { index, rankedItem ->
+                    TodayTrafficRankRow(
+                        rank = rankedItem.first,
+                        item = rankedItem.second,
+                        share = if (totalTraffic > 0L) rankedItem.second.totalBytes.toFloat() / totalTraffic.toFloat() else 0f
+                    )
+                    if (index < ranked.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .055f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayTrafficSummaryCard(uploadBytes: Long, downloadBytes: Long, onlineCount: Int) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        shadowElevation = 1.dp
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 17.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(54.dp).clip(RoundedCornerShape(20.dp)).background(
+                    Brush.linearGradient(listOf(Color(0xFF0F766E).copy(alpha = .15f), Color(0xFF14B8A6).copy(alpha = .06f)))
+                ),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF123B4A)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.DataUsage, null, tint = Color(0xFF5EEAD4), modifier = Modifier.size(22.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("今日设备上网总流量", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f))
+                    Spacer(Modifier.weight(1f))
+                    Surface(shape = RoundedCornerShape(99.dp), color = Color(0xFF22C55E).copy(alpha = .11f)) {
+                        Text("$onlineCount 台在线", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color(0xFF16A34A), fontSize = 9.5.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("下载/", fontSize = 12.sp, color = Color(0xFF0EA5E9), fontWeight = FontWeight.Black)
+                    Text(formatTraffic(downloadBytes), fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Spacer(Modifier.width(10.dp))
+                    Box(Modifier.width(1.dp).height(21.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .09f)))
+                    Spacer(Modifier.width(10.dp))
+                    Text("上传/", fontSize = 12.sp, color = Color(0xFF22C55E), fontWeight = FontWeight.Black)
+                    Text(formatTraffic(uploadBytes), fontSize = 18.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrafficSortButton(text: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(99.dp), color = if (selected) Color(0xFF14B8A6).copy(alpha = .12f) else Color.Transparent) {
+        Text(
+            text,
+            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+            color = if (selected) Color(0xFF0F9F93) else MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
+            fontWeight = FontWeight.Black,
+            fontSize = 10.5.sp
+        )
+    }
+}
+
+@Composable
+private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Float) {
+    val device = item.device
+    val profile = remember(device) { inferDeviceProfile(device) }
+    val progress by animateFloatAsState(share.coerceIn(0f, 1f), label = "trafficShare")
+    val percent = (share.coerceIn(0f, 1f) * 100f).roundToInt()
+    val rankColor = when (rank) {
+        1 -> Color(0xFFF59E0B)
+        2 -> Color(0xFF94A3B8)
+        3 -> Color(0xFFF97316)
+        else -> Color(0xFF14B8A6)
+    }
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            modifier = Modifier.size(30.dp),
+            shape = CircleShape,
+            color = rankColor.copy(alpha = if (rank <= 3) .16f else .08f),
+            border = BorderStroke(1.dp, rankColor.copy(alpha = .16f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(rank.toString(), color = rankColor, fontSize = 12.sp, fontWeight = FontWeight.Black)
+            }
+        }
+        Spacer(Modifier.width(7.dp))
+        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 37)
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    device.remark.ifBlank { device.name.ifBlank { device.mac } },
+                    Modifier.weight(1f),
+                    fontSize = 13.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(6.dp))
+                Surface(shape = RoundedCornerShape(99.dp), color = if (device.online) Color(0xFF22C55E).copy(alpha = .11f) else Color(0xFF94A3B8).copy(alpha = .11f)) {
+                    Text(
+                        if (device.online) "在线" else "离线",
+                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        color = if (device.online) Color(0xFF16A34A) else Color(0xFF64748B),
+                        fontSize = 8.8.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.ArrowDownward, null, tint = Color(0xFF0EA5E9), modifier = Modifier.size(13.dp))
+                Text(formatTraffic(item.downloadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                Spacer(Modifier.width(7.dp))
+                Icon(Icons.Rounded.ArrowUpward, null, tint = Color(0xFF22C55E), modifier = Modifier.size(13.dp))
+                Text(formatTraffic(item.uploadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+            }
+            Text(
+                if (device.todayOnlineDate == java.time.LocalDate.now().toString()) {
+                    cleanApiText(device.todayOnlineDurationText).takeIf { it.isNotBlank() }
+                        ?.let { "今日在线：${formatDurationText(it)}" }
+                        ?: device.todayOnlineDurationSec.takeIf { it > 0L }
+                            ?.let { "今日在线：${formatDurationMs(it * 1000L)}" }
+                        ?: "今日在线：0分"
+                } else "今日在线：0分",
+                fontSize = 9.2.sp,
+                lineHeight = 10.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(Color(0xFFE8EEF4))) {
+                    Box(
+                        Modifier.fillMaxHeight().fillMaxWidth(progress).clip(CircleShape).background(
+                            Brush.horizontalGradient(listOf(Color(0xFF5EEAD4), Color(0xFF2DD4BF)))
+                        )
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text("$percent%", modifier = Modifier.width(29.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontSize = 10.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+}
+
 
 @Composable
 fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = {}) {
@@ -2855,31 +3185,36 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var editingDevice by remember { mutableStateOf(false) }
-    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.osType, d.hostName, d.wolMode, d.connectType, d.ssid, d.band, d.rssi, d.rxrate) { inferDeviceProfile(d) }
+    val profile = remember(d.name, d.remark, d.manualType, d.mac, d.manufacture, d.devType, d.osType, d.hostName, d.wolMode, d.wolEnabledOverride, d.connectType, d.ssid, d.band, d.rssi, d.rxrate) { inferDeviceProfile(d) }
     val wifi = remember(d.ssid, d.band, d.rssi, d.rxrate, d.connectType) { hasWifiInfo(d) }
+    val wolManaged = remember(d.mac, state.wolDevices) { state.wolDevices.any { it.enabled && it.mac.equals(d.mac, ignoreCase = true) } }
     ExpressiveCard(
         title = d.remark.ifBlank { d.name.ifBlank { d.mac } },
-        subtitle = if (wifi) listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ") else "",
+        subtitle = if (wifi) {
+            listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ")
+        } else {
+            listOf(profile.label, "有线设备").filter { it.isNotBlank() }.joinToString(" · ")
+        },
         icon = profile.icon,
         accent = profile.accent,
         iconKey = profile.iconKey,
         headerAction = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = profile.accent.copy(alpha = .10f)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Edit, null, tint = profile.accent, modifier = Modifier.size(15.dp)) }
+                androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = DEVICE_ICON_ACCENT.copy(alpha = .11f)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Edit, null, tint = DEVICE_ICON_ACCENT, modifier = Modifier.size(15.dp)) }
                 }
-                Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFFFE4E6)) {
-                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+                Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)) {
+                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFF64748B), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
                 }
             }
         },
         modifier = Modifier.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
     ) {
         DeviceSmartInfo(d, profile)
-        if (!d.online && profile.wolCandidate) {
+        if (!d.online && wolManaged) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(Modifier.weight(1f), shape = RoundedCornerShape(18.dp), color = profile.accent.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, profile.accent.copy(alpha = .14f))) {
-                    Text("${profile.note} · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Surface(Modifier.weight(1f), shape = RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
+                    Text("已加入 WOL 管理 · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 11.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
                     onClick = {
@@ -2913,30 +3248,27 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
 
 @Composable
 fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
-    val ctx = LocalContext.current
     val ip4 = cleanApiText(d.ip).ifBlank { cleanApiText(d.lastKnownIp()) }.ifBlank { "--" }
-    val v6 = d.ipv6.filter { it.isNotBlank() }.distinct()
+    val v6Pick = remember(d.ipv6, d.ipv6Candidates) { d.pickIpv6() }
     val wifi = hasWifiInfo(d)
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         if (wifi) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
-                val v6Full = bestIpv6ForDisplay(v6)
-                val v6Text = v6Full.ifBlank { "--" }.let { if (it == "--") it else shortIpv6(it) + if (v6.size > 1) " +${v6.size - 1}" else "" }
+                val v6Full = v6Pick.best.orEmpty()
+                val v6Text = v6Full.takeIf { it.isNotBlank() }?.let(::shortIpv6) ?: "--"
                 DeviceMiniMetric("IPv6", v6Text, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), copyValue = v6Full, allowScroll = true)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val radio = listOf(d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "--" }
                 DeviceMiniMetric("链路", radio, Icons.Rounded.Wifi, Color(0xFF22C55E), Modifier.weight(1f), copyValue = radio.takeIf { it != "--" }.orEmpty(), allowScroll = true)
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
-                DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFFF59E0B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true)
+                DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFF64748B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true, valueColor = deviceSignalValueColor(d.rssi))
             }
-            DeviceFooterLine(d = d, profile = profile, showTime = true)
+            DeviceTodayTrafficBar(d)
+            DeviceFooterLine(d = d, showTime = true)
         } else {
-            WiredDeviceInfo(d = d, profile = profile, ip4 = ip4, ipv6List = v6)
-        }
-        if (v6.size > 1) {
-            Text("IPv6 共 ${v6.size} 个：${v6.take(2).joinToString(" · ") { shortIpv6(it) }}${if (v6.size > 2) " · …" else ""}", Modifier.clickable { copy(ctx, v6.joinToString("\n")) }.horizontalScroll(rememberScrollState()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            WiredDeviceInfo(d = d, ip4 = ip4, ipv6Pick = v6Pick)
         }
     }
 }
@@ -2944,10 +3276,10 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
 private fun DeviceItem.lastKnownIp(): String = ip
 
 @Composable
-fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ipv6List: List<String>) {
-    val v6Full = bestIpv6ForDisplay(ipv6List)
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+fun WiredDeviceInfo(d: DeviceItem, ip4: String, ipv6Pick: Ipv6PickResult) {
+    val v6Full = ipv6Pick.best.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DeviceMiniMetric("IPv4", ip4, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), copyValue = cleanApiText(d.ip), allowScroll = true)
             DeviceMiniMetric("MAC", d.mac.ifBlank { "--" }, Icons.Rounded.SettingsEthernet, Color(0xFF64748B), Modifier.weight(1f), copyValue = d.mac, allowScroll = true)
         }
@@ -2960,16 +3292,70 @@ fun WiredDeviceInfo(d: DeviceItem, profile: DeviceVisualProfile, ip4: String, ip
             copyValue = v6Full,
             allowScroll = true
         )
-        DeviceFooterLine(d = d, profile = profile, showTime = false)
+        DeviceTodayTrafficBar(d)
+        DeviceFooterLine(d = d, showTime = false)
     }
 }
 
 @Composable
-fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Boolean) {
+fun DeviceTodayTrafficBar(d: DeviceItem) {
+    val upload = cleanApiText(d.todayUpload)
+    val download = cleanApiText(d.todayDownload)
+    if (upload.isBlank() && download.isBlank()) return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(17.dp),
+        color = Color(0xFF0EA5E9).copy(alpha = .055f),
+        border = BorderStroke(1.dp, Color(0xFF0EA5E9).copy(alpha = .11f))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text("今日流量", fontSize = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
+                Spacer(Modifier.width(6.dp))
+                DeviceTrafficDirection(
+                    label = "上行",
+                    value = upload.ifBlank { "--" },
+                    icon = Icons.Rounded.ArrowUpward,
+                    color = Color(0xFFF59E0B),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.width(1.dp))
+            DeviceTrafficDirection(
+                label = "下行",
+                value = download.ifBlank { "--" },
+                icon = Icons.Rounded.ArrowDownward,
+                color = Color(0xFF06B6D4),
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceTrafficDirection(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(22.dp).clip(RoundedCornerShape(9.dp)).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(13.dp))
+        }
+        Spacer(Modifier.width(5.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 8.7.sp, lineHeight = 9.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), maxLines = 1)
+            Text(value, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .34f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
     val timeText = if (showTime) {
         if (d.online) {
             listOfNotNull(
-                cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
                 cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
             ).joinToString(" · ")
         } else {
@@ -2978,19 +3364,16 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
                 cleanApiText(d.lastSeenAt).takeIf { it.isNotBlank() }?.let { "最后 $it" }
             ).joinToString(" · ")
         }
-    } else "有线设备"
+    } else ""
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = RoundedCornerShape(14.dp), color = profile.accent.copy(alpha = .10f)) {
-            Text(profile.label, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = profile.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
-        }
         if (timeText.isNotBlank()) {
-            Spacer(Modifier.width(8.dp))
             Text(
                 timeText,
-                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (showTime) .54f else .62f),
-                fontSize = 10.8.sp,
+                fontSize = 10.5.sp,
+                lineHeight = 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Clip
@@ -3003,20 +3386,29 @@ fun DeviceFooterLine(d: DeviceItem, profile: DeviceVisualProfile, showTime: Bool
 
 
 @Composable
-fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false) {
+fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false, valueColor: Color? = null) {
     val ctx = LocalContext.current
-    Surface(modifier = modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))) {
-        Row(Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(26.dp).clip(RoundedCornerShape(11.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(15.dp))
+    Surface(modifier = modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }, shape = RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(24.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
             }
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
-                Text(label, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
+                Text(label, fontSize = 9.sp, lineHeight = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
                 val textModifier = if (allowScroll && value != "--") Modifier.horizontalScroll(rememberScrollState()) else Modifier
-                Text(value, modifier = textModifier, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
+                Text(value, modifier = textModifier, fontSize = 10.7.sp, lineHeight = 12.5.sp, fontWeight = FontWeight.Black, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else valueColor ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
             }
         }
+    }
+}
+
+private fun deviceSignalValueColor(raw: String): Color {
+    val dbm = Regex("-?\\d+").find(cleanApiText(raw))?.value?.toIntOrNull() ?: return Color(0xFF334155)
+    return when {
+        dbm <= -85 -> Color(0xFFDC2626)
+        dbm <= -70 -> Color(0xFFF59E0B)
+        else -> Color(0xFF334155)
     }
 }
 
@@ -3039,7 +3431,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
             if (details) {
                 val parts = if (d.online) {
                     listOfNotNull(
-                        cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 $it" },
+                        cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
                         cleanApiText(d.onlineSince).takeIf { it.isNotBlank() }?.let { "上线 $it" }
                     )
                 } else {
@@ -3117,34 +3509,118 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
-    ToolGroupLabel("网络检测")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("延迟测试", "Ping/TCP/HTTP", Icons.Rounded.Speed, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_ping") }
-        ToolHubTile("端口测试", "TCP Connect", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_port") }
+    val toolSections = remember {
+        mapOf(
+            "net" to listOf(
+                ToolMosaicItem("延迟测试", R.drawable.tool_ping_3d, Color(0xFF3B6EEA), "tool_ping"),
+                ToolMosaicItem("端口测试", R.drawable.tool_port_3d, Color(0xFF00A9D6), "tool_port"),
+                ToolMosaicItem("路由追踪", R.drawable.tool_trace_3d, Color(0xFF5269E8), "tool_trace"),
+                ToolMosaicItem("UDP探测", R.drawable.tool_udp_3d, Color(0xFF00B8C8), "tool_udp")
+            ),
+            "public" to listOf(
+                ToolMosaicItem("DNS解析", R.drawable.tool_dns_3d, Color(0xFF426DE6), "tool_dns"),
+                ToolMosaicItem("IPv6可用性", R.drawable.tool_ipv6_3d, Color(0xFF00AFC8), "tool_ipv6"),
+                ToolMosaicItem("NAT检测", R.drawable.tool_nat_3d, Color(0xFF8B5CF6), "tool_nat"),
+                ToolMosaicItem("DNS质量", R.drawable.tool_dns_quality_3d, Color(0xFF9B59F6), "tool_dns_quality")
+            ),
+            "device" to listOf(
+                ToolMosaicItem("无线漫游", R.drawable.tool_roam_3d, Color(0xFF20B879), "tool_roam"),
+                ToolMosaicItem("MTU检测", R.drawable.tool_mtu_3d, Color(0xFF00A9D6), "tool_mtu"),
+                ToolMosaicItem("SSH命令", R.drawable.tool_ssh_3d, Color(0xFF66758E), "tool_ssh"),
+                ToolMosaicItem("端口映射", R.drawable.tool_portmap_3d, Color(0xFF1677F2), "tool_portmap")
+            )
+        )
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("路由追踪", "Traceroute/IP路径", Icons.Rounded.AltRoute, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_trace") }
-        ToolHubTile("UDP探测", "STUN/DNS/NTP", Icons.Rounded.SyncAlt, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_udp") }
+    var toolOrder by remember { mutableStateOf(normalizeToolSectionOrder(prefs.toolSectionOrder)) }
+    fun saveToolOrder(newOrder: List<String>) {
+        val normalized = normalizeToolSectionOrder(newOrder.joinToString(","))
+        toolOrder = normalized
+        prefs.toolSectionOrder = normalized.joinToString(",")
     }
 
-    ToolGroupLabel("解析与公网")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("DNS解析", "A/AAAA/归属", Icons.Rounded.Dns, Color(0xFF2563EB), Modifier.weight(1f)) { open("tool_dns") }
-        ToolHubTile("IPv6可用性", "IPv6/DNS/优先级", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f)) { open("tool_ipv6") }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(220)),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        toolOrder.forEach { key ->
+            val items = toolSections[key] ?: return@forEach
+            ReorderableToolSection(
+                sectionKey = key,
+                order = toolOrder,
+                onOrder = ::saveToolOrder
+            ) {
+                ToolMosaicSection(items = items, open = open)
+            }
+        }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("NAT检测", "RFC5780 / 3489", Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_nat") }
-        ToolHubTile("DNS质量", "多DNS延迟", Icons.Rounded.TravelExplore, Color(0xFF7C3AED), Modifier.weight(1f)) { open("tool_dns_quality") }
+}
+
+@Composable
+fun ReorderableToolSection(sectionKey: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
+    var dragging by remember(sectionKey) { mutableStateOf(false) }
+    var dragY by remember(sectionKey) { mutableStateOf(0f) }
+    val scale by animateFloatAsState(if (dragging) 0.982f else 1f, animationSpec = tween(180), label = "tool-section-scale")
+    val thresholdPx = with(LocalDensity.current) { 138.dp.toPx() }
+
+    fun commitOrder() {
+        val current = order.indexOf(sectionKey)
+        if (current < 0) return
+        val steps = (dragY / thresholdPx).roundToInt().coerceIn(-current, order.lastIndex - current)
+        if (steps == 0) return
+        val next = order.toMutableList()
+        val item = next.removeAt(current)
+        next.add((current + steps).coerceIn(0, next.size), item)
+        onOrder(next)
     }
 
-    ToolGroupLabel("设备与链路")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("无线漫游", "RSSI/AP切换", Icons.Rounded.Wifi, Color(0xFF16A34A), Modifier.weight(1f)) { open("tool_roam") }
-        ToolHubTile("MTU检测", "分片/路径MTU", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9), Modifier.weight(1f)) { open("tool_mtu") }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ToolHubTile("SSH命令", "NAS/路由器", Icons.Rounded.Terminal, Color(0xFF64748B), Modifier.weight(1f)) { open("tool_ssh") }
-        ToolHubTile("服务监控", "TCP/UDP可达", Icons.Rounded.Public, Color(0xFFF59E0B), Modifier.weight(1f)) { open("tool_service") }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .zIndex(if (dragging) 6f else 0f)
+            .offset { IntOffset(0, if (dragging) dragY.roundToInt() else 0) }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                alpha = if (dragging) 0.992f else 1f
+                clip = false
+            }
+            .pointerInput(sectionKey, order) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { dragging = true; dragY = 0f },
+                    onDragEnd = {
+                        commitOrder()
+                        dragging = false
+                        dragY = 0f
+                    },
+                    onDragCancel = { dragging = false; dragY = 0f },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        dragY += dragAmount.y
+                    }
+                )
+            }
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .shadow(if (dragging) 10.dp else 0.dp, RoundedCornerShape(25.dp), clip = false)
+        ) { content() }
+        if (dragging) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                shape = RoundedCornerShape(50),
+                color = Color.White.copy(alpha = 0.98f),
+                shadowElevation = 5.dp
+            ) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.OpenWith, null, tint = Color(0xFF1677F2), modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("长按换位", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFF1677F2))
+                }
+            }
+        }
     }
 }
 
@@ -3170,46 +3646,184 @@ fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Co
     }
 }
 
-@Composable
-fun ToolGroupLabel(text: String) {
-    Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 0.dp))
-}
+data class ToolMosaicItem(
+    val title: String,
+    val iconRes: Int,
+    val color: Color,
+    val route: String
+)
 
 @Composable
-fun ToolHubTile(title: String, subtitle: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun ToolMosaicSection(items: List<ToolMosaicItem>, open: (String) -> Unit) {
+    if (items.size < 4) return
     Surface(
-        modifier = modifier
-            .height(96.dp)
-            .shadow(3.dp, RoundedCornerShape(24.dp), clip = false)
-            .clip(RoundedCornerShape(24.dp))
-            .clickable { onClick() },
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .84f)),
+        modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(25.dp), clip = false),
+        shape = RoundedCornerShape(25.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .92f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 13.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(15.dp)).background(color.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                    Icon(icon, null, tint = color, modifier = Modifier.size(19.dp))
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp)) {
+            Row(Modifier.fillMaxWidth().height(134.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                ToolMosaicTile(
+                    item = items[0],
+                    modifier = Modifier.weight(1.05f).fillMaxHeight(),
+                    layout = ToolTileLayout.Prominent,
+                    onClick = { open(items[0].route) }
+                )
+                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        ToolMosaicTile(items[1], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[1].route) }
+                        ToolMosaicTile(items[2], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[2].route) }
+                    }
+                    ToolMosaicTile(items[3], Modifier.weight(.74f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
                 }
-                Spacer(Modifier.width(9.dp))
-                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                subtitle,
-                fontSize = 10.6.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
+    }
+}
+
+enum class ToolTileLayout { Prominent, Compact, Wide }
+
+@Composable
+fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLayout, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 21.dp else 17.dp)
+    val contentPadding = when (layout) {
+        ToolTileLayout.Prominent -> 7.dp
+        ToolTileLayout.Compact -> 4.dp
+        ToolTileLayout.Wide -> 5.dp
+    }
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = .94f),
+                        item.color.copy(alpha = .085f)
+                    )
+                )
+            )
+            .border(1.dp, item.color.copy(alpha = .10f), shape)
+            .clickable { onClick() }
+    ) {
+        ToolTileBackdrop(item)
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+        ) {
+            when (layout) {
+                ToolTileLayout.Prominent -> {
+                    Column(
+                        Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(item.title, fontSize = 13.2.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false)
+                        Spacer(Modifier.height(3.dp))
+                        ToolAssetIcon(item.iconRes, 66.dp)
+                    }
+                }
+                ToolTileLayout.Compact -> {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        ToolAssetIcon(item.iconRes, 34.dp)
+                        Spacer(Modifier.height(1.dp))
+                        Text(item.title, fontSize = 9.9.sp, lineHeight = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                ToolTileLayout.Wide -> {
+                    Row(
+                        Modifier.fillMaxSize().padding(horizontal = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(item.title, fontSize = 12.sp, lineHeight = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(7.dp))
+                        ToolAssetIcon(item.iconRes, 32.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ToolTileBackdrop(item: ToolMosaicItem) {
+    Canvas(Modifier.fillMaxSize()) {
+        val accent = item.color
+        val thin = 1.25.dp.toPx()
+        val medium = 2.dp.toPx()
+        val motifCenter = Offset(size.width * .68f, size.height * .60f)
+        val motifRadius = size.minDimension * .22f
+
+        drawCircle(accent.copy(alpha = .04f), motifRadius * 1.45f, motifCenter)
+        drawCircle(accent.copy(alpha = .055f), motifRadius, motifCenter, style = Stroke(thin))
+
+        when (item.route) {
+            "tool_ping", "tool_dns_quality" -> {
+                val wave = Path().apply {
+                    moveTo(size.width * .08f, size.height * .68f)
+                    lineTo(size.width * .25f, size.height * .68f)
+                    lineTo(size.width * .35f, size.height * .51f)
+                    lineTo(size.width * .46f, size.height * .76f)
+                    lineTo(size.width * .59f, size.height * .59f)
+                    lineTo(size.width * .92f, size.height * .59f)
+                }
+                drawPath(wave, accent.copy(alpha = .105f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+            "tool_trace", "tool_roam", "tool_ipv6" -> {
+                val points = listOf(
+                    Offset(size.width * .17f, size.height * .70f),
+                    Offset(size.width * .36f, size.height * .43f),
+                    Offset(size.width * .58f, size.height * .65f),
+                    Offset(size.width * .81f, size.height * .31f)
+                )
+                points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .10f), a, b, medium, StrokeCap.Round) }
+                points.forEach { point ->
+                    drawCircle(Color.White.copy(alpha = .72f), 4.5.dp.toPx(), point)
+                    drawCircle(accent.copy(alpha = .15f), 2.7.dp.toPx(), point)
+                }
+            }
+            "tool_port", "tool_udp", "tool_mtu", "tool_nat", "tool_portmap" -> {
+                repeat(3) { index ->
+                    drawArc(
+                        color = accent.copy(alpha = .065f + index * .018f),
+                        startAngle = 205f,
+                        sweepAngle = 245f,
+                        useCenter = false,
+                        topLeft = Offset(size.width * (.24f + index * .05f), size.height * (.23f + index * .05f)),
+                        size = Size(size.minDimension * (.62f - index * .10f), size.minDimension * (.62f - index * .10f)),
+                        style = Stroke(thin, cap = StrokeCap.Round)
+                    )
+                }
+            }
+            else -> {
+                repeat(4) { index ->
+                    drawCircle(
+                        accent.copy(alpha = .065f + index * .014f),
+                        3.dp.toPx(),
+                        Offset(size.width * (.18f + index * .15f), size.height * (.69f - (index % 2) * .15f))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ToolAssetIcon(iconRes: Int, size: Dp, modifier: Modifier = Modifier) {
+    val bitmap = ImageBitmap.imageResource(iconRes)
+    Canvas(modifier.size(size)) {
+        drawImage(
+            image = bitmap,
+            srcOffset = IntOffset.Zero,
+            srcSize = IntSize(bitmap.width, bitmap.height),
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(this.size.width.roundToInt(), this.size.height.roundToInt()),
+            filterQuality = FilterQuality.High
+        )
     }
 }
 
@@ -3326,8 +3940,19 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     if (showHistorySheet) {
         ModalBottomSheet(
             onDismissRequest = { showHistorySheet = false },
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.background
+            shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
+            dragHandle = {
+                Box(
+                    Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(LAB_POPUP_HANDLE.copy(alpha = .84f))
+                )
+            }
         ) {
             Column(
                 Modifier
@@ -3364,8 +3989,19 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     selectedHistoryReport?.let { report ->
         ModalBottomSheet(
             onDismissRequest = { selectedHistoryReport = null },
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.background
+            shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
+            dragHandle = {
+                Box(
+                    Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(LAB_POPUP_HANDLE.copy(alpha = .84f))
+                )
+            }
         ) {
             Column(
                 Modifier
@@ -4557,7 +5193,7 @@ fun PingHistoryDialog(history: List<PingHistoryEntry>, bytes: Int, onClear: () -
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Black) } },
         dismissButton = { TextButton(onClick = onClear, enabled = history.isNotEmpty()) { Text("清空", fontWeight = FontWeight.Bold) } },
         shape = RoundedCornerShape(30.dp),
-        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
+        containerColor = LAB_POPUP_SURFACE,
         title = { Text("延迟测试历史", fontWeight = FontWeight.Black, fontSize = 19.sp) },
         text = {
             Column(Modifier.heightIn(max = 470.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -6432,7 +7068,9 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
                 }
             }
         },
-        shape = RoundedCornerShape(28.dp)
+        shape = RoundedCornerShape(28.dp),
+        containerColor = LAB_POPUP_SURFACE,
+        tonalElevation = 0.dp
     )
 }
 
@@ -6447,7 +7085,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
 }, topNav = topNav) {
     val scope = rememberCoroutineScope()
     var openedSwipeId by remember { mutableStateOf<Int?>(null) }
-    ExpressiveCard("事件同步", "上线、离线、STUN、DDNS 变化按通知样式显示。", Icons.Rounded.History, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+    ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
     state.events.forEach { e ->
         key(e.id) {
             EventCompactCard(
@@ -6598,21 +7236,39 @@ fun shortTime(t: String): String = if (t.length >= 19) t.substring(11, 19) else 
 fun formatDurationText(raw: String): String {
     val s = raw.trim()
     if (s.isBlank() || s == "-" || s.lowercase(Locale.getDefault()) == "null") return ""
-    if ("小时" in s || "天" in s) return s
+    val normalized = s
+        .replace("小小时", "小时")
+        .replace(Regex("(?<!小)时"), "小时")
+    parseDurationSeconds(normalized)?.let { seconds ->
+        return compactDurationFromSeconds(seconds)
+    }
     Regex("^(\\d+)分(\\d+)秒$").find(s)?.let {
         val totalMin = it.groupValues[1].toIntOrNull() ?: 0
         val sec = it.groupValues[2].toIntOrNull() ?: 0
         val h = totalMin / 60
         val m = totalMin % 60
-        return buildString { if (h > 0) append(h).append("小时"); if (m > 0 || h == 0) append(m).append("分"); append(sec).append("秒") }
+        return compactDurationFromSeconds(h * 3600L + m * 60L + sec)
     }
     Regex("^(\\d+)分$").find(s)?.let {
         val totalMin = it.groupValues[1].toIntOrNull() ?: 0
         val h = totalMin / 60
         val m = totalMin % 60
-        return if (h > 0) "${h}小时${m}分" else "${m}分"
+        return compactDurationFromSeconds(h * 3600L + m * 60L)
     }
-    return s.replace("时", "小时")
+    return normalized
+}
+
+private fun compactDurationFromSeconds(seconds: Long): String {
+    val days = seconds / 86400L
+    val hours = (seconds % 86400L) / 3600L
+    val minutes = (seconds % 3600L) / 60L
+    val rest = seconds % 60L
+    return buildString {
+        if (days > 0) append(days).append("天")
+        if (hours > 0) append(hours).append("小时")
+        if (minutes > 0) append(minutes).append("分")
+        if (isEmpty()) append(rest).append("秒")
+    }
 }
 
 
@@ -6697,14 +7353,14 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
             confirmButton = { TextButton(onClick = { scope.launch { runCatching { HubApi(prefs).putDailyNote(selected, noteText) }.onSuccess { loadDate(selected); noteEdit = false } } }) { Text("保存", fontWeight = FontWeight.Bold) } },
             dismissButton = { TextButton(onClick = { noteEdit = false }) { Text("取消", fontWeight = FontWeight.Bold) } },
             shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = LAB_POPUP_SURFACE,
             tonalElevation = 0.dp
         )
     }
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
                 dates.take(7).forEachIndexed { idx, d ->
                     val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
                     DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)
@@ -6767,7 +7423,7 @@ fun DailyDeviceSummaryRow(o: JSONObject) {
     val detailParts = mutableListOf<String>()
     if (o.has("online")) detailParts += "上线 ${o.optInt("online", 0)} 次"
     if (o.has("offline")) detailParts += "下线 ${o.optInt("offline", 0)} 次"
-    cleanApiText(o.optString("onlineDurationText")).takeIf { it.isNotBlank() }?.let { detailParts += "在线 $it" }
+    cleanApiText(o.optString("onlineDurationText")).takeIf { it.isNotBlank() }?.let { detailParts += "在线 ${formatDurationText(it)}" }
     cleanApiText(o.optString("lastIp")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     cleanApiText(o.optString("lastSignal")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     val fallbackDetail = lines.drop(1).joinToString(" · ")
@@ -6831,6 +7487,12 @@ fun normalizeHomeOrder(raw: String): List<String> {
     return (parsed + all.filter { it !in parsed }).take(all.size)
 }
 
+fun normalizeToolSectionOrder(raw: String): List<String> {
+    val all = listOf("net", "public", "device")
+    val parsed = raw.split(",").map { it.trim() }.filter { it in all }.distinct()
+    return (parsed + all.filter { it !in parsed }).take(all.size)
+}
+
 fun maskAddressForUi(value: String?, privacyMode: Boolean): String {
     val v = cleanApiText(value)
     if (!privacyMode || v.isBlank()) return v
@@ -6883,7 +7545,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.17：设备识别、IPv6、WOL、漫游测试与轻量图标持续修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.22：新增 Rust 端口映射管理，支持 TCP 6→4 / 6→6 与 IPv6 后缀匹配。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 

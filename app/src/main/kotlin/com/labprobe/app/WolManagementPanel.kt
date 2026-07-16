@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 @Composable
 fun WolManagementPanel(state: AppState) {
@@ -230,6 +231,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                 label = { Text("备注名称") },
                 placeholder = { Text("例如：绿联 DH4300") },
                 singleLine = true,
+                shape = RoundedCornerShape(24.dp),
+                colors = labOutlinedColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
@@ -242,6 +245,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
                 isError = mac.isNotBlank() && !validMac,
                 supportingText = { Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF") },
+                shape = RoundedCornerShape(24.dp),
+                colors = labOutlinedColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -255,7 +260,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.Black) }
             Button(
                 enabled = validMac,
                 onClick = {
@@ -273,7 +278,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                     )
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = selectedRule.accent)
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }
         Spacer(Modifier.heightIn(min = 8.dp))
@@ -306,34 +312,61 @@ private fun IconButtonLite(icon: androidx.compose.ui.graphics.vector.ImageVector
 
 fun mergeSharedDeviceState(watched: List<DeviceItem>, online: List<DeviceItem>): List<DeviceItem> {
     val map = linkedMapOf<String, DeviceItem>()
-    watched.forEach { if (it.mac.isNotBlank()) map[it.mac.lowercase()] = it }
+    watched.forEach { if (it.mac.isNotBlank()) map[cleanMac(it.mac)] = it }
     online.forEach { d ->
         if (d.mac.isBlank()) return@forEach
-        val old = map[d.mac.lowercase()]
-        map[d.mac.lowercase()] = if (old == null) d else mergePreferFreshDevice(old, d)
+        val key = cleanMac(d.mac)
+        val old = map[key]
+        map[key] = if (old == null) d else mergePreferFreshDevice(old, d)
     }
     return map.values.toList()
 }
 
-private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem = fresh.copy(
-    name = fresh.name.ifBlank { old.name },
-    ip = fresh.ip.ifBlank { old.ip },
-    ssid = fresh.ssid.ifBlank { old.ssid },
-    band = fresh.band.ifBlank { old.band },
-    rssi = fresh.rssi.ifBlank { old.rssi },
-    rxrate = fresh.rxrate.ifBlank { old.rxrate },
-    onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
-    offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
-    onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
-    lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
-    ipv6 = (fresh.ipv6 + old.ipv6).distinct(),
-    manufacture = fresh.manufacture.ifBlank { old.manufacture },
-    devType = fresh.devType.ifBlank { old.devType },
-    osType = fresh.osType.ifBlank { old.osType },
-    hostName = fresh.hostName.ifBlank { old.hostName },
-    wolMode = fresh.wolMode.ifBlank { old.wolMode },
-    connectType = fresh.connectType.ifBlank { old.connectType },
-    remark = fresh.remark.ifBlank { old.remark },
-    manualType = fresh.manualType.ifBlank { old.manualType },
-    wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride
-)
+private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem {
+    val oldTodayValid = old.todayOnlineDate == LocalDate.now().toString()
+    val mergedIpv6 = mergeIpv6Candidates(
+        fresh.ipv6Candidates,
+        fresh.ipv6.map { Ipv6AddressCandidate(it) },
+        old.ipv6Candidates,
+        old.ipv6.map { Ipv6AddressCandidate(it) }
+    ).take(24)
+    return fresh.copy(
+        name = fresh.name.ifBlank { old.name },
+        ip = fresh.ip.ifBlank { old.ip },
+        ssid = fresh.ssid.ifBlank { old.ssid },
+        band = fresh.band.ifBlank { old.band },
+        rssi = fresh.rssi.ifBlank { old.rssi },
+        rxrate = fresh.rxrate.ifBlank { old.rxrate },
+        onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
+        offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
+        onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
+        todayOnlineDurationSec = when {
+            fresh.todayOnlineDate.isNotBlank() -> fresh.todayOnlineDurationSec
+            oldTodayValid -> old.todayOnlineDurationSec
+            else -> 0L
+        },
+        todayOnlineDurationText = when {
+            fresh.todayOnlineDate.isNotBlank() -> fresh.todayOnlineDurationText
+            oldTodayValid -> old.todayOnlineDurationText
+            else -> ""
+        },
+        todayOnlineDate = fresh.todayOnlineDate.ifBlank { old.todayOnlineDate.takeIf { oldTodayValid }.orEmpty() },
+        lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
+        ipv6 = mergedIpv6.map { it.address },
+        ipv6Candidates = mergedIpv6,
+        manufacture = fresh.manufacture.ifBlank { old.manufacture },
+        devType = fresh.devType.ifBlank { old.devType },
+        osType = fresh.osType.ifBlank { old.osType },
+        hostName = fresh.hostName.ifBlank { old.hostName },
+        wolMode = fresh.wolMode.ifBlank { old.wolMode },
+        connectType = fresh.connectType.ifBlank { old.connectType },
+        remark = fresh.remark.ifBlank { old.remark },
+        manualType = fresh.manualType.ifBlank { old.manualType },
+        wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride,
+        followedOverride = fresh.followedOverride ?: old.followedOverride,
+        todayUpload = fresh.todayUpload.ifBlank { old.todayUpload },
+        todayDownload = fresh.todayDownload.ifBlank { old.todayDownload },
+        totalUpload = fresh.totalUpload.ifBlank { old.totalUpload },
+        totalDownload = fresh.totalDownload.ifBlank { old.totalDownload }
+    )
+}
