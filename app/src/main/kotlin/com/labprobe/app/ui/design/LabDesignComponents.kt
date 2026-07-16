@@ -43,9 +43,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-val LAB_POPUP_SURFACE = Color(0xFFFBFEFF)
-val LAB_POPUP_SUBTLE = Color(0xFFF3F8FB)
-val LAB_POPUP_BORDER = Color(0xFFE2ECF3)
+val LAB_POPUP_SURFACE = Color(0xFFFAFCFF)
+val LAB_POPUP_SUBTLE = Color(0xFFF3F7FC)
+val LAB_POPUP_BORDER = Color(0xFFDDE7F2)
 val LAB_POPUP_SCRIM = Color(0xFF0F172A)
 val LAB_POPUP_HANDLE = Color(0xFF1E293B)
 
@@ -55,17 +55,7 @@ fun LabCard(
     accent: Color = MaterialTheme.colorScheme.primary,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(24.dp)
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = shape,
-        color = LAB_POPUP_SURFACE,
-        border = BorderStroke(1.dp, LAB_POPUP_BORDER),
-        shadowElevation = 1.dp,
-        tonalElevation = 0.dp
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
-    }
+    LabV2Card(modifier = modifier, content = content)
 }
 
 @Composable
@@ -88,15 +78,7 @@ fun LabIconBox(icon: ImageVector, accent: Color, modifier: Modifier = Modifier, 
     if (iconKey.isNotBlank()) {
         LabMiniDeviceIcon(iconKey, accent, modifier = modifier, sizeDp = sizeDp)
     } else {
-        Box(
-            modifier
-                .size(sizeDp.dp)
-                .clip(RoundedCornerShape((sizeDp * .38f).dp))
-                .background(accent.copy(alpha = .12f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size((sizeDp * .48f).dp))
-        }
+        LabV2ToolIcon(icon = icon, accent = accent, modifier = modifier, size = sizeDp)
     }
 }
 
@@ -113,9 +95,9 @@ fun LabSection(
             action?.invoke(this)
         }
         Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = LAB_POPUP_SUBTLE,
-            border = BorderStroke(1.dp, LAB_POPUP_BORDER)
+            shape = RoundedCornerShape(18.dp),
+            color = LabV2.FieldSoft,
+            border = BorderStroke(1.dp, LabV2.Border)
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
         }

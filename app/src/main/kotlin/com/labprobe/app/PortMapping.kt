@@ -5,8 +5,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -24,11 +29,14 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -46,6 +54,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
+import kotlin.math.min
 
 private val PortBlue = Color(0xFF1677F2)
 private val PortCyan = Color(0xFF13B8D4)
@@ -81,6 +90,7 @@ private val PortPopupBg = Color(0xFFFFFFFF)
     val targetPort: Int,
     val preferCurrentPrefix: Boolean,
     val expiresAt: Long?,
+    val leaseSeconds: Long,
     val maxConnections: Int,
     val idleTimeoutSec: Int,
     val runtime: PortMapRuntime = PortMapRuntime()
@@ -126,6 +136,7 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
         targetPort = o.optInt("targetPort"),
         preferCurrentPrefix = o.optBoolean("preferCurrentPrefix", true),
         expiresAt = nullableLong(o, "expiresAt"),
+        leaseSeconds = o.optLong("leaseSeconds", 0L).coerceAtLeast(0L),
         maxConnections = o.optInt("maxConnections", 32),
         idleTimeoutSec = o.optInt("idleTimeoutSec", 300),
         runtime = PortMapRuntime(
@@ -228,17 +239,23 @@ class PortMapApi(private val prefs: AppPrefs) {
     val targetPort: String = "443",
     val duration: String = "永久",
     val originalExpiresAt: Long? = null,
+    val leaseSeconds: Long = 0L,
     val maxConnections: String = "32",
     val idleTimeoutSec: String = "300"
 ) {
     fun toJson(): JSONObject {
         val now = System.currentTimeMillis() / 1000L
+        val selectedLease = when (duration) {
+            "保持原有效期" -> leaseSeconds.coerceAtLeast(0L)
+            "1小时" -> 3600L
+            "6小时" -> 6L * 3600L
+            "24小时" -> 24L * 3600L
+            else -> 0L
+        }
         val expires = when (duration) {
             "保持原有效期" -> originalExpiresAt
-            "1小时" -> now + 3600
-            "6小时" -> now + 6 * 3600
-            "24小时" -> now + 24 * 3600
-            else -> null
+            "永久" -> null
+            else -> now + selectedLease
         }
         return JSONObject().apply {
             if (id.isNotBlank()) put("id", id)
@@ -254,6 +271,7 @@ class PortMapApi(private val prefs: AppPrefs) {
             put("targetPort", targetPort.toIntOrNull() ?: 0)
             put("preferCurrentPrefix", true)
             if (expires == null) put("expiresAt", JSONObject.NULL) else put("expiresAt", expires)
+            put("leaseSeconds", selectedLease)
             put("maxConnections", maxConnections.toIntOrNull() ?: 32)
             put("idleTimeoutSec", idleTimeoutSec.toIntOrNull() ?: 300)
         }
@@ -274,6 +292,7 @@ class PortMapApi(private val prefs: AppPrefs) {
             targetPort = rule.targetPort.toString(),
             duration = if (rule.expiresAt == null) "永久" else "保持原有效期",
             originalExpiresAt = rule.expiresAt,
+            leaseSeconds = rule.leaseSeconds,
             maxConnections = rule.maxConnections.toString(),
             idleTimeoutSec = rule.idleTimeoutSec.toString()
         )
@@ -317,7 +336,8 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val visible = rules.filter {
         when (filter) {
             "运行中" -> it.isRunning || it.runtime.state == "waiting_target" || it.runtime.state == "waiting_agent"
-            "已停止" -> !it.isRunning && it.runtime.state != "waiting_target" && it.runtime.state != "waiting_agent"
+            "已停止" -> !it.isRunning && it.runtime.state !in listOf("waiting_target", "waiting_agent", "expired")
+            "已到期" -> it.runtime.state == "expired"
             else -> true
         }
     }
@@ -327,16 +347,18 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            listOf("全部", "运行中", "已停止").forEach { item ->
-                FilterChip(
-                    selected = filter == item,
-                    onClick = { filter = item },
-                    label = { Text(item, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.padding(end = 5.dp),
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PortBlue, selectedLabelColor = Color.White)
-                )
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                listOf("全部", "运行中", "已停止", "已到期").forEach { item ->
+                    FilterChip(
+                        selected = filter == item,
+                        onClick = { filter = item },
+                        label = { Text(item, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        modifier = Modifier.padding(end = 5.dp),
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PortBlue, selectedLabelColor = Color.White)
+                    )
+                }
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
             Surface(
                 onClick = { editDraft = PortMapDraft(listenPort = nextPort(rules, agent).toString()) },
                 shape = CircleShape,
@@ -426,26 +448,18 @@ private fun nextPort(rules: List<PortMapRule>, agent: PortMapAgentInfo): Int {
 @Composable
 private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefresh: () -> Unit) {
     val color = if (agent.online) PortGreen else PortRed
-    Surface(
-        shape = RoundedCornerShape(25.dp),
-        color = Color.White.copy(alpha = .96f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
-        shadowElevation = 2.dp
-    ) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(48.dp).background(Brush.linearGradient(listOf(PortBlue.copy(alpha = .18f), PortCyan.copy(alpha = .08f))), RoundedCornerShape(17.dp)),
-                contentAlignment = Alignment.Center
-            ) { Icon(Icons.Rounded.SwapHoriz, null, tint = PortBlue, modifier = Modifier.size(28.dp)) }
+    LabV2Card(compact = true) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(agent.router.ifBlank { "BE72Pro" }, fontWeight = FontWeight.Black, fontSize = 14.sp)
-                Text("Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f), fontWeight = FontWeight.SemiBold)
+                Text(agent.router.ifBlank { "BE72Pro" }, fontWeight = FontWeight.Black, fontSize = 14.5.sp, color = LabV2.Ink)
+                Text("Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}", fontSize = 10.3.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(7.dp).background(color, CircleShape))
                     Spacer(Modifier.width(5.dp))
                     Text(if (agent.online) "Agent 在线" else "Agent 未连接", color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = 9.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f))
+                    if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = 9.3.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             IconButton(onClick = onRefresh) {
@@ -457,14 +471,18 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
 
 @Composable
 private fun PortMapEmptyCard(onAdd: () -> Unit) {
-    Surface(shape = RoundedCornerShape(25.dp), color = Color.White.copy(alpha = .94f), shadowElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(vertical = 34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Rounded.SwapHoriz, null, tint = PortBlue, modifier = Modifier.size(42.dp))
-            Spacer(Modifier.height(9.dp))
-            Text("暂无端口映射", fontWeight = FontWeight.Black)
-            Text("创建 6→4 或 6→6 TCP 反代规则", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f))
+    LabV2Card {
+        Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 52)
+            Spacer(Modifier.height(10.dp))
+            Text("暂无端口映射", fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("创建 6→4 或 6→6 TCP 四层反代规则", fontSize = 10.5.sp, color = LabV2.InkMuted)
             Spacer(Modifier.height(13.dp))
-            Button(onClick = onAdd, shape = RoundedCornerShape(18.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("新建映射") }
+            Button(onClick = onAdd, shape = LabV2.ButtonShape) {
+                Icon(Icons.Rounded.Add, null)
+                Spacer(Modifier.width(5.dp))
+                Text("新建映射")
+            }
         }
     }
 }
@@ -472,48 +490,49 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 @Composable
 private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
     val status = portMapStatus(rule)
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(24.dp),
-        color = Color.White.copy(alpha = .96f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, status.color.copy(alpha = .10f)),
-        shadowElevation = 2.dp
-    ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(9.dp).background(status.color, CircleShape))
-                Spacer(Modifier.width(8.dp))
-                Text(rule.name, Modifier.weight(1f), fontSize = 14.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("● ${status.text}", color = status.color, fontSize = 10.sp, fontWeight = FontWeight.Black)
+    LabV2Card(modifier = Modifier.clickable(onClick = onOpen), compact = true) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).background(status.color, CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Text(rule.name, Modifier.weight(1f), fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Surface(shape = RoundedCornerShape(99.dp), color = status.color.copy(alpha = .10f)) {
+                Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = status.color, fontSize = 9.8.sp, fontWeight = FontWeight.Black)
             }
-            Text(
-                "TCP · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}   [::]:${rule.listenPort} → ${rule.targetText}",
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
-                Text("已解析 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = 9.8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(
+            "TCP · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = LabV2.InkMuted
+        )
+        Text(
+            "[::]:${rule.listenPort} → ${rule.targetText}",
+            fontSize = 10.8.sp,
+            lineHeight = 14.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = LabV2.Ink,
+            maxLines = 3,
+            overflow = TextOverflow.Clip
+        )
+        if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
+            Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = 9.8.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Clip)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LabV2Metric("连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
+            LabV2Metric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
+            LabV2Metric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
+        }
+        if (rule.runtime.lastError.isNotBlank() && !rule.isRunning) {
+            Text(rule.runtime.lastError, color = PortRed, fontSize = 9.5.sp, maxLines = 3, overflow = TextOverflow.Clip)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(portMapTimeText(rule), Modifier.weight(1f), fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            OutlinedButton(onClick = onToggle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.isRunning || rule.enabled) PortRed else PortBlue)) {
+                Text(if (rule.isRunning || rule.enabled) "停止" else "启动", fontSize = 10.5.sp, fontWeight = FontWeight.Black)
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PortMapMiniMetric(Icons.Rounded.Link, "${rule.runtime.activeConnections} 连接", Modifier.weight(1f))
-                PortMapMiniMetric(Icons.Rounded.ArrowUpward, formatPortBytes(rule.runtime.totalUploadBytes), Modifier.weight(1f))
-                PortMapMiniMetric(Icons.Rounded.ArrowDownward, formatPortBytes(rule.runtime.totalDownloadBytes), Modifier.weight(1f))
-            }
-            if (rule.runtime.lastError.isNotBlank() && !rule.isRunning) {
-                Text(rule.runtime.lastError, color = PortRed, fontSize = 9.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(portMapTimeText(rule), Modifier.weight(1f), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), fontWeight = FontWeight.SemiBold)
-                OutlinedButton(onClick = onToggle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.isRunning || rule.enabled) PortRed else PortBlue)) {
-                    Text(if (rule.isRunning || rule.enabled) "停止" else "启动", fontSize = 10.5.sp, fontWeight = FontWeight.Black)
-                }
-                Spacer(Modifier.width(6.dp))
-                OutlinedButton(onClick = onEdit, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                    Text("编辑", fontSize = 10.5.sp, fontWeight = FontWeight.Black)
-                }
+            Spacer(Modifier.width(6.dp))
+            OutlinedButton(onClick = onEdit, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)) {
+                Text("编辑", fontSize = 10.5.sp, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -549,81 +568,197 @@ private fun PortMapEditorSheet(
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = PortSheetBg, dragHandle = { BottomSheetDefaults.DragHandle() }) {
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 34.dp),
-            verticalArrangement = Arrangement.spacedBy(11.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(if (draft.id.isBlank()) "新建映射" else "编辑映射", fontSize = 20.sp, fontWeight = FontWeight.Black)
-                    Text("TCP IPv6 入口 · 不修改防火墙", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f))
-                }
-                TextButton(onClick = {
-                    error = validateDraft(draft, portRange)
-                    if (error.isBlank()) onSave(draft)
-                }) { Text("保存", fontWeight = FontWeight.Black) }
-            }
+    var showDevicePicker by remember { mutableStateOf(false) }
+    val selectedDevice = remember(draft.targetMac, devices) {
+        devices.firstOrNull { cleanMac(it.mac).equals(cleanMac(draft.targetMac), ignoreCase = true) }
+    }
 
-            PortMapFormCard {
-                PortMapTextField("规则名称", draft.name, "例如：NAS HTTPS") { draft = draft.copy(name = it) }
-                PortMapChoice("映射类型", if (draft.mode == "6to4") "IPv6 → IPv4" else "IPv6 → IPv6", listOf("IPv6 → IPv4", "IPv6 → IPv6")) {
-                    draft = draft.copy(mode = if (it.endsWith("IPv4")) "6to4" else "6to6")
-                }
-                PortMapTextField("监听端口", draft.listenPort, "${portRange.first}-${portRange.last}", KeyboardType.Number) { draft = draft.copy(listenPort = it.filter(Char::isDigit)) }
-                PortMapReadOnlyRow("监听地址", "[::]:${draft.listenPort.ifBlank { "—" }} · IPv6 only")
-                PortMapReadOnlyRow("协议", "TCP")
+    LabBottomSheet(onDismiss = onDismiss, scrollable = true) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(if (draft.id.isBlank()) "新建映射" else "编辑映射", fontSize = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                Text("TCP IPv6 入口 · Rust 四层反代 · 不修改防火墙", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
             }
-
-            PortMapFormCard {
-                PortMapDevicePicker(devices) { device ->
-                    val bestIpv6 = device.pickIpv6().best.orEmpty()
-                    draft = draft.copy(
-                        targetMac = device.mac,
-                        targetIpv4 = device.ip.ifBlank { draft.targetIpv4 },
-                        targetIpv6 = bestIpv6.ifBlank { draft.targetIpv6 },
-                        targetIpv6Suffix = ipv6Suffix64(bestIpv6).ifBlank { draft.targetIpv6Suffix }
-                    )
-                }
-                if (draft.mode == "6to4") {
-                    PortMapTextField("目标 IPv4", draft.targetIpv4, "192.168.5.46") { draft = draft.copy(targetIpv4 = it) }
-                } else {
-                    PortMapChoice("目标方式", if (draft.targetMode == "ipv6_suffix") "IPv6 后缀匹配" else "完整 IPv6", listOf("IPv6 后缀匹配", "完整 IPv6")) {
-                        draft = draft.copy(targetMode = if (it.startsWith("IPv6 后缀")) "ipv6_suffix" else "ipv6_full")
-                    }
-                    if (draft.targetMode == "ipv6_suffix") {
-                        PortMapTextField("目标 MAC", draft.targetMac, "6c:1f:f7:76:71:04") { draft = draft.copy(targetMac = it) }
-                        PortMapTextField("IPv6 后缀", draft.targetIpv6Suffix, "例如 ::dead:beef") { draft = draft.copy(targetIpv6Suffix = it) }
-                        Text("按 MAC + 后缀 + 当前 LAN 前缀解析；找不到目标时规则保持等待，不连接历史地址。", fontSize = 9.5.sp, lineHeight = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .43f))
-                    } else {
-                        PortMapTextField("目标 IPv6", draft.targetIpv6, "2409:...::1234") { draft = draft.copy(targetIpv6 = it) }
-                    }
-                }
-                PortMapTextField("目标端口", draft.targetPort, "443", KeyboardType.Number) { draft = draft.copy(targetPort = it.filter(Char::isDigit)) }
-            }
-
-            PortMapFormCard {
-                val durationOptions = buildList {
-                    if (draft.originalExpiresAt != null) add("保持原有效期")
-                    addAll(listOf("1小时", "6小时", "24小时", "永久"))
-                }
-                PortMapChoice("有效期", draft.duration, durationOptions) { draft = draft.copy(duration = it) }
-                PortMapTextField("最大连接", draft.maxConnections, "32", KeyboardType.Number) { draft = draft.copy(maxConnections = it.filter(Char::isDigit)) }
-                PortMapTextField("空闲超时", draft.idleTimeoutSec, "300 秒", KeyboardType.Number) { draft = draft.copy(idleTimeoutSec = it.filter(Char::isDigit)) }
-            }
-
-            AnimatedVisibility(error.isNotBlank()) {
-                Text(error, color = PortRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-            Button(
-                onClick = {
-                    error = validateDraft(draft, portRange)
-                    if (error.isBlank()) onSave(draft)
-                },
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(18.dp)
-            ) { Text("保存映射", fontWeight = FontWeight.Black) }
+            TextButton(onClick = {
+                error = validateDraft(draft, portRange)
+                if (error.isBlank()) onSave(draft)
+            }) { Text("保存", fontWeight = FontWeight.Black) }
         }
+
+        LabV2Card(compact = true) {
+            Text("基础设置", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            PortMapV2Field("规则名称", draft.name, "例如：NAS HTTPS") { draft = draft.copy(name = it) }
+            Text("映射类型", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+            LabV2SegmentedControl(
+                options = listOf("IPv6 → IPv4", "IPv6 → IPv6"),
+                selected = if (draft.mode == "6to4") "IPv6 → IPv4" else "IPv6 → IPv6",
+                onSelect = { selected ->
+                    draft = draft.copy(mode = if (selected.endsWith("IPv4")) "6to4" else "6to6")
+                }
+            )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth < 330.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        PortMapV2Field("监听端口", draft.listenPort, "${portRange.first}-${portRange.last}", keyboardType = KeyboardType.Number) {
+                            draft = draft.copy(listenPort = it.filter(Char::isDigit))
+                        }
+                        PortMapV2ReadOnly("协议", "TCP")
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        PortMapV2Field("监听端口", draft.listenPort, "${portRange.first}-${portRange.last}", Modifier.weight(1.25f), KeyboardType.Number) {
+                            draft = draft.copy(listenPort = it.filter(Char::isDigit))
+                        }
+                        PortMapV2ReadOnly("协议", "TCP", Modifier.weight(.75f))
+                    }
+                }
+            }
+            PortMapV2ReadOnly("监听地址", "[::]:${draft.listenPort.ifBlank { "—" }} · IPv6 only", copyable = true, accent = PortBlue)
+        }
+
+        LabV2Card(compact = true) {
+            Text("目标设备", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            PortMapSelectedDevice(
+                device = selectedDevice,
+                mode = draft.mode,
+                targetMode = draft.targetMode,
+                fallbackMac = draft.targetMac,
+                onClick = { showDevicePicker = true }
+            )
+
+            if (draft.mode == "6to4") {
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth < 340.dp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                            PortMapV2Field("目标 IPv4", draft.targetIpv4, "192.168.5.46") { draft = draft.copy(targetIpv4 = it) }
+                            PortMapV2Field("目标端口", draft.targetPort, "443", keyboardType = KeyboardType.Number) {
+                                draft = draft.copy(targetPort = it.filter(Char::isDigit))
+                            }
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            PortMapV2Field("目标 IPv4", draft.targetIpv4, "192.168.5.46", Modifier.weight(1.45f)) { draft = draft.copy(targetIpv4 = it) }
+                            PortMapV2Field("目标端口", draft.targetPort, "443", Modifier.weight(.75f), KeyboardType.Number) {
+                                draft = draft.copy(targetPort = it.filter(Char::isDigit))
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("目标方式", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+                LabV2SegmentedControl(
+                    options = listOf("后缀匹配", "完整 IPv6"),
+                    selected = if (draft.targetMode == "ipv6_suffix") "后缀匹配" else "完整 IPv6",
+                    onSelect = { selected -> draft = draft.copy(targetMode = if (selected == "后缀匹配") "ipv6_suffix" else "ipv6_full") }
+                )
+                if (draft.targetMode == "ipv6_suffix") {
+                    PortMapV2Field("目标 MAC", draft.targetMac, "6c:1f:f7:76:71:04") { draft = draft.copy(targetMac = it) }
+                    PortMapV2Field("IPv6 后缀", draft.targetIpv6Suffix, "例如 ::8dc0:a9e5:169d:a7c") { draft = draft.copy(targetIpv6Suffix = it) }
+                    Text(
+                        "按 MAC + 后 64 位 + 当前 LAN 前缀解析。目标消失时保持等待，不继续使用历史地址。",
+                        fontSize = 9.6.sp,
+                        lineHeight = 13.sp,
+                        color = LabV2.InkMuted
+                    )
+                } else {
+                    PortMapV2Field("目标 IPv6", draft.targetIpv6, "2409:...::1234") { draft = draft.copy(targetIpv6 = it) }
+                }
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth < 330.dp) {
+                        PortMapV2Field("目标端口", draft.targetPort, "443", keyboardType = KeyboardType.Number) {
+                            draft = draft.copy(targetPort = it.filter(Char::isDigit))
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            PortMapV2Field("目标端口", draft.targetPort, "443", Modifier.weight(.72f), KeyboardType.Number) {
+                                draft = draft.copy(targetPort = it.filter(Char::isDigit))
+                            }
+                            PortMapV2ReadOnly(
+                                "解析策略",
+                                if (draft.targetMode == "ipv6_suffix") "当前前缀优先" else "固定地址",
+                                Modifier.weight(1.28f),
+                                accent = if (draft.targetMode == "ipv6_suffix") PortGreen else PortSlate
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        LabV2Card(compact = true) {
+            Text("运行策略", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            val durationOptions = buildList {
+                if (draft.originalExpiresAt != null) add("保持原有效期")
+                addAll(listOf("1小时", "6小时", "24小时", "永久"))
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth < 340.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        PortMapV2Select("有效期", draft.duration, durationOptions) { draft = draft.copy(duration = it) }
+                        PortMapV2Field("最大连接", draft.maxConnections, "32", keyboardType = KeyboardType.Number) {
+                            draft = draft.copy(maxConnections = it.filter(Char::isDigit))
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        PortMapV2Select("有效期", draft.duration, durationOptions, Modifier.weight(1.25f)) { draft = draft.copy(duration = it) }
+                        PortMapV2Field("最大连接", draft.maxConnections, "32", Modifier.weight(.75f), KeyboardType.Number) {
+                            draft = draft.copy(maxConnections = it.filter(Char::isDigit))
+                        }
+                    }
+                }
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth < 330.dp) {
+                    PortMapV2Field("空闲超时", draft.idleTimeoutSec, "300", keyboardType = KeyboardType.Number, suffix = "秒") {
+                        draft = draft.copy(idleTimeoutSec = it.filter(Char::isDigit))
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        PortMapV2Field("空闲超时", draft.idleTimeoutSec, "300", Modifier.weight(.75f), KeyboardType.Number, suffix = "秒") {
+                            draft = draft.copy(idleTimeoutSec = it.filter(Char::isDigit))
+                        }
+                        PortMapV2ReadOnly("到期重启", "沿用本次时长", Modifier.weight(1.25f), accent = PortGreen)
+                    }
+                }
+            }
+        }
+
+        AnimatedVisibility(error.isNotBlank()) {
+            Surface(shape = RoundedCornerShape(16.dp), color = PortRed.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, PortRed.copy(alpha = .13f))) {
+                Text(error, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = PortRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Button(
+            onClick = {
+                error = validateDraft(draft, portRange)
+                if (error.isBlank()) onSave(draft)
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = LabV2.ButtonShape,
+            colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)
+        ) { Text("保存映射", fontWeight = FontWeight.Black) }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    if (showDevicePicker) {
+        PortMapDevicePickerDialog(
+            devices = devices,
+            mode = draft.mode,
+            targetMode = draft.targetMode,
+            selectedMac = draft.targetMac,
+            onDismiss = { showDevicePicker = false },
+            onPick = { device ->
+                val bestIpv6 = device.pickIpv6().best.orEmpty()
+                draft = draft.copy(
+                    targetMac = device.mac,
+                    targetIpv4 = device.ip.ifBlank { draft.targetIpv4 },
+                    targetIpv6 = bestIpv6.ifBlank { draft.targetIpv6 },
+                    targetIpv6Suffix = ipv6Suffix64(bestIpv6).ifBlank { draft.targetIpv6Suffix }
+                )
+                showDevicePicker = false
+            }
+        )
     }
 }
 
@@ -642,82 +777,115 @@ private fun validateDraft(draft: PortMapDraft, range: IntRange): String {
 }
 
 @Composable
-private fun PortMapFormCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = RoundedCornerShape(22.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE7EEF7)), shadowElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
+private fun PortMapV2Field(
+    label: String,
+    value: String,
+    hint: String,
+    modifier: Modifier = Modifier,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    suffix: String = "",
+    onChange: (String) -> Unit
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = LabV2.FieldShape,
+            color = LabV2.Field,
+            border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .82f)),
+            tonalElevation = 0.dp
+        ) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onChange,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                    textStyle = TextStyle(fontSize = 12.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (value.isBlank()) Text(hint, fontSize = 11.5.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            inner()
+                        }
+                    }
+                )
+                if (suffix.isNotBlank()) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(suffix, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun PortMapTextField(label: String, value: String, hint: String, keyboardType: KeyboardType = KeyboardType.Text, onChange: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            singleLine = true,
-            placeholder = { Text(hint, fontSize = 10.8.sp) },
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(15.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 12.3.sp, fontWeight = FontWeight.SemiBold),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color.White,
-                unfocusedContainerColor = Color.White,
-                disabledContainerColor = Color.White
-            ),
-            modifier = Modifier.weight(1f).height(48.dp)
-        )
-    }
-}
-
-@Composable
-private fun PortMapReadOnlyRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
-        Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PortBlue)
+private fun PortMapV2ReadOnly(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    copyable: Boolean = false,
+    accent: Color = LabV2.Ink
+) {
+    val ctx = LocalContext.current
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = LabV2.FieldShape,
+            color = accent.copy(alpha = .055f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .11f)),
+            tonalElevation = 0.dp
+        ) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 13.dp).horizontalScroll(rememberScrollState()).clickable(enabled = copyable) { copy(ctx, value) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = accent, maxLines = 1, overflow = TextOverflow.Clip)
+            }
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PortMapChoice(label: String, value: String, options: List<String>, onPick: (String) -> Unit) {
+private fun PortMapV2Select(
+    label: String,
+    value: String,
+    options: List<String>,
+    modifier: Modifier = Modifier,
+    onPick: (String) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = {},
-                readOnly = true,
-                singleLine = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(15.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 12.3.sp, fontWeight = FontWeight.SemiBold),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White,
-                    disabledContainerColor = Color.White
-                ),
-                modifier = Modifier.menuAnchor().fillMaxWidth().height(48.dp)
-            )
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+            Surface(
+                modifier = Modifier.menuAnchor().fillMaxWidth().height(48.dp),
+                shape = LabV2.FieldShape,
+                color = LabV2.Field,
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (expanded) LabV2.Primary.copy(alpha = .65f) else LabV2.BorderStrong.copy(alpha = .82f)),
+                tonalElevation = 0.dp
+            ) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(value, Modifier.weight(1f), fontSize = 12.6.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = LabV2.InkMuted)
+                }
+            }
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                containerColor = PortPopupBg,
-                tonalElevation = 0.dp,
-                shadowElevation = 6.dp,
+                containerColor = Color.White,
                 shape = RoundedCornerShape(18.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8EEF6))
+                tonalElevation = 0.dp,
+                shadowElevation = 7.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)
             ) {
-                options.forEach { item ->
+                options.forEach { option ->
                     DropdownMenuItem(
-                        text = { Text(item, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
-                        colors = MenuDefaults.itemColors(
-                            textColor = MaterialTheme.colorScheme.onSurface,
-                            leadingIconColor = MaterialTheme.colorScheme.onSurface,
-                            trailingIconColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        onClick = { onPick(item); expanded = false }
+                        text = { Text(option, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = LabV2.Primary) }) else null,
+                        onClick = { onPick(option); expanded = false }
                     )
                 }
             }
@@ -726,41 +894,131 @@ private fun PortMapChoice(label: String, value: String, options: List<String>, o
 }
 
 @Composable
-private fun PortMapDevicePicker(devices: List<DeviceItem>, onPick: (DeviceItem) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("目标设备", Modifier.width(80.dp), fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .64f))
-        Box(Modifier.weight(1f)) {
-            OutlinedButton(onClick = { expanded = true }, shape = RoundedCornerShape(15.dp), modifier = Modifier.fillMaxWidth().height(46.dp)) {
-                Icon(Icons.Rounded.Devices, null, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("从在线设备填充", fontSize = 11.3.sp, fontWeight = FontWeight.Bold)
+private fun PortMapSelectedDevice(
+    device: DeviceItem?,
+    mode: String,
+    targetMode: String,
+    fallbackMac: String,
+    onClick: () -> Unit
+) {
+    val address = when {
+        device == null -> ""
+        mode == "6to4" -> cleanApiText(device.ip)
+        else -> device.pickIpv6().best.orEmpty()
+    }
+    val profile = device?.let(::inferDeviceProfile)
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        shape = RoundedCornerShape(18.dp),
+        color = LabV2.Field,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
+        tonalElevation = 0.dp
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (device != null && profile != null) {
+                LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 36)
+            } else {
+                LabV2ToolIcon(Icons.Rounded.Devices, LabV2.Primary, size = 36)
             }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.heightIn(max = 340.dp),
-                containerColor = PortPopupBg,
-                tonalElevation = 0.dp,
-                shadowElevation = 6.dp,
-                shape = RoundedCornerShape(18.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8EEF6))
-            ) {
-                devices.forEach { device ->
-                    DropdownMenuItem(
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(device.remark.ifBlank { device.name }, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Text("${device.ip} · ${device.mac}", fontSize = 9.4.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f))
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    device?.remark?.ifBlank { device.name }?.ifBlank { "已选设备" } ?: "从在线设备填充",
+                    fontSize = 12.2.sp,
+                    fontWeight = FontWeight.Black,
+                    color = LabV2.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val detail = when {
+                    device != null && address.isNotBlank() -> if (mode == "6to6" && targetMode == "ipv6_suffix") "$address · 后缀 ${ipv6Suffix64(address)}" else address
+                    fallbackMac.isNotBlank() -> fallbackMac
+                    else -> if (mode == "6to6") "仅显示已获取可用 IPv6 的设备" else "显示设备 IPv4 与 MAC"
+                }
+                Text(detail, fontSize = 9.7.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun PortMapDevicePickerDialog(
+    devices: List<DeviceItem>,
+    mode: String,
+    targetMode: String,
+    selectedMac: String,
+    onDismiss: () -> Unit,
+    onPick: (DeviceItem) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val rows = remember(devices, mode, query) {
+        devices.filter { d ->
+            val address = if (mode == "6to4") cleanApiText(d.ip) else d.pickIpv6().best.orEmpty()
+            val text = "${d.remark} ${d.name} ${d.hostName} ${d.mac} $address".lowercase(Locale.getDefault())
+            address.isNotBlank() && (query.isBlank() || text.contains(query.lowercase(Locale.getDefault())))
+        }
+    }
+    val unavailable = remember(devices, mode) {
+        if (mode == "6to6") devices.filter { it.pickIpv6().best.isNullOrBlank() } else emptyList()
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.84f),
+            shape = RoundedCornerShape(28.dp),
+            color = Color(0xFFFAFCFF),
+            border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border),
+            shadowElevation = 12.dp
+        ) {
+            Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("选择目标设备", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                        Text(
+                            if (mode == "6to4") "当前显示设备 IPv4 地址" else if (targetMode == "ipv6_suffix") "当前显示全局 IPv6 与后 64 位" else "当前显示设备完整 IPv6 地址",
+                            fontSize = 10.4.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LabV2.InkMuted
+                        )
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, null) }
+                }
+                PortMapV2Field("搜索", query, "设备名称 / IPv6 / MAC") { query = it }
+                if (rows.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(if (mode == "6to6") "没有获取到可用 IPv6 的匹配设备" else "没有匹配设备", color = LabV2.InkMuted, fontSize = 12.sp)
+                    }
+                } else {
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(rows, key = { cleanMac(it.mac).ifBlank { it.name + it.ip } }) { device ->
+                            val address = if (mode == "6to4") cleanApiText(device.ip) else device.pickIpv6().best.orEmpty()
+                            val profile = inferDeviceProfile(device)
+                            val selected = cleanMac(device.mac).equals(cleanMac(selectedMac), ignoreCase = true)
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (selected) LabV2.Primary.copy(alpha = .07f) else Color.White,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .22f) else LabV2.Border),
+                                tonalElevation = 0.dp
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 38)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(address, fontSize = 9.7.sp, fontWeight = FontWeight.SemiBold, color = if (mode == "6to6") PortBlue else LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        val extra = if (mode == "6to6" && targetMode == "ipv6_suffix") "后缀 ${ipv6Suffix64(address)} · ${device.mac}" else device.mac
+                                        Text(extra, fontSize = 9.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = LabV2.Primary, modifier = Modifier.size(20.dp))
+                                }
                             }
-                        },
-                        colors = MenuDefaults.itemColors(
-                            textColor = MaterialTheme.colorScheme.onSurface,
-                            leadingIconColor = MaterialTheme.colorScheme.onSurface,
-                            trailingIconColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        onClick = { onPick(device); expanded = false }
-                    )
+                        }
+                    }
+                }
+                if (unavailable.isNotEmpty()) {
+                    Text("另有 ${unavailable.size} 台设备尚未获取可用 IPv6，已自动隐藏。", fontSize = 9.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                 }
             }
         }
@@ -785,8 +1043,7 @@ private fun PortMapDetailSheet(
             delay(10_000)
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = PortSheetBg, dragHandle = { BottomSheetDefaults.DragHandle() }) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 34.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LabBottomSheet(onDismiss = onDismiss, scrollable = true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(rule.name, fontSize = 20.sp, fontWeight = FontWeight.Black)
@@ -795,17 +1052,18 @@ private fun PortMapDetailSheet(
                 TextButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("编辑") }
             }
 
-            PortMapFormCard {
+            LabV2Card(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("监听", "[::]:${rule.listenPort}")
                 PortMapDetailLine("配置目标", rule.targetText)
                 if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue)
                 PortMapDetailLine("运行时间", formatPortDuration(rule.runtime.startedAt?.let { max(0, System.currentTimeMillis() / 1000 - it) }))
                 PortMapDetailLine("剩余时间", remainingText(rule.expiresAt))
+                PortMapDetailLine("重启时长", if (rule.leaseSeconds > 0) formatPortDuration(rule.leaseSeconds) else "永久")
                 PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt))
             }
 
-            PortMapFormCard {
+            LabV2Card(compact = true) {
                 Text("流量统计", fontSize = 13.sp, fontWeight = FontWeight.Black)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
@@ -817,7 +1075,7 @@ private fun PortMapDetailSheet(
                 }
             }
 
-            PortMapFormCard {
+            LabV2Card(compact = true) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Black)
                     Text("60 秒采样", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f))
@@ -834,16 +1092,18 @@ private fun PortMapDetailSheet(
                 }
             }
 
-            Row(Modifier.fillMaxWidth()) {
-                Button(onClick = onToggle, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(17.dp), colors = ButtonDefaults.buttonColors(containerColor = if (rule.isRunning || rule.enabled) PortRed else PortBlue)) {
-                    Icon(if (rule.isRunning || rule.enabled) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(5.dp)); Text(if (rule.isRunning || rule.enabled) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
-                }
-                Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.height(48.dp), shape = RoundedCornerShape(17.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed)) {
-                    Icon(Icons.Rounded.Delete, null)
-                }
+        Row(Modifier.fillMaxWidth()) {
+            Button(onClick = onToggle, modifier = Modifier.weight(1f).height(48.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.isRunning || rule.enabled) PortRed else PortBlue)) {
+                Icon(if (rule.isRunning || rule.enabled) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
+                Spacer(Modifier.width(5.dp))
+                Text(if (rule.isRunning || rule.enabled) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.height(48.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed)) {
+                Icon(Icons.Rounded.Delete, null)
             }
         }
+        Spacer(Modifier.height(8.dp))
     }
 
     if (confirmDelete) {
@@ -858,27 +1118,16 @@ private fun PortMapDetailSheet(
 }
 
 @Composable
-private fun PortMapDetailLine(label: String, value: String, color: Color = MaterialTheme.colorScheme.onSurface) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(76.dp), fontSize = 10.2.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontWeight = FontWeight.Bold)
-        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 11.2.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = 10.2.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Bold)
+        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 11.2.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Clip)
     }
 }
 
 @Composable
 private fun PortMapBigMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = color.copy(alpha = 0.045f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.10f))
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-            Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(1.dp))
-            Text(value, fontSize = 15.2.sp, color = color, fontWeight = FontWeight.Black)
-        }
-    }
+    LabV2Metric(label = label, value = value, accent = color, modifier = modifier)
 }
 
 @Composable

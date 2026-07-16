@@ -145,14 +145,14 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.9.23"
-    const val CODE = 125
+    const val NAME = "0.10.0-alpha1"
+    const val CODE = 126
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.9.23 build125 · 端口映射交互优化" to listOf(
-            "修复端口映射编辑页弹出层偏粉问题，统一为白色卡片弹层",
-            "优化端口映射详情页流量统计与吞吐图，数值更紧凑、曲线更细更顺滑",
-            "工具页三块卡片去标题、缩矮并支持长按拖动排序；出口与路由图标可直达端口映射",
+        "v0.10.0-alpha1 build126 · UI V2 重构" to listOf(
+            "重构全局页面壳、底部导航、卡片、输入框与弹层视觉，保留全部测试和图表逻辑",
+            "工具页改为全新非 3D 功能图标，设备图标与识别逻辑保持不变",
+            "修复端口映射表单空洞、文字不居中、6→6 设备列表仍显示 IPv4 与到期重启问题",
             "6→6 支持 MAC + IPv6 后缀动态解析，适应家庭 IPv6 前缀变化",
             "支持启停、有效期、连接数、上下行流量与近一小时吞吐图"
         ),
@@ -1077,17 +1077,24 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
 
     val light = lightColorScheme(
-        primary = Color(0xFF2D63D8),
-        secondary = Color(0xFF7C3AED),
-        tertiary = Color(0xFFF59E0B),
-        background = Color(0xFFF4F8FF),
-        surface = Color(0xFFFFFFFF),
-        onSurface = Color(0xFF101827)
+        primary = LabV2.Primary,
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFDCEAFF),
+        onPrimaryContainer = LabV2.Ink,
+        secondary = LabV2.Purple,
+        tertiary = LabV2.Amber,
+        background = LabV2.BackgroundMid,
+        surface = LabV2.CardTop,
+        surfaceVariant = LabV2.FieldSoft,
+        outline = LabV2.BorderStrong,
+        onSurface = LabV2.Ink,
+        onSurfaceVariant = LabV2.InkMuted,
+        error = LabV2.Red
     )
 
     MaterialTheme(colorScheme = light, typography = LabTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "events", "settings")
-        val navTitles = listOf("总览", "终端", "工具", "记录", "我的")
+        val navTitles = listOf("首页", "设备", "工具", "记录", "我的")
         val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Person)
         val normalized = when {
             route.startsWith("tool_") -> "tools"
@@ -1106,13 +1113,17 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
         }
 
-        val topNav: @Composable () -> Unit = {
-            OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
-        }
+        val topNav: @Composable () -> Unit = { }
+        val showBottomNav = route in mainRoutes
 
         Scaffold(
             containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0)
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                if (showBottomNav) {
+                    LabV2BottomNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
+                }
+            }
         ) { pad ->
             Box(Modifier.fillMaxSize().appBackground()) {
                 Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -1179,17 +1190,7 @@ fun LabProbeApp(prefs: AppPrefs) {
 }
 
 @Composable
-fun Modifier.appBackground(): Modifier {
-    val brush = Brush.verticalGradient(
-        listOf(
-            Color(0xFFEAF5FF),
-            Color(0xFFF4F9FF),
-            Color(0xFFFBFDFF),
-            Color(0xFFFFFFFF)
-        )
-    )
-    return background(brush)
-}
+fun Modifier.appBackground(): Modifier = labV2PageBackground()
 
 @Composable
 fun ScreenShell(
@@ -1203,32 +1204,34 @@ fun ScreenShell(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    fontSize = 25.sp,
+                    fontSize = 23.sp,
                     fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = LabV2.Ink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     subtitle,
-                    fontSize = 12.sp,
+                    fontSize = 11.2.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    color = LabV2.InkMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 14.sp
                 )
             }
             action?.invoke(this)
         }
         topNav?.invoke()
         content()
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -1238,24 +1241,30 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 onClick = onBack,
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                shadowElevation = 2.dp,
+                color = Color(0xFFFBFDFF),
+                border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border),
+                shadowElevation = 3.dp,
                 modifier = Modifier.size(40.dp)
-            ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ArrowBack, null, modifier = Modifier.size(20.dp)) } }
-            Spacer(Modifier.width(10.dp))
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.ArrowBack, null, modifier = Modifier.size(20.dp), tint = LabV2.Ink)
+                }
+            }
+            Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.7.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 13.5.sp)
             }
         }
         content()
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -1308,49 +1317,42 @@ fun ExpressiveCard(
     iconKey: String = "",
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(26.dp)
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .shadow(1.dp, shape, clip = false),
-        shape = shape,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.82f))
-    ) {
-        Column(Modifier.padding(horizontal = 15.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (iconKey.isNotBlank()) {
-                    LabMiniDeviceIcon(iconKey, accent, sizeDp = 38)
-                    Spacer(Modifier.width(10.dp))
-                } else if (icon != null) {
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(accent.copy(alpha = 0.13f)),
-                        contentAlignment = Alignment.Center
-                    ) { Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp)) }
-                    Spacer(Modifier.width(10.dp))
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 13.sp)
-                }
-                if (headerAction != null) {
-                    Spacer(Modifier.width(8.dp))
-                    headerAction.invoke(this)
+    LabV2Card(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (iconKey.isNotBlank()) {
+                // Device artwork stays exactly as the existing device icon system.
+                LabMiniDeviceIcon(iconKey, accent, sizeDp = 40)
+                Spacer(Modifier.width(10.dp))
+            } else if (icon != null) {
+                LabV2ToolIcon(icon, accent, size = 38)
+                Spacer(Modifier.width(10.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 13.5.sp
+                    )
                 }
             }
-            content()
+            if (headerAction != null) {
+                Spacer(Modifier.width(8.dp))
+                headerAction.invoke(this)
+            }
         }
+        content()
     }
 }
 
 @Composable
 fun PillButton(text: String, icon: ImageVector? = null, enabled: Boolean = true, accent: Color = MaterialTheme.colorScheme.primary, onClick: () -> Unit) {
-    Button(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(22.dp), colors = ButtonDefaults.buttonColors(containerColor = accent), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp), modifier = Modifier.fillMaxWidth()) {
+    Button(onClick = onClick, enabled = enabled, shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = accent), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 11.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
         if (icon != null) { Icon(icon, null, Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)) }
         Text(text, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
@@ -1390,7 +1392,7 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(18.dp),
             containerColor = LAB_POPUP_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp,
@@ -1415,14 +1417,14 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
 
 @Composable
 fun labOutlinedColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = LAB_POPUP_SURFACE,
-    unfocusedContainerColor = LAB_POPUP_SURFACE,
-    disabledContainerColor = LAB_POPUP_SURFACE,
-    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.58f),
-    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.32f),
-    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-    cursorColor = MaterialTheme.colorScheme.primary
+    focusedContainerColor = LabV2.Field,
+    unfocusedContainerColor = LabV2.Field,
+    disabledContainerColor = LabV2.FieldSoft,
+    focusedBorderColor = LabV2.Primary.copy(alpha = 0.72f),
+    unfocusedBorderColor = LabV2.BorderStrong.copy(alpha = 0.78f),
+    focusedTextColor = LabV2.Ink,
+    unfocusedTextColor = LabV2.Ink,
+    cursorColor = LabV2.Primary
 )
 
 @Composable
@@ -1436,8 +1438,8 @@ fun CompactHistoryInput(label: String, hint: String, value: String, onValueChang
             singleLine = true,
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(22.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+            shape = LabV2.FieldShape,
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
             modifier = Modifier.weight(1f).height(52.dp)
         )
@@ -1454,10 +1456,10 @@ fun CompactLabeledInput(label: String, hint: String, value: String, onValueChang
             placeholder = { Text(hint, fontSize = 11.5.sp, maxLines = 1) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(22.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+            shape = LabV2.FieldShape,
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(56.dp)
+            modifier = Modifier.weight(1f).height(52.dp)
         )
     }
 }
@@ -1475,8 +1477,8 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
                 readOnly = true,
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(24.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
+                shape = LabV2.FieldShape,
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
                 colors = labOutlinedColors(),
                 modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
             )
@@ -1502,16 +1504,16 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
 
 
 private val ParamFieldHeight = 48.dp
-private val ParamFieldRadius = 17.dp
+private val ParamFieldRadius = 15.dp
 
 @Composable
 fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
     Surface(
         modifier = modifier.height(ParamFieldHeight),
         shape = RoundedCornerShape(ParamFieldRadius),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
-        tonalElevation = 1.dp,
+        color = LabV2.Field,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
+        tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
         Row(
@@ -1587,7 +1589,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(18.dp),
             containerColor = LAB_POPUP_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp
@@ -1671,7 +1673,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                 Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
@@ -1733,10 +1735,10 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
             trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
             visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            shape = RoundedCornerShape(22.dp),
-            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+            shape = LabV2.FieldShape,
+            textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
             colors = labOutlinedColors(),
-            modifier = Modifier.weight(1f).height(56.dp)
+            modifier = Modifier.weight(1f).height(54.dp)
         )
     }
 }
@@ -1745,7 +1747,7 @@ fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChang
 fun LabeledInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, keyboardType: KeyboardType = KeyboardType.Text, password: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f).height(56.dp))
+        OutlinedTextField(value = value, onValueChange = onValueChange, placeholder = { Text(hint, fontSize = 12.sp, maxLines = 1) }, singleLine = true, visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None, keyboardOptions = KeyboardOptions(keyboardType = keyboardType), shape = LabV2.FieldShape, textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.weight(1f).height(54.dp))
     }
 }
 
@@ -1756,8 +1758,8 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
-            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(24.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(60.dp))
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
+            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = LabV2.FieldShape, textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(54.dp))
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
                 options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
             }
         }
@@ -2152,7 +2154,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                 ) {
                     Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                 }
                 Box(
                     Modifier
@@ -2178,7 +2180,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(18.dp),
             containerColor = LAB_POPUP_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp,
@@ -2228,27 +2230,18 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFFEAF5FF),
-                        Color(0xFFF5FAFF),
-                        Color(0xFFFBFDFF),
-                        Color(0xFFFFFFFF)
-                    )
-                )
-            )
+            .labV2PageBackground()
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
                     Spacer(Modifier.width(8.dp))
                     VersionBadge(hasUpdate = hasPendingUpdate) { if (hasPendingUpdate) onUpdateClick() else showVersion = true }
                 }
-                Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
+                Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             }
             HomeRefreshMenuButton(
                 autoRefresh = autoRefresh,
@@ -2470,39 +2463,72 @@ fun HealthCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(30.dp), clip = false),
-        shape = RoundedCornerShape(30.dp),
-        color = Color.White.copy(alpha = 0.96f),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.95f))
-    ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), content = content)
-    }
+    LabV2Card(modifier = modifier, contentPadding = PaddingValues(horizontal = 15.dp, vertical = 14.dp), content = content)
 }
 
 @Composable
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
     HealthCard(Modifier.clickable { onNavigate("settings") }) {
+        Text("网络健康", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("网络健康得分", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(score.toString(), fontSize = 48.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 52.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化", fontSize = 14.sp, fontWeight = FontWeight.Black, color = if (score >= 85) Color(0xFF16A34A) else Color(0xFFF59E0B), modifier = Modifier.padding(bottom = 8.dp))
-                }
-                Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { "等待刷新" }, fontSize = 11.5.sp, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            HealthScoreGauge(score)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                HealthCompactState("Hub 连接", if (hubOk) "正常" else "未连接", if (hubOk) LabV2.Green else LabV2.Red)
+                HealthCompactState("网络出口", if (exitOk) "已获取" else "无数据", if (exitOk) LabV2.Primary else LabV2.InkMuted)
+                HealthCompactState("VPN / STUN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted)
+                Text(
+                    message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } },
+                    fontSize = 9.7.sp,
+                    lineHeight = 12.sp,
+                    color = LabV2.InkMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
-            WeeklyMiniBars(score)
         }
-        Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f).clickable { onNavigate("settings") })
-            HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("tool_ping") })
-            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("events") })
+            HealthStatusBadge("终端", "$onlineCount 台", LabV2.Green, Modifier.weight(1f).clickable { onNavigate("devices") })
+            HealthStatusBadge("出口", if (exitOk) "正常" else "待测", LabV2.Primary, Modifier.weight(1f).clickable { onNavigate("tool_ping") })
+            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "待同步", LabV2.Purple, Modifier.weight(1f).clickable { onNavigate("events") })
         }
+    }
+}
+
+@Composable
+fun HealthScoreGauge(score: Int) {
+    Box(Modifier.size(104.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(8.dp)) {
+            val stroke = 9.dp.toPx()
+            drawArc(
+                color = Color(0xFFE2EAF3),
+                startAngle = 135f,
+                sweepAngle = 270f,
+                useCenter = false,
+                style = Stroke(stroke, cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red,
+                startAngle = 135f,
+                sweepAngle = 270f * (score.coerceIn(0, 100) / 100f),
+                useCenter = false,
+                style = Stroke(stroke, cap = StrokeCap.Round)
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(score.toString(), fontSize = 31.sp, lineHeight = 32.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+        }
+    }
+}
+
+@Composable
+fun HealthCompactState(label: String, value: String, color: Color) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(label, Modifier.weight(1f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Text(value, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
     }
 }
 
@@ -2528,7 +2554,7 @@ fun WeeklyMiniBars(score: Int) {
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .10f), tonalElevation = 0.dp, shadowElevation = 0.dp) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(value, fontSize = 12.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -2543,13 +2569,13 @@ fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Text(title, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 30.sp)
+                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, lineHeight = 30.sp)
                     Spacer(Modifier.width(3.dp))
-                    Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), modifier = Modifier.padding(bottom = 4.dp))
+                    Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, modifier = Modifier.padding(bottom = 4.dp))
                 }
-                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -2568,8 +2594,8 @@ fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, acce
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -2586,7 +2612,7 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
     val display = cleanApiText(displayValue)
     if (real.isBlank() && display.isBlank()) return
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(86.dp), color = Color(0xFF64748B), fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, Modifier.width(86.dp), color = LabV2.InkMuted, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable(enabled = real.isNotBlank()) { copy(ctx, real) }, verticalAlignment = Alignment.CenterVertically) {
             Text(display.ifBlank { real }, color = accent, fontWeight = FontWeight.Black, fontSize = 13.2.sp, maxLines = 1)
         }
@@ -2626,8 +2652,8 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(13.dp))
@@ -2644,7 +2670,7 @@ fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
         if (state.devices.isEmpty()) {
-            Text("暂无缓存，点击刷新。", color = Color(0xFF64748B), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("暂无缓存，点击刷新。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
         state.devices.take(4).forEachIndexed { idx, d ->
             HealthDeviceLine(d)
@@ -2660,9 +2686,9 @@ fun HealthDeviceLine(d: DeviceItem) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
-            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
                     cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
@@ -2778,7 +2804,7 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
             HealthStatusBadge("备注", if (snapshot.hasNote) "1 条" else "0 条", Color(0xFF64748B), Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
-        Text(snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -2786,8 +2812,8 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
 fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
     var dragging by remember(cardKey) { mutableStateOf(false) }
     var dragY by remember(cardKey) { mutableStateOf(0f) }
-    val scale by animateFloatAsState(if (dragging) 1.025f else 1f, animationSpec = tween(140), label = "home-card-scale")
-    val thresholdPx = with(LocalDensity.current) { 92.dp.toPx() }
+    val scale by animateFloatAsState(if (dragging) 0.982f else 1f, animationSpec = tween(180), label = "home-card-scale")
+    val thresholdPx = with(LocalDensity.current) { 128.dp.toPx() }
 
     fun commitOrder() {
         val current = order.indexOf(cardKey)
@@ -2910,7 +2936,7 @@ fun StatusPill(label: String, value: String, color: Color) {
 }
 
 @Composable
-fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit) = ScreenShell("终端", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
+fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit) = ScreenShell("设备列表", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
     var mode by remember { mutableStateOf("watch") }
     var detailMac by remember { mutableStateOf<String?>(null) }
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
@@ -3449,7 +3475,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 }
 
 @Composable
-fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具", "网络诊断 · 本地系统", topNav = topNav) {
+fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具箱", "长按功能卡可调整分组顺序", topNav = topNav) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var profile by remember { mutableStateOf(detectNetworkProfile(ctx, prefs)) }
@@ -3512,22 +3538,22 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     val toolSections = remember {
         mapOf(
             "net" to listOf(
-                ToolMosaicItem("延迟测试", R.drawable.tool_ping_3d, Color(0xFF3B6EEA), "tool_ping"),
-                ToolMosaicItem("端口测试", R.drawable.tool_port_3d, Color(0xFF00A9D6), "tool_port"),
-                ToolMosaicItem("路由追踪", R.drawable.tool_trace_3d, Color(0xFF5269E8), "tool_trace"),
-                ToolMosaicItem("UDP探测", R.drawable.tool_udp_3d, Color(0xFF00B8C8), "tool_udp")
+                ToolMosaicItem("延迟测试", Icons.Rounded.Speed, LabV2.Green, "tool_ping"),
+                ToolMosaicItem("端口测试", Icons.Rounded.SettingsEthernet, LabV2.Primary, "tool_port"),
+                ToolMosaicItem("路由追踪", Icons.Rounded.Route, LabV2.Purple, "tool_trace"),
+                ToolMosaicItem("UDP 探测", Icons.Rounded.DataUsage, LabV2.Amber, "tool_udp")
             ),
             "public" to listOf(
-                ToolMosaicItem("DNS解析", R.drawable.tool_dns_3d, Color(0xFF426DE6), "tool_dns"),
-                ToolMosaicItem("IPv6可用性", R.drawable.tool_ipv6_3d, Color(0xFF00AFC8), "tool_ipv6"),
-                ToolMosaicItem("NAT检测", R.drawable.tool_nat_3d, Color(0xFF8B5CF6), "tool_nat"),
-                ToolMosaicItem("DNS质量", R.drawable.tool_dns_quality_3d, Color(0xFF9B59F6), "tool_dns_quality")
+                ToolMosaicItem("DNS 查询", Icons.Rounded.Dns, LabV2.Primary, "tool_dns"),
+                ToolMosaicItem("IPv6 检测", Icons.Rounded.Public, LabV2.Purple, "tool_ipv6"),
+                ToolMosaicItem("NAT 类型", Icons.Rounded.Router, LabV2.Green, "tool_nat"),
+                ToolMosaicItem("DNS 质量", Icons.Rounded.FactCheck, Color(0xFF2FA36B), "tool_dns_quality")
             ),
             "device" to listOf(
-                ToolMosaicItem("无线漫游", R.drawable.tool_roam_3d, Color(0xFF20B879), "tool_roam"),
-                ToolMosaicItem("MTU检测", R.drawable.tool_mtu_3d, Color(0xFF00A9D6), "tool_mtu"),
-                ToolMosaicItem("SSH命令", R.drawable.tool_ssh_3d, Color(0xFF66758E), "tool_ssh"),
-                ToolMosaicItem("端口映射", R.drawable.tool_portmap_3d, Color(0xFF1677F2), "tool_portmap")
+                ToolMosaicItem("WiFi 漫游", Icons.Rounded.Wifi, Color(0xFF2A85DE), "tool_roam"),
+                ToolMosaicItem("MTU / PMTU", Icons.Rounded.CompareArrows, LabV2.Green, "tool_mtu"),
+                ToolMosaicItem("SSH 终端", Icons.Rounded.Terminal, Color(0xFF52647A), "tool_ssh"),
+                ToolMosaicItem("端口映射", Icons.Rounded.SwapHoriz, LabV2.Primary, "tool_portmap")
             )
         )
     }
@@ -3551,7 +3577,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
                 order = toolOrder,
                 onOrder = ::saveToolOrder
             ) {
-                ToolMosaicSection(items = items, open = open)
+                ToolMosaicSection(title = toolSectionTitle(key), items = items, open = open)
             }
         }
     }
@@ -3648,181 +3674,54 @@ fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Co
 
 data class ToolMosaicItem(
     val title: String,
-    val iconRes: Int,
+    val icon: ImageVector,
     val color: Color,
     val route: String
 )
 
+fun toolSectionTitle(key: String): String = when (key) {
+    "net" -> "网络检测"
+    "public" -> "解析与公网"
+    else -> "设备与链路"
+}
+
 @Composable
-fun ToolMosaicSection(items: List<ToolMosaicItem>, open: (String) -> Unit) {
+fun ToolMosaicSection(title: String, items: List<ToolMosaicItem>, open: (String) -> Unit) {
     if (items.size < 4) return
-    Surface(
-        modifier = Modifier.fillMaxWidth().shadow(2.dp, RoundedCornerShape(25.dp), clip = false),
-        shape = RoundedCornerShape(25.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = .92f)),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
-    ) {
-        Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp)) {
-            Row(Modifier.fillMaxWidth().height(134.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                ToolMosaicTile(
-                    item = items[0],
-                    modifier = Modifier.weight(1.05f).fillMaxHeight(),
-                    layout = ToolTileLayout.Prominent,
-                    onClick = { open(items[0].route) }
-                )
-                Column(Modifier.weight(1.35f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        ToolMosaicTile(items[1], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[1].route) }
-                        ToolMosaicTile(items[2], Modifier.weight(1f).fillMaxHeight(), ToolTileLayout.Compact) { open(items[2].route) }
-                    }
-                    ToolMosaicTile(items[3], Modifier.weight(.74f).fillMaxWidth(), ToolTileLayout.Wide) { open(items[3].route) }
-                }
+    LabV2Card(compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp)) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items.take(4).forEach { item ->
+                ToolMosaicTile(item = item, modifier = Modifier.weight(1f)) { open(item.route) }
             }
         }
     }
 }
 
-enum class ToolTileLayout { Prominent, Compact, Wide }
-
 @Composable
-fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier, layout: ToolTileLayout, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(if (layout == ToolTileLayout.Prominent) 21.dp else 17.dp)
-    val contentPadding = when (layout) {
-        ToolTileLayout.Prominent -> 7.dp
-        ToolTileLayout.Compact -> 4.dp
-        ToolTileLayout.Wide -> 5.dp
-    }
-    Box(
-        modifier = modifier
+fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(
+        modifier
             .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color.White.copy(alpha = .94f),
-                        item.color.copy(alpha = .085f)
-                    )
-                )
-            )
-            .border(1.dp, item.color.copy(alpha = .10f), shape)
+            .background(Brush.verticalGradient(listOf(Color(0xFFFCFEFF), item.color.copy(alpha = .055f))))
+            .border(1.dp, LabV2.Border.copy(alpha = .86f), shape)
             .clickable { onClick() }
+            .padding(horizontal = 4.dp, vertical = 9.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        ToolTileBackdrop(item)
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(contentPadding)
-        ) {
-            when (layout) {
-                ToolTileLayout.Prominent -> {
-                    Column(
-                        Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(item.title, fontSize = 13.2.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false)
-                        Spacer(Modifier.height(3.dp))
-                        ToolAssetIcon(item.iconRes, 66.dp)
-                    }
-                }
-                ToolTileLayout.Compact -> {
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        ToolAssetIcon(item.iconRes, 34.dp)
-                        Spacer(Modifier.height(1.dp))
-                        Text(item.title, fontSize = 9.9.sp, lineHeight = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                ToolTileLayout.Wide -> {
-                    Row(
-                        Modifier.fillMaxSize().padding(horizontal = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Text(item.title, fontSize = 12.sp, lineHeight = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                        Spacer(Modifier.width(7.dp))
-                        ToolAssetIcon(item.iconRes, 32.dp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ToolTileBackdrop(item: ToolMosaicItem) {
-    Canvas(Modifier.fillMaxSize()) {
-        val accent = item.color
-        val thin = 1.25.dp.toPx()
-        val medium = 2.dp.toPx()
-        val motifCenter = Offset(size.width * .68f, size.height * .60f)
-        val motifRadius = size.minDimension * .22f
-
-        drawCircle(accent.copy(alpha = .04f), motifRadius * 1.45f, motifCenter)
-        drawCircle(accent.copy(alpha = .055f), motifRadius, motifCenter, style = Stroke(thin))
-
-        when (item.route) {
-            "tool_ping", "tool_dns_quality" -> {
-                val wave = Path().apply {
-                    moveTo(size.width * .08f, size.height * .68f)
-                    lineTo(size.width * .25f, size.height * .68f)
-                    lineTo(size.width * .35f, size.height * .51f)
-                    lineTo(size.width * .46f, size.height * .76f)
-                    lineTo(size.width * .59f, size.height * .59f)
-                    lineTo(size.width * .92f, size.height * .59f)
-                }
-                drawPath(wave, accent.copy(alpha = .105f), style = Stroke(medium, cap = StrokeCap.Round, join = StrokeJoin.Round))
-            }
-            "tool_trace", "tool_roam", "tool_ipv6" -> {
-                val points = listOf(
-                    Offset(size.width * .17f, size.height * .70f),
-                    Offset(size.width * .36f, size.height * .43f),
-                    Offset(size.width * .58f, size.height * .65f),
-                    Offset(size.width * .81f, size.height * .31f)
-                )
-                points.zipWithNext().forEach { (a, b) -> drawLine(accent.copy(alpha = .10f), a, b, medium, StrokeCap.Round) }
-                points.forEach { point ->
-                    drawCircle(Color.White.copy(alpha = .72f), 4.5.dp.toPx(), point)
-                    drawCircle(accent.copy(alpha = .15f), 2.7.dp.toPx(), point)
-                }
-            }
-            "tool_port", "tool_udp", "tool_mtu", "tool_nat", "tool_portmap" -> {
-                repeat(3) { index ->
-                    drawArc(
-                        color = accent.copy(alpha = .065f + index * .018f),
-                        startAngle = 205f,
-                        sweepAngle = 245f,
-                        useCenter = false,
-                        topLeft = Offset(size.width * (.24f + index * .05f), size.height * (.23f + index * .05f)),
-                        size = Size(size.minDimension * (.62f - index * .10f), size.minDimension * (.62f - index * .10f)),
-                        style = Stroke(thin, cap = StrokeCap.Round)
-                    )
-                }
-            }
-            else -> {
-                repeat(4) { index ->
-                    drawCircle(
-                        accent.copy(alpha = .065f + index * .014f),
-                        3.dp.toPx(),
-                        Offset(size.width * (.18f + index * .15f), size.height * (.69f - (index % 2) * .15f))
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ToolAssetIcon(iconRes: Int, size: Dp, modifier: Modifier = Modifier) {
-    val bitmap = ImageBitmap.imageResource(iconRes)
-    Canvas(modifier.size(size)) {
-        drawImage(
-            image = bitmap,
-            srcOffset = IntOffset.Zero,
-            srcSize = IntSize(bitmap.width, bitmap.height),
-            dstOffset = IntOffset.Zero,
-            dstSize = IntSize(this.size.width.roundToInt(), this.size.height.roundToInt()),
-            filterQuality = FilterQuality.High
+        LabV2ToolIcon(item.icon, item.color, size = 44)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            item.title,
+            fontSize = 10.2.sp,
+            lineHeight = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = LabV2.Ink,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
 }
@@ -4740,7 +4639,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
 
     ExpressiveCard("实时结果", status, null, Color(0xFF16A34A), headerAction = {
         TextButton(onClick = { reportHistory = prefs.roamingReports(); roamView = "history" }) { Text("历史", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
-        if (running) TextButton(onClick = { job?.cancel(); running = false; status = "已停止" }) { Text("停止", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF64748B)) }
+        if (running) TextButton(onClick = { job?.cancel(); running = false; status = "已停止" }) { Text("停止", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted) }
     }) {
         RoamMetricStrip(
             listOf(
@@ -7360,7 +7259,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
                 dates.take(7).forEachIndexed { idx, d ->
                     val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
                     DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)
