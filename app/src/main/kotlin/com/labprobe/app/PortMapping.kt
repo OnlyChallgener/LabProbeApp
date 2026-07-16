@@ -81,7 +81,7 @@ private val PortPopupBg = Color(0xFFFFFFFF)
     val lastError: String = ""
 )
 
- data class PortMapRule(
+data class PortMapRule(
     val id: String,
     val name: String,
     val enabled: Boolean,
@@ -98,9 +98,17 @@ private val PortPopupBg = Color(0xFFFFFFFF)
     val leaseSeconds: Long,
     val maxConnections: Int,
     val idleTimeoutSec: Int,
+    val desiredState: String = "",
+    val actualState: String = "",
+    val syncState: String = "",
+    val revision: Long = 0L,
     val runtime: PortMapRuntime = PortMapRuntime()
 ) {
-    val isRunning: Boolean get() = runtime.state == "running" || runtime.state == "starting"
+    val effectiveActualState: String get() = actualState.ifBlank { runtime.state }
+    val effectiveDesiredState: String get() = desiredState.ifBlank { if (enabled) "running" else "stopped" }
+    val isRunning: Boolean get() = effectiveActualState == "running"
+    val isActiveOrPending: Boolean get() = effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || syncState == "syncing"
+    val shouldStop: Boolean get() = effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || (syncState == "syncing" && effectiveDesiredState == "running")
     val modeText: String get() = if (mode == "6to4") "6→4" else "6→6"
     val targetText: String get() = when {
         mode == "6to4" -> "$targetIpv4:$targetPort"
@@ -109,15 +117,20 @@ private val PortPopupBg = Color(0xFFFFFFFF)
     }
 }
 
- data class PortMapAgentInfo(
+data class PortMapAgentInfo(
     val online: Boolean,
     val router: String,
     val lastSeenAt: String,
     val portMin: Int,
-    val portMax: Int
+    val portMax: Int,
+    val protocolVersion: String = "",
+    val hubVersion: String = "",
+    val agentVersion: String = "",
+    val relayVersion: String = "",
+    val capabilities: String = ""
 )
 
- data class PortMapHistoryPoint(
+data class PortMapHistoryPoint(
     val time: Long,
     val activeConnections: Long,
     val uploadBytes: Long,
@@ -144,6 +157,10 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
         leaseSeconds = o.optLong("leaseSeconds", 0L).coerceAtLeast(0L),
         maxConnections = o.optInt("maxConnections", 32),
         idleTimeoutSec = o.optInt("idleTimeoutSec", 300),
+        desiredState = cleanApiText(o.optString("desiredState", if (o.optBoolean("enabled")) "running" else "stopped")),
+        actualState = cleanApiText(o.optString("actualState", r.optString("state"))),
+        syncState = cleanApiText(o.optString("syncState", "synced")),
+        revision = o.optLong("revision", 0L),
         runtime = PortMapRuntime(
             state = cleanApiText(r.optString("state", if (o.optBoolean("enabled")) "waiting_agent" else "stopped")),
             resolvedTarget = cleanApiText(r.optString("resolvedTarget")),
@@ -175,7 +192,12 @@ class PortMapApi(private val prefs: AppPrefs) {
             router = cleanApiText(root.optString("router", "BE72Pro")),
             lastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
             portMin = range.optInt("min", 20000),
-            portMax = range.optInt("max", 20020)
+            portMax = range.optInt("max", 20020),
+            protocolVersion = cleanApiText(root.optString("protocolVersion")),
+            hubVersion = cleanApiText(root.optString("hubVersion")),
+            agentVersion = cleanApiText(root.optString("agentVersion")),
+            relayVersion = cleanApiText(root.optString("relayVersion")),
+            capabilities = compactPortCapabilities(root.opt("capabilities"))
         )
     }
 
@@ -230,7 +252,13 @@ class PortMapApi(private val prefs: AppPrefs) {
     private fun deleteRequest(path: String): String = execute(requestBuilder(path).delete().build())
 }
 
- data class PortMapDraft(
+private fun compactPortCapabilities(raw: Any?): String = when (raw) {
+    is JSONArray -> (0 until raw.length()).map { cleanApiText(raw.optString(it)) }.filter { it.isNotBlank() }.joinToString(" · ")
+    is JSONObject -> raw.keys().asSequence().filter { raw.optBoolean(it, false) }.toList().joinToString(" · ")
+    else -> cleanApiText(raw?.toString())
+}
+
+data class PortMapDraft(
     val id: String = "",
     val name: String = "",
     val enabled: Boolean = false,
@@ -318,6 +346,15 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
 
+    fun markSyncing(rule: PortMapRule, action: String) {
+        rules = rules.map {
+            if (it.id == rule.id) it.copy(
+                desiredState = if (action == "start") "running" else "stopped",
+                syncState = "syncing"
+            ) else it
+        }
+    }
+
     suspend fun refresh(silent: Boolean = false) {
         if (!silent) loading = true
         runCatching {
@@ -340,9 +377,9 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     val visible = rules.filter {
         when (filter) {
-            "运行中" -> it.isRunning || it.runtime.state == "waiting_target" || it.runtime.state == "waiting_agent"
-            "已停止" -> !it.isRunning && it.runtime.state !in listOf("waiting_target", "waiting_agent", "expired")
-            "已到期" -> it.runtime.state == "expired"
+            "运行中" -> it.effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || it.syncState == "syncing"
+            "已停止" -> it.effectiveActualState == "stopped" && it.syncState != "syncing"
+            "已到期" -> it.effectiveActualState == "expired"
             else -> true
         }
     }
@@ -356,8 +393,10 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             onDismiss = { selectedId = null },
             onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
             onToggle = {
+                val action = if (selected.shouldStop) "stop" else "start"
+                markSyncing(selected, action)
                 scope.launch {
-                    runCatching { api.action(selected.id, if (selected.isRunning || selected.enabled) "stop" else "start") }
+                    runCatching { api.action(selected.id, action) }
                         .onFailure { message = it.message ?: "操作失败" }
                     refresh(true)
                 }
@@ -416,8 +455,10 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     onOpen = { selectedId = rule.id },
                     onEdit = { editDraft = PortMapDraft.from(rule) },
                     onToggle = {
+                        val action = if (rule.shouldStop) "stop" else "start"
+                        markSyncing(rule, action)
                         scope.launch {
-                            runCatching { api.action(rule.id, if (rule.isRunning || rule.enabled) "stop" else "start") }
+                            runCatching { api.action(rule.id, action) }
                                 .onFailure { message = it.message ?: "操作失败" }
                             refresh(true)
                         }
@@ -462,12 +503,20 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
                 Text(agent.router.ifBlank { "BE72Pro" }, fontWeight = FontWeight.Black, fontSize = 14.5.sp, color = LabV2.Ink)
-                Text("Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}", fontSize = 10.3.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+                val versions = listOfNotNull(
+                    agent.hubVersion.takeIf { it.isNotBlank() }?.let { "Hub $it" },
+                    agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" },
+                    agent.relayVersion.takeIf { it.isNotBlank() }?.let { "Relay $it" }
+                ).joinToString(" · ")
+                Text(versions.ifBlank { "Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}" }, fontSize = 10.3.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(7.dp).background(color, CircleShape))
                     Spacer(Modifier.width(5.dp))
                     Text(if (agent.online) "Agent 在线" else "Agent 未连接", color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = 9.3.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (agent.protocolVersion.isNotBlank() || agent.capabilities.isNotBlank()) {
+                    Text(listOfNotNull(agent.protocolVersion.takeIf { it.isNotBlank() }?.let { "协议 $it" }, agent.capabilities.takeIf { it.isNotBlank() }).joinToString(" · "), fontSize = 9.2.sp, lineHeight = 11.sp, color = LabV2.InkFaint, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             IconButton(onClick = onRefresh) {
@@ -498,61 +547,67 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 @Composable
 private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
     val status = portMapStatus(rule)
-    LabV2Card(modifier = Modifier.clickable(onClick = onOpen), compact = true) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(8.dp).background(status.color, CircleShape))
-            Spacer(Modifier.width(8.dp))
-            Text(rule.name, Modifier.weight(1f), fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Surface(shape = RoundedCornerShape(99.dp), color = status.color.copy(alpha = .10f)) {
-                Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = status.color, fontSize = 9.8.sp, fontWeight = FontWeight.Black)
+    LabV2Card(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).background(status.color, CircleShape))
+                Spacer(Modifier.width(7.dp))
+                Text(rule.name, Modifier.weight(1f), fontSize = 14.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Surface(shape = RoundedCornerShape(99.dp), color = status.color.copy(alpha = .10f)) {
+                    Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = status.color, fontSize = 10.3.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black)
+                }
             }
-        }
-        Text(
-            "TCP · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}",
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = LabV2.InkMuted
-        )
-        Text(
-            "→ ${rule.targetText}",
-            fontSize = 10.8.sp,
-            lineHeight = 14.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = LabV2.Ink,
-            maxLines = if (rule.mode == "6to4") 1 else 2,
-            overflow = TextOverflow.Clip
-        )
-        if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
-            Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = 9.8.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Clip)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            LabV2Metric("连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
-            LabV2Metric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
-            LabV2Metric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
-        }
-        if (rule.runtime.lastError.isNotBlank() && !rule.isRunning) {
-            Text(rule.runtime.lastError, color = PortRed, fontSize = 9.5.sp, maxLines = 3, overflow = TextOverflow.Clip)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(portMapTimeText(rule), Modifier.weight(1f), fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
-            OutlinedButton(onClick = onToggle, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.isRunning || rule.enabled) PortRed else PortBlue)) {
-                Text(if (rule.isRunning || rule.enabled) "停止" else "启动", fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+            Text("TCP · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+            Text("→ ${rule.targetText}", fontSize = 11.2.sp, lineHeight = 13.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
+            if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
+                Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.width(6.dp))
-            OutlinedButton(onClick = onEdit, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)) {
-                Text("编辑", fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+            Text(portMapStateTrail(rule), fontSize = 9.8.sp, lineHeight = 11.sp, color = status.color, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                PortMapCompactMetric("连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
+                PortMapCompactMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
+                PortMapCompactMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
+            }
+            val error = portMapErrorText(rule.runtime.lastError)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    if (error.isNotBlank() && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) Text(error, color = PortRed, fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(portMapTimeText(rule), fontSize = 10.2.sp, lineHeight = 12.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                }
+                OutlinedButton(onClick = onToggle, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.shouldStop) PortRed else PortBlue)) {
+                    Text(if (rule.shouldStop) "停止" else "启动", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.width(5.dp))
+                OutlinedButton(onClick = onEdit, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp)) {
+                    Text("编辑", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                }
             }
         }
     }
 }
 
+@Composable
+private fun PortMapCompactMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier.height(46.dp), shape = RoundedCornerShape(13.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
+            Text(label, fontSize = 9.5.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+            Text(value, fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
+        }
+    }
+}
+
 private data class PortMapStatusUi(val text: String, val color: Color)
-private fun portMapStatus(rule: PortMapRule): PortMapStatusUi = when (rule.runtime.state) {
-    "running", "starting" -> PortMapStatusUi("运行中", PortGreen)
-    "waiting_target" -> PortMapStatusUi("等待目标", Color(0xFFF59E0B))
-    "waiting_agent" -> PortMapStatusUi("等待 Agent", Color(0xFFF59E0B))
-    "expired" -> PortMapStatusUi("已到期", PortSlate)
-    "error" -> PortMapStatusUi("异常", PortRed)
+private fun portMapStatus(rule: PortMapRule): PortMapStatusUi = when {
+    rule.syncState == "agent_offline" -> PortMapStatusUi("路由器 Agent 离线", PortRed)
+    rule.syncState == "syncing" -> PortMapStatusUi("正在同步", PortBlue)
+    rule.syncState == "error" -> PortMapStatusUi("同步失败", PortRed)
+    rule.effectiveActualState == "starting" -> PortMapStatusUi("启动中", PortBlue)
+    rule.effectiveActualState == "running" -> PortMapStatusUi("运行中", PortGreen)
+    rule.effectiveActualState == "waiting_target" -> PortMapStatusUi("等待目标 IPv6", Color(0xFFF59E0B))
+    rule.effectiveActualState == "waiting_agent" -> PortMapStatusUi("等待 Agent", Color(0xFFF59E0B))
+    rule.effectiveActualState == "draining" -> PortMapStatusUi("正在停止现有连接", Color(0xFFF59E0B))
+    rule.effectiveActualState == "expired" -> PortMapStatusUi("已到期", PortSlate)
+    rule.effectiveActualState == "error" -> PortMapStatusUi("执行失败", PortRed)
     else -> PortMapStatusUi("已停止", PortSlate)
 }
 
@@ -1062,22 +1117,26 @@ private fun PortMapDetailPage(
 
             LabV2Card(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
+                PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
                 PortMapDetailLine("监听", "[::]:${rule.listenPort}")
                 PortMapDetailLine("配置目标", rule.targetText)
                 if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue)
                 PortMapDetailLine("运行时间", formatPortDuration(rule.runtime.startedAt?.let { max(0, System.currentTimeMillis() / 1000 - it) }))
-                PortMapDetailLine("剩余时间", remainingText(rule.expiresAt))
-                PortMapDetailLine("重启时长", if (rule.leaseSeconds > 0) formatPortDuration(rule.leaseSeconds) else "永久")
+                PortMapDetailLine("剩余时间", portMapRemainingText(rule))
+                PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久")
                 PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt))
+                if (rule.revision > 0L) PortMapDetailLine("配置版本", "revision ${rule.revision}")
             }
 
-            LabV2Card(compact = true) {
-                Text("流量统计", fontSize = 13.sp, fontWeight = FontWeight.Black)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
-                    PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
-                    PortMapBigMetric("当前连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
-                    PortMapBigMetric("最大连接", rule.maxConnections.toString(), PortSlate, Modifier.weight(1f))
+            LabV2Card(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("流量统计", fontSize = 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
+                        PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
+                        PortMapBigMetric("当前连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
+                        PortMapBigMetric("最大连接", rule.maxConnections.toString(), PortSlate, Modifier.weight(1f))
+                    }
                 }
             }
 
@@ -1089,20 +1148,20 @@ private fun PortMapDetailPage(
                 PortMapTrafficChart(history, Modifier.fillMaxWidth().height(184.dp))
             }
 
-            if (rule.runtime.lastError.isNotBlank()) {
+            if (rule.runtime.lastError.isNotBlank() && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) {
                 Surface(shape = RoundedCornerShape(18.dp), color = PortRed.copy(alpha = .08f)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("最近错误", color = PortRed, fontWeight = FontWeight.Black, fontSize = 11.sp)
-                        Text(rule.runtime.lastError, color = PortRed, fontSize = 10.sp)
+                    Column(Modifier.padding(horizontal = 11.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("最近错误", color = PortRed, fontWeight = FontWeight.Black, fontSize = 11.5.sp)
+                        Text(portMapErrorText(rule.runtime.lastError), color = PortRed, fontSize = 10.8.sp, lineHeight = 13.sp)
                     }
                 }
             }
 
         Row(Modifier.fillMaxWidth()) {
-            Button(onClick = onToggle, modifier = Modifier.weight(1f).height(48.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.isRunning || rule.enabled) PortRed else PortBlue)) {
-                Icon(if (rule.isRunning || rule.enabled) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
+            Button(onClick = onToggle, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.shouldStop) PortRed else PortBlue)) {
+                Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
                 Spacer(Modifier.width(5.dp))
-                Text(if (rule.isRunning || rule.enabled) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
+                Text(if (rule.shouldStop) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
             }
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.height(48.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed)) {
@@ -1126,14 +1185,14 @@ private fun PortMapDetailPage(
 @Composable
 private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = 10.2.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Bold)
-        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 11.2.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Clip)
+        Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = 10.8.sp, lineHeight = 14.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Bold)
+        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Clip)
     }
 }
 
 @Composable
 private fun PortMapBigMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    LabV2Metric(label = label, value = value, accent = color, modifier = modifier)
+    PortMapCompactMetric(label = label, value = value, color = color, modifier = modifier)
 }
 
 @Composable
@@ -1290,9 +1349,64 @@ private fun formatEpoch(epoch: Long?): String {
     return SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(epoch * 1000))
 }
 
+private fun portMapDesiredText(rule: PortMapRule): String = when (rule.effectiveDesiredState) {
+    "running" -> "期望启动"
+    "stopped" -> "期望停止"
+    else -> rule.effectiveDesiredState.ifBlank { "期望未知" }
+}
+
+private fun portMapSyncText(rule: PortMapRule): String = when (rule.syncState) {
+    "synced" -> "已同步"
+    "syncing" -> "正在同步"
+    "agent_offline" -> "路由器 Agent 离线"
+    "error" -> "同步失败"
+    else -> rule.syncState.ifBlank { "同步状态未知" }
+}
+
+private fun portMapStateTrail(rule: PortMapRule): String = buildList {
+    add(portMapDesiredText(rule))
+    add(portMapSyncText(rule))
+    if (rule.revision > 0L) add("r${rule.revision}")
+}.joinToString(" · ")
+
+private fun portMapErrorText(raw: String): String {
+    val value = cleanApiText(raw)
+    if (value.isBlank()) return ""
+    val mappings = linkedMapOf(
+        "PORT_IN_USE" to "监听端口已被占用",
+        "LISTEN_PERMISSION" to "无权限监听该端口",
+        "TARGET_TIMEOUT" to "目标连接超时",
+        "TARGET_REFUSED" to "目标拒绝连接",
+        "IPV6_NOT_FOUND" to "未找到设备 IPv6",
+        "IPV6_AMBIGUOUS" to "IPv6 后缀对应多个设备",
+        "TARGET_OUTSIDE_LAN" to "目标不在允许的 LAN 路由中",
+        "MAX_CONNECTIONS" to "已达到最大连接数",
+        "RULE_EXPIRED" to "规则已到期",
+        "VERSION_MISMATCH" to "组件版本不兼容"
+    )
+    val upper = value.uppercase(Locale.US)
+    mappings.entries.firstOrNull { upper.contains(it.key) }?.let { return it.value }
+    if (upper.contains("RULE EXPIRED") || upper == "EXPIRED") return "规则已到期"
+    return value
+}
+
+private fun portMapRemainingText(rule: PortMapRule): String {
+    val expiry = rule.runtime.expiresAt ?: rule.expiresAt
+    if (expiry == null) return "永久"
+    val remain = expiry - System.currentTimeMillis() / 1000L
+    if (remain > 0L) return formatPortDuration(remain)
+    return if (rule.effectiveActualState in setOf("starting", "running") || rule.syncState == "syncing") "等待 Hub 更新" else "已到期"
+}
+
 private fun portMapTimeText(rule: PortMapRule): String = when {
-    rule.isRunning -> "已运行 ${formatPortDuration(rule.runtime.startedAt?.let { max(0, System.currentTimeMillis() / 1000 - it) })} · 剩余 ${remainingText(rule.expiresAt)}"
-    rule.runtime.state == "waiting_target" -> "目标未解析 · 每 30 秒重试"
-    rule.runtime.state == "waiting_agent" -> "命令等待路由器领取"
+    rule.syncState == "agent_offline" -> "等待路由器 Agent 恢复"
+    rule.syncState == "syncing" -> if (rule.effectiveDesiredState == "stopped") "停止命令已提交 · 正在同步" else "启动命令已提交 · 正在同步"
+    rule.effectiveActualState == "starting" -> "启动中 · 等待 Hub 返回实际状态"
+    rule.effectiveActualState == "running" -> "已运行 ${formatPortDuration(rule.runtime.startedAt?.let { max(0, System.currentTimeMillis() / 1000 - it) })} · 剩余 ${portMapRemainingText(rule)}"
+    rule.effectiveActualState == "waiting_target" -> "等待目标 IPv6 · 每 30 秒重试"
+    rule.effectiveActualState == "waiting_agent" -> "命令等待路由器领取"
+    rule.effectiveActualState == "draining" -> "正在停止现有连接"
+    rule.effectiveActualState == "expired" -> "已到期${if (rule.leaseSeconds > 0) " · 再次启动后按 ${formatPortDuration(rule.leaseSeconds)} 重新计时" else ""}"
+    rule.effectiveActualState == "error" -> portMapErrorText(rule.runtime.lastError).ifBlank { "执行失败" }
     else -> "尚未启动"
 }

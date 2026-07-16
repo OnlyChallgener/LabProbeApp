@@ -1022,6 +1022,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     var route by remember { mutableStateOf("home") }
     var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
+    var settingsReturnRoute by remember { mutableStateOf("favorites") }
     var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
@@ -1112,13 +1113,16 @@ fun LabProbeApp(prefs: AppPrefs) {
             else -> route
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
-        val navigate: (String) -> Unit = { target -> route = target }
+        val navigate: (String) -> Unit = { target ->
+            if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
+            route = target
+        }
         BackHandler(route.startsWith("tool_") || route == "daily" || route == "device_traffic" || route == "device_detail" || route == "settings") {
             route = when (route) {
                 "daily" -> "events"
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
-                "settings" -> "favorites"
+                "settings" -> settingsReturnRoute
                 "tool_nat_history" -> "tool_nat"
                 else -> toolReturnRoute ?: "tools"
             }
@@ -1166,8 +1170,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
-                        "favorites" -> FavoritesScreen(prefs) { route = "settings" }
-                        "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = "favorites" }
+                        "favorites" -> FavoritesScreen(prefs) { settingsReturnRoute = "favorites"; route = "settings" }
+                        "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
                         "tool_port" -> PortProbeScreen(prefs, backFromTool)
@@ -2398,28 +2402,30 @@ fun HealthCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    LabV2Card(modifier = modifier, contentPadding = PaddingValues(horizontal = 15.dp, vertical = 14.dp), content = content)
+    LabV2Card(modifier = modifier, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), content = content)
 }
 
 @Composable
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
-    HealthCard {
-        Text("网络健康", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            HealthScoreGauge(score)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                HealthCompactState("Hub 连接", if (hubOk) "正常" else "未连接", if (hubOk) LabV2.Green else LabV2.Red)
-                HealthCompactState("网络出口", if (exitOk) "已获取" else "无数据", if (exitOk) LabV2.Primary else LabV2.InkMuted)
-                HealthCompactState("VPN / STUN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted)
-                Text(
-                    message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } },
-                    fontSize = 9.7.sp,
-                    lineHeight = 12.sp,
-                    color = LabV2.InkMuted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+    HealthCard(Modifier.heightIn(min = 218.dp)) {
+        Column(Modifier.fillMaxWidth().clickable { onNavigate("settings") }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("网络健康", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                HealthScoreGauge(score)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    HealthCompactState("Hub 连接", if (hubOk) "正常" else "未连接", if (hubOk) LabV2.Green else LabV2.Red)
+                    HealthCompactState("网络出口", if (exitOk) "已获取" else "无数据", if (exitOk) LabV2.Primary else LabV2.InkMuted)
+                    HealthCompactState("VPN / STUN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted)
+                    Text(
+                        message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } },
+                        fontSize = 10.2.sp,
+                        lineHeight = 11.sp,
+                        color = LabV2.InkMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2451,7 +2457,7 @@ fun HealthScoreGauge(score: Int) {
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(score.toString(), fontSize = 31.sp, lineHeight = 32.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text(score.toString(), fontSize = 35.sp, lineHeight = 35.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
         }
     }
@@ -2462,8 +2468,8 @@ fun HealthCompactState(label: String, value: String, color: Color) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
-        Text(label, Modifier.weight(1f), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
-        Text(value, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+        Text(label, Modifier.weight(1f), fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Text(value, fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
     }
 }
 
@@ -2497,20 +2503,20 @@ fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modi
 
 @Composable
 fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color, subtitle: String, modifier: Modifier = Modifier) {
-    HealthCard(modifier) {
+    HealthCard(modifier.heightIn(min = 90.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(22.dp))
             }
-            Spacer(Modifier.width(9.dp))
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
-                Text(subtitle, fontSize = 9.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 12.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+                Text(subtitle, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(value, fontSize = 23.sp, fontWeight = FontWeight.Black, color = accent, lineHeight = 25.sp)
+                Text(value, fontSize = 27.sp, fontWeight = FontWeight.Black, color = accent, lineHeight = 28.sp)
                 Spacer(Modifier.width(2.dp))
-                Text(unit, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, modifier = Modifier.padding(bottom = 2.dp))
+                Text(unit, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, modifier = Modifier.padding(bottom = 2.dp))
             }
         }
     }
@@ -2558,14 +2564,13 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
     HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
-        Spacer(Modifier.height(6.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
-        Spacer(Modifier.height(7.dp))
+        Spacer(Modifier.height(1.dp))
         val nasIpv6 = safeNasIpv6ForUi(nas, router)
         HealthDataRowDisplay("NAS IPv6", nasIpv6, maskAddressForUi(nasIpv6, privacyMode))
         val wan6Rows = routerWan6Rows(router)
         wan6Rows.forEach { (label, value) ->
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(1.dp))
             HealthDataRowDisplay(if (wan6Rows.size <= 1) "路由 WAN6" else label, value, maskAddressForUi(value, privacyMode))
         }
     }
@@ -2591,10 +2596,9 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
                 Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Spacer(Modifier.height(6.dp))
         rows.forEachIndexed { idx, row ->
             HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
-            if (idx != rows.lastIndex) Spacer(Modifier.height(7.dp))
+            if (idx != rows.lastIndex) Spacer(Modifier.height(1.dp))
         }
     }
 }
@@ -2603,13 +2607,12 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
     HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
-        Spacer(Modifier.height(6.dp))
         if (state.devices.isEmpty()) {
             Text("暂无缓存，点击刷新。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
         state.devices.take(4).forEachIndexed { idx, d ->
             HealthDeviceLine(d)
-            if (idx != state.devices.take(4).lastIndex) Spacer(Modifier.height(8.dp))
+            if (idx != state.devices.take(4).lastIndex) Spacer(Modifier.height(3.dp))
         }
     }
 }
@@ -2620,10 +2623,10 @@ fun HealthDeviceLine(d: DeviceItem) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(d.name.ifBlank { d.mac }, fontSize = 14.2.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
-            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.8.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
                     cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
@@ -2635,10 +2638,10 @@ fun HealthDeviceLine(d: DeviceItem) {
                     cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { "最后信号 ${if (it.endsWith("dBm")) it else it + "dBm"}" }
                 ).joinToString(" · ")
             }
-            if (third.isNotBlank()) Text(third, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (third.isNotBlank()) Text(third, fontSize = 11.3.sp, lineHeight = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .10f), tonalElevation = 0.dp) {
-            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black)
+            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = accent, fontSize = 11.5.sp, fontWeight = FontWeight.Black)
         }
     }
 }
@@ -7356,11 +7359,25 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     ExpressiveCard("连接设置", "Hub 请求优先 AAAA / IPv6，失败 3 次不清空缓存。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("Token", "APP_TOKEN", token, { token = it })
-        LabeledInput("DNS", "223.5.5.5 / system", dns, { dns = it })
-        SelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "20S")) { onAuto(it); prefs.autoRefresh = it }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("DNS", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
+                CompactTextField(dns, { dns = it }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("刷新", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
+                CompactDropdown(autoRefresh, listOf("手动", "3S", "10S", "20S"), { onAuto(it); prefs.autoRefresh = it }, Modifier.fillMaxWidth())
+            }
+        }
         Text(msg, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        PillButton("保存设置", Icons.Rounded.Save, accent = Color(0xFF2563EB)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }
-        PillButton("测试连接", Icons.Rounded.WifiTethering, accent = Color(0xFF7C3AED)) { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
+                Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            }
+            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+                Icon(Icons.Rounded.WifiTethering, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("测试连接", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            }
+        }
     }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
     ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, Color(0xFF7C3AED)) {

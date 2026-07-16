@@ -186,8 +186,8 @@ fun FavoritesScreen(prefs: AppPrefs, onOpenSettings: () -> Unit) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Surface(shape = RoundedCornerShape(15.dp), color = LabV2.FieldSoft, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)) {
                             Row(Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                FavoriteModeButton("内网", mode == "lan") { mode = "lan"; prefs.favoriteNetworkMode = "lan" }
-                                FavoriteModeButton("外网", mode == "wan") { mode = "wan"; prefs.favoriteNetworkMode = "wan" }
+                                FavoriteModeButton(Icons.Rounded.Router, "内网", mode == "lan") { mode = "lan"; prefs.favoriteNetworkMode = "lan" }
+                                FavoriteModeButton(Icons.Rounded.Public, "外网", mode == "wan") { mode = "wan"; prefs.favoriteNetworkMode = "wan" }
                             }
                         }
                         CompactTextField(
@@ -261,10 +261,10 @@ private fun CompactHeaderAction(icon: ImageVector, description: String, onClick:
 }
 
 @Composable
-private fun FavoriteModeButton(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun FavoriteModeButton(icon: ImageVector, description: String, selected: Boolean, onClick: () -> Unit) {
     Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = if (selected) LabV2.Primary else Color.Transparent) {
-        Box(Modifier.height(40.dp).width(50.dp), contentAlignment = Alignment.Center) {
-            Text(text, fontSize = 11.sp, fontWeight = FontWeight.Black, color = if (selected) Color.White else LabV2.InkMuted)
+        Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+            Icon(icon, description, Modifier.size(20.dp), tint = if (selected) Color.White else LabV2.InkMuted)
         }
     }
 }

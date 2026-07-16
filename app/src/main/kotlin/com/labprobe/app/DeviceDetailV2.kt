@@ -97,14 +97,14 @@ fun DeviceDetailScreen(
         }
 
         CompactListCard {
-            Text("地址信息", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = 13.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             DeviceDetailAddress("IPv4", cleanApiText(device.ip).ifBlank { "--" }, LabV2.Primary)
             DeviceDetailAddress("IPv6", ipv6.ifBlank { "--" }, LabV2.Cyan, allowTwoLines = true)
             DeviceDetailAddress("MAC", cleanMac(device.mac).ifBlank { "--" }, profile.accent)
         }
 
         CompactListCard {
-            Text("设备信息", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = 13.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DeviceDetailPair("类型", profile.label, Modifier.weight(1f))
                 DeviceDetailPair("厂商", cleanApiText(device.manufacture).ifBlank { "--" }, Modifier.weight(1f))
@@ -140,10 +140,10 @@ fun DeviceDetailScreen(
 @Composable
 private fun DeviceDetailMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = LabV2.MetricShape, color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
-        Column(Modifier.padding(horizontal = 7.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label, fontSize = 8.8.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(label, fontSize = 9.5.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                Text(value, fontSize = if (value.length > 12) 10.sp else 11.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false)
+                Text(value, fontSize = if (value.length > 12) 10.5.sp else 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false)
             }
         }
     }
@@ -153,8 +153,8 @@ private fun DeviceDetailMetric(label: String, value: String, color: Color, modif
 private fun DeviceDetailAddress(label: String, value: String, color: Color, allowTwoLines: Boolean = false) {
     val context = LocalContext.current
     Row(Modifier.fillMaxWidth().clickable(enabled = value != "--") { copy(context, value) }, verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(48.dp).padding(top = 1.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-        Text(value, Modifier.weight(1f), fontSize = 11.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else color, maxLines = if (allowTwoLines) 2 else 1, overflow = TextOverflow.Clip)
+        Text(label, Modifier.width(54.dp).padding(top = 1.dp), fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+        Text(value, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else color, maxLines = if (allowTwoLines) 2 else 1, overflow = TextOverflow.Clip)
         if (value != "--") Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp), tint = color.copy(alpha = .55f))
     }
 }
@@ -162,18 +162,17 @@ private fun DeviceDetailAddress(label: String, value: String, color: Color, allo
 @Composable
 private fun DeviceDetailPair(label: String, value: String, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.Top) {
-        Text(label, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
-        Spacer(Modifier.width(5.dp))
-        Text(value, Modifier.weight(1f), fontSize = 11.2.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(label, Modifier.width(44.dp), fontSize = 10.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+        Text(value, Modifier.weight(1f), fontSize = 11.8.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun DeviceActionButton(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, color: Color, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Surface(onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(16.dp), color = color.copy(alpha = .09f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))) {
-        Column(Modifier.padding(horizontal = 3.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(horizontal = 3.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Icon(icon, null, Modifier.size(19.dp), tint = color)
-            Text(text, fontSize = 9.2.sp, lineHeight = 11.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, fontSize = 10.2.sp, lineHeight = 11.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
