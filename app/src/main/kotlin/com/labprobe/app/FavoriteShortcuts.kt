@@ -141,7 +141,7 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
 }
 
 @Composable
-fun FavoritesScreen(prefs: AppPrefs, onOpenSettings: () -> Unit) {
+fun FavoritesScreen(prefs: AppPrefs, topNav: @Composable () -> Unit = {}, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -174,6 +174,7 @@ fun FavoritesScreen(prefs: AppPrefs, onOpenSettings: () -> Unit) {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 2.dp)) {
+                    topNav()
                     CompactPageHeader(
                         title = "收藏",
                         subtitle = "常用服务与网页入口",

@@ -1129,8 +1129,9 @@ fun LabProbeApp(prefs: AppPrefs) {
             if (!route.startsWith("tool_")) toolReturnRoute = null
         }
 
-        val topNav: @Composable () -> Unit = { }
-        val showBottomNav = route in mainRoutes
+        val topNav: @Composable () -> Unit = {
+            OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
+        }
         val saveableStateHolder = rememberSaveableStateHolder()
         val backFromTool: () -> Unit = {
             route = toolReturnRoute ?: "tools"
@@ -1139,12 +1140,7 @@ fun LabProbeApp(prefs: AppPrefs) {
 
         Scaffold(
             containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            bottomBar = {
-                if (showBottomNav) {
-                    LabV2BottomNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
-                }
-            }
+            contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { pad ->
             Box(Modifier.fillMaxSize().appBackground()) {
                 Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -1170,7 +1166,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
-                        "favorites" -> FavoritesScreen(prefs) { settingsReturnRoute = "favorites"; route = "settings" }
+                        "favorites" -> FavoritesScreen(prefs, topNav) { settingsReturnRoute = "favorites"; route = "settings" }
                         "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
@@ -1278,7 +1274,7 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
                 Surface(
                     onClick = { onSelect(i) },
                     shape = RoundedCornerShape(24.dp),
-                    color = if (active) MaterialTheme.colorScheme.surface.copy(alpha = 0.98f) else Color.Transparent,
+                    color = if (active) Color.White.copy(alpha = .98f) else Color.Transparent,
                     shadowElevation = if (active) 2.dp else 0.dp,
                     modifier = Modifier.height(40.dp).weight(1f)
                 ) {
@@ -1286,7 +1282,7 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
                         Icon(
                             icons[i],
                             contentDescription = t,
-                            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                            tint = if (active) Color(0xFF2D63D8) else Color(0xFF64748B),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -2093,7 +2089,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                 ) {
                     Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
+                    Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                 }
                 Box(
                     Modifier
@@ -2119,7 +2115,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(24.dp),
             containerColor = LAB_POPUP_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp,
@@ -2169,18 +2165,27 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .labV2PageBackground()
-            .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
-        verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFEAF5FF),
+                        Color(0xFFF5FAFF),
+                        Color(0xFFFBFDFF),
+                        Color.White
+                    )
+                )
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("极客网探", fontSize = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
                     Spacer(Modifier.width(8.dp))
                     VersionBadge(hasUpdate = hasPendingUpdate) { if (hasPendingUpdate) onUpdateClick() else showVersion = true }
                 }
-                Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+                Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
             }
             HomeRefreshMenuButton(
                 autoRefresh = autoRefresh,
@@ -2402,36 +2407,44 @@ fun HealthCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    LabV2Card(modifier = modifier, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), content = content)
+    Surface(
+        modifier = modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(30.dp), clip = false),
+        shape = RoundedCornerShape(30.dp),
+        color = Color.White.copy(alpha = .96f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .95f))
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), content = content)
+    }
 }
 
 @Composable
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
-    HealthCard(Modifier.heightIn(min = 218.dp)) {
-        Column(Modifier.fillMaxWidth().clickable { onNavigate("settings") }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("网络健康", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                HealthScoreGauge(score)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    HealthCompactState("Hub 连接", if (hubOk) "正常" else "未连接", if (hubOk) LabV2.Green else LabV2.Red)
-                    HealthCompactState("网络出口", if (exitOk) "已获取" else "无数据", if (exitOk) LabV2.Primary else LabV2.InkMuted)
-                    HealthCompactState("VPN / STUN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted)
+    HealthCard(Modifier.clickable { onNavigate("settings") }) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("网络健康得分", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(score.toString(), fontSize = 48.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 52.sp)
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } },
-                        fontSize = 10.2.sp,
-                        lineHeight = 11.sp,
-                        color = LabV2.InkMuted,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (score >= 85) Color(0xFF16A34A) else Color(0xFFF59E0B),
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
                 }
+                Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 11.5.sp, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            WeeklyMiniBars(score)
         }
+        Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            HealthStatusBadge("终端", "$onlineCount 台", LabV2.Green, Modifier.weight(1f).clickable { onNavigate("devices") })
-            HealthStatusBadge("出口", if (exitOk) "正常" else "待测", LabV2.Primary, Modifier.weight(1f).clickable { onNavigate("tool_ping") })
-            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "待同步", LabV2.Purple, Modifier.weight(1f).clickable { onNavigate("events") })
+            HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f).clickable { onNavigate("settings") })
+            HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("tool_ping") })
+            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("events") })
         }
     }
 }
@@ -2493,8 +2506,8 @@ fun WeeklyMiniBars(score: Int) {
 
 @Composable
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.height(60.dp), shape = RoundedCornerShape(14.dp), color = color.copy(alpha = .10f), tonalElevation = 0.dp, shadowElevation = 0.dp) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 6.dp), verticalArrangement = Arrangement.Center) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .10f), tonalElevation = 0.dp, shadowElevation = 0.dp) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
             Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(value, fontSize = 12.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -2503,20 +2516,20 @@ fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modi
 
 @Composable
 fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color, subtitle: String, modifier: Modifier = Modifier) {
-    HealthCard(modifier.heightIn(min = 90.dp)) {
+    HealthCard(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = accent, modifier = Modifier.size(22.dp))
+            Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
             }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontSize = 12.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
-                Text(subtitle, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(value, fontSize = 27.sp, fontWeight = FontWeight.Black, color = accent, lineHeight = 28.sp)
-                Spacer(Modifier.width(2.dp))
-                Text(unit, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, modifier = Modifier.padding(bottom = 2.dp))
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 30.sp)
+                    Spacer(Modifier.width(3.dp))
+                    Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), modifier = Modifier.padding(bottom = 4.dp))
+                }
+                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -2535,8 +2548,8 @@ fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, acce
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -2564,13 +2577,14 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
     HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
+        Spacer(Modifier.height(13.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
-        Spacer(Modifier.height(1.dp))
+        Spacer(Modifier.height(9.dp))
         val nasIpv6 = safeNasIpv6ForUi(nas, router)
         HealthDataRowDisplay("NAS IPv6", nasIpv6, maskAddressForUi(nasIpv6, privacyMode))
         val wan6Rows = routerWan6Rows(router)
         wan6Rows.forEach { (label, value) ->
-            Spacer(Modifier.height(1.dp))
+            Spacer(Modifier.height(9.dp))
             HealthDataRowDisplay(if (wan6Rows.size <= 1) "路由 WAN6" else label, value, maskAddressForUi(value, privacyMode))
         }
     }
@@ -2592,13 +2606,14 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", fontSize = 14.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        Spacer(Modifier.height(13.dp))
         rows.forEachIndexed { idx, row ->
             HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
-            if (idx != rows.lastIndex) Spacer(Modifier.height(1.dp))
+            if (idx != rows.lastIndex) Spacer(Modifier.height(9.dp))
         }
     }
 }
@@ -2607,12 +2622,13 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
     HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
+        Spacer(Modifier.height(12.dp))
         if (state.devices.isEmpty()) {
             Text("暂无缓存，点击刷新。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
         state.devices.take(4).forEachIndexed { idx, d ->
             HealthDeviceLine(d)
-            if (idx != state.devices.take(4).lastIndex) Spacer(Modifier.height(3.dp))
+            if (idx != state.devices.take(4).lastIndex) Spacer(Modifier.height(11.dp))
         }
     }
 }
@@ -2623,10 +2639,10 @@ fun HealthDeviceLine(d: DeviceItem) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(d.name.ifBlank { d.mac }, fontSize = 14.2.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f)) {
+            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
-            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.8.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
                     cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
@@ -2638,10 +2654,10 @@ fun HealthDeviceLine(d: DeviceItem) {
                     cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { "最后信号 ${if (it.endsWith("dBm")) it else it + "dBm"}" }
                 ).joinToString(" · ")
             }
-            if (third.isNotBlank()) Text(third, fontSize = 11.3.sp, lineHeight = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (third.isNotBlank()) Text(third, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .10f), tonalElevation = 0.dp) {
-            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = accent, fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black)
         }
     }
 }
@@ -2730,19 +2746,19 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
 
     HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("今日概览", "和记录页每日总结同步，点卡片查看详情。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HealthStatusBadge("设备上线", "${snapshot.up} 次", Color(0xFF16A34A), Modifier.weight(1f))
             HealthStatusBadge("设备下线", "${snapshot.down} 次", Color(0xFFEF4444), Modifier.weight(1f))
             HealthStatusBadge("VPN-STUN", "${snapshot.vpn} 次", Color(0xFF7C3AED), Modifier.weight(1f))
         }
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HealthStatusBadge("DDNS", "${snapshot.ddns} 次", Color(0xFF0EA5E9), Modifier.weight(1f))
             HealthStatusBadge("备注", if (snapshot.hasNote) "1 条" else "0 条", Color(0xFF64748B), Modifier.weight(1f))
         }
-        Spacer(Modifier.height(4.dp))
-        Text(snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(10.dp))
+        Text(snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
