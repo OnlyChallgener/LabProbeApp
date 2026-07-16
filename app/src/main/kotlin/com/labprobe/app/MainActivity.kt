@@ -1377,8 +1377,8 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-            tonalElevation = 6.dp,
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
             shadowElevation = 10.dp,
             modifier = Modifier.widthIn(min = 230.dp, max = 340.dp).padding(vertical = 6.dp)
         ) {
@@ -1401,9 +1401,9 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
 
 @Composable
 fun labOutlinedColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = MaterialTheme.colorScheme.surface,
-    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-    disabledContainerColor = MaterialTheme.colorScheme.surface,
+    focusedContainerColor = LAB_POPUP_SURFACE,
+    unfocusedContainerColor = LAB_POPUP_SURFACE,
+    disabledContainerColor = LAB_POPUP_SURFACE,
     focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.58f),
     unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.32f),
     focusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -1461,7 +1461,7 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
                 readOnly = true,
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(24.dp),
                 textStyle = LocalTextStyle.current.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold),
                 colors = labOutlinedColors(),
                 modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
@@ -1469,9 +1469,9 @@ fun CompactSelectInput(label: String, value: String, options: List<String>, onCh
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                shape = RoundedCornerShape(22.dp),
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-                tonalElevation = 6.dp,
+                shape = RoundedCornerShape(24.dp),
+                containerColor = LAB_POPUP_SURFACE,
+                tonalElevation = 0.dp,
                 shadowElevation = 10.dp
             ) {
                 options.forEach { option ->
@@ -1573,9 +1573,9 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(22.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f),
-            tonalElevation = 6.dp,
+            shape = RoundedCornerShape(24.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
             shadowElevation = 10.dp
         ) {
             options.forEach { option ->
@@ -1657,7 +1657,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                 Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
@@ -1742,8 +1742,8 @@ fun SelectInput(label: String, value: String, options: List<String>, onChange: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.weight(1f)) {
-            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(22.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(60.dp))
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(22.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp) {
+            OutlinedTextField(value = value, onValueChange = {}, readOnly = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, shape = RoundedCornerShape(24.dp), textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), colors = labOutlinedColors(), modifier = Modifier.menuAnchor().fillMaxWidth().height(60.dp))
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
                 options.forEach { DropdownMenuItem(text = { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { onChange(it); expanded = false }) }
             }
         }
@@ -2005,7 +2005,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
             }
         },
         shape = RoundedCornerShape(30.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp
     )
 
@@ -2028,7 +2028,7 @@ fun UpdateDialogCard(
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(30.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp,
         title = { Text(if (info.hasUpdate) "发现新版本" else "版本更新", fontWeight = FontWeight.Black, fontSize = 21.sp) },
         text = {
@@ -2165,8 +2165,8 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(24.dp),
-            containerColor = Color.White.copy(alpha = 0.995f),
-            tonalElevation = 6.dp,
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
             shadowElevation = 10.dp,
             modifier = Modifier.widthIn(min = 156.dp).padding(vertical = 6.dp)
         ) {
@@ -3833,8 +3833,19 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     if (showHistorySheet) {
         ModalBottomSheet(
             onDismissRequest = { showHistorySheet = false },
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.background
+            shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
+            dragHandle = {
+                Box(
+                    Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(LAB_POPUP_HANDLE.copy(alpha = .84f))
+                )
+            }
         ) {
             Column(
                 Modifier
@@ -3871,8 +3882,19 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     selectedHistoryReport?.let { report ->
         ModalBottomSheet(
             onDismissRequest = { selectedHistoryReport = null },
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.background
+            shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
+            dragHandle = {
+                Box(
+                    Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(LAB_POPUP_HANDLE.copy(alpha = .84f))
+                )
+            }
         ) {
             Column(
                 Modifier
@@ -5064,7 +5086,7 @@ fun PingHistoryDialog(history: List<PingHistoryEntry>, bytes: Int, onClear: () -
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Black) } },
         dismissButton = { TextButton(onClick = onClear, enabled = history.isNotEmpty()) { Text("清空", fontWeight = FontWeight.Bold) } },
         shape = RoundedCornerShape(30.dp),
-        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
+        containerColor = LAB_POPUP_SURFACE,
         title = { Text("延迟测试历史", fontWeight = FontWeight.Black, fontSize = 19.sp) },
         text = {
             Column(Modifier.heightIn(max = 470.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -6939,7 +6961,9 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
                 }
             }
         },
-        shape = RoundedCornerShape(28.dp)
+        shape = RoundedCornerShape(28.dp),
+        containerColor = LAB_POPUP_SURFACE,
+        tonalElevation = 0.dp
     )
 }
 
@@ -7222,14 +7246,14 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
             confirmButton = { TextButton(onClick = { scope.launch { runCatching { HubApi(prefs).putDailyNote(selected, noteText) }.onSuccess { loadDate(selected); noteEdit = false } } }) { Text("保存", fontWeight = FontWeight.Bold) } },
             dismissButton = { TextButton(onClick = { noteEdit = false }) { Text("取消", fontWeight = FontWeight.Bold) } },
             shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = LAB_POPUP_SURFACE,
             tonalElevation = 0.dp
         )
     }
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.995f), tonalElevation = 6.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(24.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
                 dates.take(7).forEachIndexed { idx, d ->
                     val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
                     DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)

@@ -230,6 +230,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                 label = { Text("备注名称") },
                 placeholder = { Text("例如：绿联 DH4300") },
                 singleLine = true,
+                shape = RoundedCornerShape(24.dp),
+                colors = labOutlinedColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
@@ -242,6 +244,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
                 isError = mac.isNotBlank() && !validMac,
                 supportingText = { Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF") },
+                shape = RoundedCornerShape(24.dp),
+                colors = labOutlinedColors(),
                 modifier = Modifier.fillMaxWidth()
             )
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -255,7 +259,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.Black) }
             Button(
                 enabled = validMac,
                 onClick = {
@@ -273,7 +277,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                     )
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = selectedRule.accent)
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }
         Spacer(Modifier.heightIn(min = 8.dp))

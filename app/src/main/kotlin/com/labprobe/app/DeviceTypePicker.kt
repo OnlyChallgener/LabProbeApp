@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,12 +16,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,7 +57,7 @@ fun EditableDeviceTypeField(
             },
             label = { Text(label) },
             singleLine = true,
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(24.dp),
             colors = labOutlinedColors(),
             trailingIcon = {
                 IconButton(onClick = { expanded = true }) {
@@ -68,33 +69,60 @@ fun EditableDeviceTypeField(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.fillMaxWidth(.92f).heightIn(max = 420.dp)
+            shape = RoundedCornerShape(26.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp,
+            shadowElevation = 12.dp,
+            modifier = Modifier
+                .fillMaxWidth(.92f)
+                .heightIn(max = 430.dp)
+                .padding(vertical = 6.dp)
         ) {
-            groups.forEach { group ->
-                Text(
-                    group.name,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Black
-                )
-                group.items.forEach { rule ->
-                    val selected = normalizeDeviceTypeToken(value) == rule.id
-                    DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
+                groups.forEach { group ->
+                    Text(
+                        group.name,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        color = DEVICE_ICON_ACCENT,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    group.items.forEach { rule ->
+                        val selected = normalizeDeviceTypeToken(value) == rule.id
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (selected) Color(0xFFEAF7FA) else Color.Transparent,
+                            border = if (selected) BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable {
+                                    text = rule.label
+                                    onChange(rule.id)
+                                    expanded = false
+                                }
+                        ) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 DeviceTypeIconPreview(rule, 34)
                                 Spacer(Modifier.width(10.dp))
                                 Text(rule.label, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                RadioButton(selected = selected, onClick = null)
+                                RadioButton(
+                                    selected = selected,
+                                    onClick = null,
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = DEVICE_ICON_ACCENT,
+                                        unselectedColor = Color(0xFF94A3B8)
+                                    )
+                                )
                             }
-                        },
-                        onClick = {
-                            text = rule.label
-                            onChange(rule.id)
-                            expanded = false
                         }
-                    )
+                    }
                 }
             }
         }

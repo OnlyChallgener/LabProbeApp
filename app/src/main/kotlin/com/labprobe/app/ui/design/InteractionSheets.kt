@@ -49,15 +49,15 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
     LabBottomSheet(onDismiss = onDismiss) {
         Text("编辑设备", fontWeight = FontWeight.Black, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Surface(shape = RoundedCornerShape(22.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Surface(shape = RoundedCornerShape(26.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = remark,
                         onValueChange = { remark = it },
                         label = { Text("备注名称") },
                         placeholder = { Text("例如：海尔电热水器 / 美的空调 / 绿联 DH4300") },
                         singleLine = true,
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(24.dp),
                         colors = labOutlinedColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -73,14 +73,14 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                         label = { Text("MAC 地址") },
                         readOnly = true,
                         singleLine = true,
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(24.dp),
                         colors = labOutlinedColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     DeviceTypeIconPreview(rule, 42)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
@@ -89,8 +89,8 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     }
                 }
             }
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp), color = DEVICE_INFO_CARD_BACKGROUND, border = BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Text("设备管理", fontWeight = FontWeight.Black, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
                     Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -113,7 +113,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
                     val selectedWol = wolOverride ?: recommendation.recommended
@@ -139,6 +139,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     onDismiss()
                 },
                 modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }
@@ -227,7 +228,8 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
                     },
                     enabled = isValidMac(device.mac),
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
+                    shape = RoundedCornerShape(22.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
                 ) { Text("加入WOL", fontWeight = FontWeight.Black) }
             }
         }
