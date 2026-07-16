@@ -350,15 +350,15 @@ private fun FavoriteEmptyState(hasSearch: Boolean, onAction: () -> Unit) {
 }
 
 @Composable
-private fun FavoriteIcon(type: String, value: String, size: Int) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, type, value) {
-        value = if (type == "local" || type == "url") {
+private fun FavoriteIcon(type: String, iconValue: String, size: Int) {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, type, iconValue) {
+        this.value = if (type == "local" || type == "url") {
             withContext(Dispatchers.IO) {
                 runCatching {
                     val bytes = if (type == "local") {
-                        File(value).takeIf { it.isFile }?.readBytes()
+                        File(iconValue).takeIf { it.isFile }?.readBytes()
                     } else {
-                        val request = Request.Builder().url(normalizeFavoriteUrl(value)).build()
+                        val request = Request.Builder().url(normalizeFavoriteUrl(iconValue)).build()
                         favoriteImageClient.newCall(request).execute().use { response -> if (response.isSuccessful) response.body?.bytes() else null }
                     }
                     bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
@@ -371,7 +371,7 @@ private fun FavoriteIcon(type: String, value: String, size: Int) {
         if (bitmap != null) {
             Image(bitmap!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
-            val (icon, color) = favoriteBuiltinIcon(if (type == "builtin") value else "web")
+            val (icon, color) = favoriteBuiltinIcon(if (type == "builtin") iconValue else "web")
             Icon(icon, null, Modifier.size((size * .52f).dp), tint = color)
         }
     }
