@@ -51,14 +51,11 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Surface(shape = RoundedCornerShape(26.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
+                    Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    CompactTextField(
                         value = remark,
                         onValueChange = { remark = it },
-                        label = { Text("备注名称") },
-                        placeholder = { Text("例如：海尔电热水器 / 美的空调 / 绿联 DH4300") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(24.dp),
-                        colors = labOutlinedColors(),
+                        placeholder = "例如：海尔电热水器 / 美的空调 / 绿联 DH4300",
                         modifier = Modifier.fillMaxWidth()
                     )
                     EditableDeviceTypeField(
@@ -67,14 +64,11 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                         modifier = Modifier.fillMaxWidth(),
                         label = "设备类型（可输入/点箭头选择）"
                     )
-                    OutlinedTextField(
+                    Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    CompactTextField(
                         value = cleanMac(device.mac),
                         onValueChange = {},
-                        label = { Text("MAC 地址") },
                         readOnly = true,
-                        singleLine = true,
-                        shape = RoundedCornerShape(24.dp),
-                        colors = labOutlinedColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

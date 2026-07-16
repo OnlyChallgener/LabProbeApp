@@ -225,30 +225,18 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
     LabBottomSheet(onDismiss = onDismiss) {
         Text(if (initial == null) "添加 WOL 设备" else "编辑 WOL 设备", fontWeight = FontWeight.Black, fontSize = 20.sp)
         Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-            OutlinedTextField(
-                value = remark,
-                onValueChange = { remark = it },
-                label = { Text("备注名称") },
-                placeholder = { Text("例如：绿联 DH4300") },
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                colors = labOutlinedColors(),
-                modifier = Modifier.fillMaxWidth()
-            )
+            Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            CompactTextField(value = remark, onValueChange = { remark = it }, placeholder = "例如：绿联 DH4300", modifier = Modifier.fillMaxWidth())
             EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
-            OutlinedTextField(
+            Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = if (mac.isNotBlank() && !validMac) MaterialTheme.colorScheme.error else LabV2.InkMuted)
+            CompactTextField(
                 value = mac,
                 onValueChange = { mac = it.uppercase() },
-                label = { Text("MAC 地址") },
-                placeholder = { Text("6C:1F:F7:76:71:04") },
-                singleLine = true,
+                placeholder = "6C:1F:F7:76:71:04",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
-                isError = mac.isNotBlank() && !validMac,
-                supportingText = { Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF") },
-                shape = RoundedCornerShape(24.dp),
-                colors = labOutlinedColors(),
                 modifier = Modifier.fillMaxWidth()
             )
+            Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF", fontSize = 10.sp, color = if (validMac) LabV2.InkMuted else MaterialTheme.colorScheme.error)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 DeviceTypeIconPreview(selectedRule, 44)
                 Spacer(Modifier.width(10.dp))

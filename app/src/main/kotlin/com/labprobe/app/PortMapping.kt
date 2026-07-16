@@ -1,10 +1,12 @@
 package com.labprobe.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,6 +30,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
@@ -55,6 +59,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private val PortBlue = Color(0xFF1677F2)
 private val PortCyan = Color(0xFF13B8D4)
@@ -343,6 +348,32 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     val selected = selectedId?.let { id -> rules.firstOrNull { it.id == id } }
 
+    if (selected != null) {
+        BackHandler { selectedId = null }
+        PortMapDetailPage(
+            rule = selected,
+            api = api,
+            onDismiss = { selectedId = null },
+            onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
+            onToggle = {
+                scope.launch {
+                    runCatching { api.action(selected.id, if (selected.isRunning || selected.enabled) "stop" else "start") }
+                        .onFailure { message = it.message ?: "操作失败" }
+                    refresh(true)
+                }
+            },
+            onDelete = {
+                scope.launch {
+                    runCatching { api.delete(selected.id) }
+                        .onSuccess { selectedId = null }
+                        .onFailure { message = it.message ?: "删除失败" }
+                    refresh(true)
+                }
+            }
+        )
+        return
+    }
+
     DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack) {
         PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
 
@@ -415,29 +446,6 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         )
     }
 
-    if (selected != null) {
-        PortMapDetailSheet(
-            rule = selected,
-            api = api,
-            onDismiss = { selectedId = null },
-            onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
-            onToggle = {
-                scope.launch {
-                    runCatching { api.action(selected.id, if (selected.isRunning || selected.enabled) "stop" else "start") }
-                        .onFailure { message = it.message ?: "操作失败" }
-                    refresh(true)
-                }
-            },
-            onDelete = {
-                scope.launch {
-                    runCatching { api.delete(selected.id) }
-                        .onSuccess { selectedId = null }
-                        .onFailure { message = it.message ?: "删除失败" }
-                    refresh(true)
-                }
-            }
-        )
-    }
 }
 
 private fun nextPort(rules: List<PortMapRule>, agent: PortMapAgentInfo): Int {
@@ -500,18 +508,18 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
             }
         }
         Text(
-            "TCP · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}",
+            "TCP · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}",
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             color = LabV2.InkMuted
         )
         Text(
-            "[::]:${rule.listenPort} → ${rule.targetText}",
+            "→ ${rule.targetText}",
             fontSize = 10.8.sp,
             lineHeight = 14.5.sp,
             fontWeight = FontWeight.SemiBold,
             color = LabV2.Ink,
-            maxLines = 3,
+            maxLines = if (rule.mode == "6to4") 1 else 2,
             overflow = TextOverflow.Clip
         )
         if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
@@ -1027,7 +1035,7 @@ private fun PortMapDevicePickerDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PortMapDetailSheet(
+private fun PortMapDetailPage(
     rule: PortMapRule,
     api: PortMapApi,
     onDismiss: () -> Unit,
@@ -1043,12 +1051,12 @@ private fun PortMapDetailSheet(
             delay(10_000)
         }
     }
-    LabBottomSheet(onDismiss = onDismiss, scrollable = true) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(rule.name, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                    Text("TCP · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f))
+    DetailShell(rule.name, "TCP · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = RoundedCornerShape(99.dp), color = portMapStatus(rule).color.copy(alpha = .10f)) {
+                    Text(portMapStatus(rule).text, Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = portMapStatus(rule).color, fontSize = 10.sp, fontWeight = FontWeight.Black)
                 }
+                Spacer(Modifier.weight(1f))
                 TextButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("编辑") }
             }
 
@@ -1065,11 +1073,9 @@ private fun PortMapDetailSheet(
 
             LabV2Card(compact = true) {
                 Text("流量统计", fontSize = 13.sp, fontWeight = FontWeight.Black)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
                     PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PortMapBigMetric("当前连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
                     PortMapBigMetric("最大连接", rule.maxConnections.toString(), PortSlate, Modifier.weight(1f))
                 }
@@ -1080,7 +1086,7 @@ private fun PortMapDetailSheet(
                     Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Black)
                     Text("60 秒采样", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f))
                 }
-                PortMapTrafficChart(history, Modifier.fillMaxWidth().height(164.dp))
+                PortMapTrafficChart(history, Modifier.fillMaxWidth().height(184.dp))
             }
 
             if (rule.runtime.lastError.isNotBlank()) {
@@ -1103,7 +1109,7 @@ private fun PortMapDetailSheet(
                 Icon(Icons.Rounded.Delete, null)
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(2.dp))
     }
 
     if (confirmDelete) {
@@ -1147,63 +1153,92 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
         return
     }
     val maxValue = rates.maxOf { max(it.second, it.third) }.coerceAtLeast(1f)
-    Canvas(modifier.background(Color(0xFFF8FBFF), RoundedCornerShape(16.dp)).padding(horizontal = 10.dp, vertical = 12.dp)) {
-        val w = size.width
-        val h = size.height
-        val usableHeight = h - 6.dp.toPx()
-
-        repeat(5) { i ->
-            val y = usableHeight * i / 4f
-            drawLine(Color(0xFFCBD5E1).copy(alpha = .26f), Offset(0f, y), Offset(w, y), 0.8.dp.toPx())
-        }
-
-        fun seriesPoints(selector: (Triple<Long, Float, Float>) -> Float): List<Offset> = rates.mapIndexed { i, row ->
-            val value = selector(row)
-            val x = if (rates.lastIndex == 0) 0f else w * i / rates.lastIndex.toFloat()
-            val y = usableHeight - (value / maxValue) * (usableHeight - 2.dp.toPx())
-            Offset(x, y)
-        }
-
-        fun smoothPath(points: List<Offset>): Path = Path().apply {
-            if (points.isEmpty()) return@apply
-            moveTo(points.first().x, points.first().y)
-            if (points.size == 1) return@apply
-            for (i in 1 until points.size) {
-                val prev = points[i - 1]
-                val cur = points[i]
-                val midX = (prev.x + cur.x) / 2f
-                val midY = (prev.y + cur.y) / 2f
-                quadraticBezierTo(prev.x, prev.y, midX, midY)
+    var selectedIndex by remember(rates) { mutableStateOf<Int?>(null) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(Color(0xFFF8FBFF), RoundedCornerShape(14.dp))
+                .pointerInput(rates) {
+                    detectTapGestures { point ->
+                        val left = 36.dp.toPx()
+                        val right = 7.dp.toPx()
+                        val plotWidth = (size.width - left - right).coerceAtLeast(1f)
+                        selectedIndex = (((point.x - left) / plotWidth).coerceIn(0f, 1f) * rates.lastIndex).roundToInt()
+                    }
+                }
+        ) {
+            val left = 36.dp.toPx()
+            val right = 7.dp.toPx()
+            val top = 9.dp.toPx()
+            val bottom = 21.dp.toPx()
+            val plotWidth = size.width - left - right
+            val plotHeight = size.height - top - bottom
+            val axisColor = Color(0xFF94A3B8).copy(alpha = .72f)
+            val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.rgb(100, 116, 139)
+                textSize = 8.5.sp.toPx()
             }
-            lineTo(points.last().x, points.last().y)
+
+            drawLine(axisColor, Offset(left, top), Offset(left, top + plotHeight), 0.8.dp.toPx())
+            drawLine(axisColor, Offset(left, top + plotHeight), Offset(left + plotWidth, top + plotHeight), 0.8.dp.toPx())
+
+            val yTicks = listOf(0f, maxValue / 2f, maxValue)
+            yTicks.forEachIndexed { index, value ->
+                val y = top + plotHeight - (index / 2f) * plotHeight
+                drawLine(axisColor, Offset(left - 3.dp.toPx(), y), Offset(left, y), 0.8.dp.toPx())
+                drawContext.canvas.nativeCanvas.drawText(formatPortRate(value), 1.dp.toPx(), y + 3.dp.toPx(), labelPaint)
+            }
+
+            val xLabels = listOf("60分", "40分", "20分", "现在")
+            xLabels.forEachIndexed { index, label ->
+                val x = left + plotWidth * index / 3f
+                drawLine(axisColor, Offset(x, top + plotHeight), Offset(x, top + plotHeight + 3.dp.toPx()), 0.8.dp.toPx())
+                val textWidth = labelPaint.measureText(label)
+                val drawX = when (index) { 0 -> x; 3 -> x - textWidth; else -> x - textWidth / 2f }
+                drawContext.canvas.nativeCanvas.drawText(label, drawX, size.height - 3.dp.toPx(), labelPaint)
+            }
+
+            fun seriesPoints(selector: (Triple<Long, Float, Float>) -> Float): List<Offset> = rates.mapIndexed { index, row ->
+                val x = left + plotWidth * index / rates.lastIndex.toFloat()
+                val y = top + plotHeight - (selector(row) / maxValue) * plotHeight
+                Offset(x, y)
+            }
+            fun linePath(values: List<Offset>) = Path().apply {
+                if (values.isEmpty()) return@apply
+                moveTo(values.first().x, values.first().y)
+                values.drop(1).forEach { lineTo(it.x, it.y) }
+            }
+
+            val upload = seriesPoints { it.second }
+            val download = seriesPoints { it.third }
+            drawPath(linePath(upload), PortBlue, style = Stroke(1.3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(linePath(download), PortGreen, style = Stroke(1.3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+
+            selectedIndex?.coerceIn(0, rates.lastIndex)?.let { index ->
+                val x = upload[index].x
+                drawLine(Color(0xFF64748B).copy(alpha = .55f), Offset(x, top), Offset(x, top + plotHeight), 0.8.dp.toPx())
+                drawCircle(PortBlue, 2.8.dp.toPx(), upload[index])
+                drawCircle(PortGreen, 2.8.dp.toPx(), download[index])
+            }
         }
-
-        fun areaPath(points: List<Offset>): Path = Path().apply {
-            if (points.isEmpty()) return@apply
-            addPath(smoothPath(points))
-            lineTo(points.last().x, usableHeight)
-            lineTo(points.first().x, usableHeight)
-            close()
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            ChartLegendDot(PortBlue, "上传")
+            Spacer(Modifier.width(14.dp))
+            ChartLegendDot(PortGreen, "下载")
+            selectedIndex?.coerceIn(0, rates.lastIndex)?.let { index ->
+                Spacer(Modifier.width(12.dp))
+                Text("↑ ${formatPortRate(rates[index].second)}  ↓ ${formatPortRate(rates[index].third)}", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+            }
         }
-
-        val upPoints = seriesPoints { it.second }
-        val downPoints = seriesPoints { it.third }
-        val upLine = smoothPath(upPoints)
-        val downLine = smoothPath(downPoints)
-
-        drawPath(areaPath(upPoints), color = PortBlue.copy(alpha = 0.05f))
-        drawPath(areaPath(downPoints), color = PortGreen.copy(alpha = 0.05f))
-        drawPath(upLine, PortBlue, style = Stroke(1.35.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(downLine, PortGreen, style = Stroke(1.35.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-
-        upPoints.lastOrNull()?.let { drawCircle(PortBlue, radius = 2.3.dp.toPx(), center = it) }
-        downPoints.lastOrNull()?.let { drawCircle(PortGreen, radius = 2.3.dp.toPx(), center = it) }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        ChartLegendDot(PortBlue, "上传")
-        Spacer(Modifier.width(14.dp))
-        ChartLegendDot(PortGreen, "下载")
-    }
+}
+
+private fun formatPortRate(value: Float): String = when {
+    value >= 1024f * 1024f -> String.format(Locale.US, "%.1fMB/s", value / 1024f / 1024f)
+    value >= 1024f -> String.format(Locale.US, "%.1fKB/s", value / 1024f)
+    else -> "${value.roundToInt()}B/s"
 }
 
 @Composable

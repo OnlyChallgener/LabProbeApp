@@ -21,15 +21,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,9 +49,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 /**
  * LabProbe UI V2 design tokens.
@@ -72,10 +86,21 @@ object LabV2 {
     val Border = Color(0xFFDDE7F2)
     val BorderStrong = Color(0xFFCAD8E8)
 
-    val CardShape = RoundedCornerShape(24.dp)
-    val CompactCardShape = RoundedCornerShape(20.dp)
-    val FieldShape = RoundedCornerShape(15.dp)
-    val ButtonShape = RoundedCornerShape(17.dp)
+    val PageHorizontal = 14.dp
+    val PageTop = 8.dp
+    val SectionGap = 10.dp
+    val CardGap = 8.dp
+    val ListGap = 7.dp
+    val CardHorizontal = 12.dp
+    val CardVertical = 9.dp
+    val RowGap = 6.dp
+    val FieldHeight = 48.dp
+
+    val CardShape = RoundedCornerShape(22.dp)
+    val CompactCardShape = RoundedCornerShape(18.dp)
+    val FieldShape = RoundedCornerShape(14.dp)
+    val MetricShape = RoundedCornerShape(14.dp)
+    val ButtonShape = RoundedCornerShape(16.dp)
 }
 
 fun Modifier.labV2PageBackground(): Modifier = background(
@@ -90,7 +115,7 @@ fun Modifier.labV2PageBackground(): Modifier = background(
 fun LabV2Card(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
-    contentPadding: PaddingValues = PaddingValues(horizontal = 15.dp, vertical = 13.dp),
+    contentPadding: PaddingValues = PaddingValues(horizontal = LabV2.CardHorizontal, vertical = LabV2.CardVertical),
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = if (compact) LabV2.CompactCardShape else LabV2.CardShape
@@ -104,9 +129,188 @@ fun LabV2Card(
     ) {
         Column(
             Modifier.fillMaxWidth().padding(contentPadding),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
+            verticalArrangement = Arrangement.spacedBy(LabV2.RowGap),
             content = content
         )
+    }
+}
+
+@Composable
+fun CompactPageHeader(
+    title: String,
+    subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
+    action: (@Composable RowScope.() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (onBack != null) {
+            Surface(
+                onClick = onBack,
+                modifier = Modifier.size(38.dp),
+                shape = CircleShape,
+                color = LabV2.Field,
+                border = BorderStroke(1.dp, LabV2.Border)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.ArrowBack, null, Modifier.size(19.dp), tint = LabV2.Ink)
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontSize = 21.sp, lineHeight = 24.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        action?.let {
+            Spacer(Modifier.width(8.dp))
+            it.invoke(this)
+        }
+    }
+}
+
+@Composable
+fun CompactTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String = "",
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    singleLine: Boolean = true,
+    readOnly: Boolean = false,
+    enabled: Boolean = true
+) {
+    Surface(
+        modifier = modifier.height(LabV2.FieldHeight),
+        shape = LabV2.FieldShape,
+        color = if (enabled) LabV2.Field else LabV2.FieldSoft,
+        border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f)),
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            leadingIcon?.invoke()
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                enabled = enabled,
+                readOnly = readOnly,
+                singleLine = singleLine,
+                keyboardOptions = keyboardOptions,
+                visualTransformation = visualTransformation,
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink),
+                decorationBox = { inner ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (value.isEmpty() && placeholder.isNotBlank()) {
+                            Text(placeholder, fontSize = 12.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        inner()
+                    }
+                }
+            )
+            trailingIcon?.invoke()
+        }
+    }
+}
+
+@Composable
+fun CompactDropdown(
+    value: String,
+    options: List<String>,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    leadingIcon: (@Composable () -> Unit)? = null
+) {
+    var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+    Box(modifier) {
+        Surface(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().height(LabV2.FieldHeight),
+            shape = LabV2.FieldShape,
+            color = LabV2.Field,
+            border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f))
+        ) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                leadingIcon?.invoke()
+                Text(value, Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = LabV2.InkMuted)
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            shape = RoundedCornerShape(18.dp),
+            containerColor = LabV2.Field,
+            shadowElevation = 10.dp
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, fontSize = 12.5.sp, fontWeight = if (option == value) FontWeight.Black else FontWeight.SemiBold) },
+                    onClick = { expanded = false; onSelect(option) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CompactSegmentedControl(
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) = LabV2SegmentedControl(options, selected, onSelect, modifier)
+
+@Composable
+fun CompactListCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    LabV2Card(modifier = modifier, compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp), content = content)
+}
+
+@Composable
+fun CompactChartCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    LabV2Card(modifier = modifier, compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), content = content)
+}
+
+@Composable
+fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = LabV2.CardTop,
+            border = BorderStroke(1.dp, LabV2.Border),
+            shadowElevation = 14.dp
+        ) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+        }
+    }
+}
+
+@Composable
+fun CompactBottomSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    scrollable: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    LabBottomSheet(onDismiss = onDismiss, scrollable = scrollable) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Rounded.Close, null, Modifier.size(19.dp), tint = LabV2.InkMuted)
+            }
+        }
+        content()
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -297,7 +501,7 @@ fun LabV2Metric(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = LabV2.MetricShape,
         color = accent.copy(alpha = .065f),
         border = BorderStroke(1.dp, accent.copy(alpha = .10f)),
         tonalElevation = 0.dp

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -167,7 +168,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         sheetGesturesEnabled = !scrollable,
-        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         containerColor = LAB_POPUP_SURFACE,
         scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
         dragHandle = {
@@ -182,7 +183,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
         }
     ) {
         Column(
-            contentModifier,
+            contentModifier.navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content
         )

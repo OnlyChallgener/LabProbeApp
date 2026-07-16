@@ -49,23 +49,22 @@ fun EditableDeviceTypeField(
     var text by remember(value) { mutableStateOf(deviceTypeDisplayName(value)) }
 
     Box(modifier) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = { input ->
-                text = input
-                onChange(normalizeDeviceTypeToken(input).ifBlank { input.trim() })
-            },
-            label = { Text(label) },
-            singleLine = true,
-            shape = RoundedCornerShape(24.dp),
-            colors = labOutlinedColors(),
-            trailingIcon = {
-                IconButton(onClick = { expanded = true }) {
-                    Icon(Icons.Rounded.ArrowDropDown, null)
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
+        Column {
+            Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
+            CompactTextField(
+                value = text,
+                onValueChange = { input ->
+                    text = input
+                    onChange(normalizeDeviceTypeToken(input).ifBlank { input.trim() })
+                },
+                trailingIcon = {
+                    IconButton(onClick = { expanded = true }, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Rounded.ArrowDropDown, null)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
