@@ -4022,7 +4022,15 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NetworkStatusTile("NAT类型", profile.natType, Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f), clickable = true) { open("tool_nat") }
+                NetworkStatusTile(
+                    "NAT类型",
+                    profile.natType,
+                    Icons.Rounded.Router,
+                    Color(0xFF7C3AED),
+                    Modifier.weight(1f),
+                    clickable = true,
+                    onClick = { open("tool_nat") }
+                )
                 NetworkStatusTile("运营商", profile.operator, Icons.Rounded.CellTower, Color(0xFF0EA5E9), Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
