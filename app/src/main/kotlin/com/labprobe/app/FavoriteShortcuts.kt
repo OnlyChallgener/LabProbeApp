@@ -53,6 +53,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -121,6 +122,76 @@ fun AppPrefs.saveFavoriteShortcuts(items: List<FavoriteShortcut>) {
     favoriteShortcutsJson = array.toString()
 }
 
+fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
+    val markers = events.asSequence()
+        .mapNotNull(::webhookFavoriteMarker)
+        .distinctBy { it.first.lowercase(Locale.ROOT) }
+        .toList()
+    if (markers.isEmpty()) return 0
+
+    val current = favoriteShortcuts().toMutableList()
+    var changes = 0
+    markers.forEach { (title, address) ->
+        val wanUrl = normalizeFavoriteUrl(address)
+        if (wanUrl.isBlank()) return@forEach
+        val generatedId = "webhook-${Integer.toHexString(title.lowercase(Locale.ROOT).hashCode())}"
+        val index = current.indexOfFirst { it.id == generatedId || it.title.equals(title, ignoreCase = true) }
+        if (index >= 0) {
+            val old = current[index]
+            if (old.id != generatedId || old.title != title || old.wanUrl != wanUrl) {
+                current[index] = old.copy(id = generatedId, title = title, wanUrl = wanUrl)
+                changes++
+            }
+        } else {
+            current += FavoriteShortcut(
+                id = generatedId,
+                title = title,
+                description = "Webhook 自动同步",
+                iconType = "builtin",
+                iconValue = webhookBuiltinIcon(title),
+                lanUrl = "",
+                wanUrl = wanUrl,
+                order = current.size
+            )
+            changes++
+        }
+    }
+    if (changes > 0) saveFavoriteShortcuts(current)
+    return changes
+}
+
+private fun webhookFavoriteMarker(event: EventItem): Pair<String, String>? {
+    if (!event.type.contains("webhook", ignoreCase = true) &&
+        listOf(event.newValue, event.oldValue, event.name, event.title).none { it.contains('*') }
+    ) return null
+    val text = listOf(event.newValue, event.oldValue, event.name, event.title).joinToString("\n")
+    val direct = Regex("""\*([^*：:\r\n\"']{1,40})[：:]\s*([^\s\"'}\\,]+)""").find(text)
+    val title = direct?.groupValues?.get(1)?.trim()?.trim('*', ' ', '#')
+        ?: listOf(event.name, event.title).firstOrNull { it.trimStart().startsWith('*') }?.trim()?.trimStart('*')?.trim()
+        ?: return null
+    val address = (direct?.groupValues?.get(2)
+        ?: listOf(event.newValue, event.oldValue).firstOrNull { value ->
+            val clean = value.trim().trimStart('#')
+            !clean.any(Char::isWhitespace) && (clean.contains('.') || clean.contains(':'))
+        })?.trim()?.trimStart('#')?.trimEnd('.', ';', '；') ?: return null
+    if (title.isBlank() || address.isBlank() || address.contains("{ipAddr}", ignoreCase = true)) return null
+    if (!address.contains('.') && !address.contains(':')) return null
+    return title to address
+}
+
+private fun webhookBuiltinIcon(title: String): String {
+    val value = title.lowercase(Locale.ROOT)
+    return when {
+        value.contains("lucky") || value.contains("proxy") || value.contains("cloud") -> "cloud"
+        value.contains("plex") || value.contains("media") || value.contains("影视") -> "media"
+        value.contains("router") || value.contains("路由") -> "router"
+        value.contains("download") || value.contains("qb") || value.contains("aria") || value.contains("下载") -> "download"
+        value.contains("home") || value.contains("ha") || value.contains("家庭") -> "home"
+        value.contains("nas") || value.contains("server") || value.contains("服务") -> "server"
+        else -> "web"
+    }
+}
+
 private fun normalizeFavoriteUrl(raw: String): String {
     val value = raw.trim()
     if (value.isBlank()) return ""
@@ -141,13 +212,17 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
 }
 
 @Composable
-fun FavoritesScreen(prefs: AppPrefs, topNav: @Composable () -> Unit = {}, onOpenSettings: () -> Unit) {
+fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
     var shortcuts by remember { mutableStateOf(prefs.favoriteShortcuts()) }
     var editing by remember { mutableStateOf<FavoriteShortcut?>(null) }
     var adding by remember { mutableStateOf(false) }
+
+    LaunchedEffect(syncVersion) {
+        if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
+    }
 
     fun persist(items: List<FavoriteShortcut>) {
         val normalized = items.mapIndexed { index, item -> item.copy(order = index) }
@@ -174,7 +249,6 @@ fun FavoritesScreen(prefs: AppPrefs, topNav: @Composable () -> Unit = {}, onOpen
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 2.dp)) {
-                    topNav()
                     CompactPageHeader(
                         title = "收藏",
                         subtitle = "常用服务与网页入口",
@@ -184,6 +258,7 @@ fun FavoritesScreen(prefs: AppPrefs, topNav: @Composable () -> Unit = {}, onOpen
                             CompactHeaderAction(Icons.Rounded.Person, "我的") { onOpenSettings() }
                         }
                     )
+                    topNav()
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Surface(shape = RoundedCornerShape(15.dp), color = LabV2.FieldSoft, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)) {
                             Row(Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -399,6 +474,7 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
         )
     }
     var error by remember { mutableStateOf("") }
+    val webhookManaged = existing?.id?.startsWith("webhook-") == true
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -409,24 +485,35 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
         }
     }
 
-    CompactBottomSheet(title = if (existing == null) "添加收藏" else "编辑收藏", onDismiss = onDismiss, scrollable = true) {
-        FavoriteEditorLabel("名称")
-        CompactTextField(draft.title, { draft = draft.copy(title = it) }, Modifier.fillMaxWidth(), placeholder = "例如：Home Assistant")
-        FavoriteEditorLabel("描述")
-        CompactTextField(draft.description, { draft = draft.copy(description = it) }, Modifier.fillMaxWidth(), placeholder = "一行简短说明")
-        FavoriteEditorLabel("内网地址")
-        CompactTextField(draft.lanUrl, { draft = draft.copy(lanUrl = it) }, Modifier.fillMaxWidth(), placeholder = "192.168.5.10:8123", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-        FavoriteEditorLabel("外网地址")
-        CompactTextField(draft.wanUrl, { draft = draft.copy(wanUrl = it) }, Modifier.fillMaxWidth(), placeholder = "example.com", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-
-        FavoriteEditorLabel("图标来源")
-        CompactSegmentedControl(listOf("内置图标", "本地上传", "图片网址"), when (draft.iconType) { "local" -> "本地上传"; "url" -> "图片网址"; else -> "内置图标" }, {
-            draft = when (it) {
-                "本地上传" -> draft.copy(iconType = "local", iconValue = if (draft.iconType == "local") draft.iconValue else "")
-                "图片网址" -> draft.copy(iconType = "url", iconValue = if (draft.iconType == "url") draft.iconValue else "")
-                else -> draft.copy(iconType = "builtin", iconValue = if (draft.iconType == "builtin") draft.iconValue else "web")
+    CompactPopup(onDismiss = onDismiss) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(if (existing == null) "添加收藏" else "编辑收藏", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                if (webhookManaged) Text("标题和外网地址由 Webhook 自动维护", fontSize = 9.5.sp, color = LabV2.InkMuted, maxLines = 1)
             }
-        })
+            IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(18.dp), tint = LabV2.InkMuted) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FavoriteInlineField("名称", draft.title, { draft = draft.copy(title = it) }, "Home Assistant", Modifier.weight(1f), readOnly = webhookManaged)
+            FavoriteInlineField("描述", draft.description, { draft = draft.copy(description = it) }, "简短说明", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth()) {
+            FavoriteInlineField("内网地址", draft.lanUrl, { draft = draft.copy(lanUrl = it) }, "192.168.5.10:8123", Modifier.weight(1f), uri = true)
+        }
+        Row(Modifier.fillMaxWidth()) {
+            FavoriteInlineField("外网地址", draft.wanUrl, { draft = draft.copy(wanUrl = it) }, "example.com", Modifier.weight(1f), uri = true, readOnly = webhookManaged)
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("图标", modifier = Modifier.width(30.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            CompactSegmentedControl(listOf("内置图标", "本地上传", "图片网址"), when (draft.iconType) { "local" -> "本地上传"; "url" -> "图片网址"; else -> "内置图标" }, {
+                draft = when (it) {
+                    "本地上传" -> draft.copy(iconType = "local", iconValue = if (draft.iconType == "local") draft.iconValue else "")
+                    "图片网址" -> draft.copy(iconType = "url", iconValue = if (draft.iconType == "url") draft.iconValue else "")
+                    else -> draft.copy(iconType = "builtin", iconValue = if (draft.iconType == "builtin") draft.iconValue else "web")
+                }
+            }, Modifier.weight(1f))
+        }
 
         when (draft.iconType) {
             "local" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -435,7 +522,10 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
                     Icon(Icons.Rounded.Image, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("选择 PNG / JPG / WEBP", fontSize = 11.sp, fontWeight = FontWeight.Black)
                 }
             }
-            "url" -> CompactTextField(draft.iconValue, { draft = draft.copy(iconValue = it) }, Modifier.fillMaxWidth(), placeholder = "https://example.com/icon.png", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), leadingIcon = { FavoriteIcon("url", draft.iconValue, 28) })
+            "url" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FavoriteIcon("url", draft.iconValue, 42)
+                CompactTextField(draft.iconValue, { draft = draft.copy(iconValue = it) }, Modifier.weight(1f), placeholder = "https://example.com/icon.png", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+            }
             else -> {
                 val choices = listOf("web", "router", "server", "media", "cloud", "home", "download")
                 Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -478,8 +568,18 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
 }
 
 @Composable
-private fun FavoriteEditorLabel(text: String) {
-    Text(text, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
+private fun RowScope.FavoriteInlineField(label: String, value: String, onValueChange: (String) -> Unit, placeholder: String, modifier: Modifier, uri: Boolean = false, readOnly: Boolean = false) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, modifier = Modifier.width(if (label.length > 2) 48.dp else 28.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+        CompactTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.weight(1f),
+            placeholder = placeholder,
+            keyboardOptions = if (uri) KeyboardOptions(keyboardType = KeyboardType.Uri) else KeyboardOptions.Default,
+            readOnly = readOnly
+        )
+    }
 }
 
 private suspend fun copyFavoriteImage(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {

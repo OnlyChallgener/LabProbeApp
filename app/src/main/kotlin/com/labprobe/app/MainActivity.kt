@@ -48,6 +48,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -103,6 +105,7 @@ import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -265,6 +268,10 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("favorite_shortcuts_v1", v).apply()
     var favoriteNetworkMode: String get() = sp.getString("favorite_network_mode", "lan") ?: "lan"
         set(v) = sp.edit().putString("favorite_network_mode", v).apply()
+    var certificateExpiryJson: String get() = sp.getString("certificate_expiry_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("certificate_expiry_v1", v).apply()
+    var certificateReminderKeysJson: String get() = sp.getString("certificate_reminder_keys_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("certificate_reminder_keys_v1", v).apply()
 
     private fun historyLimit(key: String): Int = if (key.contains("ssh_cmd", true)) 6 else 3
     private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(historyLimit(key))
@@ -810,6 +817,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var loading by mutableStateOf(false)
     var hubConnected by mutableStateOf(prefs.lastRefresh.isNotBlank() && prefs.hub.isNotBlank())
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
+    var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
     suspend fun refreshAll(forceHealth: Boolean = false) {
         if (prefs.hub.isBlank()) {
@@ -850,10 +858,18 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     private suspend fun fetchData(api: HubApi) {
         val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
-        val stRoot = api.getStatus()
-        val devWatched = api.getDevices(false)
-        val devOnline = api.getDevices(true)
-        val evs = normalizeDeviceEvents(api.getEvents())
+        val (stRoot, deviceLists, rawEvents) = coroutineScope {
+            val statusRequest = async { api.getStatus() }
+            val watchedRequest = async { api.getDevices(false) }
+            val onlineRequest = async { api.getDevices(true) }
+            val eventsRequest = async { api.getEvents() }
+            Triple(statusRequest.await(), watchedRequest.await() to onlineRequest.await(), eventsRequest.await())
+        }
+        val devWatched = deviceLists.first
+        val devOnline = deviceLists.second
+        val evs = normalizeDeviceEvents(rawEvents)
+        if (prefs.syncWebhookFavoriteShortcuts(evs) > 0) favoriteSyncVersion++
+        CertificateReminderCenter.notifyDue(appContext, prefs)
         status = stRoot
         val devOnlineWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devOnline), deviceOverrides)
         val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
@@ -1027,7 +1043,9 @@ fun LabProbeApp(prefs: AppPrefs) {
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
     val scope = rememberCoroutineScope()
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) CertificateReminderCenter.notifyDue(context, prefs)
+    }
     LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
     var latestUpdate by remember { mutableStateOf<GitHubUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -1059,11 +1077,13 @@ fun LabProbeApp(prefs: AppPrefs) {
 
     LaunchedEffect(Unit) {
         EventNotificationCenter.ensureChannel(context)
+        CertificateReminderCenter.ensureChannel(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        CertificateReminderCenter.notifyDue(context, prefs)
         state.refreshAll()
         delay(1500L)
         updateChecking = true
@@ -1166,7 +1186,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
-                        "favorites" -> FavoritesScreen(prefs, topNav) { settingsReturnRoute = "favorites"; route = "settings" }
+                        "favorites" -> FavoritesScreen(prefs, state.favoriteSyncVersion, topNav) { settingsReturnRoute = "favorites"; route = "settings" }
                         "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
@@ -2151,7 +2171,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = safeNasIpv6ForUi(nas, router)
-    val vpnRows = remember(data?.toString(), nasV6, state.events) {
+    val vpnRows = remember(state.status, nasV6, state.events) {
         buildVpnRowsForHome(data, nasV6, state.events)
     }
     val onlineCount = state.onlineDevices.size
@@ -2299,7 +2319,7 @@ fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem
     fun addVpnRow(labelRaw: String?, addrRaw: String?) {
         val addr = cleanApiText(addrRaw)
         if (addr.isBlank()) return
-        val label = vpnServiceLabel(cleanApiText(labelRaw).ifBlank { "STUN" })
+        val label = vpnServiceLabel(webhookDisplayText(cleanApiText(labelRaw).ifBlank { "STUN" }))
         val sameLabelIndex = rows.indexOfFirst { it.first.equals(label, ignoreCase = true) }
         if (sameLabelIndex >= 0) {
             rows[sameLabelIndex] = label to addr
@@ -2405,6 +2425,7 @@ fun OneUiSegmentBar() {
 @Composable
 fun HealthCard(
     modifier: Modifier = Modifier,
+    verticalPadding: Dp = 15.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
@@ -2415,7 +2436,7 @@ fun HealthCard(
         shadowElevation = 0.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .95f))
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), content = content)
+        Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
     }
 }
 
@@ -2423,22 +2444,14 @@ fun HealthCard(
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
     HealthCard(Modifier.clickable { onNavigate("settings") }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+            HealthScoreGauge(score)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("网络健康得分", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(score.toString(), fontSize = 48.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 52.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Black,
-                        color = if (score >= 85) Color(0xFF16A34A) else Color(0xFFF59E0B),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
                 Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 11.5.sp, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                HealthCompactState("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red)
+                HealthCompactState("在线终端", "$onlineCount 台", if (onlineCount > 0) LabV2.Primary else LabV2.InkMuted)
             }
-            WeeklyMiniBars(score)
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2516,7 +2529,7 @@ fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modi
 
 @Composable
 fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color, subtitle: String, modifier: Modifier = Modifier) {
-    HealthCard(modifier) {
+    HealthCard(modifier, verticalPadding = 11.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
@@ -2626,9 +2639,10 @@ fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
         if (state.devices.isEmpty()) {
             Text("暂无缓存，点击刷新。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
-        state.devices.take(4).forEachIndexed { idx, d ->
+        val visibleDevices = remember(state.devices) { state.devices.take(4) }
+        visibleDevices.forEachIndexed { idx, d ->
             HealthDeviceLine(d)
-            if (idx != state.devices.take(4).lastIndex) Spacer(Modifier.height(11.dp))
+            if (idx != visibleDevices.lastIndex) Spacer(Modifier.height(11.dp))
         }
     }
 }
@@ -2890,30 +2904,36 @@ fun StatusPill(label: String, value: String, color: Color) {
 }
 
 @Composable
-fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit, onOpenDetails: (String) -> Unit) = ScreenShell("设备", "设备识别 · IPv6 · WOL 唤醒", topNav = topNav) {
+fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit, onOpenDetails: (String) -> Unit) {
     var mode by rememberSaveable { mutableStateOf("watch") }
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
     val followed = remember(shared) { followedDeviceList(shared) }
     val list = if (mode == "online") state.onlineDevices else followed
     val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
-    ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
-            FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线终端", fontSize = 12.sp) })
-            FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
-            FilterChip(
-                selected = false,
-                onClick = onOpenTraffic,
-                label = { Text("今日流量", fontSize = 12.sp) },
-                leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) }
-            )
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
+        verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
+    ) {
+        item { CompactPageHeader("设备", "设备识别 · IPv6 · WOL 唤醒") }
+        item { topNav() }
+        item {
+            ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
+                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线终端", fontSize = 12.sp) })
+                    FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
+                    FilterChip(selected = false, onClick = onOpenTraffic, label = { Text("今日流量", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) })
+                }
+                Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
-        Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-    if (mode == "wol") {
-        WolManagementPanel(state)
-    } else {
-        list.forEach { d -> DeviceSmartCard(state, d, onOpenDetails = { onOpenDetails(d.mac) }) }
+        if (mode == "wol") {
+            item { WolManagementPanel(state) }
+        } else {
+            items(list, key = { it.mac.ifBlank { it.name } }) { d -> DeviceSmartCard(state, d, onOpenDetails = { onOpenDetails(d.mac) }) }
+        }
+        item { Spacer(Modifier.height(2.dp)) }
     }
 }
 
@@ -6919,30 +6939,37 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
 @Composable fun ResultText(text: String) { Text(text, Modifier.fillMaxWidth().padding(top = 4.dp, start = 2.dp, end = 2.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), fontWeight = FontWeight.SemiBold, lineHeight = 18.sp, fontSize = 12.2.sp) }
 
 @Composable
-fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) = ScreenShell("记录", "事件流 · 左滑删除 · 每日总结", action = {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
-        AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
-    }
-}, topNav = topNav) {
+fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     var openedSwipeId by remember { mutableStateOf<Int?>(null) }
-    ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LabV2.ListGap)) {
-        state.events.forEach { e ->
-            key(e.id) {
-                EventCompactCard(
-                    e = e,
-                    openedSwipeId = openedSwipeId,
-                    onSwipeOpen = { openedSwipeId = it },
-                    onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
-                    onDelete = {
-                        openedSwipeId = null
-                        scope.launch { state.deleteEvent(e) }
-                    }
-                )
-            }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
+        verticalArrangement = Arrangement.spacedBy(LabV2.ListGap)
+    ) {
+        item {
+            CompactPageHeader(title = "记录", subtitle = "事件流 · 左滑删除 · 每日总结", action = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
+                    AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
+                }
+            })
         }
+        item { topNav() }
+        item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+        items(state.events, key = { eventNotificationIdentity(it) }) { e ->
+            EventCompactCard(
+                e = e,
+                openedSwipeId = openedSwipeId,
+                onSwipeOpen = { openedSwipeId = it },
+                onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
+                onDelete = {
+                    openedSwipeId = null
+                    scope.launch { state.deleteEvent(e) }
+                }
+            )
+        }
+        item { Spacer(Modifier.height(2.dp)) }
     }
 }
 
@@ -7055,13 +7082,18 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
 
 
 fun eventTitle(e: EventItem): String {
-    val n = e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }.ifBlank { "事件" }
+    val n = webhookDisplayText(e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }).ifBlank { "事件" }
     return when (e.type) {
         "device_online" -> "$n 上线"
         "device_offline" -> "$n 离线"
-        else -> e.title.ifBlank { n }
+        else -> webhookDisplayText(e.title).ifBlank { n }
     }
 }
+
+fun webhookDisplayText(raw: String): String = raw
+    .replace(Regex("""\*([^*：:\r\n]{1,40})([：:])"""), "$1$2")
+    .replace(Regex("""^\s*\*+"""), "")
+    .trim()
 
 fun eventLine(e: EventItem): String {
     fun clean(v: String) = v.takeIf { it.isNotBlank() && it.lowercase(Locale.getDefault()) != "null" && it != "-" } ?: ""
@@ -7071,7 +7103,7 @@ fun eventLine(e: EventItem): String {
     return when (e.type) {
         "device_online" -> listOf(ip, rssi, bandRate, clean(e.ssid)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "已连接" }
         "device_offline" -> listOf(clean(formatDurationText(e.onlineDurationText)).takeIf { it.isNotBlank() }?.let { "在线 $it" } ?: "", rssi.takeIf { it.isNotBlank() }?.let { "最后 $it" } ?: "", ip, bandRate).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "已断开" }
-        else -> listOf(clean(e.name), clean(e.newValue)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { e.type }
+        else -> listOf(clean(webhookDisplayText(e.name)), clean(webhookDisplayText(e.newValue))).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { e.type }
     }
 }
 
@@ -7212,6 +7244,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
             }
         }
     }
+    CertificateExpirySection(prefs)
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()

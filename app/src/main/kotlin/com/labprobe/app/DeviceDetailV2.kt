@@ -2,9 +2,7 @@ package com.labprobe.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -85,9 +83,9 @@ fun DeviceDetailScreen(
         CompactListCard {
             Text("连接概览", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                DeviceDetailMetric("连接", connection, LabV2.Primary, Modifier.weight(1.35f))
+                DeviceDetailMetric("连接", connection, LabV2.Primary, Modifier.weight(1f))
                 DeviceDetailMetric("信号", signal, LabV2.Amber, Modifier.weight(1f))
-                DeviceDetailMetric("速率", rate, LabV2.Green, Modifier.weight(1.15f))
+                DeviceDetailMetric("速率", rate, LabV2.Green, Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 DeviceDetailMetric("在线", onlineTime, LabV2.Green, Modifier.weight(1f))
@@ -142,9 +140,7 @@ private fun DeviceDetailMetric(label: String, value: String, color: Color, modif
     Surface(modifier = modifier, shape = LabV2.MetricShape, color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
         Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(label, fontSize = 9.5.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                Text(value, fontSize = if (value.length > 12) 10.5.sp else 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false)
-            }
+            Text(value, modifier = Modifier.fillMaxWidth(), fontSize = if (value.length > 12) 10.5.sp else 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
     }
 }
