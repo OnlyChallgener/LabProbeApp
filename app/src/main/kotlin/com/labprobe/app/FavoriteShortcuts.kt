@@ -213,7 +213,7 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
 }
 
 @Composable
-fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenDns: () -> Unit, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit) {
+fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenDns: () -> Unit, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit, onBeforeOpenShortcut: () -> Unit = {}) {
     val context = LocalContext.current
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -305,7 +305,7 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                         mode = mode,
                         columns = columns,
                         dragEnabled = query.isBlank(),
-                        onOpen = { openFavorite(context, shortcut, mode) },
+                        onOpen = { onBeforeOpenShortcut(); openFavorite(context, shortcut, mode) },
                         onEdit = { editing = shortcut },
                         onDelete = { persist(shortcuts.filterNot { it.id == shortcut.id }) },
                         onMoveBy = { delta ->

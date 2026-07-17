@@ -73,5 +73,5 @@ jobs:
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.0-alpha1-build126-release-apk
+          name: LabProbe-v0.10.1-build128-release-apk
           path: app/build/outputs/apk/release/app-release.apk

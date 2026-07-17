@@ -189,7 +189,7 @@ class PortMapApi(private val prefs: AppPrefs) {
         val rows = (0 until rules.length()).mapNotNull { rules.optJSONObject(it)?.let(::parsePortMapRule) }
         rows to PortMapAgentInfo(
             online = root.optBoolean("agentOnline", false),
-            router = cleanApiText(root.optString("router", "BE72Pro")),
+            router = cleanApiText(root.optString("router", "router")),
             lastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
             portMin = range.optInt("min", 20000),
             portMax = range.optInt("max", 20020),
@@ -339,7 +339,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var rules by remember { mutableStateOf<List<PortMapRule>>(emptyList()) }
     var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
-    var agent by remember { mutableStateOf(PortMapAgentInfo(false, "BE72Pro", "", 20000, 20020)) }
+    var agent by remember { mutableStateOf(PortMapAgentInfo(false, "router", "", 20000, 20020)) }
     var loading by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("全部") }
@@ -502,7 +502,7 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(agent.router.ifBlank { "BE72Pro" }, fontWeight = FontWeight.Black, fontSize = 14.5.sp, color = LabV2.Ink)
+                Text(agent.router.ifBlank { "路由器" }, fontWeight = FontWeight.Black, fontSize = 14.5.sp, color = LabV2.Ink)
                 val versions = listOfNotNull(
                     agent.hubVersion.takeIf { it.isNotBlank() }?.let { "Hub $it" },
                     agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" },

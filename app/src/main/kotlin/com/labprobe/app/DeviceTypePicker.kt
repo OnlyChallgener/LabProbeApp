@@ -8,13 +8,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun EditableDeviceTypeField(
@@ -48,77 +56,74 @@ fun EditableDeviceTypeField(
     var expanded by remember { mutableStateOf(false) }
     var text by remember(value) { mutableStateOf(deviceTypeDisplayName(value)) }
 
-    Box(modifier) {
-        Column {
-            Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
-            CompactTextField(
-                value = text,
-                onValueChange = { input ->
-                    text = input
-                    onChange(normalizeDeviceTypeToken(input).ifBlank { input.trim() })
-                },
-                trailingIcon = {
-                    IconButton(onClick = { expanded = true }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Rounded.ArrowDropDown, null)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        DropdownMenu(
-            expanded = expanded,
+    Column(modifier) {
+        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
+        CompactTextField(
+            value = text,
+            onValueChange = { input ->
+                text = input
+                onChange(normalizeDeviceTypeToken(input).ifBlank { input.trim() })
+            },
+            trailingIcon = {
+                IconButton(onClick = { expanded = true }, modifier = Modifier.size(30.dp)) {
+                    Icon(Icons.Rounded.ArrowDropDown, null)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+    if (expanded) {
+        Dialog(
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(26.dp),
-            containerColor = LAB_POPUP_SURFACE,
-            tonalElevation = 0.dp,
-            shadowElevation = 12.dp,
-            modifier = Modifier
-                .fillMaxWidth(.92f)
-                .heightIn(max = 430.dp)
-                .padding(vertical = 6.dp)
+            properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            Column(Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
-                groups.forEach { group ->
-                    Text(
-                        group.name,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        color = DEVICE_ICON_ACCENT,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    group.items.forEach { rule ->
-                        val selected = normalizeDeviceTypeToken(value) == rule.id
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (selected) Color(0xFFEAF7FA) else Color.Transparent,
-                            border = if (selected) BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER) else null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 2.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable {
-                                    text = rule.label
-                                    onChange(rule.id)
-                                    expanded = false
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = LAB_POPUP_SURFACE,
+                tonalElevation = 0.dp,
+                shadowElevation = 16.dp,
+                border = BorderStroke(1.dp, LAB_POPUP_BORDER),
+                modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.78f)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("选择设备类型", fontSize = 18.sp, fontWeight = FontWeight.Black)
+                            Text("紧凑显示 · 一页查看更多设备", fontSize = 10.5.sp, color = LabV2.InkMuted)
+                        }
+                        IconButton(onClick = { expanded = false }) { Icon(Icons.Rounded.Close, "关闭") }
+                    }
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(94.dp),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(5.dp)
+                    ) {
+                        groups.forEach { group ->
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(group.name, Modifier.padding(start = 4.dp, top = 8.dp, bottom = 2.dp), color = DEVICE_ICON_ACCENT, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                            }
+                            items(group.items, key = { it.id }) { rule ->
+                                val selected = normalizeDeviceTypeToken(value) == rule.id
+                                Surface(
+                                    shape = RoundedCornerShape(17.dp),
+                                    color = if (selected) Color(0xFFEAF7FA) else LAB_POPUP_SUBTLE,
+                                    border = BorderStroke(1.dp, if (selected) DEVICE_ICON_ACCENT.copy(alpha = .32f) else LAB_POPUP_BORDER),
+                                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable {
+                                        text = rule.label
+                                        onChange(rule.id)
+                                        expanded = false
+                                    }
+                                ) {
+                                    Column(
+                                        Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 7.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        DeviceTypeIconPreview(rule, 30)
+                                        Spacer(Modifier.width(2.dp))
+                                        Text(rule.label, fontSize = 10.2.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
-                        ) {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                DeviceTypeIconPreview(rule, 34)
-                                Spacer(Modifier.width(10.dp))
-                                Text(rule.label, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                RadioButton(
-                                    selected = selected,
-                                    onClick = null,
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = DEVICE_ICON_ACCENT,
-                                        unselectedColor = Color(0xFF94A3B8)
-                                    )
-                                )
                             }
                         }
                     }

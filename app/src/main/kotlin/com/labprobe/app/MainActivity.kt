@@ -48,6 +48,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -93,6 +94,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -159,41 +162,14 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.10.0-alpha1"
-    const val CODE = 126
+    const val NAME = "0.10.1"
+    const val CODE = 128
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.10.0-alpha1 build126 · UI V2 重构" to listOf(
-            "重构全局页面壳、底部导航、卡片、输入框与弹层视觉，保留全部测试和图表逻辑",
-            "工具页改为全新非 3D 功能图标，设备图标与识别逻辑保持不变",
-            "修复端口映射表单空洞、文字不居中、6→6 设备列表仍显示 IPv4 与到期重启问题",
-            "6→6 支持 MAC + IPv6 后缀动态解析，适应家庭 IPv6 前缀变化",
-            "支持启停、有效期、连接数、上下行流量与近一小时吞吐图"
-        ),
-        "v0.9.21 build123 · IPv6 与今日时长修复" to listOf(
-            "NAS IPv6 优先尊重 Hub 本机主地址，不再被历史 EUI-64 邻居地址覆盖",
-            "今日流量排行显示当天累计在线时长，不再显示设备总在线时长"
-        ),
-        "v0.9.17 build118 · 漫游波形细化 / 双 Ping" to listOf(
-            "路由器+外网模式下，延迟图同时显示网关与外网两条波形",
-            "丢包标记改为底部超短超细红线，AP/Wi‑Fi 切换线从底部连接到当时波形点",
-            "实时结果小卡改为横向自适应单行布局，避免 ms/% 等数值被截断",
-            "Wi‑Fi 切换事件详情改为多行展示，SSID、BSSID、恢复耗时和丢包信息更完整"
-        ),
-        "v0.9.17 build116 · 清理基线 / 浅色固定 / 漫游波形" to listOf(
-            "统一版本来源为 AppVersion + Gradle versionCode，修复更新检测显示远端旧版本的问题",
-            "彻底移除深色/黑夜模式入口和主题判断，界面固定浅色淡蓝白",
-            "漫游实时小卡改为一行式布局，标题与数值同排，避免裁字",
-            "漫游图表改为波形图：RSSI 阶梯波形、延迟尖峰波形、丢包红色竖条",
-            "Wi-Fi 手动切换后续单独记录为 Wi-Fi 切换事件，不混入 AP 漫游次数"
-        ),
-        "v0.9.17 build115 · 稳定回退" to listOf(
-            "回退到稳定漫游入口，保证可覆盖安装和可进入测试页面",
-            "暂不启用风险较高的手动 Wi-Fi 切换统计改动"
-        ),
-        "v0.9.17 build113 · 背景与状态栏修复" to listOf(
-            "全局背景调整为淡蓝白过渡，状态栏与页面顶部无感衔接",
-            "漫游小卡和配置区做紧凑化调整"
+        "v0.10.1 build128 · 连接与更新修复" to listOf(
+            "Hub 连接监督与数据刷新分离：已连接时静默同步数据，断开后再自动重连",
+            "更新检测明确区分 Lucky 主源和 GitHub 备用源，远端旧版本不再误显示为最新",
+            "Rust Agent 更新按实际上报路由器匹配，不再依赖固定路由器名称"
         )
     )
 }
@@ -879,16 +855,18 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         }
         if (!refreshMutex.tryLock()) return
         if (!silent) loading = true
+        var attemptedReconnect = false
         try {
             val api = HubApi(prefs)
             api.ensureClientToken()
-            val reconnecting = !hubConnected || forceHealth
-            if (reconnecting) {
-                if (!silent) message = "正在连接 Hub，最多尝试 3 次..."
-                api.healthWithRetry(3)
+            val needsReconnect = !hubConnected || forceHealth
+            if (needsReconnect) {
+                if (!silent) message = "正在连接 Hub，最多尝试 5 次..."
+                attemptedReconnect = true
+                api.healthWithRetry(5)
                 hubConnected = true
             }
-            val fullDue = forceFull || reconnecting || prefs.syncRevision <= 0L ||
+            val fullDue = forceFull || needsReconnect || prefs.syncRevision <= 0L ||
                 prefs.syncHub != prefs.hub ||
                 System.currentTimeMillis() - prefs.lastFullSyncAt >= FULL_SYNC_INTERVAL_MS
             if (!silent) message = if (fullDue) "正在校准完整数据..." else "正在同步变化..."
@@ -900,25 +878,47 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 }
             }
         } catch (first: Exception) {
-            if (hubConnected) {
-                if (!silent) message = "刷新失败，正在重连 Hub..."
+            val wasConnected = hubConnected
+            hubConnected = false
+            if (wasConnected) {
+                if (!silent) message = "Hub 已断开，正在自动重连..."
                 try {
                     val api = HubApi(prefs)
                     api.ensureClientToken()
-                    api.healthWithRetry(3)
+                    api.healthWithRetry(5)
                     hubConnected = true
                     if (!silent) message = "重连成功，正在校准完整数据..."
                     syncFull(api, silent)
                 } catch (second: Exception) {
                     hubConnected = false
-                    message = "连接失败，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${second.message}"
+                    message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${second.message}"
                 }
+            } else if (attemptedReconnect) {
+                message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
             } else {
-                hubConnected = false
-                message = "连接失败，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
+                message = "Hub 已断开，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
             }
         } finally {
             if (!silent) loading = false
+            refreshMutex.unlock()
+        }
+    }
+
+    suspend fun keepHubConnection(silent: Boolean = true) {
+        if (prefs.hub.isBlank() || hubConnected || loading) return
+        if (!refreshMutex.tryLock()) return
+        try {
+            if (!silent) message = "Hub 已断开，正在自动重连..."
+            val api = HubApi(prefs)
+            api.ensureClientToken()
+            api.healthWithRetry(5)
+            hubConnected = true
+            syncFull(api, silent = true)
+            if (!silent) message = "Hub 已重连 · ${prefs.lastRefresh.ifBlank { nowClock() }}"
+        } catch (error: Exception) {
+            hubConnected = false
+            message = "Hub 已断开，自动重连 5 次失败 · 请手动测试或刷新：${error.message}"
+        } finally {
             refreshMutex.unlock()
         }
     }
@@ -1341,6 +1341,12 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
     LaunchedEffect(Unit) {
         while (true) {
+            delay(30_000L)
+            if (appForeground) state.keepHubConnection(silent = true)
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
             delay(FULL_SYNC_INTERVAL_MS)
             if (appForeground) state.refreshAll(forceFull = true, silent = true)
         }
@@ -1367,18 +1373,19 @@ fun LabProbeApp(prefs: AppPrefs) {
         val navTitles = listOf("首页", "设备", "工具", "记录", "收藏")
         val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
         val normalized = when {
-            route.startsWith("tool_") -> "tools"
-            route == "daily" -> "events"
+            route.startsWith("tool_") -> toolReturnRoute?.takeIf { it in mainRoutes } ?: "tools"
+            route == "daily" -> dailyReturnRoute.takeIf { it in mainRoutes } ?: "events"
             route == "health_score" -> "home"
             route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
-            route == "settings" -> "favorites"
+            route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
             else -> route
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
         val navigate: (String) -> Unit = { target ->
+            if (target.startsWith("tool_")) toolReturnRoute = if (route in mainRoutes) route else normalized
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
-            if (target == "daily") dailyReturnRoute = if (route == "home" || route == "health_score") route else "events"
+            if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
             route = target
         }
         BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "wol" || route == "device_traffic" || route == "device_detail" || route == "settings") {
@@ -1440,7 +1447,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                             topNav = topNav,
                             onOpenDns = { toolReturnRoute = "favorites"; route = "tool_dns" },
                             onOpenPortMapping = { toolReturnRoute = "favorites"; route = "tool_portmap" },
-                            onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" }
+                            onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" },
+                            onBeforeOpenShortcut = {}
                         )
                         "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
                         "tool_ping" -> PingScreen(prefs, backFromTool)
@@ -2023,6 +2031,7 @@ data class GitHubUpdateInfo(
     val fallbackApkUrl: String = ""
 ) {
     val hasUpdate: Boolean get() = versionCode > AppVersion.CODE
+    val isRepositoryOlder: Boolean get() = versionCode in 1 until AppVersion.CODE
 }
 
 data class UpdateDownloadUi(
@@ -2055,6 +2064,17 @@ private fun formatSpeed(bytesPerSec: Long): String = when {
     bytesPerSec <= 0L -> "0 KB/s"
     bytesPerSec >= 1024L * 1024L -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / 1024.0 / 1024.0)
     else -> String.format(Locale.US, "%.0f KB/s", bytesPerSec / 1024.0)
+}
+
+private fun updatePackageLine(info: GitHubUpdateInfo): String {
+    val size = info.apkSize.takeIf { it > 0L }?.let { " · ${formatBytesShort(it)}" }.orEmpty()
+    return "更新包：${info.apkName.ifBlank { "未提供" }}$size"
+}
+
+private fun updateStateLine(info: GitHubUpdateInfo): String = when {
+    info.hasUpdate -> "发现新版本：${info.name}"
+    info.isRepositoryOlder -> "更新仓版本低于当前 APP：${info.name} / 当前 v${AppVersion.NAME}"
+    else -> "当前已是最新版本：${info.name}"
 }
 
 private fun updateHttpClient() = OkHttpClient.Builder()
@@ -2144,8 +2164,7 @@ suspend fun fetchGithubLatestInfo(): GitHubUpdateInfo = withContext(Dispatchers.
 suspend fun checkGithubLatestSummary(): String = withContext(Dispatchers.IO) {
     runCatching {
         val info = fetchGithubLatestInfo()
-        val state = if (info.hasUpdate) "发现新版本" else "当前已是最新版本"
-        "$state：${info.name}\n更新包：${info.apkName} · ${formatBytesShort(info.apkSize)}"
+        "${updateStateLine(info)}\n${updatePackageLine(info)}"
     }.getOrElse { e ->
         "检测失败：${e.message ?: e.javaClass.simpleName}"
     }
@@ -2273,7 +2292,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
                     onClick = {
                         scope.launch {
                             checking = true
-                            updateText = "正在检测 GitHub Release..."
+                            updateText = "正在检测 Lucky 更新仓..."
                             runCatching { fetchGithubLatestInfo() }
                                 .onSuccess { info ->
                                     if (info.hasUpdate) {
@@ -2281,7 +2300,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
                                         onDismiss()
                                         onUpdateFound(info)
                                     } else {
-                                        updateText = "当前已是最新版本：${info.name}\n更新包：${info.apkName} · ${formatBytesShort(info.apkSize)}"
+                                        updateText = "${updateStateLine(info)}\n${updatePackageLine(info)}"
                                         checking = false
                                     }
                                 }
@@ -2782,6 +2801,19 @@ fun HealthCard(
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
+    val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
+    val scoreGlowAlpha by scorePulse.animateFloat(
+        initialValue = .08f,
+        targetValue = .24f,
+        animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
+        label = "homeScoreGlowAlpha"
+    )
+    val scoreGlowScale by scorePulse.animateFloat(
+        initialValue = .94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
+        label = "homeScoreGlowScale"
+    )
     val shape = RoundedCornerShape(30.dp)
     Surface(
         modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
@@ -2793,7 +2825,14 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.clip(CircleShape).clickable { onNavigate("health_score") }) {
+                Box(Modifier.size(122.dp).clip(CircleShape).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
+                    Box(
+                        Modifier
+                            .size(118.dp)
+                            .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
+                            .clip(CircleShape)
+                            .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = .015f))))
+                    )
                     HealthScoreGauge(score, 112.dp)
                 }
                 Spacer(Modifier.width(12.dp))
@@ -2875,8 +2914,13 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 .clip(CircleShape)
                 .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = .02f))))
         )
-        Box(Modifier.size(112.dp).clip(CircleShape).background(Color.White.copy(alpha = .96f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Rounded.Router, null, tint = scoreColor, modifier = Modifier.size(72.dp))
+        Box(Modifier.size(146.dp).clip(CircleShape).background(Color.White.copy(alpha = .94f)), contentAlignment = Alignment.Center) {
+            Image(
+                painter = painterResource(R.drawable.router_skeuomorphic_v3),
+                contentDescription = "锐捷路由器",
+                modifier = Modifier.size(132.dp),
+                contentScale = ContentScale.Fit
+            )
         }
     }
 
@@ -2889,7 +2933,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         ScoreRuleRow("近期异常扣分", if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常", -(badCount * 2), badCount == 0)
     }
 
-    ExpressiveCard("Rust Agent 更新", agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令", Icons.Rounded.SystemUpdateAlt, LabV2.Primary) {
+    ExpressiveCard("Rust Agent 更新", agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令", Icons.Rounded.SystemUpdateAlt, LabV2.Green) {
         Text(agentMessage, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
         agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
             Text("Agent 最后上报：$it", fontSize = 10.8.sp, color = LabV2.InkMuted)
@@ -2906,8 +2950,10 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                     }
                 },
                 enabled = !agentBusy,
-                modifier = Modifier.weight(1f)
-            ) { Text("检查更新", fontWeight = FontWeight.Black) }
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Green),
+                border = BorderStroke(1.dp, LabV2.Green.copy(alpha = .34f))
+            ) { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("检查更新", fontWeight = FontWeight.Black) }
             Button(
                 onClick = {
                     scope.launch {
@@ -2919,8 +2965,9 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                     }
                 },
                 enabled = !agentBusy && agentInfo?.updateAvailable == true,
-                modifier = Modifier.weight(1f)
-            ) { Text("立即更新", fontWeight = FontWeight.Black) }
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = LabV2.Green)
+            ) { Icon(Icons.Rounded.SystemUpdateAlt, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即更新", fontWeight = FontWeight.Black) }
         }
     }
 }
@@ -7497,7 +7544,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
         verticalArrangement = Arrangement.spacedBy(LabV2.ListGap)
     ) {
         item {
-            CompactPageHeader(title = "记录", subtitle = "事件流 · 左滑删除 · 每日总结", action = {
+            CompactPageHeader(title = "记录", subtitle = "事件流 · 长按选择复制 · 左滑删除", action = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
                     AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
@@ -7522,6 +7569,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Unit, onSwipeClose: () -> Unit, onDelete: () -> Unit) {
     val isOnline = e.type == "device_online"
@@ -7545,6 +7593,7 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
     var targetOffsetPx by remember(e.id) { mutableStateOf(0f) }
     var dragging by remember(e.id) { mutableStateOf(false) }
     var pendingDelete by remember(e.id) { mutableStateOf(false) }
+    var showSelection by remember(eventNotificationIdentity(e)) { mutableStateOf(false) }
     val animatedOffsetPx by animateFloatAsState(targetOffsetPx, animationSpec = tween(if (dragging) 0 else 180), label = "event-swipe-offset")
 
     LaunchedEffect(e.id) { targetOffsetPx = 0f }
@@ -7607,7 +7656,11 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
                             }
                         )
                     }
-                    .shadow(2.dp, RoundedCornerShape(18.dp), clip = false),
+                    .shadow(2.dp, RoundedCornerShape(18.dp), clip = false)
+                    .combinedClickable(
+                        onClick = { targetOffsetPx = 0f; onSwipeClose() },
+                        onLongClick = { targetOffsetPx = 0f; onSwipeClose(); showSelection = true }
+                    ),
                 shape = RoundedCornerShape(18.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
             ) {
@@ -7627,6 +7680,37 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
             }
         }
     }
+    if (showSelection) EventSelectionDialog(e = e, onDismiss = { showSelection = false })
+}
+
+@Composable
+private fun EventSelectionDialog(e: EventItem, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val text = remember(e) {
+        buildString {
+            appendLine(eventTitle(e))
+            appendLine("时间：${e.time}")
+            appendLine("类型：${eventLabel(e.type)}")
+            appendLine("内容：${eventLine(e)}")
+            cleanApiText(e.oldValue).takeIf { it.isNotBlank() }?.let { appendLine("原值：$it") }
+            cleanApiText(e.newValue).takeIf { it.isNotBlank() }?.let { appendLine("新值：$it") }
+        }.trim()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择并复制事件信息", fontWeight = FontWeight.Black) },
+        text = {
+            Surface(shape = RoundedCornerShape(18.dp), color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.Border)) {
+                SelectionContainer {
+                    Text(text, Modifier.padding(12.dp), fontSize = 12.5.sp, lineHeight = 18.sp, color = LabV2.Ink)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { copy(context, text) }) { Text("复制全部", fontWeight = FontWeight.Black) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = LAB_POPUP_SURFACE
+    )
 }
 
 
@@ -7952,7 +8036,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     var hub by remember { mutableStateOf(prefs.hub) }
     var token by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
-    var msg by remember { mutableStateOf("等待测试") }
+    var msg by remember { mutableStateOf("") }
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     ExpressiveCard("连接设置", "Hub 请求优先 AAAA / IPv6，失败 3 次不清空缓存。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
@@ -7967,12 +8051,15 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 CompactDropdown(autoRefresh, listOf("手动", "3S", "10S", "20S"), { onAuto(it); prefs.autoRefresh = it }, Modifier.fillMaxWidth())
             }
         }
-        Text(msg, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val connectionMessage = msg.ifBlank {
+            if (state.hubConnected) "已连接 · ${state.message}" else state.message.ifBlank { "正在等待自动连接" }
+        }
+        Text(connectionMessage, color = if (state.hubConnected) LabV2.Green else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
-            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { val api = HubApi(prefs); api.ensureClientToken(); api.health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = "正在连接并校准数据..."; runCatching { state.refreshAll(forceHealth = true, forceFull = true); if (state.hubConnected) "已连接 · 数据已刷新" else state.message }.onSuccess { msg = it }.onFailure { msg = "失败：${it.message}" } } }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
                 Icon(Icons.Rounded.WifiTethering, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("测试连接", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
@@ -8059,7 +8146,7 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) { val path = if (online) "/api/devices?view=online" else "/api/devices"; val root = JSONObject(getText(path, true)); parseDeviceArray((root.optJSONArray("devices") ?: JSONArray()).toString()) }
     suspend fun getEvents(): List<EventItem> = withContext(Dispatchers.IO) { val root = JSONObject(getText("/api/events", true)); parseEvents((root.optJSONArray("events") ?: JSONArray()).toString()).reversed() }
     suspend fun getAgentUpdateStatus(): AgentUpdateInfo = withContext(Dispatchers.IO) {
-        val root = JSONObject(getText("/api/agent/update/status", true))
+        val root = JSONObject(getText("/api/agent/update/status?refresh=1", true))
         AgentUpdateInfo(
             currentVersion = root.optString("currentVersion", "未知"),
             latestVersion = root.optString("latestVersion", "未知"),
