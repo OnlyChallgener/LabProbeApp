@@ -50,7 +50,8 @@ fun DeviceDetailScreen(
     val wifi = hasWifiInfo(device)
     val signal = cleanApiText(device.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm", true)) it else "$it dBm" } ?: "--"
     val rate = cleanApiText(device.rxrate).ifBlank { "--" }
-    val connection = if (wifi) listOf(cleanApiText(device.band), cleanApiText(device.ssid)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "Wi-Fi" } else "有线"
+    val band = if (wifi) cleanApiText(device.band).ifBlank { "Wi-Fi" } else "有线"
+    val wifiName = if (wifi) cleanApiText(device.ssid) else ""
     val onlineTime = cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let(::formatDurationText).orEmpty().ifBlank { "--" }
     var editing by remember { mutableStateOf(false) }
     var waking by remember { mutableStateOf(false) }
@@ -83,9 +84,20 @@ fun DeviceDetailScreen(
         CompactListCard {
             Text("连接概览", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                DeviceDetailMetric("连接", connection, LabV2.Primary, Modifier.weight(1f))
+                DeviceDetailMetric("频段", band, LabV2.Primary, Modifier.weight(1f))
                 DeviceDetailMetric("信号", signal, LabV2.Amber, Modifier.weight(1f))
                 DeviceDetailMetric("速率", rate, LabV2.Green, Modifier.weight(1f))
+            }
+            if (wifiName.isNotBlank()) {
+                Surface(shape = RoundedCornerShape(14.dp), color = LabV2.Primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .09f))) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Wifi, null, Modifier.size(15.dp), tint = LabV2.Primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Wi-Fi", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+                        Spacer(Modifier.width(8.dp))
+                        Text(wifiName, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 DeviceDetailMetric("在线", onlineTime, LabV2.Green, Modifier.weight(1f))

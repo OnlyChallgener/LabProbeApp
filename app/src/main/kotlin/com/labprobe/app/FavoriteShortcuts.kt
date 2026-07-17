@@ -212,7 +212,7 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
 }
 
 @Composable
-fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenSettings: () -> Unit) {
+fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -240,6 +240,7 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val columns = if (maxWidth >= 720.dp) 3 else 2
+        val searchWidth = if (maxWidth >= 500.dp) 210.dp else 160.dp
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize(),
@@ -269,7 +270,7 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                         CompactTextField(
                             value = query,
                             onValueChange = { query = it },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.width(searchWidth),
                             placeholder = "搜索收藏",
                             leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(18.dp), tint = LabV2.InkMuted) },
                             trailingIcon = if (query.isNotBlank()) ({
@@ -278,6 +279,10 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                                 }
                             }) else null
                         )
+                        Spacer(Modifier.weight(1f))
+                        Surface(onClick = onOpenPortMapping, modifier = Modifier.size(48.dp), shape = RoundedCornerShape(15.dp), color = LabV2.Primary.copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .12f))) {
+                            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.SwapHoriz, "端口映射", Modifier.size(21.dp), tint = LabV2.Primary) }
+                        }
                     }
                 }
             }

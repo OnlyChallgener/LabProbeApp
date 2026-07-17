@@ -69,55 +69,63 @@ fun WolManagementPanel(state: AppState) {
     val candidates = remember(state.wolDevices, shared) { wolCandidatesFromDevices(shared, state.wolDevices) }
     val enabledCount = state.wolDevices.count { it.enabled }
 
-    ExpressiveCard("WOL 设备", null, Icons.Rounded.Power, Color(0xFF8B5CF6)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f))
-            Spacer(Modifier.weight(1f))
-            Button(
-                onClick = { showAdd = true },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-            ) {
-                Icon(Icons.Rounded.Add, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("添加", fontSize = 12.sp, fontWeight = FontWeight.Black)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        CompactListCard {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF8B5CF6).copy(alpha = .11f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Power, null, Modifier.size(19.dp), tint = Color(0xFF8B5CF6))
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text("WOL 设备", fontSize = 16.5.sp, lineHeight = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                }
+                Button(
+                    onClick = { showAdd = true },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                ) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("添加", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+                }
             }
         }
         if (runtimes.isEmpty()) {
-            Text("暂无 WOL 设备，点右上角添加。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontSize = 11.sp)
+            CompactListCard { Text("暂无 WOL 设备，点右上角添加。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontSize = 11.sp) }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                runtimes.forEach { item ->
-                    WolDeviceCard(
-                        item = item,
-                        onToggle = { state.toggleWolDevice(item.config.mac, it) },
-                        onEdit = { editing = item.config },
-                        onDelete = { state.deleteWolDevice(item.config.mac) },
-                        onWake = {
-                            scope.launch {
-                                val msg = runCatching { state.wakeMac(ctx, item.config.mac) }.getOrElse { "WOL失败：${it.message}" }
-                                toast(ctx, msg)
-                            }
+            runtimes.forEach { item ->
+                WolDeviceCard(
+                    item = item,
+                    onToggle = { state.toggleWolDevice(item.config.mac, it) },
+                    onEdit = { editing = item.config },
+                    onDelete = { state.deleteWolDevice(item.config.mac) },
+                    onWake = {
+                        scope.launch {
+                            val msg = runCatching { state.wakeMac(ctx, item.config.mac) }.getOrElse { "WOL失败：${it.message}" }
+                            toast(ctx, msg)
                         }
-                    )
-                }
+                    }
+                )
             }
         }
 
         if (candidates.isNotEmpty()) {
-            Text("自动候选", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontSize = 11.sp, fontWeight = FontWeight.Black)
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                candidates.forEach { c ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        SmallTypeIcon(c.profile)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(c.config.remark, fontWeight = FontWeight.Black, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${c.profile.label} · ${c.config.mac}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f), fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        OutlinedButton(onClick = { state.addOrUpdateWolDevice(c.config.copy(enabled = true, updatedAt = System.currentTimeMillis())) }, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)) {
-                            Text("加入", fontSize = 11.sp, fontWeight = FontWeight.Black)
+            CompactListCard {
+                Text("自动候选", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontSize = 11.sp, fontWeight = FontWeight.Black)
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    candidates.forEach { c ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            SmallTypeIcon(c.profile)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(c.config.remark, fontWeight = FontWeight.Black, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${c.profile.label} · ${c.config.mac}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f), fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            OutlinedButton(onClick = { state.addOrUpdateWolDevice(c.config.copy(enabled = true, updatedAt = System.currentTimeMillis())) }, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)) {
+                                Text("加入", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                            }
                         }
                     }
                 }
@@ -156,18 +164,19 @@ private fun WolDeviceCard(
         shadowElevation = 2.dp,
         border = BorderStroke(1.dp, p.accent.copy(alpha = .10f))
     ) {
-        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SmallTypeIcon(p, 44)
-                Spacer(Modifier.width(10.dp))
+                SmallTypeIcon(p, 42)
+                Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(item.config.remark.ifBlank { item.config.mac }, Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        TypeBadge(p.label, p.accent)
-                    }
-                    Text("MAC：${item.config.mac}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.config.remark.ifBlank { item.config.mac }, fontSize = 14.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("MAC：${item.config.mac}", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Switch(checked = item.config.enabled, onCheckedChange = onToggle)
+                Spacer(Modifier.width(5.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    TypeBadge(p.label, p.accent)
+                    Switch(checked = item.config.enabled, onCheckedChange = onToggle)
+                }
             }
 
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -182,8 +191,8 @@ private fun WolDeviceCard(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(
                     onClick = onEdit,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.Edit, null, tint = p.accent, modifier = Modifier.size(14.dp))
@@ -192,8 +201,8 @@ private fun WolDeviceCard(
                 }
                 OutlinedButton(
                     onClick = onDelete,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
@@ -203,9 +212,9 @@ private fun WolDeviceCard(
                 Button(
                     onClick = onWake,
                     enabled = item.config.enabled && !item.online,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF14B8A6)),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f)
                 ) { Text("唤醒", fontSize = 11.sp, fontWeight = FontWeight.Black) }
             }

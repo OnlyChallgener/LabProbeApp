@@ -1186,7 +1186,13 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = "events" }
-                        "favorites" -> FavoritesScreen(prefs, state.favoriteSyncVersion, topNav) { settingsReturnRoute = "favorites"; route = "settings" }
+                        "favorites" -> FavoritesScreen(
+                            prefs = prefs,
+                            syncVersion = state.favoriteSyncVersion,
+                            topNav = topNav,
+                            onOpenPortMapping = { toolReturnRoute = "favorites"; route = "tool_portmap" },
+                            onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" }
+                        )
                         "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
@@ -2442,22 +2448,40 @@ fun HealthCard(
 
 @Composable
 fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
-    HealthCard(Modifier.clickable { onNavigate("settings") }) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            HealthScoreGauge(score)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("网络健康得分", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A))
-                Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 11.5.sp, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                HealthCompactState("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red)
-                HealthCompactState("在线终端", "$onlineCount 台", if (onlineCount > 0) LabV2.Primary else LabV2.InkMuted)
+    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
+    val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
+    val shape = RoundedCornerShape(30.dp)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .shadow(6.dp, shape, clip = false)
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(Color.White, scoreColor.copy(alpha = .045f))))
+            .border(1.dp, scoreColor.copy(alpha = .11f), shape)
+            .clickable { onNavigate("settings") }
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                HealthScoreGauge(score)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("网络健康得分", Modifier.weight(1f), fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+                        Surface(shape = RoundedCornerShape(99.dp), color = scoreColor.copy(alpha = .11f)) {
+                            Text(scoreLabel, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
+                        }
+                    }
+                    Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 11.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    HealthCompactState("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red)
+                    HealthCompactState("在线终端", "$onlineCount 台", if (onlineCount > 0) LabV2.Primary else LabV2.InkMuted)
+                }
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f).clickable { onNavigate("settings") })
-            HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("tool_ping") })
-            HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("events") })
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f).clickable { onNavigate("settings") })
+                HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("tool_ping") })
+                HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("events") })
+            }
         }
     }
 }
