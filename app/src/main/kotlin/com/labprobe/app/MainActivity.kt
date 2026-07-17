@@ -1190,6 +1190,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             prefs = prefs,
                             syncVersion = state.favoriteSyncVersion,
                             topNav = topNav,
+                            onOpenDns = { toolReturnRoute = "favorites"; route = "tool_dns" },
                             onOpenPortMapping = { toolReturnRoute = "favorites"; route = "tool_portmap" },
                             onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" }
                         )
@@ -2451,39 +2452,56 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val shape = RoundedCornerShape(30.dp)
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .shadow(6.dp, shape, clip = false)
-            .clip(shape)
-            .background(Brush.linearGradient(listOf(Color.White, scoreColor.copy(alpha = .045f))))
-            .border(1.dp, scoreColor.copy(alpha = .11f), shape)
-            .clickable { onNavigate("settings") }
+    Surface(
+        onClick = { onNavigate("settings") },
+        modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
+        shape = shape,
+        color = Color(0xFFFEFFFF),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .86f))
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 HealthScoreGauge(score)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Spacer(Modifier.width(15.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("网络健康得分", Modifier.weight(1f), fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
-                        Surface(shape = RoundedCornerShape(99.dp), color = scoreColor.copy(alpha = .11f)) {
-                            Text(scoreLabel, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
-                        }
+                        Text("网络健康得分", Modifier.weight(1f), fontSize = 17.sp, lineHeight = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+                        Text(scoreLabel, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
                     }
                     Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 11.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     HealthCompactState("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red)
                     HealthCompactState("在线终端", "$onlineCount 台", if (onlineCount > 0) LabV2.Primary else LabV2.InkMuted)
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                HealthStatusBadge("Hub", if (hubOk) "就绪" else "未连", if (hubOk) Color(0xFF16A34A) else Color(0xFFEF4444), Modifier.weight(1f).clickable { onNavigate("settings") })
-                HealthStatusBadge("出口", if (exitOk) "正常" else "无数据", if (exitOk) Color(0xFF0EA5E9) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("tool_ping") })
-                HealthStatusBadge("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) Color(0xFF7C3AED) else Color(0xFF64748B), Modifier.weight(1f).clickable { onNavigate("events") })
+            HorizontalDivider(Modifier.padding(top = 10.dp), color = LabV2.Border.copy(alpha = .72f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                HealthScoreShortcut("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
+                HealthScoreDivider()
+                HealthScoreShortcut("出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("tool_ping") }
+                HealthScoreDivider()
+                HealthScoreShortcut("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("events") }
             }
         }
     }
+}
+
+@Composable
+private fun HealthScoreShortcut(label: String, value: String, statusColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Row(modifier.clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(statusColor))
+        Spacer(Modifier.width(7.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(label, fontSize = 9.5.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+            Text(value, fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun HealthScoreDivider() {
+    Box(Modifier.width(1.dp).height(28.dp).background(LabV2.Border.copy(alpha = .72f)))
 }
 
 @Composable
