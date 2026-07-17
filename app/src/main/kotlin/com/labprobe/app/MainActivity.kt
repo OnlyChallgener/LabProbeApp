@@ -2463,52 +2463,81 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                HealthScoreGauge(score)
-                Spacer(Modifier.width(15.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                HealthScoreGauge(score, 112.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("网络健康得分", Modifier.weight(1f), fontSize = 17.sp, lineHeight = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
-                        Text(scoreLabel, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
+                        Surface(shape = RoundedCornerShape(99.dp), color = scoreColor.copy(alpha = .10f)) {
+                            Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
+                                Text(scoreLabel, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
+                            }
+                        }
                     }
-                    Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 11.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    HealthCompactState("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red)
-                    HealthCompactState("在线终端", "$onlineCount 台", if (onlineCount > 0) LabV2.Primary else LabV2.InkMuted)
+                    Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 10.8.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    HealthStatePill(
+                        icon = Icons.Rounded.Router,
+                        label = "Hub",
+                        value = if (hubOk) "就绪" else "未连",
+                        color = if (hubOk) LabV2.Green else LabV2.Red,
+                        trailing = Icons.Rounded.Check
+                    )
+                    HealthStatePill(
+                        icon = Icons.Rounded.Devices,
+                        label = "在线终端",
+                        value = "$onlineCount 台",
+                        color = LabV2.Primary,
+                        trailing = Icons.Rounded.ChevronRight
+                    )
                 }
             }
-            HorizontalDivider(Modifier.padding(top = 10.dp), color = LabV2.Border.copy(alpha = .72f))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                HealthScoreShortcut("Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
-                HealthScoreDivider()
-                HealthScoreShortcut("出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("tool_ping") }
-                HealthScoreDivider()
-                HealthScoreShortcut("VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("events") }
+            Spacer(Modifier.height(11.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                HealthShortcutTile(Icons.Rounded.Router, "Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
+                HealthShortcutTile(Icons.Rounded.Public, "出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("tool_ping") }
+                HealthShortcutTile(Icons.Rounded.VpnKey, "VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("events") }
             }
         }
     }
 }
 
 @Composable
-private fun HealthScoreShortcut(label: String, value: String, statusColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Row(modifier.clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(statusColor))
-        Spacer(Modifier.width(7.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(label, fontSize = 9.5.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
-            Text(value, fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun HealthStatePill(icon: ImageVector, label: String, value: String, color: Color, trailing: ImageVector) {
+    Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFFF8FAFD), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .72f))) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(28.dp).clip(CircleShape).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(16.dp), tint = color)
+            }
+            Spacer(Modifier.width(7.dp))
+            Text("$label：", fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+            Text(value, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(trailing, null, Modifier.size(16.dp), tint = color.copy(alpha = if (trailing == Icons.Rounded.ChevronRight) .42f else 1f))
         }
     }
 }
 
 @Composable
-private fun HealthScoreDivider() {
-    Box(Modifier.width(1.dp).height(28.dp).background(LabV2.Border.copy(alpha = .72f)))
+private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp).clip(CircleShape).background(Color.White.copy(alpha = .88f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(19.dp), tint = color)
+            }
+            Spacer(Modifier.width(7.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(label, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+                Text(value, fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
 }
 
 @Composable
-fun HealthScoreGauge(score: Int) {
-    Box(Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(8.dp)) {
-            val stroke = 9.dp.toPx()
+            val stroke = if (size > 100.dp) 10.dp.toPx() else 9.dp.toPx()
             drawArc(
                 color = Color(0xFFE2EAF3),
                 startAngle = 135f,
@@ -2525,8 +2554,8 @@ fun HealthScoreGauge(score: Int) {
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(score.toString(), fontSize = 35.sp, lineHeight = 35.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+            Text(score.toString(), fontSize = if (size > 100.dp) 42.sp else 35.sp, lineHeight = if (size > 100.dp) 42.sp else 35.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = if (size > 100.dp) 10.5.sp else 9.5.sp, fontWeight = FontWeight.Black, color = if (score >= 85) LabV2.Green else LabV2.InkMuted)
         }
     }
 }

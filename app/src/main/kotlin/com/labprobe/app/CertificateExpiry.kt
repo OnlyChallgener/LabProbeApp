@@ -264,7 +264,7 @@ private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Uni
         else -> "剩余 $remaining 天"
     }
     Surface(shape = RoundedCornerShape(16.dp), color = accent.copy(alpha = .055f), border = BorderStroke(1.dp, accent.copy(alpha = .12f))) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(item.note.ifBlank { "证书" }, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(7.dp))
@@ -280,20 +280,23 @@ private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Uni
                     }
                 }
             }
-            Text(
-                listOfNotNull(
-                    item.organization.takeIf { it.isNotBlank() }?.let { "机构 $it" },
-                    item.provider.takeIf { it.isNotBlank() }?.let { "服务商 $it" },
-                    item.appliedOn.takeIf { it.isNotBlank() }?.let { "申请 $it" },
-                    "到期 ${item.expiresOn}"
-                ).joinToString(" · "),
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = LabV2.InkMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CertificateCardInfo("机构", item.organization.ifBlank { "--" }, Modifier.weight(1f))
+                CertificateCardInfo("服务商", item.provider.ifBlank { "--" }, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CertificateCardInfo("申请", item.appliedOn.ifBlank { "--" }, Modifier.weight(1f))
+                CertificateCardInfo("到期", item.expiresOn, Modifier.weight(1f), valueColor = accent)
+            }
         }
+    }
+}
+
+@Composable
+private fun CertificateCardInfo(label: String, value: String, modifier: Modifier = Modifier, valueColor: Color = LabV2.InkMuted) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text("$label ", fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, color = LabV2.InkFaint, maxLines = 1)
+        Text(value, Modifier.weight(1f), fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = valueColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

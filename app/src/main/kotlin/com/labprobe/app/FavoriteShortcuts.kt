@@ -138,15 +138,16 @@ fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
         val index = current.indexOfFirst { it.id == generatedId || it.title.equals(title, ignoreCase = true) }
         if (index >= 0) {
             val old = current[index]
-            if (old.id != generatedId || old.title != title || old.wanUrl != wanUrl) {
-                current[index] = old.copy(id = generatedId, title = title, wanUrl = wanUrl)
+            val description = old.description.takeUnless { it == "Webhook 自动同步" }.orEmpty()
+            if (old.id != generatedId || old.title != title || old.wanUrl != wanUrl || old.description != description) {
+                current[index] = old.copy(id = generatedId, title = title, description = description, wanUrl = wanUrl)
                 changes++
             }
         } else {
             current += FavoriteShortcut(
                 id = generatedId,
                 title = title,
-                description = "Webhook 自动同步",
+                description = "",
                 iconType = "builtin",
                 iconValue = webhookBuiltinIcon(title),
                 lanUrl = "",
