@@ -1,3 +1,17 @@
+# LabProbe APP 数据连接（第一阶段）
+
+APP 保持现有页面、卡片、排序和跳转不变，数据连接采用“首次全量 + 后续增量 + 定期校准”：
+
+- 首次进入、Hub重连、重新保存连接、恢复前台和网络切换时获取完整快照。
+- 普通自动刷新使用 Hub revision/sequence，只更新新增、变化、离线和删除的数据。
+- 每 5 分钟完整校准；序号中断时立即回退完整校准。
+- 无变化时不替换 Compose列表、不重写大缓存；失败时保留旧页面和最后更新时间。
+- Hub旧版本不支持同步接口时，自动回退原有状态、设备和事件接口。
+
+新 Hub 首启会在容器日志显示一次性 APP 配对码。设置页结构保持不变：Hub填写 `http://192.168.1.20:58443` 或 `https://hub.example.com`，Token输入框填写 `APP-123456`。连接时APP自动换取独立Client Token并迁移到Android Keystore；旧 `APP_TOKEN` 继续兼容。
+
+APP 更新继续使用原入口、弹窗、忽略版本、下载目录和安装流程。检查时优先读取 `UpdateRepository.APP_MANIFEST` 指向的 Lucky `update.json`；连接失败、超时或 JSON 无效时回退原 GitHub Release API。`sha256`、`sizeBytes`、`fallbackUrl` 均为向后兼容可选字段，存在时会校验大小和 SHA256，校验失败禁止安装。
+
 # Labprobe v0.9.15 buildfix17
 
 - versionCode = 62

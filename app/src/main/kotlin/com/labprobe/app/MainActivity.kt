@@ -23,12 +23,15 @@ import androidx.core.content.FileProvider
 import androidx.core.app.ActivityCompat
 import android.net.Uri
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -38,6 +41,10 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -112,6 +119,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -133,6 +141,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.net.URLEncoder
 import java.util.Date
@@ -245,10 +254,16 @@ fun Activity.applyLabProbeSystemBars() {
 
 class AppPrefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
+    private val secureTokenStore = SecureTokenStore(context)
+    init {
+        val legacy = sp.getString("token", "").orEmpty().trim()
+        if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
+        if (sp.contains("token")) sp.edit().remove("token").apply()
+    }
     var hub: String get() = sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB
         set(v) = sp.edit().putString("hub", v.trim().trimEnd('/')).apply()
-    var token: String get() = sp.getString("token", DEFAULT_TOKEN) ?: DEFAULT_TOKEN
-        set(v) = sp.edit().putString("token", v.trim()).apply()
+    var token: String get() = secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
+        set(v) = secureTokenStore.set(v)
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
     var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
@@ -337,6 +352,12 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("device_overrides_v1", v).apply()
     var lastRefresh: String get() = sp.getString("last_refresh", "") ?: ""
         set(v) = sp.edit().putString("last_refresh", v).apply()
+    var syncRevision: Long get() = sp.getLong("sync_revision_v1", 0L)
+        set(v) = sp.edit().putLong("sync_revision_v1", v.coerceAtLeast(0L)).apply()
+    var lastFullSyncAt: Long get() = sp.getLong("last_full_sync_at_v1", 0L)
+        set(v) = sp.edit().putLong("last_full_sync_at_v1", v.coerceAtLeast(0L)).apply()
+    var syncHub: String get() = sp.getString("sync_hub_v1", "") ?: ""
+        set(v) = sp.edit().putString("sync_hub_v1", v.trim().trimEnd('/')).apply()
 
     var pingHost: String get() = sp.getString("ping_host", "223.5.5.5") ?: "223.5.5.5"
         set(v) = sp.edit().putString("ping_host", v).apply()
@@ -806,8 +827,40 @@ data class NatRunResult(
     val serverUsed: String? = null
 )
 
+private const val FULL_SYNC_INTERVAL_MS = 5 * 60 * 1000L
+
+data class HubSyncSnapshot(
+    val revision: Long,
+    val statusRoot: JSONObject,
+    val watchedDevices: List<DeviceItem>,
+    val onlineDevices: List<DeviceItem>,
+    val events: List<EventItem>
+)
+
+data class HubSyncChanges(
+    val revision: Long,
+    val nextRevision: Long,
+    val fullRequired: Boolean,
+    val hasMore: Boolean,
+    val changes: JSONArray
+)
+
+data class AgentUpdateInfo(
+    val currentVersion: String,
+    val latestVersion: String,
+    val updateAvailable: Boolean,
+    val state: String,
+    val message: String,
+    val lastSeenAt: String
+)
+
+class HubSyncUnsupported(message: String) : RuntimeException(message)
+class HubRevisionGap(message: String) : RuntimeException(message)
+class HubHttpException(val statusCode: Int, message: String) : RuntimeException(message)
+
 class AppState(private val prefs: AppPrefs, context: Context) {
     private val appContext = context.applicationContext
+    private val refreshMutex = Mutex()
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
     var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
     var devices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), deviceOverrides))
@@ -819,44 +872,205 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
-    suspend fun refreshAll(forceHealth: Boolean = false) {
+    suspend fun refreshAll(forceHealth: Boolean = false, forceFull: Boolean = false, silent: Boolean = false) {
         if (prefs.hub.isBlank()) {
             message = "Hub 地址为空，请先输入"
             return
         }
-        loading = true
+        if (!refreshMutex.tryLock()) return
+        if (!silent) loading = true
         try {
             val api = HubApi(prefs)
-            if (!hubConnected || forceHealth) {
-                message = "正在连接 Hub，最多尝试 3 次..."
+            api.ensureClientToken()
+            val reconnecting = !hubConnected || forceHealth
+            if (reconnecting) {
+                if (!silent) message = "正在连接 Hub，最多尝试 3 次..."
                 api.healthWithRetry(3)
                 hubConnected = true
             }
-            message = "正在刷新数据..."
-            fetchData(api)
+            val fullDue = forceFull || reconnecting || prefs.syncRevision <= 0L ||
+                prefs.syncHub != prefs.hub ||
+                System.currentTimeMillis() - prefs.lastFullSyncAt >= FULL_SYNC_INTERVAL_MS
+            if (!silent) message = if (fullDue) "正在校准完整数据..." else "正在同步变化..."
+            if (fullDue) syncFull(api, silent) else {
+                try {
+                    syncIncremental(api, silent)
+                } catch (_: HubRevisionGap) {
+                    syncFull(api, silent)
+                }
+            }
         } catch (first: Exception) {
             if (hubConnected) {
-                message = "刷新失败，正在重连 Hub..."
+                if (!silent) message = "刷新失败，正在重连 Hub..."
                 try {
                     val api = HubApi(prefs)
+                    api.ensureClientToken()
                     api.healthWithRetry(3)
                     hubConnected = true
-                    message = "重连成功，正在刷新数据..."
-                    fetchData(api)
+                    if (!silent) message = "重连成功，正在校准完整数据..."
+                    syncFull(api, silent)
                 } catch (second: Exception) {
                     hubConnected = false
-                    message = "连接失败，保留缓存：${second.message}"
+                    message = "连接失败，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${second.message}"
                 }
             } else {
                 hubConnected = false
-                message = "连接失败，保留缓存：${first.message}"
+                message = "连接失败，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
             }
         } finally {
-            loading = false
+            if (!silent) loading = false
+            refreshMutex.unlock()
         }
     }
 
-    private suspend fun fetchData(api: HubApi) {
+    private suspend fun syncFull(api: HubApi, silent: Boolean) {
+        try {
+            val snapshot = api.getSyncSnapshot()
+            applyFullSnapshot(snapshot, silent)
+            prefs.syncRevision = snapshot.revision
+            prefs.syncHub = prefs.hub
+            prefs.lastFullSyncAt = System.currentTimeMillis()
+        } catch (unsupported: HubSyncUnsupported) {
+            fetchLegacyData(api, silent)
+            prefs.syncRevision = 0L
+            prefs.syncHub = prefs.hub
+            prefs.lastFullSyncAt = System.currentTimeMillis()
+        }
+    }
+
+    private fun applyFullSnapshot(snapshot: HubSyncSnapshot, silent: Boolean) {
+        val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
+        val online = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.onlineDevices), deviceOverrides)
+        val watched = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.watchedDevices), deviceOverrides)
+        val merged = preserveFollowedDeviceSnapshots(
+            base = mergeDeviceCache(devices, watched),
+            previous = devices,
+            online = online,
+            overrides = deviceOverrides
+        )
+        val normalizedEvents = normalizeDeviceEvents(snapshot.events)
+        val statusChanged = status?.toString() != snapshot.statusRoot.toString()
+        val devicesChanged = devices != merged
+        val onlineChanged = onlineDevices != online
+        val eventsChanged = events != normalizedEvents
+        if (statusChanged) status = snapshot.statusRoot
+        if (devicesChanged) devices = merged
+        if (onlineChanged) onlineDevices = online
+        if (eventsChanged) events = normalizedEvents
+        finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || eventsChanged, silent = silent)
+    }
+
+    private suspend fun syncIncremental(api: HubApi, silent: Boolean) {
+        val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
+        var cursor = prefs.syncRevision
+        var pageCount = 0
+        var changed = false
+        while (pageCount++ < 12) {
+            val page = api.getSyncChanges(cursor)
+            if (page.fullRequired) throw HubRevisionGap("Hub 要求完整校准")
+            var expected = cursor + 1L
+            for (index in 0 until page.changes.length()) {
+                val change = page.changes.optJSONObject(index) ?: continue
+                val sequence = change.optLong("sequence", change.optLong("revision", -1L))
+                if (sequence != expected) throw HubRevisionGap("增量序号中断：期望 $expected，收到 $sequence")
+                changed = applyChange(change) || changed
+                cursor = sequence
+                expected++
+            }
+            if (page.changes.length() == 0 && page.nextRevision != cursor) {
+                throw HubRevisionGap("增量游标不一致")
+            }
+            if (!page.hasMore) {
+                if (cursor != page.revision) {
+                    // Hub may have advanced while this page was in flight; request the next page.
+                    continue
+                }
+                break
+            }
+        }
+        if (pageCount > 12) throw HubRevisionGap("增量页数超过安全上限")
+        prefs.syncRevision = cursor
+        if (changed) {
+            val currentStatus = status
+            if (currentStatus != null) {
+                val online = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(currentStatus, onlineDevices), deviceOverrides)
+                val watched = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(currentStatus, devices), deviceOverrides)
+                if (online != onlineDevices) onlineDevices = online
+                if (watched != devices) devices = watched
+            }
+        }
+        finishSuccessfulSync(previousEventKeys, dataChanged = changed, silent = silent)
+    }
+
+    private fun applyChange(change: JSONObject): Boolean {
+        val entity = change.optString("entity")
+        val operation = change.optString("operation")
+        val key = change.optString("key")
+        val payload = change.optJSONObject("payload")
+        when (entity) {
+            "status" -> {
+                if (payload == null) return false
+                val root = JSONObject().put("ok", true).put("data", payload)
+                if (status?.toString() == root.toString()) return false
+                status = root
+                return true
+            }
+            "device", "online_device" -> {
+                val source = if (entity == "device") devices else onlineDevices
+                val updated = if (operation == "delete") {
+                    source.filterNot { cleanMac(it.mac).equals(cleanMac(key), ignoreCase = true) }
+                } else {
+                    val parsed = payload?.let { parseDeviceArray(JSONArray().put(it).toString()).firstOrNull() } ?: return false
+                    val fixed = applyDeviceOverrides(listOf(parsed), deviceOverrides).first()
+                    var found = false
+                    val next = source.map {
+                        if (cleanMac(it.mac).equals(cleanMac(fixed.mac), ignoreCase = true)) {
+                            found = true
+                            fixed
+                        } else it
+                    }.toMutableList()
+                    if (!found) next += fixed
+                    next
+                }
+                if (updated == source) return false
+                if (entity == "device") devices = updated else onlineDevices = updated
+                return true
+            }
+            "event" -> {
+                val updated = if (operation == "delete") {
+                    val id = key.toIntOrNull()
+                    events.filterNot { if (id != null) it.id == id else eventNotificationIdentity(it) == key }
+                } else {
+                    val parsed = payload?.let { parseEvents(JSONArray().put(it).toString()).firstOrNull() } ?: return false
+                    normalizeDeviceEvents(listOf(parsed) + events.filterNot { it.id > 0 && it.id == parsed.id })
+                }
+                if (updated == events) return false
+                events = updated
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun finishSuccessfulSync(previousEventKeys: Set<String>, dataChanged: Boolean, silent: Boolean) {
+        if (dataChanged && prefs.syncWebhookFavoriteShortcuts(events) > 0) favoriteSyncVersion++
+        CertificateReminderCenter.notifyDue(appContext, prefs)
+        if (dataChanged && (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty())) {
+            EventNotificationCenter.notifyNewEvents(appContext, events.filter { eventNotificationIdentity(it) !in previousEventKeys })
+        }
+        prefs.eventNotificationBaselineReady = true
+        if (dataChanged) {
+            status?.let { prefs.cacheStatus = it.toString() }
+            prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
+            prefs.cacheOnlineDevices = JSONArray(onlineDevices.map { it.toJson() }).toString()
+            prefs.cacheEvents = JSONArray(events.map { it.toJson() }).toString()
+        }
+        prefs.lastRefresh = nowClock()
+        hubConnected = true
+        if (!silent) message = "刷新成功：${prefs.lastRefresh}"
+    }
+
+    private suspend fun fetchLegacyData(api: HubApi, silent: Boolean) {
         val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
         val (stRoot, deviceLists, rawEvents) = coroutineScope {
             val statusRequest = async { api.getStatus() }
@@ -868,9 +1082,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val devWatched = deviceLists.first
         val devOnline = deviceLists.second
         val evs = normalizeDeviceEvents(rawEvents)
-        if (prefs.syncWebhookFavoriteShortcuts(evs) > 0) favoriteSyncVersion++
-        CertificateReminderCenter.notifyDue(appContext, prefs)
-        status = stRoot
+        val statusChanged = status?.toString() != stRoot.toString()
         val devOnlineWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devOnline), deviceOverrides)
         val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
         val mergedDevices = preserveFollowedDeviceSnapshots(
@@ -879,29 +1091,21 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             online = devOnlineWithIpv6,
             overrides = deviceOverrides
         )
-        devices = mergedDevices
-        onlineDevices = devOnlineWithIpv6
-        events = evs
-        if (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty()) {
-            val newEvents = evs.filter { eventNotificationIdentity(it) !in previousEventKeys }
-            EventNotificationCenter.notifyNewEvents(appContext, newEvents)
-        } else {
-            // 首次成功同步只建立基线，避免安装后把整段历史一次性弹出。
-        }
-        prefs.eventNotificationBaselineReady = true
-        prefs.cacheStatus = stRoot.toString()
-        // 保存合并后的关注终端缓存，而不是只保存 Hub 本次返回值。
-        // 这样离线设备在 Hub 短时间字段缺失、APP 重启后，仍能保留最后 IP / SSID / 频段 / 速率 / 信号。
-        prefs.cacheDevices = JSONArray(mergedDevices.map { it.toJson() }).toString()
-        prefs.cacheOnlineDevices = JSONArray(devOnlineWithIpv6.map { it.toJson() }).toString()
-        prefs.cacheEvents = JSONArray(evs.map { it.toJson() }).toString()
-        prefs.lastRefresh = nowClock()
-        hubConnected = true
-        message = "刷新成功：${prefs.lastRefresh}"
+        val devicesChanged = devices != mergedDevices
+        val onlineChanged = onlineDevices != devOnlineWithIpv6
+        val eventsChanged = events != evs
+        if (statusChanged) status = stRoot
+        if (devicesChanged) devices = mergedDevices
+        if (onlineChanged) onlineDevices = devOnlineWithIpv6
+        if (eventsChanged) events = evs
+        finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || eventsChanged, silent = silent)
     }
 
     fun markHubChanged() {
         hubConnected = false
+        prefs.syncRevision = 0L
+        prefs.lastFullSyncAt = 0L
+        prefs.syncHub = ""
         message = "Hub 设置已变更，请测试或刷新"
     }
 
@@ -1039,14 +1243,45 @@ fun LabProbeApp(prefs: AppPrefs) {
     var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("favorites") }
+    var dailyReturnRoute by remember { mutableStateOf("events") }
     var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
     val scope = rememberCoroutineScope()
+    var appForeground by remember { mutableStateOf(true) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) CertificateReminderCenter.notifyDue(context, prefs)
     }
     LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
+    DisposableEffect(context) {
+        val activity = context.findActivity() as? ComponentActivity
+        var startedOnce = false
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    appForeground = true
+                    if (startedOnce) scope.launch { state.refreshAll(forceFull = true, silent = true) }
+                    startedOnce = true
+                }
+                Lifecycle.Event.ON_STOP -> appForeground = false
+                else -> Unit
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
+    DisposableEffect(context) {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        var seenNetwork = false
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (seenNetwork && appForeground) scope.launch { state.refreshAll(forceFull = true, silent = true) }
+                seenNetwork = true
+            }
+        }
+        runCatching { manager?.registerDefaultNetworkCallback(callback) }
+        onDispose { runCatching { manager?.unregisterNetworkCallback(callback) } }
+    }
     var latestUpdate by remember { mutableStateOf<GitHubUpdateInfo?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateChecking by remember { mutableStateOf(false) }
@@ -1100,8 +1335,14 @@ fun LabProbeApp(prefs: AppPrefs) {
         if (sec > 0) {
             while (true) {
                 delay(sec * 1000L)
-                if (!state.loading) state.refreshAll()
+                if (appForeground && !state.loading) state.refreshAll(silent = true)
             }
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(FULL_SYNC_INTERVAL_MS)
+            if (appForeground) state.refreshAll(forceFull = true, silent = true)
         }
     }
 
@@ -1128,6 +1369,8 @@ fun LabProbeApp(prefs: AppPrefs) {
         val normalized = when {
             route.startsWith("tool_") -> "tools"
             route == "daily" -> "events"
+            route == "health_score" -> "home"
+            route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
             route == "settings" -> "favorites"
             else -> route
@@ -1135,11 +1378,14 @@ fun LabProbeApp(prefs: AppPrefs) {
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
         val navigate: (String) -> Unit = { target ->
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
+            if (target == "daily") dailyReturnRoute = if (route == "home" || route == "health_score") route else "events"
             route = target
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "device_traffic" || route == "device_detail" || route == "settings") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "wol" || route == "device_traffic" || route == "device_detail" || route == "settings") {
             route = when (route) {
-                "daily" -> "events"
+                "daily" -> dailyReturnRoute
+                "health_score" -> "home"
+                "wol" -> "home"
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
                 "settings" -> settingsReturnRoute
@@ -1174,6 +1420,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                     ) { r ->
                         saveableStateHolder.SaveableStateProvider(r) { when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                        "health_score" -> HealthScoreDetailScreen(prefs, state) { route = "home" }
+                        "wol" -> WolDetailScreen(state) { route = "home" }
                         "devices" -> DevicesScreen(state, topNav, onOpenTraffic = { route = "device_traffic" }, onOpenDetails = { mac -> selectedDeviceMac = mac; route = "device_detail" })
                         "device_traffic" -> TodayTrafficScreen(state) { route = "devices" }
                         "device_detail" -> DeviceDetailScreen(
@@ -1184,8 +1432,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" }
                         )
                         "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
-                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { route = "daily" }, topNav)
-                        "daily" -> DailyScreen(prefs) { route = "events" }
+                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { dailyReturnRoute = "events"; route = "daily" }, topNav)
+                        "daily" -> DailyScreen(prefs) { route = dailyReturnRoute }
                         "favorites" -> FavoritesScreen(
                             prefs = prefs,
                             syncVersion = state.favoriteSyncVersion,
@@ -1770,7 +2018,9 @@ data class GitHubUpdateInfo(
     val htmlUrl: String,
     val apkName: String,
     val apkUrl: String,
-    val apkSize: Long
+    val apkSize: Long,
+    val apkSha256: String = "",
+    val fallbackApkUrl: String = ""
 ) {
     val hasUpdate: Boolean get() = versionCode > AppVersion.CODE
 }
@@ -1807,11 +2057,50 @@ private fun formatSpeed(bytesPerSec: Long): String = when {
     else -> String.format(Locale.US, "%.0f KB/s", bytesPerSec / 1024.0)
 }
 
-suspend fun fetchGithubLatestInfo(): GitHubUpdateInfo = withContext(Dispatchers.IO) {
-    val client = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+private fun updateHttpClient() = OkHttpClient.Builder()
+    .connectTimeout(6, TimeUnit.SECONDS)
+    .readTimeout(10, TimeUnit.SECONDS)
+    .build()
+
+private fun fetchLuckyUpdateInfo(client: OkHttpClient): GitHubUpdateInfo {
+    val req = Request.Builder()
+        .url(UpdateRepository.APP_MANIFEST)
+        .header("User-Agent", "Labprobe/${AppVersion.NAME}")
         .build()
+    client.newCall(req).execute().use { resp ->
+        val text = resp.body?.string().orEmpty()
+        if (!resp.isSuccessful) error("Lucky HTTP ${resp.code}")
+        val json = runCatching { JSONObject(text) }.getOrElse { error("Lucky update.json 无效") }
+        val versionCode = json.optInt("versionCode", 0)
+        val versionName = json.optString("versionName").trim()
+        val downloadUrl = json.optString("downloadUrl").trim()
+        if (versionCode <= 0 || versionName.isBlank() || !downloadUrl.startsWith("http")) {
+            error("Lucky update.json 缺少有效版本或下载地址")
+        }
+        val sha256 = json.optString("sha256").trim().lowercase(Locale.ROOT)
+        if (sha256.isNotBlank() && !sha256.matches(Regex("[0-9a-f]{64}"))) error("Lucky update.json 的 sha256 无效")
+        val rawChangelog = json.opt("changelog")
+        val changelog = when (rawChangelog) {
+            is JSONArray -> (0 until rawChangelog.length()).joinToString("\n") { rawChangelog.optString(it) }
+            else -> cleanApiText(rawChangelog?.toString())
+        }
+        val apkName = Uri.parse(downloadUrl).lastPathSegment.orEmpty().ifBlank { "LabProbeApp-v$versionName.apk" }
+        return GitHubUpdateInfo(
+            tag = versionName,
+            name = "v$versionName",
+            body = changelog,
+            versionCode = versionCode,
+            htmlUrl = AppVersion.GITHUB,
+            apkName = apkName,
+            apkUrl = downloadUrl,
+            apkSize = json.optLong("sizeBytes", 0L).coerceAtLeast(0L),
+            apkSha256 = sha256,
+            fallbackApkUrl = json.optString("fallbackUrl").trim()
+        )
+    }
+}
+
+private fun fetchGitHubReleaseInfo(client: OkHttpClient): GitHubUpdateInfo {
     val req = Request.Builder()
         .url("https://api.github.com/repos/OnlyChallgener/LabProbeApp/releases/latest")
         .header("User-Agent", "Labprobe/${AppVersion.NAME}")
@@ -1842,8 +2131,14 @@ suspend fun fetchGithubLatestInfo(): GitHubUpdateInfo = withContext(Dispatchers.
             }
         }
         if (apkUrl.isBlank()) error("最新 Release 没有 APK 附件")
-        GitHubUpdateInfo(tag, name, body, parseReleaseBuildCode(tag, name), htmlUrl, apkName, apkUrl, apkSize)
+        return GitHubUpdateInfo(tag, name, body, parseReleaseBuildCode(tag, name), htmlUrl, apkName, apkUrl, apkSize)
     }
+}
+
+suspend fun fetchGithubLatestInfo(): GitHubUpdateInfo = withContext(Dispatchers.IO) {
+    val client = updateHttpClient()
+    runCatching { fetchLuckyUpdateInfo(client) }
+        .getOrElse { fetchGitHubReleaseInfo(client) }
 }
 
 suspend fun checkGithubLatestSummary(): String = withContext(Dispatchers.IO) {
@@ -1859,7 +2154,31 @@ suspend fun checkGithubLatestSummary(): String = withContext(Dispatchers.IO) {
 suspend fun downloadUpdateApk(context: Context, info: GitHubUpdateInfo, onProgress: (UpdateDownloadUi) -> Unit): File = withContext(Dispatchers.IO) {
     val dir = File(context.getExternalFilesDir(null) ?: context.cacheDir, "updates").apply { mkdirs() }
     val file = File(dir, info.apkName.ifBlank { "LabProbe-update-${info.versionCode}.apk" })
-    if (file.exists() && info.apkSize > 0 && file.length() == info.apkSize) {
+    fun fileSha256(target: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        target.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+    fun verify(target: File, expectedSize: Long) {
+        if (expectedSize > 0L && target.length() != expectedSize) {
+            error("文件大小校验失败：${formatBytesShort(target.length())} / ${formatBytesShort(expectedSize)}")
+        }
+        if (info.apkSha256.isNotBlank() && !fileSha256(target).equals(info.apkSha256, ignoreCase = true)) {
+            error("SHA256 校验失败，已禁止安装")
+        }
+    }
+    if (file.exists() && (info.apkSize > 0L || info.apkSha256.isNotBlank()) && (info.apkSize <= 0L || file.length() == info.apkSize)) {
+        val cachedValid = runCatching { verify(file, info.apkSize) }.isSuccess
+        if (!cachedValid) file.delete()
+    }
+    if (file.exists()) {
         onProgress(UpdateDownloadUi(phase = "done", downloaded = file.length(), total = info.apkSize, filePath = file.absolutePath))
         return@withContext file
     }
@@ -1867,42 +2186,54 @@ suspend fun downloadUpdateApk(context: Context, info: GitHubUpdateInfo, onProgre
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)
         .build()
-    val req = Request.Builder().url(info.apkUrl).header("User-Agent", "Labprobe/${AppVersion.NAME}").build()
-    client.newCall(req).execute().use { resp ->
-        if (!resp.isSuccessful) error("下载失败：GitHub HTTP ${resp.code}")
-        val body = resp.body ?: error("下载失败：响应为空")
-        val total = if (body.contentLength() > 0) body.contentLength() else info.apkSize
+    val urls = listOf(info.apkUrl, info.fallbackApkUrl).map { it.trim() }.filter { it.startsWith("http") }.distinct()
+    var lastError: Throwable? = null
+    for (url in urls) {
         val tmp = File(dir, file.name + ".part")
-        val buf = ByteArray(64 * 1024)
-        var downloaded = 0L
-        val start = SystemClock.elapsedRealtime().coerceAtLeast(1L)
-        var lastEmit = 0L
-        body.byteStream().use { input ->
-            FileOutputStream(tmp).use { output ->
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    output.write(buf, 0, n)
-                    downloaded += n
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastEmit >= 250L || (total > 0 && downloaded >= total)) {
-                        val elapsed = (now - start).coerceAtLeast(1L)
-                        val speed = downloaded * 1000L / elapsed
-                        onProgress(UpdateDownloadUi("downloading", downloaded, total, speed, slow = elapsed > 12_000L && speed in 1L until 45_000L))
-                        lastEmit = now
+        tmp.delete()
+        try {
+            val req = Request.Builder().url(url).header("User-Agent", "Labprobe/${AppVersion.NAME}").build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                val body = resp.body ?: error("响应为空")
+                val responseSize = body.contentLength().coerceAtLeast(0L)
+                val total = if (info.apkSize > 0L) info.apkSize else responseSize
+                val buf = ByteArray(64 * 1024)
+                var downloaded = 0L
+                val start = SystemClock.elapsedRealtime().coerceAtLeast(1L)
+                var lastEmit = 0L
+                body.byteStream().use { input ->
+                    FileOutputStream(tmp).use { output ->
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            output.write(buf, 0, n)
+                            downloaded += n
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastEmit >= 250L || (total > 0 && downloaded >= total)) {
+                                val elapsed = (now - start).coerceAtLeast(1L)
+                                val speed = downloaded * 1000L / elapsed
+                                onProgress(UpdateDownloadUi("downloading", downloaded, total, speed, slow = elapsed > 12_000L && speed in 1L until 45_000L))
+                                lastEmit = now
+                            }
+                        }
                     }
                 }
+                verify(tmp, if (info.apkSize > 0L) info.apkSize else responseSize)
+                if (file.exists()) file.delete()
+                if (!tmp.renameTo(file)) {
+                    tmp.copyTo(file, overwrite = true)
+                    tmp.delete()
+                }
+                onProgress(UpdateDownloadUi(phase = "done", downloaded = file.length(), total = total, filePath = file.absolutePath))
+                return@withContext file
             }
-        }
-        if (total > 0 && downloaded < total) error("下载失败：文件不完整 ${formatBytesShort(downloaded)} / ${formatBytesShort(total)}")
-        if (file.exists()) file.delete()
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
+        } catch (error: Throwable) {
             tmp.delete()
+            lastError = error
         }
-        onProgress(UpdateDownloadUi(phase = "done", downloaded = file.length(), total = total, filePath = file.absolutePath))
-        file
     }
+    error("下载失败：${lastError?.message ?: "没有可用下载地址"}")
 }
 
 fun installApk(context: Context, file: File) {
@@ -2239,7 +2570,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         hubOk = hubOk,
                         exitOk = exitOk,
                         vpnOk = vpnOk,
-                        onlineCount = onlineCount,
+                        wolCount = state.wolDevices.count { it.enabled },
                         lastRefresh = prefs.lastRefresh,
                         message = state.message,
                         onNavigate = onNavigate
@@ -2448,12 +2779,11 @@ fun HealthCard(
 }
 
 @Composable
-fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
+fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val shape = RoundedCornerShape(30.dp)
     Surface(
-        onClick = { onNavigate("settings") },
         modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
         shape = shape,
         color = Color(0xFFFEFFFF),
@@ -2463,7 +2793,9 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                HealthScoreGauge(score, 112.dp)
+                Box(Modifier.clip(CircleShape).clickable { onNavigate("health_score") }) {
+                    HealthScoreGauge(score, 112.dp)
+                }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2477,18 +2809,20 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                     }
                     Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 10.8.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     HealthStatePill(
-                        icon = Icons.Rounded.Router,
-                        label = "Hub",
-                        value = if (hubOk) "就绪" else "未连",
-                        color = if (hubOk) LabV2.Green else LabV2.Red,
-                        trailing = Icons.Rounded.Check
+                        icon = Icons.Rounded.PowerSettingsNew,
+                        label = "WOL",
+                        value = "$wolCount 台",
+                        color = LabV2.Green,
+                        trailing = Icons.Rounded.ChevronRight,
+                        onClick = { onNavigate("wol") }
                     )
                     HealthStatePill(
-                        icon = Icons.Rounded.Devices,
-                        label = "在线终端",
-                        value = "$onlineCount 台",
+                        icon = Icons.Rounded.Summarize,
+                        label = "今日总结",
+                        value = "查看详情",
                         color = LabV2.Primary,
-                        trailing = Icons.Rounded.ChevronRight
+                        trailing = Icons.Rounded.ChevronRight,
+                        onClick = { onNavigate("daily") }
                     )
                 }
             }
@@ -2503,8 +2837,119 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
 }
 
 @Composable
-private fun HealthStatePill(icon: ImageVector, label: String, value: String, color: Color, trailing: ImageVector) {
-    Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFFF8FAFD), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .72f))) {
+fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack) {
+    val data = state.status?.optJSONObject("data") ?: state.status
+    val nas = data?.optJSONObject("nas")
+    val router = data?.optJSONObject("router")
+    val nasV6 = safeNasIpv6ForUi(nas, router)
+    val vpnOk = buildVpnRowsForHome(data, nasV6, state.events).isNotEmpty()
+    val exitOk = cleanApiText(nas?.optString("exitIpv4")).isNotBlank() || cleanApiText(nas?.optString("exitIpv6")).isNotBlank()
+    val hubOk = prefs.hub.isNotBlank() && state.hubConnected
+    val onlineCount = state.onlineDevices.size
+    val badCount = state.events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }.coerceAtMost(4)
+    val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
+    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
+    val pulse = rememberInfiniteTransition(label = "routerGlow")
+    val glowAlpha by pulse.animateFloat(
+        initialValue = .10f,
+        targetValue = .28f,
+        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
+        label = "routerGlowAlpha"
+    )
+    val glowScale by pulse.animateFloat(
+        initialValue = .97f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
+        label = "routerGlowScale"
+    )
+    var agentInfo by remember { mutableStateOf<AgentUpdateInfo?>(null) }
+    var agentMessage by remember { mutableStateOf("等待检查 Rust Agent 版本") }
+    var agentBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .size(150.dp)
+                .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
+                .clip(CircleShape)
+                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = .02f))))
+        )
+        Box(Modifier.size(112.dp).clip(CircleShape).background(Color.White.copy(alpha = .96f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Router, null, tint = scoreColor, modifier = Modifier.size(72.dp))
+        }
+    }
+
+    ExpressiveCard("当前得分 $score", "分数只由下列项目计算，满分按 99 分封顶", Icons.Rounded.VerifiedUser, scoreColor) {
+        ScoreRuleRow("基础运行分", "APP 可正常展示本地缓存", 64, true)
+        ScoreRuleRow("Hub 连接", if (hubOk) "已连接" else "未连接", 12, hubOk)
+        ScoreRuleRow("公网出口", if (exitOk) "已取得 IPv4/IPv6" else "暂无出口地址", 10, exitOk)
+        ScoreRuleRow("VPN / STUN", if (vpnOk) "已记录地址" else "暂无记录", 7, vpnOk)
+        ScoreRuleRow("在线设备", if (onlineCount > 0) "$onlineCount 台在线" else "暂无在线设备", 5, onlineCount > 0)
+        ScoreRuleRow("近期异常扣分", if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常", -(badCount * 2), badCount == 0)
+    }
+
+    ExpressiveCard("Rust Agent 更新", agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令", Icons.Rounded.SystemUpdateAlt, LabV2.Primary) {
+        Text(agentMessage, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
+            Text("Agent 最后上报：$it", fontSize = 10.8.sp, color = LabV2.InkMuted)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        agentBusy = true
+                        runCatching { HubApi(prefs).getAgentUpdateStatus() }
+                            .onSuccess { info -> agentInfo = info; agentMessage = if (info.updateAvailable) "发现 Rust Agent 新版本" else info.message.ifBlank { "当前已是最新版本" } }
+                            .onFailure { agentMessage = "检查失败：${it.message}" }
+                        agentBusy = false
+                    }
+                },
+                enabled = !agentBusy,
+                modifier = Modifier.weight(1f)
+            ) { Text("检查更新", fontWeight = FontWeight.Black) }
+            Button(
+                onClick = {
+                    scope.launch {
+                        agentBusy = true
+                        runCatching { HubApi(prefs).requestAgentUpdate() }
+                            .onSuccess { agentMessage = it.optString("message", "更新指令已发送") }
+                            .onFailure { agentMessage = "下发失败：${it.message}" }
+                        agentBusy = false
+                    }
+                },
+                enabled = !agentBusy && agentInfo?.updateAvailable == true,
+                modifier = Modifier.weight(1f)
+            ) { Text("立即更新", fontWeight = FontWeight.Black) }
+        }
+    }
+}
+
+@Composable
+private fun ScoreRuleRow(title: String, detail: String, points: Int, achieved: Boolean) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(28.dp).clip(CircleShape).background((if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .10f)), contentAlignment = Alignment.Center) {
+            Icon(if (achieved) Icons.Rounded.Check else Icons.Rounded.Remove, null, tint = if (achieved) LabV2.Green else LabV2.InkMuted, modifier = Modifier.size(15.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text(detail, fontSize = 10.5.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(if (points > 0) "+$points" else "$points", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (points < 0) LabV2.Red else if (achieved) LabV2.Green else LabV2.InkMuted)
+    }
+}
+
+@Composable
+fun WolDetailScreen(state: AppState, onBack: () -> Unit) = DetailShell("WOL", "远程唤醒设备", onBack) {
+    WolManagementPanel(state)
+}
+
+@Composable
+private fun HealthStatePill(icon: ImageVector, label: String, value: String, color: Color, trailing: ImageVector, onClick: (() -> Unit)? = null) {
+    val pillShape = RoundedCornerShape(16.dp)
+    val modifier = if (onClick == null) Modifier else Modifier.clip(pillShape).clickable { onClick() }
+    Surface(modifier = modifier, shape = pillShape, color = Color(0xFFF8FAFD), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .72f))) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(28.dp).clip(CircleShape).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, Modifier.size(16.dp), tint = color)
@@ -3564,8 +4009,17 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
         }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NetworkStatusTile("IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f), clickable = true) { open("tool_dns") }
-                NetworkStatusTile("IPv6地址", profile.ipv6Address, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f), clickable = true) { open("tool_dns") }
+                NetworkStatusTile(
+                    "IPv4出口", profile.ipv4Exit, Icons.Rounded.Public, Color(0xFF2563EB), Modifier.weight(1f),
+                    onIconClick = { open("tool_dns") },
+                    onValueClick = { copy(ctx, profile.ipv4Exit) }
+                )
+                NetworkStatusTile(
+                    "IPv6地址", profile.ipv6Address, Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4), Modifier.weight(1f),
+                    onIconClick = { open("tool_dns") },
+                    onValueClick = { copy(ctx, profile.ipv6Address) },
+                    scrollableValue = true
+                )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NetworkStatusTile("NAT类型", profile.natType, Icons.Rounded.Router, Color(0xFF7C3AED), Modifier.weight(1f), clickable = true) { open("tool_nat") }
@@ -3693,7 +4147,18 @@ fun ReorderableToolSection(sectionKey: String, order: List<String>, onOrder: (Li
 }
 
 @Composable
-fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, clickable: Boolean = false, onClick: () -> Unit = {}) {
+fun NetworkStatusTile(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    color: Color,
+    modifier: Modifier = Modifier,
+    clickable: Boolean = false,
+    onClick: () -> Unit = {},
+    onIconClick: (() -> Unit)? = null,
+    onValueClick: (() -> Unit)? = null,
+    scrollableValue: Boolean = false
+) {
     val m = if (clickable) modifier.clickable { onClick() } else modifier
     Surface(
         modifier = m.height(62.dp),
@@ -3702,13 +4167,18 @@ fun NetworkStatusTile(label: String, value: String, icon: ImageVector, color: Co
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))
     ) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(28.dp).clip(RoundedCornerShape(12.dp)).background(color.copy(alpha = .13f)), contentAlignment = Alignment.Center) {
+            val iconModifier = Modifier.size(28.dp).clip(RoundedCornerShape(12.dp)).background(color.copy(alpha = .13f)).let { base ->
+                if (onIconClick != null) base.clickable { onIconClick() } else base
+            }
+            Box(iconModifier, contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
             }
             Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
+            val valueModifier = Modifier.weight(1f).let { base -> if (onValueClick != null) base.clickable { onValueClick() } else base }
+            Column(valueModifier) {
                 Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
-                Text(value.ifBlank { "未知" }, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val textModifier = if (scrollableValue) Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()) else Modifier
+                Text(value.ifBlank { "未知" }, modifier = textModifier, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (scrollableValue) TextOverflow.Clip else TextOverflow.Ellipsis)
             }
         }
     }
@@ -7494,7 +7964,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
-            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { HubApi(prefs).health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = runCatching { val api = HubApi(prefs); api.ensureClientToken(); api.health(); state.hubConnected = true; "连接成功" }.getOrElse { "失败：${it.message}" } } }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
                 Icon(Icons.Rounded.WifiTethering, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("测试连接", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
@@ -7528,9 +7998,72 @@ class HubApi(private val prefs: AppPrefs) {
         retryText("/health", false, attempts)
     }
 
+    suspend fun ensureClientToken() = withContext(Dispatchers.IO) {
+        val candidate = prefs.token.trim().uppercase(Locale.ROOT)
+        if (!candidate.matches(Regex("APP-[0-9]{6}"))) return@withContext
+        val payload = JSONObject()
+            .put("pairingCode", candidate)
+            .put("clientType", "app")
+            .put("clientName", "极客网探 Android")
+        val root = JSONObject(postJson("/api/pair", payload.toString(), auth = false))
+        val token = root.optString("clientToken")
+        if (token.isBlank()) throw RuntimeException("Hub 未返回 Client Token")
+        prefs.token = token
+        prefs.syncRevision = 0L
+        prefs.lastFullSyncAt = 0L
+    }
+
+    suspend fun getSyncSnapshot(): HubSyncSnapshot = withContext(Dispatchers.IO) {
+        val root = try {
+            JSONObject(getText("/api/sync/snapshot", true))
+        } catch (error: HubHttpException) {
+            if (error.statusCode == 404 || error.statusCode == 405) throw HubSyncUnsupported("Hub 不支持增量同步")
+            throw error
+        }
+        val status = root.optJSONObject("status") ?: JSONObject()
+        val devices = root.optJSONObject("devices") ?: JSONObject()
+        HubSyncSnapshot(
+            revision = root.optLong("revision", root.optLong("sequence", 0L)),
+            statusRoot = JSONObject().put("ok", true).put("data", status),
+            watchedDevices = parseDeviceArray((devices.optJSONArray("watched") ?: JSONArray()).toString()),
+            onlineDevices = parseDeviceArray((devices.optJSONArray("online") ?: JSONArray()).toString()),
+            events = parseEvents((root.optJSONArray("events") ?: JSONArray()).toString())
+        )
+    }
+
+    suspend fun getSyncChanges(since: Long): HubSyncChanges = withContext(Dispatchers.IO) {
+        val root = try {
+            JSONObject(getText("/api/sync/changes?since=$since&limit=500", true))
+        } catch (error: HubHttpException) {
+            if (error.statusCode == 404 || error.statusCode == 405) throw HubSyncUnsupported("Hub 不支持增量同步")
+            throw error
+        }
+        HubSyncChanges(
+            revision = root.optLong("revision", since),
+            nextRevision = root.optLong("nextRevision", since),
+            fullRequired = root.optBoolean("fullRequired", false),
+            hasMore = root.optBoolean("hasMore", false),
+            changes = root.optJSONArray("changes") ?: JSONArray()
+        )
+    }
+
     suspend fun getStatus(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/status", true)) }
     suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) { val path = if (online) "/api/devices?view=online" else "/api/devices"; val root = JSONObject(getText(path, true)); parseDeviceArray((root.optJSONArray("devices") ?: JSONArray()).toString()) }
     suspend fun getEvents(): List<EventItem> = withContext(Dispatchers.IO) { val root = JSONObject(getText("/api/events", true)); parseEvents((root.optJSONArray("events") ?: JSONArray()).toString()).reversed() }
+    suspend fun getAgentUpdateStatus(): AgentUpdateInfo = withContext(Dispatchers.IO) {
+        val root = JSONObject(getText("/api/agent/update/status", true))
+        AgentUpdateInfo(
+            currentVersion = root.optString("currentVersion", "未知"),
+            latestVersion = root.optString("latestVersion", "未知"),
+            updateAvailable = root.optBoolean("updateAvailable", false),
+            state = root.optString("state", "idle"),
+            message = root.optString("message", ""),
+            lastSeenAt = root.optString("lastSeenAt", "")
+        )
+    }
+    suspend fun requestAgentUpdate(): JSONObject = withContext(Dispatchers.IO) {
+        JSONObject(postJson("/api/agent/update", JSONObject().put("manifestUrl", UpdateRepository.AGENT_MANIFEST).put("installerUrl", UpdateRepository.AGENT_INSTALLER).toString()))
+    }
     suspend fun deleteEvent(id: Int): String = withContext(Dispatchers.IO) { deleteText("/api/events/$id") }
     suspend fun sendWol(mac: String): JSONObject = withContext(Dispatchers.IO) { JSONObject(postJson("/api/wol", JSONObject().put("mac", mac).toString())) }
     suspend fun getDaily(date: String? = null): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText(if (date.isNullOrBlank()) "/api/daily/latest" else "/api/daily?date=$date", true)) }
@@ -7554,7 +8087,7 @@ class HubApi(private val prefs: AppPrefs) {
         val req = Request.Builder().url(joinUrl(prefs.hub, path)).apply { if (auth && prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
         val res = client.newCall(req).execute()
         val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
+        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
         return text
     }
 
@@ -7564,17 +8097,17 @@ class HubApi(private val prefs: AppPrefs) {
         val req = Request.Builder().url(joinUrl(prefs.hub, path)).put(body).apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
         val res = client.newCall(req).execute()
         val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
+        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
         return text
     }
 
-    private fun postJson(path: String, json: String): String {
+    private fun postJson(path: String, json: String, auth: Boolean = true): String {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val req = Request.Builder().url(joinUrl(prefs.hub, path)).post(body).apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
+        val req = Request.Builder().url(joinUrl(prefs.hub, path)).post(body).apply { if (auth && prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
         val res = client.newCall(req).execute()
         val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
+        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
         return text
     }
 
@@ -7583,7 +8116,7 @@ class HubApi(private val prefs: AppPrefs) {
         val req = Request.Builder().url(joinUrl(prefs.hub, path)).delete().apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
         val res = client.newCall(req).execute()
         val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw RuntimeException("HTTP ${res.code}: $text")
+        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
         return text
     }
 }
