@@ -60,7 +60,11 @@ fun DeviceDetailScreen(
         CompactListCard {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(
-                    Modifier.size(112.dp).clip(RoundedCornerShape(28.dp)).background(profile.accent.copy(alpha = .065f)),
+                    Modifier
+                        .size(112.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(profile.accent.copy(alpha = .065f))
+                        .clickable { editing = true },
                     contentAlignment = Alignment.Center
                 ) {
                     LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)

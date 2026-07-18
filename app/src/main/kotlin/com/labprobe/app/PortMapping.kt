@@ -1121,7 +1121,7 @@ private fun PortMapDetailPage(
                 PortMapDetailLine("监听", "[::]:${rule.listenPort}")
                 PortMapDetailLine("配置目标", rule.targetText)
                 if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue)
-                PortMapDetailLine("运行时间", formatPortDuration(rule.runtime.startedAt?.let { max(0, System.currentTimeMillis() / 1000 - it) }))
+                PortMapDetailLine("运行时间", formatPortDuration(portMapRunningDuration(rule)))
                 PortMapDetailLine("剩余时间", portMapRemainingText(rule))
                 PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久")
                 PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt))
@@ -1349,6 +1349,16 @@ private fun formatEpoch(epoch: Long?): String {
     return SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(epoch * 1000))
 }
 
+private fun portMapStartedAt(rule: PortMapRule): Long? {
+    rule.runtime.startedAt?.let { return it }
+    val expiry = rule.runtime.expiresAt ?: rule.expiresAt
+    if (expiry != null && rule.leaseSeconds > 0L) return (expiry - rule.leaseSeconds).takeIf { it > 0L }
+    return null
+}
+
+private fun portMapRunningDuration(rule: PortMapRule): Long? =
+    portMapStartedAt(rule)?.let { max(0L, System.currentTimeMillis() / 1000L - it) }
+
 private fun portMapDesiredText(rule: PortMapRule): String = when (rule.effectiveDesiredState) {
     "running" -> "期望启动"
     "stopped" -> "期望停止"
@@ -1402,7 +1412,7 @@ private fun portMapTimeText(rule: PortMapRule): String = when {
     rule.syncState == "agent_offline" -> "等待路由器 Agent 恢复"
     rule.syncState == "syncing" -> if (rule.effectiveDesiredState == "stopped") "停止命令已提交 · 正在同步" else "启动命令已提交 · 正在同步"
     rule.effectiveActualState == "starting" -> "启动中 · 等待 Hub 返回实际状态"
-    rule.effectiveActualState == "running" -> "已运行 ${formatPortDuration(rule.runtime.startedAt?.let { max(0, System.currentTimeMillis() / 1000 - it) })} · 剩余 ${portMapRemainingText(rule)}"
+    rule.effectiveActualState == "running" -> "已运行 ${formatPortDuration(portMapRunningDuration(rule))} · 剩余 ${portMapRemainingText(rule)}"
     rule.effectiveActualState == "waiting_target" -> "等待目标 IPv6 · 每 30 秒重试"
     rule.effectiveActualState == "waiting_agent" -> "命令等待路由器领取"
     rule.effectiveActualState == "draining" -> "正在停止现有连接"

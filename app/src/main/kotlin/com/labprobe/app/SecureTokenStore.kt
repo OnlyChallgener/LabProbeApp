@@ -10,10 +10,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Stores Hub client credentials with a non-exportable Android Keystore key. */
-class SecureTokenStore(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("labprobe_secure", Context.MODE_PRIVATE)
-    private val alias = "labprobe_hub_client_token_v1"
+private class SecureStringStore(context: Context, prefsName: String, private val alias: String) {
+    private val prefs = context.applicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -56,4 +54,18 @@ class SecureTokenStore(context: Context) {
             .putString("ciphertext", Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .apply()
     }
+}
+
+/** Stores the Hub Client Token with a non-exportable Android Keystore key. */
+class SecureTokenStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure", "labprobe_hub_client_token_v1")
+    fun get(): String = delegate.get()
+    fun set(value: String) = delegate.set(value)
+}
+
+/** Stores MQTT credentials returned by the user's own Hub. */
+class SecureMqttStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure_mqtt", "labprobe_mqtt_credentials_v1")
+    fun get(): String = delegate.get()
+    fun set(value: String) = delegate.set(value)
 }

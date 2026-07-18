@@ -86,10 +86,9 @@ fun EditableDeviceTypeField(
                 modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.78f)
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                             Text("选择设备类型", fontSize = 18.sp, fontWeight = FontWeight.Black)
-                            Text("紧凑显示 · 一页查看更多设备", fontSize = 10.5.sp, color = LabV2.InkMuted)
                         }
                         IconButton(onClick = { expanded = false }) { Icon(Icons.Rounded.Close, "关闭") }
                     }

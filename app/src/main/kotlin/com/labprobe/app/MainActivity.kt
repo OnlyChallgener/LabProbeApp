@@ -114,8 +114,12 @@ import com.jcraft.jsch.JSch
 import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -123,6 +127,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -231,6 +236,7 @@ fun Activity.applyLabProbeSystemBars() {
 class AppPrefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
+    private val secureMqttStore = SecureMqttStore(context)
     init {
         val legacy = sp.getString("token", "").orEmpty().trim()
         if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
@@ -242,8 +248,17 @@ class AppPrefs(context: Context) {
         set(v) = secureTokenStore.set(v)
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
-    var autoRefresh: String get() = sp.getString("auto_refresh", "手动") ?: "手动"
+    var autoRefresh: String get() = "实时"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
+    var mqttUrlOverride: String get() = sp.getString("mqtt_url_override_v1", "") ?: ""
+        set(v) = sp.edit().putString("mqtt_url_override_v1", v.trim()).apply()
+    var mqttConfig: HubMqttConfig get() = HubMqttConfig.fromJson(secureMqttStore.get())
+        set(v) = secureMqttStore.set(v.toJson())
+    var mqttClientId: String
+        get() = sp.getString("mqtt_client_id_v1", "").orEmpty().ifBlank {
+            HubMqttClient.newClientId().also { sp.edit().putString("mqtt_client_id_v1", it).apply() }
+        }
+        set(v) = sp.edit().putString("mqtt_client_id_v1", v.trim()).apply()
     var ignoredUpdateCode: Int get() = sp.getInt("ignored_update_code", 0)
         set(v) = sp.edit().putInt("ignored_update_code", v).apply()
     var lastUpdateCheckAt: Long get() = sp.getLong("last_update_check_at", 0L)
@@ -837,6 +852,39 @@ class HubHttpException(val statusCode: Int, message: String) : RuntimeException(
 class AppState(private val prefs: AppPrefs, context: Context) {
     private val appContext = context.applicationContext
     private val refreshMutex = Mutex()
+    private val stateScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val mqttRevisionSignals = Channel<Long>(Channel.CONFLATED)
+    private val realtimeClient = HubMqttClient(
+        clientId = prefs.mqttClientId,
+        onState = { next ->
+            stateScope.launch {
+                mqttState = next
+                when (next) {
+                    HubRealtimeState.Connected -> {
+                        mqttConnected = true
+                        message = "已连接 · 实时同步中"
+                    }
+                    HubRealtimeState.Connecting -> {
+                        mqttConnected = false
+                        message = "正在连接实时同步..."
+                    }
+                    is HubRealtimeState.Reconnecting -> {
+                        mqttConnected = false
+                        message = "实时连接中断 · 正在重连 ${next.attempt}/${next.maxAttempts}"
+                    }
+                    is HubRealtimeState.HttpFallback -> {
+                        mqttConnected = false
+                        message = "MQTT 已断开 · HTTP 兜底同步"
+                    }
+                    HubRealtimeState.Disabled -> {
+                        mqttConnected = false
+                        message = if (hubConnected) "Hub 已连接 · HTTP 兼容同步" else message
+                    }
+                }
+            }
+        },
+        onRevision = { revision -> mqttRevisionSignals.trySend(revision) }
+    )
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
     var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
     var devices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), deviceOverrides))
@@ -844,83 +892,94 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var events by mutableStateOf(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)))
     var wolDevices by mutableStateOf(parseWolDevices(prefs.wolDevicesJson))
     var loading by mutableStateOf(false)
-    var hubConnected by mutableStateOf(prefs.lastRefresh.isNotBlank() && prefs.hub.isNotBlank())
+    var hubConnected by mutableStateOf(false)
+    var mqttConnected by mutableStateOf(false)
+    var mqttState by mutableStateOf<HubRealtimeState>(HubRealtimeState.Disabled)
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
+
+    init {
+        stateScope.launch {
+            for (targetRevision in mqttRevisionSignals) {
+                if (targetRevision > prefs.syncRevision) refreshAll(silent = true)
+            }
+        }
+    }
 
     suspend fun refreshAll(forceHealth: Boolean = false, forceFull: Boolean = false, silent: Boolean = false) {
         if (prefs.hub.isBlank()) {
             message = "Hub 地址为空，请先输入"
             return
         }
-        if (!refreshMutex.tryLock()) return
         if (!silent) loading = true
-        var attemptedReconnect = false
-        try {
-            val api = HubApi(prefs)
-            api.ensureClientToken()
-            val needsReconnect = !hubConnected || forceHealth
-            if (needsReconnect) {
-                if (!silent) message = "正在连接 Hub，最多尝试 5 次..."
-                attemptedReconnect = true
-                api.healthWithRetry(5)
-                hubConnected = true
-            }
-            val fullDue = forceFull || needsReconnect || prefs.syncRevision <= 0L ||
-                prefs.syncHub != prefs.hub ||
-                System.currentTimeMillis() - prefs.lastFullSyncAt >= FULL_SYNC_INTERVAL_MS
-            if (!silent) message = if (fullDue) "正在校准完整数据..." else "正在同步变化..."
-            if (fullDue) syncFull(api, silent) else {
-                try {
-                    syncIncremental(api, silent)
-                } catch (_: HubRevisionGap) {
-                    syncFull(api, silent)
-                }
-            }
-        } catch (first: Exception) {
-            val wasConnected = hubConnected
-            hubConnected = false
-            if (wasConnected) {
-                if (!silent) message = "Hub 已断开，正在自动重连..."
-                try {
-                    val api = HubApi(prefs)
-                    api.ensureClientToken()
-                    api.healthWithRetry(5)
+        refreshMutex.withLock {
+            var attemptedReconnect = false
+            try {
+                val api = HubApi(prefs)
+                api.ensureClientToken()
+                val needsReconnect = !hubConnected || forceHealth
+                if (needsReconnect) {
+                    if (!silent) message = "正在连接 Hub，最多尝试 5 次..."
+                    attemptedReconnect = true
+                    api.keepaliveWithRetry(5)
                     hubConnected = true
-                    if (!silent) message = "重连成功，正在校准完整数据..."
-                    syncFull(api, silent)
-                } catch (second: Exception) {
-                    hubConnected = false
-                    message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${second.message}"
                 }
-            } else if (attemptedReconnect) {
-                message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
-            } else {
-                message = "Hub 已断开，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
+                val fullDue = forceFull || needsReconnect || prefs.syncRevision <= 0L ||
+                    prefs.syncHub != prefs.hub ||
+                    System.currentTimeMillis() - prefs.lastFullSyncAt >= FULL_SYNC_INTERVAL_MS
+                if (!silent) message = if (fullDue) "正在校准完整数据..." else "正在同步变化..."
+                if (fullDue) syncFull(api, silent) else {
+                    try {
+                        syncIncremental(api, silent)
+                    } catch (_: HubRevisionGap) {
+                        syncFull(api, silent)
+                    }
+                }
+            } catch (first: Exception) {
+                val wasConnected = hubConnected
+                hubConnected = false
+                if (wasConnected) {
+                    if (!silent) message = "Hub 已断开，正在自动重连..."
+                    try {
+                        val api = HubApi(prefs)
+                        api.ensureClientToken()
+                        api.keepaliveWithRetry(5)
+                        hubConnected = true
+                        if (!silent) message = "重连成功，正在校准完整数据..."
+                        syncFull(api, silent)
+                    } catch (second: Exception) {
+                        hubConnected = false
+                        message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${second.message}"
+                    }
+                } else if (attemptedReconnect) {
+                    message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
+                } else {
+                    message = "Hub 已断开，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
+                }
+            } finally {
+                if (!silent) loading = false
             }
-        } finally {
-            if (!silent) loading = false
-            refreshMutex.unlock()
         }
     }
 
-    suspend fun keepHubConnection(silent: Boolean = true) {
-        if (prefs.hub.isBlank() || hubConnected || loading) return
-        if (!refreshMutex.tryLock()) return
-        try {
-            if (!silent) message = "Hub 已断开，正在自动重连..."
-            val api = HubApi(prefs)
-            api.ensureClientToken()
-            api.healthWithRetry(5)
-            hubConnected = true
-            syncFull(api, silent = true)
-            if (!silent) message = "Hub 已重连 · ${prefs.lastRefresh.ifBlank { nowClock() }}"
-        } catch (error: Exception) {
-            hubConnected = false
-            message = "Hub 已断开，自动重连 5 次失败 · 请手动测试或刷新：${error.message}"
-        } finally {
-            refreshMutex.unlock()
-        }
+    suspend fun startRealtime() {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return
+        val stored = prefs.mqttConfig
+        val remote = runCatching { HubApi(prefs).getMqttConfig() }.getOrElse { stored }
+        val effective = remote.copy(publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl })
+        prefs.mqttConfig = effective
+        realtimeClient.start(effective)
+    }
+
+    fun stopRealtime() {
+        realtimeClient.stop()
+        mqttConnected = false
+    }
+
+    fun close() {
+        realtimeClient.close()
+        mqttRevisionSignals.close()
+        stateScope.cancel()
     }
 
     private suspend fun syncFull(api: HubApi, silent: Boolean) {
@@ -1102,11 +1161,20 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     }
 
     fun markHubChanged() {
+        stopRealtime()
         hubConnected = false
         prefs.syncRevision = 0L
         prefs.lastFullSyncAt = 0L
         prefs.syncHub = ""
-        message = "Hub 设置已变更，请测试或刷新"
+        message = "Hub 设置已变更 · 正在自动连接"
+    }
+
+    fun markHubSavedWithoutConnectionChange() {
+        message = when {
+            mqttConnected -> "已连接 · 实时同步中"
+            hubConnected -> "Hub 已连接 · HTTP 兼容同步"
+            else -> "Hub 设置已保存，等待自动连接"
+        }
     }
 
     fun saveDeviceOverride(
@@ -1244,7 +1312,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("favorites") }
     var dailyReturnRoute by remember { mutableStateOf("events") }
-    var autoRefresh by remember { mutableStateOf(prefs.autoRefresh) }
+    var autoRefresh by remember { mutableStateOf("实时") }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
     val scope = rememberCoroutineScope()
@@ -1260,10 +1328,16 @@ fun LabProbeApp(prefs: AppPrefs) {
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     appForeground = true
-                    if (startedOnce) scope.launch { state.refreshAll(forceFull = true, silent = true) }
+                    if (startedOnce) scope.launch {
+                        state.refreshAll(forceFull = true, silent = true)
+                        state.startRealtime()
+                    }
                     startedOnce = true
                 }
-                Lifecycle.Event.ON_STOP -> appForeground = false
+                Lifecycle.Event.ON_STOP -> {
+                    appForeground = false
+                    state.stopRealtime()
+                }
                 else -> Unit
             }
         }
@@ -1275,7 +1349,11 @@ fun LabProbeApp(prefs: AppPrefs) {
         var seenNetwork = false
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                if (seenNetwork && appForeground) scope.launch { state.refreshAll(forceFull = true, silent = true) }
+                if (seenNetwork && appForeground) scope.launch {
+                    state.stopRealtime()
+                    state.refreshAll(forceFull = true, silent = true)
+                    state.startRealtime()
+                }
                 seenNetwork = true
             }
         }
@@ -1319,7 +1397,8 @@ fun LabProbeApp(prefs: AppPrefs) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         CertificateReminderCenter.notifyDue(context, prefs)
-        state.refreshAll()
+        state.refreshAll(forceFull = true)
+        state.startRealtime()
         delay(1500L)
         updateChecking = true
         runCatching { fetchGithubLatestInfo() }
@@ -1330,19 +1409,10 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
         updateChecking = false
     }
-    LaunchedEffect(autoRefresh) {
-        val sec = autoRefresh.removeSuffix("S").toIntOrNull() ?: 0
-        if (sec > 0) {
-            while (true) {
-                delay(sec * 1000L)
-                if (appForeground && !state.loading) state.refreshAll(silent = true)
-            }
-        }
-    }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(appForeground, state.mqttConnected) {
         while (true) {
             delay(30_000L)
-            if (appForeground) state.keepHubConnection(silent = true)
+            if (appForeground && !state.mqttConnected && !state.loading) state.refreshAll(silent = true)
         }
     }
     LaunchedEffect(Unit) {
@@ -1350,6 +1420,9 @@ fun LabProbeApp(prefs: AppPrefs) {
             delay(FULL_SYNC_INTERVAL_MS)
             if (appForeground) state.refreshAll(forceFull = true, silent = true)
         }
+    }
+    DisposableEffect(state) {
+        onDispose { state.close() }
     }
 
     val light = lightColorScheme(
@@ -1426,7 +1499,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         }
                     ) { r ->
                         saveableStateHolder.SaveableStateProvider(r) { when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "health_score" -> HealthScoreDetailScreen(prefs, state) { route = "home" }
                         "wol" -> WolDetailScreen(state) { route = "home" }
                         "devices" -> DevicesScreen(state, topNav, onOpenTraffic = { route = "device_traffic" }, onOpenDetails = { mac -> selectedDeviceMac = mac; route = "device_detail" })
@@ -1439,7 +1512,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" }
                         )
                         "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
-                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll() } }, { dailyReturnRoute = "events"; route = "daily" }, topNav)
+                        "events" -> EventsScreen(state, { scope.launch { state.refreshAll(forceFull = true) } }, { dailyReturnRoute = "events"; route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = dailyReturnRoute }
                         "favorites" -> FavoritesScreen(
                             prefs = prefs,
@@ -1464,7 +1537,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
                         "tool_portmap" -> PortMappingScreen(prefs, backFromTool)
-                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll() } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
                     }
                 }
@@ -2447,7 +2520,6 @@ fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () ->
 
 @Composable
 fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -> Unit, onAuto: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
     Box {
         Surface(
             shape = RoundedCornerShape(28.dp),
@@ -2464,7 +2536,16 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                         .padding(start = 13.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
+                    if (loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(17.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFF2563EB),
+                            trackColor = Color(0xFF2563EB).copy(alpha = .12f)
+                        )
+                    } else {
+                        Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
+                    }
                     Spacer(Modifier.width(6.dp))
                     Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                 }
@@ -2477,38 +2558,13 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp))
-                        .clickable { expanded = true }
-                        .padding(start = if (autoRefresh == "手动") 9.dp else 8.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
+                        .padding(start = 8.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (autoRefresh != "手动") {
-                        Text(autoRefresh, fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(16.dp), tint = Color(0xFF64748B))
+                    Icon(Icons.Rounded.WifiTethering, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
+                    Spacer(Modifier.width(3.dp))
+                    Text("实时", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
                 }
-            }
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = LAB_POPUP_SURFACE,
-            tonalElevation = 0.dp,
-            shadowElevation = 10.dp,
-            modifier = Modifier.widthIn(min = 156.dp).padding(vertical = 6.dp)
-        ) {
-            DropdownMenuItem(
-                text = { Text("手动", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
-                onClick = { onAuto("手动"); expanded = false },
-                leadingIcon = { if (autoRefresh == "手动") Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }
-            )
-            listOf("3S", "10S", "20S").forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) },
-                    onClick = { onAuto(option); expanded = false },
-                    leadingIcon = { if (autoRefresh == option) Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }
-                )
             }
         }
     }
@@ -2825,12 +2881,11 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(122.dp).clip(CircleShape).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(132.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
-                            .size(118.dp)
+                            .size(130.dp)
                             .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
-                            .clip(CircleShape)
                             .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = .015f))))
                     )
                     HealthScoreGauge(score, 112.dp)
@@ -2909,19 +2964,16 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(150.dp)
+                .size(184.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = .02f))))
+                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = .0f))))
         )
-        Box(Modifier.size(146.dp).clip(CircleShape).background(Color.White.copy(alpha = .94f)), contentAlignment = Alignment.Center) {
-            Image(
-                painter = painterResource(R.drawable.router_skeuomorphic_v3),
-                contentDescription = "锐捷路由器",
-                modifier = Modifier.size(132.dp),
-                contentScale = ContentScale.Fit
-            )
-        }
+        Image(
+            painter = painterResource(R.drawable.router_skeuomorphic_v3),
+            contentDescription = "路由器",
+            modifier = Modifier.size(150.dp),
+            contentScale = ContentScale.Fit
+        )
     }
 
     ExpressiveCard("当前得分 $score", "分数只由下列项目计算，满分按 99 分封顶", Icons.Rounded.VerifiedUser, scoreColor) {
@@ -3418,7 +3470,10 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             StatusPill("终端", "${state.onlineDevices.size} 在线", Color(0xFFF59E0B))
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(0.95f)) { CompactSelectInput("刷新", autoRefresh, listOf("手动", "3S", "10S", "20S"), onAuto) }
+            Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                Text(if (state.mqttConnected) "MQTT 实时" else "HTTP 兜底", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
+            }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
         }
     }
@@ -7665,7 +7720,14 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
                 color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
             ) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(32.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp)) }
+                    Box(Modifier.size(32.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) {
+                        if (isOnline) {
+                            val profile = remember(e) { eventDeviceProfile(e) }
+                            LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 27)
+                        } else {
+                            Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp))
+                        }
+                    }
                     Spacer(Modifier.width(9.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -7713,6 +7775,23 @@ private fun EventSelectionDialog(e: EventItem, onDismiss: () -> Unit) {
     )
 }
 
+
+private fun eventDeviceProfile(e: EventItem): DeviceVisualProfile = inferDeviceProfile(
+    DeviceItem(
+        name = e.name.ifBlank { e.title },
+        mac = e.mac,
+        online = e.type == "device_online",
+        ip = e.ip,
+        ssid = e.ssid,
+        band = e.band,
+        rssi = e.rssi,
+        rxrate = e.rxrate,
+        onlineSince = e.onlineSince,
+        offlineAt = e.offlineAt,
+        onlineDurationText = e.onlineDurationText,
+        lastSeenAt = e.time
+    )
+)
 
 fun eventTitle(e: EventItem): String {
     val n = webhookDisplayText(e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }).ifBlank { "事件" }
@@ -8034,21 +8113,29 @@ fun recentSevenDates(): List<String> {
 @Composable
 fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
     var hub by remember { mutableStateOf(prefs.hub) }
-    var token by remember { mutableStateOf(prefs.token) }
+    var credentialInput by remember { mutableStateOf("") }
     var dns by remember { mutableStateOf(prefs.hubDns) }
+    var mqttUrl by remember { mutableStateOf(prefs.mqttUrlOverride) }
     var msg by remember { mutableStateOf("") }
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
-    ExpressiveCard("连接设置", "Hub 请求优先 AAAA / IPv6，失败 3 次不清空缓存。", Icons.Rounded.Link, Color(0xFF2563EB)) {
+    ExpressiveCard("连接设置", "MQTT 实时同步，断线自动重连并由 HTTP 校准兜底。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
-        LabeledInput("Token", "APP_TOKEN", token, { token = it })
+        LabeledInput("配对码", if (prefs.token.isBlank()) "APP-123456" else "已安全保存；重新配对时再填写", credentialInput, { credentialInput = it })
+        LabeledInput("MQTT", "自动读取 Hub；也可填写 wss://自己的域名:端口/mqtt", mqttUrl, { mqttUrl = it })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("DNS", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
                 CompactTextField(dns, { dns = it }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("刷新", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
-                CompactDropdown(autoRefresh, listOf("手动", "3S", "10S", "20S"), { onAuto(it); prefs.autoRefresh = it }, Modifier.fillMaxWidth())
+                Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
+                Surface(Modifier.fillMaxWidth().height(42.dp), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f))) {
+                    Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (state.mqttConnected) "MQTT 实时" else "自动连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    }
+                }
             }
         }
         val connectionMessage = msg.ifBlank {
@@ -8056,11 +8143,45 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
         Text(connectionMessage, color = if (state.hubConnected) LabV2.Green else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; prefs.addHistory("hub", hub); state.markHubChanged(); toast(ctx, "已保存") }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
+            Button(onClick = {
+                val suppliedCredential = credentialInput.trim()
+                val connectionChanged = prefs.hub != hub.trim().trimEnd('/') || (suppliedCredential.isNotBlank() && prefs.token != suppliedCredential) || prefs.hubDns != dns.trim()
+                val mqttChanged = prefs.mqttUrlOverride != mqttUrl.trim()
+                prefs.hub = hub
+                if (suppliedCredential.isNotBlank()) prefs.token = suppliedCredential
+                prefs.hubDns = dns
+                prefs.mqttUrlOverride = mqttUrl
+                prefs.addHistory("hub", hub)
+                if (connectionChanged) state.markHubChanged() else state.markHubSavedWithoutConnectionChange()
+                if (mqttChanged || connectionChanged) scope.launch {
+                    if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)
+                    state.startRealtime()
+                }
+                credentialInput = ""
+                toast(ctx, "已保存")
+            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
-            Button(onClick = { prefs.hub = hub; prefs.token = token; prefs.hubDns = dns; state.markHubChanged(); scope.launch { msg = "正在连接并校准数据..."; runCatching { state.refreshAll(forceHealth = true, forceFull = true); if (state.hubConnected) "已连接 · 数据已刷新" else state.message }.onSuccess { msg = it }.onFailure { msg = "失败：${it.message}" } } }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
-                Icon(Icons.Rounded.WifiTethering, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("测试连接", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            Button(onClick = {
+                val suppliedCredential = credentialInput.trim()
+                val changed = prefs.hub != hub.trim().trimEnd('/') || (suppliedCredential.isNotBlank() && prefs.token != suppliedCredential) || prefs.hubDns != dns.trim()
+                prefs.hub = hub
+                if (suppliedCredential.isNotBlank()) prefs.token = suppliedCredential
+                prefs.hubDns = dns
+                prefs.mqttUrlOverride = mqttUrl
+                prefs.addHistory("hub", hub)
+                if (changed) state.markHubChanged()
+                credentialInput = ""
+                scope.launch {
+                    msg = "正在连接并校准数据..."
+                    runCatching {
+                        state.refreshAll(forceHealth = true, forceFull = true)
+                        state.startRealtime()
+                        if (state.hubConnected) "已连接 · 数据已校准" else state.message
+                    }.onSuccess { msg = it }.onFailure { msg = "失败：${it.message}" }
+                }
+            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+                Icon(Icons.Rounded.Sync, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即校准", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
     }
@@ -8093,6 +8214,11 @@ class HubApi(private val prefs: AppPrefs) {
         retryText("/health", false, attempts)
     }
 
+    suspend fun keepaliveWithRetry(attempts: Int = 3): String = withContext(Dispatchers.IO) {
+        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        retryText("/api/sync/revision", true, attempts)
+    }
+
     suspend fun ensureClientToken() = withContext(Dispatchers.IO) {
         val candidate = prefs.token.trim().uppercase(Locale.ROOT)
         if (!candidate.matches(Regex("APP-[0-9]{6}"))) return@withContext
@@ -8104,9 +8230,29 @@ class HubApi(private val prefs: AppPrefs) {
         val token = root.optString("clientToken")
         if (token.isBlank()) throw RuntimeException("Hub 未返回 Client Token")
         prefs.token = token
+        root.optJSONObject("mqtt")?.let { prefs.mqttConfig = mqttConfigFromApi(it) }
         prefs.syncRevision = 0L
         prefs.lastFullSyncAt = 0L
     }
+
+    suspend fun getMqttConfig(): HubMqttConfig = withContext(Dispatchers.IO) {
+        val root = try {
+            JSONObject(getText("/api/mqtt/config", true))
+        } catch (error: HubHttpException) {
+            if (error.statusCode == 404 || error.statusCode == 405) return@withContext HubMqttConfig()
+            throw error
+        }
+        mqttConfigFromApi(root.optJSONObject("mqtt") ?: root)
+    }
+
+    private fun mqttConfigFromApi(root: JSONObject): HubMqttConfig = HubMqttConfig(
+        enabled = root.optBoolean("enabled", false),
+        publicUrl = root.optString("publicUrl"),
+        username = root.optString("username"),
+        password = root.optString("password"),
+        revisionTopic = root.optString("revisionTopic"),
+        availabilityTopic = root.optString("availabilityTopic")
+    )
 
     suspend fun getSyncSnapshot(): HubSyncSnapshot = withContext(Dispatchers.IO) {
         val root = try {
