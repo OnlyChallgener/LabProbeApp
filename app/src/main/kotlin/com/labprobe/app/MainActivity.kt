@@ -1276,7 +1276,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
         val mergedDevices = preserveFollowedDeviceSnapshots(
             base = mergeDeviceCache(
-                (offlineDevices + disappeared).filter { it.followedOverride == true },
+                offlineDevices.filter { it.followedOverride == true },
                 mergeDeviceCache(devices, devWatchedWithIpv6)
             ),
             previous = devices,
