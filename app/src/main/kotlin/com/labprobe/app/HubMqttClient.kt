@@ -104,17 +104,32 @@ class HubMqttClient(
     }
 
     fun close() {
-        stop()
-        scope.cancel()
+        desired = false
+        generation += 1L
+        reconnectJob?.cancel()
+        reconnectJob = null
+        val current = detachClient()
+        scope.launch {
+            teardownClient(current)
+            scope.cancel()
+        }
     }
 
     private fun stopClient() {
+        val current = detachClient()
+        if (current != null) scope.launch { teardownClient(current) }
+    }
+
+    private fun detachClient(): MqttAsyncClient? {
         val current = client
         client = null
-        if (current != null) {
-            runCatching { if (current.isConnected) current.disconnectForcibly() }
-            runCatching { current.close() }
-        }
+        return current
+    }
+
+    private fun teardownClient(current: MqttAsyncClient?) {
+        if (current == null) return
+        runCatching { if (current.isConnected) current.disconnectForcibly() }
+        runCatching { current.close() }
     }
 
     private fun connect(run: Long, fastAttempt: Int, slowRetry: Boolean) {

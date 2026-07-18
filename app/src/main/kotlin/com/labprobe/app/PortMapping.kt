@@ -139,7 +139,12 @@ data class PortMapHistoryPoint(
 
 private fun parsePortMapRule(o: JSONObject): PortMapRule {
     val r = o.optJSONObject("runtime") ?: JSONObject()
-    fun nullableLong(obj: JSONObject, key: String): Long? = if (!obj.has(key) || obj.isNull(key) || obj.optLong(key) <= 0) null else obj.optLong(key)
+    fun nullableEpoch(obj: JSONObject, key: String): Long? {
+        if (!obj.has(key) || obj.isNull(key)) return null
+        val raw = obj.optLong(key)
+        if (raw <= 0L) return null
+        return if (raw > 10_000_000_000L) raw / 1000L else raw
+    }
     return PortMapRule(
         id = cleanApiText(o.optString("id")),
         name = cleanApiText(o.optString("name")),
@@ -153,7 +158,7 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
         targetMac = cleanMac(o.optString("targetMac")),
         targetPort = o.optInt("targetPort"),
         preferCurrentPrefix = o.optBoolean("preferCurrentPrefix", true),
-        expiresAt = nullableLong(o, "expiresAt"),
+        expiresAt = nullableEpoch(o, "expiresAt"),
         leaseSeconds = o.optLong("leaseSeconds", 0L).coerceAtLeast(0L),
         maxConnections = o.optInt("maxConnections", 32),
         idleTimeoutSec = o.optInt("idleTimeoutSec", 300),
@@ -167,9 +172,9 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
             activeConnections = r.optLong("activeConnections"),
             totalUploadBytes = r.optLong("totalUploadBytes"),
             totalDownloadBytes = r.optLong("totalDownloadBytes"),
-            startedAt = nullableLong(r, "startedAt"),
-            expiresAt = nullableLong(r, "expiresAt") ?: nullableLong(o, "expiresAt"),
-            lastResolvedAt = nullableLong(r, "lastResolvedAt"),
+            startedAt = nullableEpoch(r, "startedAt"),
+            expiresAt = nullableEpoch(r, "expiresAt") ?: nullableEpoch(o, "expiresAt"),
+            lastResolvedAt = nullableEpoch(r, "lastResolvedAt"),
             lastError = cleanApiText(r.optString("lastError"))
         )
     )
@@ -1334,6 +1339,7 @@ private fun formatPortDuration(seconds: Long?): String {
     return when {
         day > 0 -> "${day}天${hour}小时"
         hour > 0 -> "${hour}小时${minute}分"
+        sec > 0 && minute == 0L -> "<1分"
         else -> "${minute}分"
     }
 }

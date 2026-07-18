@@ -43,7 +43,13 @@ fun parseEvents(json: String): List<EventItem> {
             onlineSince = field("onlineSince"),
             offlineAt = field("offlineAt"),
             onlineDurationText = field("onlineDurationText"),
-            mac = field("mac").ifBlank { field("deviceMac") }.ifBlank { field("lastMac") }
+            mac = field("mac").ifBlank { field("deviceMac") }.ifBlank { field("lastMac") },
+            manufacture = field("manufacture").ifBlank { field("vendor") }.ifBlank { field("oui") },
+            devType = field("devType").ifBlank { field("deviceType") },
+            osType = field("osType").ifBlank { field("os") },
+            hostName = field("hostName").ifBlank { field("hostname") },
+            remark = field("remark").ifBlank { field("note") },
+            manualType = field("manualType").ifBlank { field("deviceTypeManual") }
         )
     }
     return out
@@ -326,6 +332,12 @@ fun EventItem.toJson(): JSONObject = JSONObject()
     .put("offlineAt", offlineAt)
     .put("onlineDurationText", onlineDurationText)
     .put("mac", mac)
+    .put("manufacture", manufacture)
+    .put("devType", devType)
+    .put("osType", osType)
+    .put("hostName", hostName)
+    .put("remark", remark)
+    .put("manualType", manualType)
 
 
 private fun boolOrNull(o: JSONObject, key: String): Boolean? {

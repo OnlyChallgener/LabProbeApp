@@ -64,5 +64,11 @@ data class EventItem(
     val onlineSince: String = "",
     val offlineAt: String = "",
     val onlineDurationText: String = "",
-    val mac: String = ""
+    val mac: String = "",
+    val manufacture: String = "",
+    val devType: String = "",
+    val osType: String = "",
+    val hostName: String = "",
+    val remark: String = "",
+    val manualType: String = ""
 )

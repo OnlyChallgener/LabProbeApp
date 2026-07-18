@@ -155,6 +155,7 @@ import java.net.URLEncoder
 import java.util.Date
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
@@ -337,6 +338,10 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("cache_devices", v).apply()
     var cacheOnlineDevices: String get() = sp.getString("cache_online_devices", "") ?: ""
         set(v) = sp.edit().putString("cache_online_devices", v).apply()
+    var cacheOfflineDevices: String get() = sp.getString("cache_offline_devices_v1", "") ?: ""
+        set(v) = sp.edit().putString("cache_offline_devices_v1", v).apply()
+    var offlineHiddenKeysJson: String get() = sp.getString("offline_hidden_keys_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("offline_hidden_keys_v1", v).apply()
     var cacheEvents: String get() = sp.getString("cache_events", "") ?: ""
         set(v) = sp.edit().putString("cache_events", v).apply()
     var eventNotificationBaselineReady: Boolean get() = sp.getBoolean("event_notification_baseline_ready", false)
@@ -829,6 +834,7 @@ data class HubSyncSnapshot(
     val statusRoot: JSONObject,
     val watchedDevices: List<DeviceItem>,
     val onlineDevices: List<DeviceItem>,
+    val offlineDevices: List<DeviceItem>,
     val events: List<EventItem>
 )
 
@@ -882,6 +888,11 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val refreshMutex = Mutex()
     private val stateScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mqttRevisionSignals = Channel<Long>(Channel.CONFLATED)
+    private val foregroundRecoverySignals = Channel<Boolean>(Channel.CONFLATED)
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cacheWriteMutex = Mutex()
+    private val cacheWriteVersion = AtomicLong(0L)
+    @Volatile private var foregroundActive = true
     private val realtimeClient = HubMqttClient(
         clientId = prefs.mqttClientId,
         onState = { next ->
@@ -917,6 +928,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
     var devices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), deviceOverrides))
     var onlineDevices by mutableStateOf(applyDeviceOverrides(parseDeviceArray(prefs.cacheOnlineDevices), deviceOverrides))
+    var offlineDevices by mutableStateOf(
+        aggregateOfflineDevices(
+            applyDeviceOverrides(parseDeviceArray(prefs.cacheOfflineDevices), deviceOverrides),
+            onlineDevices,
+            parseOfflineHiddenKeys(prefs.offlineHiddenKeysJson)
+        )
+    )
     var events by mutableStateOf(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)))
     var wolDevices by mutableStateOf(parseWolDevices(prefs.wolDevicesJson))
     var loading by mutableStateOf(false)
@@ -930,6 +948,18 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         stateScope.launch {
             for (targetRevision in mqttRevisionSignals) {
                 if (targetRevision > prefs.syncRevision) refreshAll(silent = true)
+            }
+        }
+        stateScope.launch {
+            for (firstSignal in foregroundRecoverySignals) {
+                var forceFull = firstSignal
+                delay(180L)
+                while (true) {
+                    val next = foregroundRecoverySignals.tryReceive().getOrNull() ?: break
+                    forceFull = forceFull || next
+                }
+                refreshAll(forceFull = forceFull, silent = true)
+                if (foregroundActive) startRealtime()
             }
         }
     }
@@ -1004,9 +1034,20 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         mqttConnected = false
     }
 
+    fun setForeground(active: Boolean) {
+        foregroundActive = active
+        if (!active) stopRealtime()
+    }
+
+    fun requestForegroundRecovery(forceFull: Boolean = false) {
+        foregroundRecoverySignals.trySend(forceFull)
+    }
+
     fun close() {
         realtimeClient.close()
         mqttRevisionSignals.close()
+        foregroundRecoverySignals.close()
+        cacheScope.cancel()
         stateScope.cancel()
     }
 
@@ -1029,6 +1070,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
         val online = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.onlineDevices), deviceOverrides)
         val watched = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.watchedDevices), deviceOverrides)
+        val disappeared = onlineDevices
+            .filterNot { old -> online.any { cleanMac(it.mac) == cleanMac(old.mac) } }
+            .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
+        val archivedOffline = applyDeviceOverrides(snapshot.offlineDevices + disappeared, deviceOverrides)
         val merged = preserveFollowedDeviceSnapshots(
             base = mergeDeviceCache(devices, watched),
             previous = devices,
@@ -1040,11 +1085,12 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val devicesChanged = devices != merged
         val onlineChanged = onlineDevices != online
         val eventsChanged = events != normalizedEvents
+        val offlineChanged = refreshOfflineDevices(archivedOffline, online)
         if (statusChanged) status = snapshot.statusRoot
         if (devicesChanged) devices = merged
         if (onlineChanged) onlineDevices = online
         if (eventsChanged) events = normalizedEvents
-        finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || eventsChanged, silent = silent)
+        finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || offlineChanged || eventsChanged, silent = silent)
     }
 
     private suspend fun syncIncremental(api: HubApi, silent: Boolean) {
@@ -1104,6 +1150,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             }
             "device", "online_device" -> {
                 val source = if (entity == "device") devices else onlineDevices
+                val removedOnline = if (entity == "online_device" && operation == "delete") {
+                    source.firstOrNull { cleanMac(it.mac).equals(cleanMac(key), ignoreCase = true) }
+                } else null
                 val updated = if (operation == "delete") {
                     source.filterNot { cleanMac(it.mac).equals(cleanMac(key), ignoreCase = true) }
                 } else {
@@ -1120,7 +1169,17 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                     next
                 }
                 if (updated == source) return false
-                if (entity == "device") devices = updated else onlineDevices = updated
+                if (entity == "device") {
+                    devices = updated
+                } else {
+                    onlineDevices = updated
+                    val archived = removedOnline?.copy(
+                        online = false,
+                        offlineAt = removedOnline.offlineAt.ifBlank { offlineNow() },
+                        lastSeenAt = removedOnline.lastSeenAt.ifBlank { offlineNow() }
+                    )
+                    refreshOfflineDevices(if (archived == null) offlineDevices else offlineDevices + archived, updated)
+                }
                 return true
             }
             "event" -> {
@@ -1147,14 +1206,54 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         }
         prefs.eventNotificationBaselineReady = true
         if (dataChanged) {
-            status?.let { prefs.cacheStatus = it.toString() }
-            prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
-            prefs.cacheOnlineDevices = JSONArray(onlineDevices.map { it.toJson() }).toString()
-            prefs.cacheEvents = JSONArray(events.map { it.toJson() }).toString()
+            persistCachesAsync()
         }
         prefs.lastRefresh = nowClock()
         hubConnected = true
         if (!silent) message = "刷新成功：${prefs.lastRefresh}"
+    }
+
+    private fun persistCachesAsync() {
+        val version = cacheWriteVersion.incrementAndGet()
+        val statusText = status?.toString()
+        val deviceSnapshot = devices.toList()
+        val onlineSnapshot = onlineDevices.toList()
+        val offlineSnapshot = offlineDevices.toList()
+        val eventSnapshot = events.toList()
+        cacheScope.launch {
+            val devicesText = JSONArray(deviceSnapshot.map { it.toJson() }).toString()
+            val onlineText = JSONArray(onlineSnapshot.map { it.toJson() }).toString()
+            val offlineText = JSONArray(offlineSnapshot.map { it.toJson() }).toString()
+            val eventsText = JSONArray(eventSnapshot.map { it.toJson() }).toString()
+            cacheWriteMutex.withLock {
+                if (version != cacheWriteVersion.get()) return@withLock
+                statusText?.let { prefs.cacheStatus = it }
+                prefs.cacheDevices = devicesText
+                prefs.cacheOnlineDevices = onlineText
+                prefs.cacheOfflineDevices = offlineText
+                prefs.cacheEvents = eventsText
+            }
+        }
+    }
+
+    private fun refreshOfflineDevices(archived: List<DeviceItem>, online: List<DeviceItem> = onlineDevices): Boolean {
+        val hidden = parseOfflineHiddenKeys(prefs.offlineHiddenKeysJson)
+        val onlineKeys = online.map(::offlineDeviceIdentity).toSet()
+        val retainedHidden = hidden - onlineKeys
+        if (retainedHidden != hidden) prefs.offlineHiddenKeysJson = offlineHiddenKeysJson(retainedHidden)
+        val next = aggregateOfflineDevices(applyDeviceOverrides(archived, deviceOverrides), online, retainedHidden)
+        if (next == offlineDevices) return false
+        offlineDevices = next
+        prefs.cacheOfflineDevices = JSONArray(next.map { it.toJson() }).toString()
+        return true
+    }
+
+    fun dismissOfflineDevice(device: DeviceItem) {
+        val key = offlineDeviceIdentity(device)
+        val hidden = parseOfflineHiddenKeys(prefs.offlineHiddenKeysJson) + key
+        prefs.offlineHiddenKeysJson = offlineHiddenKeysJson(hidden)
+        offlineDevices = offlineDevices.filterNot { offlineDeviceIdentity(it) == key }
+        prefs.cacheOfflineDevices = JSONArray(offlineDevices.map { it.toJson() }).toString()
     }
 
     private suspend fun fetchLegacyData(api: HubApi, silent: Boolean) {
@@ -1180,12 +1279,16 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         )
         val devicesChanged = devices != mergedDevices
         val onlineChanged = onlineDevices != devOnlineWithIpv6
+        val disappeared = onlineDevices
+            .filterNot { old -> devOnlineWithIpv6.any { cleanMac(it.mac) == cleanMac(old.mac) } }
+            .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
+        val offlineChanged = refreshOfflineDevices(offlineDevices + disappeared, devOnlineWithIpv6)
         val eventsChanged = events != evs
         if (statusChanged) status = stRoot
         if (devicesChanged) devices = mergedDevices
         if (onlineChanged) onlineDevices = devOnlineWithIpv6
         if (eventsChanged) events = evs
-        finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || eventsChanged, silent = silent)
+        finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || offlineChanged || eventsChanged, silent = silent)
     }
 
     fun markHubChanged() {
@@ -1231,6 +1334,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         prefs.deviceOverridesJson = deviceOverridesToJson(deviceOverrides)
         devices = applyDeviceOverrides(devices, deviceOverrides)
         onlineDevices = applyDeviceOverrides(onlineDevices, deviceOverrides)
+        offlineDevices = applyDeviceOverrides(offlineDevices, deviceOverrides)
         if (item.followedOverride == true) {
             val snapshot = (onlineDevices + devices).firstOrNull { it.mac.equals(clean, ignoreCase = true) }
             if (snapshot != null) {
@@ -1238,6 +1342,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             }
         }
         prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
+        prefs.cacheOfflineDevices = JSONArray(offlineDevices.map { it.toJson() }).toString()
         message = "已保存设备备注：${item.remark.ifBlank { clean }}"
     }
 
@@ -1251,7 +1356,11 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         onlineDevices = onlineDevices.map { d ->
             if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
         }
+        offlineDevices = offlineDevices.map { d ->
+            if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
+        }
         prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
+        prefs.cacheOfflineDevices = JSONArray(offlineDevices.map { it.toJson() }).toString()
         message = "已删除设备本地设置"
     }
 
@@ -1356,15 +1465,13 @@ fun LabProbeApp(prefs: AppPrefs) {
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     appForeground = true
-                    if (startedOnce) scope.launch {
-                        state.refreshAll(forceFull = true, silent = true)
-                        state.startRealtime()
-                    }
+                    state.setForeground(true)
+                    if (startedOnce) state.requestForegroundRecovery(forceFull = false)
                     startedOnce = true
                 }
                 Lifecycle.Event.ON_STOP -> {
                     appForeground = false
-                    state.stopRealtime()
+                    state.setForeground(false)
                 }
                 else -> Unit
             }
@@ -1377,11 +1484,7 @@ fun LabProbeApp(prefs: AppPrefs) {
         var seenNetwork = false
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                if (seenNetwork && appForeground) scope.launch {
-                    state.stopRealtime()
-                    state.refreshAll(forceFull = true, silent = true)
-                    state.startRealtime()
-                }
+                if (seenNetwork && appForeground) state.requestForegroundRecovery(forceFull = true)
                 seenNetwork = true
             }
         }
@@ -2887,14 +2990,14 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
-        initialValue = .12f,
-        targetValue = .32f,
+        initialValue = .20f,
+        targetValue = .48f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowAlpha"
     )
     val scoreGlowScale by scorePulse.animateFloat(
-        initialValue = .95f,
-        targetValue = 1.10f,
+        initialValue = .92f,
+        targetValue = 1.17f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
@@ -2912,9 +3015,9 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                 Box(Modifier.size(132.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
-                            .size(154.dp)
+                            .size(176.dp)
                             .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
-                            .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = scoreGlowAlpha * .30f), Color.Transparent)))
+                            .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = scoreGlowAlpha * .36f), Color.Transparent)))
                     )
                     HealthScoreGauge(score, 112.dp)
                 }
@@ -2973,14 +3076,14 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val pulse = rememberInfiniteTransition(label = "routerGlow")
     val glowAlpha by pulse.animateFloat(
-        initialValue = .14f,
-        targetValue = .36f,
+        initialValue = .22f,
+        targetValue = .50f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowAlpha"
     )
     val glowScale by pulse.animateFloat(
-        initialValue = .96f,
-        targetValue = 1.10f,
+        initialValue = .91f,
+        targetValue = 1.18f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
@@ -2992,9 +3095,9 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(216.dp)
+                .size(268.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
-                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = glowAlpha * .32f), Color.Transparent)))
+                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = glowAlpha * .40f), Color.Transparent)))
         )
         Image(
             painter = painterResource(R.drawable.router_skeuomorphic_v3),
@@ -3572,7 +3675,11 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
     var mode by rememberSaveable { mutableStateOf("watch") }
     val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
     val followed = remember(shared) { followedDeviceList(shared) }
-    val list = if (mode == "online") state.onlineDevices else followed
+    val list = when (mode) {
+        "online" -> state.onlineDevices
+        "offline" -> state.offlineDevices
+        else -> followed
+    }
     val wolCount = remember(state.wolDevices) { state.wolDevices.count { it.enabled } }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -3582,10 +3689,11 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
         item { CompactPageHeader("设备", "设备识别 · IPv6 · WOL 唤醒") }
         item { topNav() }
         item {
-            ExpressiveCard("终端同步", "${if (mode == "online") "在线终端" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
+            ExpressiveCard("终端同步", "${if (mode == "online") "在线" else if (mode == "offline") "离线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
-                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线终端", fontSize = 12.sp) })
+                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线", fontSize = 12.sp) })
+                    FilterChip(selected = mode == "offline", onClick = { mode = "offline" }, label = { Text("离线", fontSize = 12.sp) })
                     FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
                     FilterChip(selected = false, onClick = onOpenTraffic, label = { Text("今日流量", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) })
                 }
@@ -3595,7 +3703,14 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
         if (mode == "wol") {
             item { WolManagementPanel(state) }
         } else {
-            items(list, key = { it.mac.ifBlank { it.name } }) { d -> DeviceSmartCard(state, d, onOpenDetails = { onOpenDetails(d.mac) }) }
+            items(list, key = { d -> if (mode == "offline") offlineDeviceIdentity(d) else cleanMac(d.mac).ifBlank { d.name } }) { d ->
+                DeviceSmartCard(
+                    state = state,
+                    d = d,
+                    onOpenDetails = { onOpenDetails(d.mac) },
+                    onDelete = if (mode == "offline") ({ state.dismissOfflineDevice(d) }) else null
+                )
+            }
         }
         item { Spacer(Modifier.height(2.dp)) }
     }
@@ -3841,7 +3956,7 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
 
 
 @Composable
-fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = {}) {
+fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = {}, onDelete: (() -> Unit)? = null) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -3863,6 +3978,11 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = DEVICE_ICON_ACCENT.copy(alpha = .11f)) {
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Edit, null, tint = DEVICE_ICON_ACCENT, modifier = Modifier.size(15.dp)) }
+                }
+                if (onDelete != null) {
+                    androidx.compose.material3.Surface(onClick = onDelete, modifier = Modifier.size(28.dp), shape = CircleShape, color = LabV2.Red.copy(alpha = .10f)) {
+                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.DeleteOutline, null, tint = LabV2.Red, modifier = Modifier.size(15.dp)) }
+                    }
                 }
                 Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)) {
                     Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFF64748B), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
@@ -7639,6 +7759,9 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
 fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     var openedSwipeId by remember { mutableStateOf<Int?>(null) }
+    val eventDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+        mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
@@ -7657,6 +7780,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
         items(state.events, key = { eventNotificationIdentity(it) }) { e ->
             EventCompactCard(
                 e = e,
+                knownDevices = eventDevices,
                 openedSwipeId = openedSwipeId,
                 onSwipeOpen = { openedSwipeId = it },
                 onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
@@ -7672,7 +7796,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Unit, onSwipeClose: () -> Unit, onDelete: () -> Unit) {
+fun EventCompactCard(e: EventItem, knownDevices: List<DeviceItem>, openedSwipeId: Int?, onSwipeOpen: (Int) -> Unit, onSwipeClose: () -> Unit, onDelete: () -> Unit) {
     val isOnline = e.type == "device_online"
     val isOffline = e.type == "device_offline"
     val accent = when {
@@ -7768,7 +7892,7 @@ fun EventCompactCard(e: EventItem, openedSwipeId: Int?, onSwipeOpen: (Int) -> Un
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(32.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha=.14f)), contentAlignment = Alignment.Center) {
                         if (isOnline) {
-                            val profile = remember(e) { eventDeviceProfile(e) }
+                            val profile = remember(e, knownDevices) { eventDeviceProfile(e, knownDevices) }
                             LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 27)
                         } else {
                             Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp))
@@ -7822,8 +7946,8 @@ private fun EventSelectionDialog(e: EventItem, onDismiss: () -> Unit) {
 }
 
 
-private fun eventDeviceProfile(e: EventItem): DeviceVisualProfile = inferDeviceProfile(
-    DeviceItem(
+private fun eventDeviceProfile(e: EventItem, knownDevices: List<DeviceItem>): DeviceVisualProfile {
+    val probe = DeviceItem(
         name = e.name.ifBlank { e.title },
         mac = e.mac,
         online = e.type == "device_online",
@@ -7835,9 +7959,20 @@ private fun eventDeviceProfile(e: EventItem): DeviceVisualProfile = inferDeviceP
         onlineSince = e.onlineSince,
         offlineAt = e.offlineAt,
         onlineDurationText = e.onlineDurationText,
-        lastSeenAt = e.time
+        lastSeenAt = e.time,
+        manufacture = e.manufacture,
+        devType = e.devType,
+        osType = e.osType,
+        hostName = e.hostName,
+        remark = e.remark,
+        manualType = e.manualType
     )
-)
+    val eventMac = cleanMac(e.mac)
+    val identity = offlineDeviceIdentity(probe)
+    val matched = knownDevices.firstOrNull { eventMac.isNotBlank() && cleanMac(it.mac) == eventMac }
+        ?: knownDevices.firstOrNull { identity.startsWith("name:") && offlineDeviceIdentity(it) == identity }
+    return inferDeviceProfile(matched ?: probe)
+}
 
 fun eventTitle(e: EventItem): String {
     val n = webhookDisplayText(e.name.ifBlank { e.title.removeSuffix(" 上线").removeSuffix(" 离线") }).ifBlank { "事件" }
@@ -8353,6 +8488,7 @@ class HubApi(private val prefs: AppPrefs) {
             statusRoot = JSONObject().put("ok", true).put("data", status),
             watchedDevices = parseDeviceArray((devices.optJSONArray("watched") ?: JSONArray()).toString()),
             onlineDevices = parseDeviceArray((devices.optJSONArray("online") ?: JSONArray()).toString()),
+            offlineDevices = parseDeviceArray((devices.optJSONArray("offline") ?: JSONArray()).toString()),
             events = parseEvents((root.optJSONArray("events") ?: JSONArray()).toString())
         )
     }
