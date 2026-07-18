@@ -157,7 +157,6 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 import kotlin.math.abs
 import kotlin.math.min
@@ -947,7 +946,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     init {
         stateScope.launch {
             for (targetRevision in mqttRevisionSignals) {
-                if (targetRevision > prefs.syncRevision) refreshAll(silent = true)
+                if (foregroundActive && targetRevision > prefs.syncRevision) refreshAll(silent = true)
             }
         }
         stateScope.launch {
@@ -1244,7 +1243,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val next = aggregateOfflineDevices(applyDeviceOverrides(archived, deviceOverrides), online, retainedHidden)
         if (next == offlineDevices) return false
         offlineDevices = next
-        prefs.cacheOfflineDevices = JSONArray(next.map { it.toJson() }).toString()
         return true
     }
 
@@ -1253,7 +1251,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val hidden = parseOfflineHiddenKeys(prefs.offlineHiddenKeysJson) + key
         prefs.offlineHiddenKeysJson = offlineHiddenKeysJson(hidden)
         offlineDevices = offlineDevices.filterNot { offlineDeviceIdentity(it) == key }
-        prefs.cacheOfflineDevices = JSONArray(offlineDevices.map { it.toJson() }).toString()
+        persistCachesAsync()
     }
 
     private suspend fun fetchLegacyData(api: HubApi, silent: Boolean) {
@@ -1341,8 +1339,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 devices = listOf(snapshot) + devices.filterNot { it.mac.equals(clean, ignoreCase = true) }
             }
         }
-        prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
-        prefs.cacheOfflineDevices = JSONArray(offlineDevices.map { it.toJson() }).toString()
+        persistCachesAsync()
         message = "已保存设备备注：${item.remark.ifBlank { clean }}"
     }
 
@@ -1359,8 +1356,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         offlineDevices = offlineDevices.map { d ->
             if (d.mac.equals(clean, ignoreCase = true)) d.copy(followedOverride = null) else d
         }
-        prefs.cacheDevices = JSONArray(devices.map { it.toJson() }).toString()
-        prefs.cacheOfflineDevices = JSONArray(offlineDevices.map { it.toJson() }).toString()
+        persistCachesAsync()
         message = "已删除设备本地设置"
     }
 

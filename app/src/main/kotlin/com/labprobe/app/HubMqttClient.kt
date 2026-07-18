@@ -72,11 +72,11 @@ class HubMqttClient(
     private val onRevision: (Long) -> Unit
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var client: MqttAsyncClient? = null
+    @Volatile private var client: MqttAsyncClient? = null
     private var reconnectJob: Job? = null
     @Volatile private var desired = false
     @Volatile private var generation = 0L
-    private var activeConfig = HubMqttConfig()
+    @Volatile private var activeConfig = HubMqttConfig()
 
     fun start(config: HubMqttConfig) {
         val normalized = config.copy(publicUrl = normalizeMqttUrl(config.publicUrl))
@@ -86,11 +86,11 @@ class HubMqttClient(
             return
         }
         if (desired && activeConfig == normalized && client?.isConnected == true) return
+        generation += 1L
+        val run = generation
         stopClient()
         activeConfig = normalized
         desired = true
-        generation += 1L
-        val run = generation
         onState(HubRealtimeState.Connecting)
         connect(run, fastAttempt = 0, slowRetry = false)
     }
