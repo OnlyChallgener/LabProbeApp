@@ -2,6 +2,8 @@
 
 极客网探 Android 客户端，Kotlin + Jetpack Compose。当前开发版为 `v0.10.2 build130`。
 
+第三方首次部署请直接查看：[Hub 与 LabRelay 简明安装](THIRD_PARTY_INSTALL.md)。新用户使用一次性配对码，不需要预先创建 `APP_TOKEN` 或 `HOOK_TOKEN`。
+
 ## 数据连接
 
 APP 保持现有页面、卡片、排序和跳转逻辑，数据连接采用“首次全量 + 后续增量 + 定期校准”：

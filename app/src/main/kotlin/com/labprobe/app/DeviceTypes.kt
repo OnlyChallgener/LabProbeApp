@@ -300,10 +300,9 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
         keywords = listOf("pressure cooker", "电压力锅", "压力锅")),
     DeviceTypeRule("dishwasher", "洗碗机", "dishwasher", Color(0xFF0EA5E9), priority = 68,
         keywords = listOf("dishwasher", "洗碗机"), brands = listOf("美的", "海尔", "西门子", "老板")),
-    DeviceTypeRule("oven", "蒸烤箱", "smart_stove", Color(0xFFF97316), priority = 68,
-        keywords = listOf("oven", "steam", "蒸烤箱", "烤箱"), brands = listOf("美的", "方太", "老板")),
     DeviceTypeRule("steam_oven", "蒸烤箱", "steam_oven", Color(0xFFF97316), priority = 78,
-        keywords = listOf("steam oven", "combi oven", "steam grill", "蒸烤箱", "蒸箱", "烤箱")),
+        keywords = listOf("oven", "steam", "steam oven", "combi oven", "steam grill", "蒸烤箱", "蒸箱", "烤箱"),
+        brands = listOf("美的", "方太", "老板")),
     DeviceTypeRule("water_purifier", "净水器", "purifier", Color(0xFF0EA5E9), priority = 70,
         keywords = listOf("purifier", "water purifier", "净水", "净水器"), brands = listOf("安吉尔", "沁园", "美的", "海尔")),
     DeviceTypeRule("rice_cooker", "电饭煲", "rice", Color(0xFFF59E0B), priority = 66,
@@ -351,6 +350,10 @@ val DEVICE_TYPE_RULES: List<DeviceTypeRule> = listOf(
 fun deviceTypeById(id: String?): DeviceTypeRule {
     val raw = id?.trim().orEmpty()
     if (raw.isBlank()) return DEVICE_TYPE_RULES.first { it.id == "unknown" }
+    // 兼容旧版本保存的 oven 类型；选择列表只保留一个蒸烤箱入口。
+    if (raw.equals("oven", ignoreCase = true)) {
+        return DEVICE_TYPE_RULES.first { it.id == "steam_oven" }
+    }
     return DEVICE_TYPE_RULES.firstOrNull { it.id.equals(raw, ignoreCase = true) }
         ?: DEVICE_TYPE_RULES.firstOrNull { it.label.equals(raw, ignoreCase = true) }
         ?: DEVICE_TYPE_RULES.firstOrNull { it.aliases.any { alias -> alias.equals(raw, ignoreCase = true) } }
@@ -370,6 +373,7 @@ val ugreenNasModelTokens = listOf(
 fun normalizeDeviceTypeToken(raw: String): String {
     val s = raw.trim().lowercase(Locale.getDefault())
     if (s.isBlank()) return ""
+    if (s == "oven") return "steam_oven"
     DEVICE_TYPE_RULES.forEach { rule ->
         if (rule.id.lowercase(Locale.getDefault()) == s) return rule.id
         if (rule.label.lowercase(Locale.getDefault()) == s) return rule.id
@@ -386,7 +390,7 @@ fun normalizeDeviceTypeToken(raw: String): String {
         s.contains("airpods") || s.contains("earbuds") || s.contains("wireless earbuds") || s.contains("tws") -> "wireless_earbuds"
         s.contains("headphones") || s.contains("headset") || s.contains("over-ear") -> "headphones"
         s.contains("aircon companion") || s.contains("ac companion") -> "aircon_companion"
-        s.contains("steam oven") || s.contains("combi oven") -> "steam_oven"
+        s.contains("steam oven") || s.contains("combi oven") || s.contains("蒸烤箱") || s.contains("蒸箱") || s.contains("烤箱") -> "steam_oven"
         s.contains("power strip") || s.contains("smart power strip") || s.contains("powerstrip") -> "power_strip"
         s.contains("desktop charger") || s.contains("charging station") || s.contains("gan charger") || s.contains("multiport charger") -> "desktop_charger"
         s.contains("nas") || s.contains("群晖") || s.contains("威联通") || s.contains("极空间") || s.contains("飞牛") || ugreenNasModelTokens.any { s.contains(it) } -> "nas"
