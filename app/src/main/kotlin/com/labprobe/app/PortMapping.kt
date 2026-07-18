@@ -1362,8 +1362,20 @@ private fun portMapStartedAt(rule: PortMapRule): Long? {
     return null
 }
 
-private fun portMapRunningDuration(rule: PortMapRule): Long? =
-    portMapStartedAt(rule)?.let { max(0L, System.currentTimeMillis() / 1000L - it) }
+private fun portMapRunningDuration(rule: PortMapRule): Long? {
+    val now = System.currentTimeMillis() / 1000L
+    val expiry = rule.runtime.expiresAt ?: rule.expiresAt
+    val leaseDerived = if (expiry != null && rule.leaseSeconds > 0L) {
+        val remaining = (expiry - now).coerceIn(0L, rule.leaseSeconds)
+        rule.leaseSeconds - remaining
+    } else null
+    val startedDerived = portMapStartedAt(rule)?.let { max(0L, now - it) }
+    return when {
+        leaseDerived != null && startedDerived != null -> max(leaseDerived, startedDerived)
+        leaseDerived != null -> leaseDerived
+        else -> startedDerived
+    }
+}
 
 private fun portMapDesiredText(rule: PortMapRule): String = when (rule.effectiveDesiredState) {
     "running" -> "期望启动"

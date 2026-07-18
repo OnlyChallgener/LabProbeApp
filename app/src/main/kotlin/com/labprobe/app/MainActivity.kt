@@ -1074,7 +1074,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
         val archivedOffline = applyDeviceOverrides(snapshot.offlineDevices + disappeared, deviceOverrides)
         val merged = preserveFollowedDeviceSnapshots(
-            base = mergeDeviceCache(devices, watched),
+            base = mergeDeviceCache(archivedOffline.filter { it.followedOverride == true }, mergeDeviceCache(devices, watched)),
             previous = devices,
             online = online,
             overrides = deviceOverrides
@@ -1169,7 +1169,12 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 }
                 if (updated == source) return false
                 if (entity == "device") {
-                    devices = updated
+                    devices = preserveFollowedDeviceSnapshots(
+                        base = updated,
+                        previous = devices + offlineDevices,
+                        online = onlineDevices,
+                        overrides = deviceOverrides
+                    )
                 } else {
                     onlineDevices = updated
                     val archived = removedOnline?.copy(
@@ -1270,7 +1275,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val devOnlineWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devOnline), deviceOverrides)
         val devWatchedWithIpv6 = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(stRoot, devWatched), deviceOverrides)
         val mergedDevices = preserveFollowedDeviceSnapshots(
-            base = mergeDeviceCache(devices, devWatchedWithIpv6),
+            base = mergeDeviceCache(
+                (offlineDevices + disappeared).filter { it.followedOverride == true },
+                mergeDeviceCache(devices, devWatchedWithIpv6)
+            ),
             previous = devices,
             online = devOnlineWithIpv6,
             overrides = deviceOverrides
@@ -1334,7 +1342,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         onlineDevices = applyDeviceOverrides(onlineDevices, deviceOverrides)
         offlineDevices = applyDeviceOverrides(offlineDevices, deviceOverrides)
         if (item.followedOverride == true) {
-            val snapshot = (onlineDevices + devices).firstOrNull { it.mac.equals(clean, ignoreCase = true) }
+            val snapshot = (onlineDevices + devices + offlineDevices).firstOrNull { cleanMac(it.mac) == clean }
             if (snapshot != null) {
                 devices = listOf(snapshot) + devices.filterNot { it.mac.equals(clean, ignoreCase = true) }
             }
@@ -2986,14 +2994,14 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
-        initialValue = .20f,
-        targetValue = .48f,
+        initialValue = .30f,
+        targetValue = .62f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowAlpha"
     )
     val scoreGlowScale by scorePulse.animateFloat(
-        initialValue = .92f,
-        targetValue = 1.17f,
+        initialValue = .96f,
+        targetValue = 1.23f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
@@ -3011,9 +3019,17 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                 Box(Modifier.size(132.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
-                            .size(176.dp)
+                            .size(184.dp)
                             .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
-                            .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = scoreGlowAlpha * .36f), Color.Transparent)))
+                            .background(
+                                Brush.radialGradient(
+                                    0.00f to Color.Transparent,
+                                    0.50f to Color.Transparent,
+                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .28f),
+                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha),
+                                    1.00f to Color.Transparent
+                                )
+                            )
                     )
                     HealthScoreGauge(score, 112.dp)
                 }
@@ -3072,14 +3088,14 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val pulse = rememberInfiniteTransition(label = "routerGlow")
     val glowAlpha by pulse.animateFloat(
-        initialValue = .22f,
-        targetValue = .50f,
+        initialValue = .30f,
+        targetValue = .62f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowAlpha"
     )
     val glowScale by pulse.animateFloat(
-        initialValue = .91f,
-        targetValue = 1.18f,
+        initialValue = .95f,
+        targetValue = 1.22f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
@@ -3093,7 +3109,15 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
             Modifier
                 .size(268.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
-                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = glowAlpha * .40f), Color.Transparent)))
+                .background(
+                    Brush.radialGradient(
+                        0.00f to Color.Transparent,
+                        0.34f to Color.Transparent,
+                        0.52f to scoreColor.copy(alpha = glowAlpha * .24f),
+                        0.72f to scoreColor.copy(alpha = glowAlpha),
+                        1.00f to Color.Transparent
+                    )
+                )
         )
         Image(
             painter = painterResource(R.drawable.router_skeuomorphic_v3),
@@ -3669,7 +3693,9 @@ fun StatusPill(label: String, value: String, color: Color) {
 @Composable
 fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit, onOpenDetails: (String) -> Unit) {
     var mode by rememberSaveable { mutableStateOf("watch") }
-    val shared = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
+    val shared = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+        mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
+    }
     val followed = remember(shared) { followedDeviceList(shared) }
     val list = when (mode) {
         "online" -> state.onlineDevices
@@ -4435,7 +4461,7 @@ fun NetworkStatusTile(
     Surface(
         modifier = m.height(62.dp),
         shape = RoundedCornerShape(20.dp),
-        color = color.copy(alpha = .08f),
+        color = Color.White,
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))
     ) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

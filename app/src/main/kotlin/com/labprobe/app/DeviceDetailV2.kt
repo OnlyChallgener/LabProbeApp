@@ -30,8 +30,12 @@ fun DeviceDetailScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val devices = remember(state.devices, state.onlineDevices) { mergeSharedDeviceState(state.devices, state.onlineDevices) }
-    val device = remember(deviceMac, devices) { deviceMac?.let { mac -> devices.firstOrNull { it.mac.equals(mac, true) } } }
+    val devices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+        mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
+    }
+    val device = remember(deviceMac, devices) {
+        deviceMac?.let { mac -> devices.firstOrNull { cleanMac(it.mac) == cleanMac(mac) } }
+    }
     if (device == null) {
         DetailShell("设备详情", "设备数据已刷新", onBack) {
             CompactListCard {
