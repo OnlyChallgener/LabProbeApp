@@ -13,6 +13,7 @@ import org.eclipse.paho.client.mqttv3.IMqttToken
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
+import org.eclipse.paho.client.mqttv3.MqttException
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
@@ -60,7 +61,7 @@ sealed interface HubRealtimeState {
     data object Disabled : HubRealtimeState
     data object Connecting : HubRealtimeState
     data object Connected : HubRealtimeState
-    data class Reconnecting(val attempt: Int, val maxAttempts: Int) : HubRealtimeState
+    data class Reconnecting(val attempt: Int, val maxAttempts: Int, val reason: String) : HubRealtimeState
     data class HttpFallback(val reason: String) : HubRealtimeState
 }
 
@@ -122,7 +123,7 @@ class HubMqttClient(
             val mqtt = runCatching {
                 MqttAsyncClient(activeConfig.publicUrl, clientId, MemoryPersistence())
             }.getOrElse {
-                scheduleReconnect(run, fastAttempt, slowRetry, it.message ?: "MQTT地址无效")
+                scheduleReconnect(run, fastAttempt, slowRetry, failureReason(it, "MQTT地址无效"))
                 return@launch
             }
             client = mqtt
@@ -132,15 +133,25 @@ class HubMqttClient(
                 override fun connectionLost(cause: Throwable?) {
                     if (client === mqtt) client = null
                     runCatching { mqtt.close() }
-                    scheduleReconnect(run, 0, false, cause?.message ?: "连接中断")
+                    scheduleReconnect(run, 0, false, failureReason(cause, "连接中断"))
                 }
 
                 override fun messageArrived(topic: String?, message: MqttMessage?) {
-                    if (topic != activeConfig.revisionTopic || message == null) return
-                    val revision = runCatching {
-                        JSONObject(String(message.payload, Charsets.UTF_8)).optLong("revision", 0L)
-                    }.getOrDefault(0L)
-                    if (revision > 0L) onRevision(revision)
+                    if (message == null) return
+                    when (topic) {
+                        activeConfig.revisionTopic -> {
+                            val revision = runCatching {
+                                JSONObject(String(message.payload, Charsets.UTF_8)).optLong("revision", 0L)
+                            }.getOrDefault(0L)
+                            if (revision > 0L) onRevision(revision)
+                        }
+                        activeConfig.availabilityTopic -> {
+                            when (String(message.payload, Charsets.UTF_8).trim().lowercase()) {
+                                "online" -> onState(HubRealtimeState.Connected)
+                                "offline" -> onState(HubRealtimeState.HttpFallback("Hub MQTT发布端离线"))
+                            }
+                        }
+                    }
                 }
 
                 override fun deliveryComplete(token: IMqttDeliveryToken?) = Unit
@@ -161,7 +172,10 @@ class HubMqttClient(
                         runCatching { mqtt.close() }
                         return
                     }
-                    mqtt.subscribe(activeConfig.revisionTopic, 1, null, object : IMqttActionListener {
+                    val topics = listOf(activeConfig.revisionTopic, activeConfig.availabilityTopic)
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                    mqtt.subscribe(topics.toTypedArray(), IntArray(topics.size) { 1 }, null, object : IMqttActionListener {
                         override fun onSuccess(asyncActionToken: IMqttToken?) {
                             if (desired && run == generation) onState(HubRealtimeState.Connected)
                         }
@@ -170,7 +184,7 @@ class HubMqttClient(
                             if (client === mqtt) client = null
                             runCatching { mqtt.disconnectForcibly() }
                             runCatching { mqtt.close() }
-                            scheduleReconnect(run, fastAttempt, slowRetry, exception?.message ?: "订阅失败")
+                            scheduleReconnect(run, fastAttempt, slowRetry, failureReason(exception, "订阅失败"))
                         }
                     })
                 }
@@ -178,7 +192,7 @@ class HubMqttClient(
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
                     if (client === mqtt) client = null
                     runCatching { mqtt.close() }
-                    scheduleReconnect(run, fastAttempt, slowRetry, exception?.message ?: "连接失败")
+                    scheduleReconnect(run, fastAttempt, slowRetry, failureReason(exception, "连接失败"))
                 }
             }
             try {
@@ -186,7 +200,7 @@ class HubMqttClient(
             } catch (error: Exception) {
                 if (client === mqtt) client = null
                 runCatching { mqtt.close() }
-                scheduleReconnect(run, fastAttempt, slowRetry, error.message ?: "连接失败")
+                scheduleReconnect(run, fastAttempt, slowRetry, failureReason(error, "连接失败"))
             }
         }
     }
@@ -202,10 +216,22 @@ class HubMqttClient(
                 return@launch
             }
             val nextAttempt = fastAttempt + 1
-            onState(HubRealtimeState.Reconnecting(nextAttempt, FAST_RETRY_COUNT))
+            onState(HubRealtimeState.Reconnecting(nextAttempt, FAST_RETRY_COUNT, reason))
             delay(min(16_000L, 1_000L shl (nextAttempt - 1)))
             connect(run, nextAttempt, slowRetry = false)
         }
+    }
+
+    private fun failureReason(error: Throwable?, fallback: String): String {
+        if (error == null) return fallback
+        val parts = mutableListOf<String>()
+        var current: Throwable? = error
+        while (current != null && parts.size < 3) {
+            if (current is MqttException) parts += "MQTT错误 ${current.reasonCode}"
+            current.message?.trim()?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotBlank() }?.let { parts += it }
+            current = current.cause
+        }
+        return parts.distinct().joinToString(" · ").ifBlank { fallback }.take(180)
     }
 
     companion object {

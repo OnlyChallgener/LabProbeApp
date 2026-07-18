@@ -890,23 +890,23 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 when (next) {
                     HubRealtimeState.Connected -> {
                         mqttConnected = true
-                        message = "已连接 · 实时同步中"
+                        message = "实时同步正常"
                     }
                     HubRealtimeState.Connecting -> {
                         mqttConnected = false
-                        message = "正在连接实时同步..."
+                        message = "正在连接实时同步"
                     }
                     is HubRealtimeState.Reconnecting -> {
                         mqttConnected = false
-                        message = "实时连接中断 · 正在重连 ${next.attempt}/${next.maxAttempts}"
+                        message = "正在重连 ${next.attempt}/${next.maxAttempts}"
                     }
                     is HubRealtimeState.HttpFallback -> {
                         mqttConnected = false
-                        message = "MQTT 已断开 · HTTP 兜底同步"
+                        message = "已切换 HTTP 同步"
                     }
                     HubRealtimeState.Disabled -> {
                         mqttConnected = false
-                        message = if (hubConnected) "Hub 已连接 · HTTP 兼容同步" else message
+                        message = if (hubConnected) "HTTP 同步正常" else message
                     }
                 }
             }
@@ -1199,8 +1199,8 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     fun markHubSavedWithoutConnectionChange() {
         message = when {
-            mqttConnected -> "已连接 · 实时同步中"
-            hubConnected -> "Hub 已连接 · HTTP 兼容同步"
+            mqttConnected -> "实时同步正常"
+            hubConnected -> "HTTP 同步正常"
             else -> "Hub 设置已保存，等待自动连接"
         }
     }
@@ -8156,6 +8156,22 @@ fun recentSevenDates(): List<String> {
     return out
 }
 
+private fun mqttFailureText(raw: String): String {
+    val reason = raw.trim()
+    if (reason.isBlank()) return ""
+    return when {
+        reason.contains("not authorized", true) || reason.contains("bad user", true) ||
+            reason.contains("MQTT错误 4") || reason.contains("MQTT错误 5") -> "MQTT认证失败，请检查账号和密码"
+        reason.contains("SSLHandshake", true) || reason.contains("certificate", true) || reason.contains("CertPath", true) -> "TLS证书验证失败"
+        reason.contains("UnknownHost", true) || reason.contains("unable to resolve", true) -> "MQTT域名解析失败"
+        reason.contains("timeout", true) || reason.contains("timed out", true) -> "MQTT连接超时"
+        reason.contains("WebSocket", true) || reason.contains("handshake", true) -> "WSS握手失败"
+        reason.contains("connection refused", true) -> "MQTT服务拒绝连接"
+        reason.contains("network is unreachable", true) || reason.contains("no route", true) -> "当前网络无法到达MQTT地址"
+        else -> reason.take(120)
+    }
+}
+
 @Composable
 fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
     var hub by remember { mutableStateOf(prefs.hub) }
@@ -8179,15 +8195,35 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                     Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
                         Spacer(Modifier.width(6.dp))
-                        Text(if (state.mqttConnected) "MQTT 实时" else "自动连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                        val syncLabel = when (val realtime = state.mqttState) {
+                            HubRealtimeState.Connected -> "MQTT 实时"
+                            HubRealtimeState.Connecting -> "正在连接"
+                            is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
+                            is HubRealtimeState.HttpFallback -> "HTTP 同步"
+                            HubRealtimeState.Disabled -> "HTTP 同步"
+                        }
+                        Text(syncLabel, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
                     }
                 }
             }
         }
-        val connectionMessage = msg.ifBlank {
-            if (state.hubConnected) "已连接 · ${state.message}" else state.message.ifBlank { "正在等待自动连接" }
+        val liveConnectionMessage = when (val realtime = state.mqttState) {
+            HubRealtimeState.Connected -> "实时同步正常"
+            HubRealtimeState.Connecting -> if (state.hubConnected) "正在连接实时同步" else "正在连接 Hub"
+            is HubRealtimeState.Reconnecting -> "正在重连实时同步 ${realtime.attempt}/${realtime.maxAttempts}"
+            is HubRealtimeState.HttpFallback -> if (state.hubConnected) "HTTP 同步正常" else "Hub 连接失败"
+            HubRealtimeState.Disabled -> if (state.hubConnected) "HTTP 同步正常" else state.message.ifBlank { "等待连接" }
         }
-        Text(connectionMessage, color = if (state.hubConnected) LabV2.Green else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val connectionMessage = msg.ifBlank { liveConnectionMessage }
+        val mqttFailure = when (val realtime = state.mqttState) {
+            is HubRealtimeState.Reconnecting -> mqttFailureText(realtime.reason)
+            is HubRealtimeState.HttpFallback -> mqttFailureText(realtime.reason)
+            else -> ""
+        }
+        Text(connectionMessage, color = if (state.mqttConnected) LabV2.Green else if (state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (mqttFailure.isNotBlank()) {
+            Text("原因：$mqttFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val suppliedCredential = credentialInput.trim()
@@ -8219,12 +8255,15 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 if (changed) state.markHubChanged()
                 credentialInput = ""
                 scope.launch {
-                    msg = "正在连接并校准数据..."
+                    msg = "正在校准数据"
                     runCatching {
                         state.refreshAll(forceHealth = true, forceFull = true)
                         state.startRealtime()
-                        if (state.hubConnected) "已连接 · 数据已校准" else state.message
-                    }.onSuccess { msg = it }.onFailure { msg = "失败：${it.message}" }
+                        if (!state.hubConnected) error(state.message)
+                    }.onSuccess {
+                        msg = ""
+                        toast(ctx, "数据校准完成")
+                    }.onFailure { msg = "校准失败：${it.message}" }
                 }
             }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
                 Icon(Icons.Rounded.Sync, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即校准", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
