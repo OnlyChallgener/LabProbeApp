@@ -167,14 +167,14 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 object AppVersion {
-    const val NAME = "0.10.1"
-    const val CODE = 128
+    val NAME: String get() = BuildConfig.VERSION_NAME
+    val CODE: Int get() = BuildConfig.VERSION_CODE
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.10.1 build128 · 连接与更新修复" to listOf(
-            "Hub 连接监督与数据刷新分离：已连接时静默同步数据，断开后再自动重连",
-            "更新检测明确区分 Lucky 主源和 GitHub 备用源，远端旧版本不再误显示为最新",
-            "Rust Agent 更新按实际上报路由器匹配，不再依赖固定路由器名称"
+        "v0.10.2 build130 · 实时同步与状态保留" to listOf(
+            "MQTT 实时同步配合 HTTP 增量兜底和五分钟完整校准",
+            "健康分和路由器光晕向周围扩散更明显",
+            "Rust Agent 上次检查结果退出页面后继续保留"
         )
     )
 }
@@ -263,6 +263,10 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putInt("ignored_update_code", v).apply()
     var lastUpdateCheckAt: Long get() = sp.getLong("last_update_check_at", 0L)
         set(v) = sp.edit().putLong("last_update_check_at", v).apply()
+    var agentUpdateInfoJson: String get() = sp.getString("agent_update_info_v1", "") ?: ""
+        set(v) = sp.edit().putString("agent_update_info_v1", v).apply()
+    var agentUpdateMessage: String get() = sp.getString("agent_update_message_v1", "") ?: ""
+        set(v) = sp.edit().putString("agent_update_message_v1", v).apply()
 
     var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"
         set(v) = sp.edit().putString("home_order", v).apply()
@@ -844,6 +848,30 @@ data class AgentUpdateInfo(
     val message: String,
     val lastSeenAt: String
 )
+
+private fun AgentUpdateInfo.toStoredJson(): String = JSONObject()
+    .put("currentVersion", currentVersion)
+    .put("latestVersion", latestVersion)
+    .put("updateAvailable", updateAvailable)
+    .put("state", state)
+    .put("message", message)
+    .put("lastSeenAt", lastSeenAt)
+    .toString()
+
+private fun storedAgentUpdateInfo(raw: String): AgentUpdateInfo? {
+    if (raw.isBlank()) return null
+    return runCatching {
+        val root = JSONObject(raw)
+        AgentUpdateInfo(
+            currentVersion = root.optString("currentVersion", "未知"),
+            latestVersion = root.optString("latestVersion", "未知"),
+            updateAvailable = root.optBoolean("updateAvailable", false),
+            state = root.optString("state", "idle"),
+            message = root.optString("message", ""),
+            lastSeenAt = root.optString("lastSeenAt", "")
+        )
+    }.getOrNull()
+}
 
 class HubSyncUnsupported(message: String) : RuntimeException(message)
 class HubRevisionGap(message: String) : RuntimeException(message)
@@ -2859,14 +2887,14 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
-        initialValue = .08f,
-        targetValue = .24f,
+        initialValue = .12f,
+        targetValue = .32f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowAlpha"
     )
     val scoreGlowScale by scorePulse.animateFloat(
-        initialValue = .94f,
-        targetValue = 1.06f,
+        initialValue = .95f,
+        targetValue = 1.10f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
@@ -2884,9 +2912,9 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                 Box(Modifier.size(132.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
-                            .size(130.dp)
+                            .size(154.dp)
                             .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
-                            .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = .015f))))
+                            .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = scoreGlowAlpha), scoreColor.copy(alpha = scoreGlowAlpha * .30f), Color.Transparent)))
                     )
                     HealthScoreGauge(score, 112.dp)
                 }
@@ -2945,28 +2973,28 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val pulse = rememberInfiniteTransition(label = "routerGlow")
     val glowAlpha by pulse.animateFloat(
-        initialValue = .10f,
-        targetValue = .28f,
+        initialValue = .14f,
+        targetValue = .36f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowAlpha"
     )
     val glowScale by pulse.animateFloat(
-        initialValue = .97f,
-        targetValue = 1.04f,
+        initialValue = .96f,
+        targetValue = 1.10f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
-    var agentInfo by remember { mutableStateOf<AgentUpdateInfo?>(null) }
-    var agentMessage by remember { mutableStateOf("等待检查 Rust Agent 版本") }
+    var agentInfo by remember { mutableStateOf(storedAgentUpdateInfo(prefs.agentUpdateInfoJson)) }
+    var agentMessage by remember { mutableStateOf(prefs.agentUpdateMessage.ifBlank { "等待检查 Rust Agent 版本" }) }
     var agentBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(184.dp)
+                .size(216.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
-                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = .0f))))
+                .background(Brush.radialGradient(listOf(scoreColor.copy(alpha = glowAlpha), scoreColor.copy(alpha = glowAlpha * .32f), Color.Transparent)))
         )
         Image(
             painter = painterResource(R.drawable.router_skeuomorphic_v3),
@@ -2996,8 +3024,18 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                     scope.launch {
                         agentBusy = true
                         runCatching { HubApi(prefs).getAgentUpdateStatus() }
-                            .onSuccess { info -> agentInfo = info; agentMessage = if (info.updateAvailable) "发现 Rust Agent 新版本" else info.message.ifBlank { "当前已是最新版本" } }
-                            .onFailure { agentMessage = "检查失败：${it.message}" }
+                            .onSuccess { info ->
+                                val checkedMessage = if (info.updateAvailable) "发现 Rust Agent 新版本" else info.message.ifBlank { "当前已是最新版本" }
+                                agentInfo = info
+                                agentMessage = checkedMessage
+                                prefs.agentUpdateInfoJson = info.toStoredJson()
+                                prefs.agentUpdateMessage = checkedMessage
+                            }
+                            .onFailure {
+                                val failedMessage = "检查失败：${it.message} · 已保留上次结果"
+                                agentMessage = failedMessage
+                                prefs.agentUpdateMessage = failedMessage
+                            }
                         agentBusy = false
                     }
                 },
@@ -3011,8 +3049,16 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                     scope.launch {
                         agentBusy = true
                         runCatching { HubApi(prefs).requestAgentUpdate() }
-                            .onSuccess { agentMessage = it.optString("message", "更新指令已发送") }
-                            .onFailure { agentMessage = "下发失败：${it.message}" }
+                            .onSuccess {
+                                val updateMessage = it.optString("message", "更新指令已发送")
+                                agentMessage = updateMessage
+                                prefs.agentUpdateMessage = updateMessage
+                            }
+                            .onFailure {
+                                val failedMessage = "下发失败：${it.message}"
+                                agentMessage = failedMessage
+                                prefs.agentUpdateMessage = failedMessage
+                            }
                         agentBusy = false
                     }
                 },
@@ -8193,7 +8239,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.9.22：新增 Rust 端口映射管理，支持 TCP 6→4 / 6→6 与 IPv6 后缀匹配。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.2：MQTT 实时同步、自动校准与 Agent 检查结果保留。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
