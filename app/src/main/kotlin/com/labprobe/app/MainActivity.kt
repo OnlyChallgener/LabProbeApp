@@ -1500,7 +1500,8 @@ fun LabProbeApp(prefs: AppPrefs) {
     var updateChecking by remember { mutableStateOf(false) }
     var ignoredUpdateCode by remember { mutableStateOf(prefs.ignoredUpdateCode) }
     var downloadUi by remember { mutableStateOf(UpdateDownloadUi()) }
-    var showUpdateBar by remember { mutableStateOf(true) }
+    var showUpdateBar by remember { mutableStateOf(false) }
+    var backgroundUpdateRequested by remember { mutableStateOf(false) }
     var installAfterDownload by remember { mutableStateOf(false) }
     fun pendingUpdate(): Boolean = latestUpdate?.let { it.hasUpdate && ignoredUpdateCode != it.versionCode } == true
     fun openGithub(info: GitHubUpdateInfo? = latestUpdate) {
@@ -1509,7 +1510,8 @@ fun LabProbeApp(prefs: AppPrefs) {
     fun startUpdateDownload(info: GitHubUpdateInfo?, installAfter: Boolean) {
         val target = info ?: return
         installAfterDownload = installAfter
-        showUpdateBar = true
+        backgroundUpdateRequested = !installAfter
+        showUpdateBar = !installAfter
         scope.launch {
             downloadUi = UpdateDownloadUi(phase = "downloading", total = target.apkSize)
             runCatching {
@@ -1681,7 +1683,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                         info = latestUpdate!!,
                         state = downloadUi,
                         checking = updateChecking,
-                        onDismiss = { showUpdateDialog = false },
+                        onDismiss = {
+                            if (downloadUi.phase != "downloading" || backgroundUpdateRequested) {
+                                showUpdateDialog = false
+                            }
+                        },
                         onImmediate = { startUpdateDownload(latestUpdate, true) },
                         onBackground = { showUpdateDialog = false; startUpdateDownload(latestUpdate, false) },
                         onIgnore = { latestUpdate?.let { prefs.ignoredUpdateCode = it.versionCode; ignoredUpdateCode = it.versionCode }; showUpdateDialog = false },
@@ -1690,7 +1696,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         onRetry = { startUpdateDownload(latestUpdate, installAfterDownload) }
                     )
                 }
-                if (showUpdateBar && downloadUi.phase != "idle") {
+                if (showUpdateBar && backgroundUpdateRequested && downloadUi.phase != "idle") {
                     Box(Modifier.align(Alignment.BottomCenter).zIndex(8f)) {
                         UpdateFloatingBar(
                             state = downloadUi,
@@ -3088,14 +3094,14 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val pulse = rememberInfiniteTransition(label = "routerGlow")
     val glowAlpha by pulse.animateFloat(
-        initialValue = .30f,
-        targetValue = .62f,
+        initialValue = .28f,
+        targetValue = .58f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowAlpha"
     )
     val glowScale by pulse.animateFloat(
-        initialValue = .95f,
-        targetValue = 1.22f,
+        initialValue = 1.00f,
+        targetValue = 1.14f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
@@ -3107,14 +3113,13 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(268.dp)
+                .size(300.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
                 .background(
                     Brush.radialGradient(
-                        0.00f to Color.Transparent,
-                        0.34f to Color.Transparent,
-                        0.52f to scoreColor.copy(alpha = glowAlpha * .24f),
-                        0.72f to scoreColor.copy(alpha = glowAlpha),
+                        0.00f to LabV2.Green.copy(alpha = glowAlpha * .30f),
+                        0.42f to LabV2.Green.copy(alpha = glowAlpha * .22f),
+                        0.72f to LabV2.Green.copy(alpha = glowAlpha * .10f),
                         1.00f to Color.Transparent
                     )
                 )
