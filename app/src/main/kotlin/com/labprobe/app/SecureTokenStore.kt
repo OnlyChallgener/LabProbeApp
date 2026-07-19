@@ -63,15 +63,22 @@ class SecureTokenStore(context: Context) {
     fun set(value: String) = delegate.set(value)
 }
 
+/** Removes the deprecated APP-side HOOK_TOKEN copy left by build132. */
+fun clearDeprecatedHookToken(context: Context) {
+    context.applicationContext
+        .getSharedPreferences("labprobe_secure_hook", Context.MODE_PRIVATE)
+        .edit()
+        .clear()
+        .apply()
+    runCatching {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (store.containsAlias("labprobe_hook_token_v1")) store.deleteEntry("labprobe_hook_token_v1")
+    }
+}
+
 /** Stores MQTT credentials returned by the user's own Hub. */
 class SecureMqttStore(context: Context) {
     private val delegate = SecureStringStore(context, "labprobe_secure_mqtt", "labprobe_mqtt_credentials_v1")
-    fun get(): String = delegate.get()
-    fun set(value: String) = delegate.set(value)
-}
-/** Stores HOOK_TOKEN separately from APP_TOKEN. */
-class SecureHookTokenStore(context: Context) {
-    private val delegate = SecureStringStore(context, "labprobe_secure_hook", "labprobe_hook_token_v1")
     fun get(): String = delegate.get()
     fun set(value: String) = delegate.set(value)
 }

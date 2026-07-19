@@ -171,10 +171,10 @@ object AppVersion {
     val CODE: Int get() = BuildConfig.VERSION_CODE
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.10.4 build132 · Token 鉴权与在线升级" to listOf(
-            "MQTT 实时同步配合 HTTP 增量兜底和五分钟完整校准",
-            "健康分和路由器光晕向周围扩散更明显",
-            "Rust Agent 上次检查结果退出页面后继续保留"
+        "v0.10.5 build133 · Token 权限与关注列表修复" to listOf(
+            "APP 仅保存和使用 APP_TOKEN，不再要求 HOOK_TOKEN",
+            "首页关注终端与设备页使用相同筛选",
+            "取消关注后首页立即同步移除设备"
         )
     )
 }
@@ -236,22 +236,17 @@ fun Activity.applyLabProbeSystemBars() {
 class AppPrefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
-    private val secureHookTokenStore = SecureHookTokenStore(context)
     private val secureMqttStore = SecureMqttStore(context)
     init {
+        clearDeprecatedHookToken(context)
         val legacy = sp.getString("token", "").orEmpty().trim()
         if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
         if (sp.contains("token")) sp.edit().remove("token").apply()
-        val legacyHook = sp.getString("hook_token", "").orEmpty().trim().ifBlank { sp.getString("hookToken", "").orEmpty().trim() }
-        if (secureHookTokenStore.get().isBlank() && legacyHook.isNotBlank()) secureHookTokenStore.set(legacyHook)
-        if (sp.contains("hook_token") || sp.contains("hookToken")) sp.edit().remove("hook_token").remove("hookToken").apply()
     }
     var hub: String get() = sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB
         set(v) = sp.edit().putString("hub", v.trim().trimEnd('/')).apply()
     var token: String get() = secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
         set(v) = secureTokenStore.set(v)
-    var hookToken: String get() = secureHookTokenStore.get()
-        set(v) = secureHookTokenStore.set(v)
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
     var autoRefresh: String get() = "实时"
@@ -3860,9 +3855,13 @@ fun vpnServiceLabel(key: String): String = when (key.lowercase(Locale.getDefault
 
 @Composable
 fun DevicesHomeCard(state: AppState) {
+    val shared = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+        mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
+    }
+    val followed = remember(shared) { followedDeviceList(shared) }
     ExpressiveCard("关注终端", "在线时长、下线发现时间精确到秒。", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
-        if (state.devices.isEmpty()) Text("暂无缓存，点击刷新。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
-        state.devices.take(4).forEach { DeviceLine(it, details = true) }
+        if (followed.isEmpty()) Text("暂无关注终端。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+        followed.take(4).forEach { DeviceLine(it, details = true) }
     }
 }
 
@@ -8673,7 +8672,6 @@ private fun mqttFailureText(raw: String): String {
 fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
     var hub by remember { mutableStateOf(prefs.hub) }
     var appToken by remember { mutableStateOf(prefs.token) }
-    var hookToken by remember { mutableStateOf(prefs.hookToken) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var mqttUrl by remember { mutableStateOf(prefs.mqttUrlOverride) }
     var msg by remember { mutableStateOf("") }
@@ -8681,7 +8679,6 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     ExpressiveCard("连接设置", "MQTT 实时同步，断线自动重连并由 HTTP 校准兜底。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
-        LabeledInput("HOOK Token", "LabRelay / Lucky / Webhook HOOK_TOKEN", hookToken, { hookToken = it }, password = true)
         LabeledInput("MQTT", "自动读取 Hub；也可填写 wss://自己的域名:端口/mqtt", mqttUrl, { mqttUrl = it })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -8726,12 +8723,10 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val cleanAppToken = appToken.trim()
-                val cleanHookToken = hookToken.trim()
-                val connectionChanged = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hookToken != cleanHookToken || prefs.hubDns != dns.trim()
+                val connectionChanged = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
                 val mqttChanged = prefs.mqttUrlOverride != mqttUrl.trim()
                 prefs.hub = hub
                 prefs.token = cleanAppToken
-                prefs.hookToken = cleanHookToken
                 prefs.hubDns = dns
                 prefs.mqttUrlOverride = mqttUrl
                 prefs.addHistory("hub", hub)
@@ -8746,11 +8741,9 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             }
             Button(onClick = {
                 val cleanAppToken = appToken.trim()
-                val cleanHookToken = hookToken.trim()
-                val changed = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hookToken != cleanHookToken || prefs.hubDns != dns.trim()
+                val changed = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
                 prefs.hub = hub
                 prefs.token = cleanAppToken
-                prefs.hookToken = cleanHookToken
                 prefs.hubDns = dns
                 prefs.mqttUrlOverride = mqttUrl
                 prefs.addHistory("hub", hub)
@@ -8779,7 +8772,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.4：恢复 APP_TOKEN 与 HOOK_TOKEN，并移除配对码流程。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.5：APP 仅使用 APP_TOKEN，取消关注后首页同步移除。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 

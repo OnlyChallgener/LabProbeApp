@@ -115,10 +115,9 @@ services:
 1. 打开 APP 的“我的 / 设置”。
 2. Hub 地址填写 `http://192.168.x.x:58443`。
 3. APP Token 填写 Compose 中的 `APP_TOKEN`。
-4. HOOK Token 填写 Compose 中的 `HOOK_TOKEN`。
-5. 保存并立即校准。
+4. 保存并立即校准。
 
-APP 的 API 请求使用 `APP_TOKEN`。两个令牌都会由 Android Keystore 加密保存。
+APP 只使用 `APP_TOKEN`，并由 Android Keystore 加密保存。`HOOK_TOKEN` 不填写到 APP，只在安装 LabRelay 或配置 Lucky/Webhook 时使用。
 
 
 ## 三、安装 LabRelay

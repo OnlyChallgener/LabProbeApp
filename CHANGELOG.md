@@ -1,8 +1,9 @@
 # LabProbe 更新日志
 
-## v0.10.4 build132
+## v0.10.5 build133
 - MQTT 前台实时同步，断线自动重连并由 HTTP 增量同步兜底，每 5 分钟完整校准。
-- 取消配对码，设置页恢复独立 APP_TOKEN 与 HOOK_TOKEN。
+- APP 设置仅保留 APP_TOKEN；HOOK_TOKEN 仅供 LabRelay、Lucky 与 Webhook 使用。
+- 首页“关注终端”与设备页使用同一关注筛选，取消关注后立即消失。
 - 首页健康分和评分细则路由器的动态光晕向周围扩散更明显。
 - Rust Agent 上一次检查结果持久保存，退出评分页面后不再丢失。
 - APP 版本显示和更新判断统一读取 Gradle BuildConfig，避免多处版本号不一致。
