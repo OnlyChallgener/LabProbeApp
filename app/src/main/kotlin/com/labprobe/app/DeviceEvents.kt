@@ -3,9 +3,11 @@ package com.labprobe.app
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 private const val DEVICE_EVENT_OFFLINE_COOLDOWN_MS = 5 * 60 * 1000L
+private const val DEVICE_EVENT_MAX_DAYS = 15
 
 fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<DeviceItem> {
     val oldByMac = old.associateBy { cleanMac(it.mac) }
@@ -108,9 +110,21 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
         if (at != null) lastOfflineAtByKey[key] = at
         onlineAtByKey.remove(key)
     }
-    return kept.sortedWith(compareByDescending<EventItem> { parseEventMillis(it.time) ?: 0L }.thenByDescending { it.id })
+    return trimDeviceEventsToRecentDays(kept.sortedWith(compareByDescending<EventItem> { parseEventMillis(it.time) ?: 0L }.thenByDescending { it.id }))
 }
 
+private fun trimDeviceEventsToRecentDays(events: List<EventItem>): List<EventItem> {
+    if (events.isEmpty()) return events
+    val days = events.mapNotNull(::eventRetentionDay).distinct().sortedDescending().take(DEVICE_EVENT_MAX_DAYS).toSet()
+    if (days.isEmpty()) return events
+    return events.filter { eventRetentionDay(it)?.let { day -> day in days } ?: true }
+}
+
+private fun eventRetentionDay(event: EventItem): String? {
+    Regex("""\d{4}-\d{2}-\d{2}""").find(event.time)?.value?.let { return it }
+    val millis = parseEventMillis(event.time) ?: return null
+    return SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(millis))
+}
 fun eventDeviceKey(e: EventItem): String {
     val mac = e.mac.trim().lowercase(Locale.getDefault())
     if (mac.isNotBlank() && mac != "null" && mac != "-") return "mac:$mac"

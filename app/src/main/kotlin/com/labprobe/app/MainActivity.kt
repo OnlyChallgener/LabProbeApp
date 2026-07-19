@@ -236,16 +236,22 @@ fun Activity.applyLabProbeSystemBars() {
 class AppPrefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
+    private val secureHookTokenStore = SecureHookTokenStore(context)
     private val secureMqttStore = SecureMqttStore(context)
     init {
         val legacy = sp.getString("token", "").orEmpty().trim()
         if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
         if (sp.contains("token")) sp.edit().remove("token").apply()
+        val legacyHook = sp.getString("hook_token", "").orEmpty().trim().ifBlank { sp.getString("hookToken", "").orEmpty().trim() }
+        if (secureHookTokenStore.get().isBlank() && legacyHook.isNotBlank()) secureHookTokenStore.set(legacyHook)
+        if (sp.contains("hook_token") || sp.contains("hookToken")) sp.edit().remove("hook_token").remove("hookToken").apply()
     }
     var hub: String get() = sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB
         set(v) = sp.edit().putString("hub", v.trim().trimEnd('/')).apply()
     var token: String get() = secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
         set(v) = secureTokenStore.set(v)
+    var hookToken: String get() = secureHookTokenStore.get()
+        set(v) = secureHookTokenStore.set(v)
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
     var autoRefresh: String get() = "实时"
@@ -278,6 +284,10 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("favorite_shortcuts_v1", v).apply()
     var favoriteNetworkMode: String get() = sp.getString("favorite_network_mode", "lan") ?: "lan"
         set(v) = sp.edit().putString("favorite_network_mode", v).apply()
+    var routerLanUrl: String get() = sp.getString("router_lan_url_v1", "") ?: ""
+        set(v) = sp.edit().putString("router_lan_url_v1", v.trim()).apply()
+    var routerWanUrl: String get() = sp.getString("router_wan_url_v1", "") ?: ""
+        set(v) = sp.edit().putString("router_wan_url_v1", v.trim()).apply()
     var certificateExpiryJson: String get() = sp.getString("certificate_expiry_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("certificate_expiry_v1", v).apply()
     var certificateReminderKeysJson: String get() = sp.getString("certificate_reminder_keys_v1", "[]") ?: "[]"
@@ -981,7 +991,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             var attemptedReconnect = false
             try {
                 val api = HubApi(prefs)
-                api.ensureClientToken()
+
                 val needsReconnect = !hubConnected || forceHealth
                 if (needsReconnect) {
                     if (!silent) message = "正在连接 Hub，最多尝试 5 次..."
@@ -1007,7 +1017,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                     if (!silent) message = "Hub 已断开，正在自动重连..."
                     try {
                         val api = HubApi(prefs)
-                        api.ensureClientToken()
+        
                         api.keepaliveWithRetry(5)
                         hubConnected = true
                         if (!silent) message = "重连成功，正在校准完整数据..."
@@ -1525,16 +1535,27 @@ fun LabProbeApp(prefs: AppPrefs) {
     var showUpdateBar by remember { mutableStateOf(false) }
     var backgroundUpdateRequested by remember { mutableStateOf(false) }
     var installAfterDownload by remember { mutableStateOf(false) }
+    var updateDownloadJob by remember { mutableStateOf<Job?>(null) }
     fun pendingUpdate(): Boolean = latestUpdate?.let { it.hasUpdate && ignoredUpdateCode != it.versionCode } == true
     fun openGithub(info: GitHubUpdateInfo? = latestUpdate) {
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info?.htmlUrl?.takeIf { it.isNotBlank() } ?: AppVersion.GITHUB))) }
     }
+    fun cancelUpdateDownload(resetUi: Boolean = true) {
+        updateDownloadJob?.cancel()
+        updateDownloadJob = null
+        installAfterDownload = false
+        backgroundUpdateRequested = false
+        showUpdateBar = false
+        if (resetUi) downloadUi = UpdateDownloadUi()
+    }
     fun startUpdateDownload(info: GitHubUpdateInfo?, installAfter: Boolean) {
         val target = info ?: return
+        updateDownloadJob?.cancel()
         installAfterDownload = installAfter
         backgroundUpdateRequested = !installAfter
         showUpdateBar = !installAfter
-        scope.launch {
+        val job = scope.launch {
+            val runningJob = coroutineContext[Job]
             downloadUi = UpdateDownloadUi(phase = "downloading", total = target.apkSize)
             runCatching {
                 downloadUpdateApk(context, target) { progress -> downloadUi = progress }
@@ -1542,9 +1563,15 @@ fun LabProbeApp(prefs: AppPrefs) {
                 downloadUi = UpdateDownloadUi(phase = "done", downloaded = file.length(), total = target.apkSize, filePath = file.absolutePath)
                 if (installAfterDownload) installApk(context, file)
             }.onFailure { e ->
-                downloadUi = UpdateDownloadUi(phase = "error", total = target.apkSize, error = e.message ?: e.javaClass.simpleName)
+                if (e is kotlinx.coroutines.CancellationException) {
+                    downloadUi = UpdateDownloadUi()
+                } else {
+                    downloadUi = UpdateDownloadUi(phase = "error", total = target.apkSize, error = e.message ?: e.javaClass.simpleName)
+                }
             }
+            if (updateDownloadJob == runningJob) updateDownloadJob = null
         }
+        updateDownloadJob = job
     }
 
     LaunchedEffect(Unit) {
@@ -1643,6 +1670,28 @@ fun LabProbeApp(prefs: AppPrefs) {
             toolReturnRoute = null
         }
 
+        var pageSwipeOffset by remember { mutableStateOf(0f) }
+        val primaryPageSwipeModifier = if (route in mainRoutes) {
+            Modifier.pointerInput(route, selected) {
+                detectHorizontalDragGestures(
+                    onDragStart = { pageSwipeOffset = 0f },
+                    onDragCancel = { pageSwipeOffset = 0f },
+                    onDragEnd = {
+                        val threshold = 96.dp.toPx()
+                        val nextIndex = when {
+                            pageSwipeOffset <= -threshold && selected < mainRoutes.lastIndex -> selected + 1
+                            pageSwipeOffset >= threshold && selected > 0 -> selected - 1
+                            else -> selected
+                        }
+                        if (nextIndex != selected) route = mainRoutes[nextIndex]
+                        pageSwipeOffset = 0f
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        if (!change.isConsumed) pageSwipeOffset += dragAmount
+                    }
+                )
+            }
+        } else Modifier
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
@@ -1651,6 +1700,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                 Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing)) {
                     AnimatedContent(
                         targetState = route,
+                        modifier = Modifier.fillMaxSize().then(primaryPageSwipeModifier),
                         label = "route",
                         transitionSpec = {
                             fadeIn(animationSpec = tween(120)) togetherWith
@@ -1711,8 +1761,19 @@ fun LabProbeApp(prefs: AppPrefs) {
                             }
                         },
                         onImmediate = { startUpdateDownload(latestUpdate, true) },
-                        onBackground = { showUpdateDialog = false; startUpdateDownload(latestUpdate, false) },
-                        onIgnore = { latestUpdate?.let { prefs.ignoredUpdateCode = it.versionCode; ignoredUpdateCode = it.versionCode }; showUpdateDialog = false },
+                        onBackground = {
+                            if (downloadUi.phase == "downloading") {
+                                installAfterDownload = false
+                                backgroundUpdateRequested = true
+                                showUpdateBar = true
+                                showUpdateDialog = false
+                            } else {
+                                showUpdateDialog = false
+                                startUpdateDownload(latestUpdate, false)
+                            }
+                        },
+                        onIgnore = { cancelUpdateDownload(); latestUpdate?.let { prefs.ignoredUpdateCode = it.versionCode; ignoredUpdateCode = it.versionCode }; showUpdateDialog = false },
+                        onCancel = { cancelUpdateDownload(); showUpdateDialog = false },
                         onGithub = { openGithub() },
                         onInstall = { downloadUi.filePath.takeIf { it.isNotBlank() }?.let { installApk(context, File(it)) } },
                         onRetry = { startUpdateDownload(latestUpdate, installAfterDownload) }
@@ -1724,6 +1785,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             state = downloadUi,
                             onShow = { showUpdateDialog = true },
                             onHide = { showUpdateBar = false },
+                            onCancel = { cancelUpdateDownload() },
                             onInstall = { downloadUi.filePath.takeIf { it.isNotBlank() }?.let { installApk(context, File(it)) } }
                         )
                     }
@@ -2444,6 +2506,7 @@ suspend fun downloadUpdateApk(context: Context, info: GitHubUpdateInfo, onProgre
     val urls = listOf(info.apkUrl, info.fallbackApkUrl).map { it.trim() }.filter { it.startsWith("http") }.distinct()
     var lastError: Throwable? = null
     for (url in urls) {
+        if (!currentCoroutineContext().isActive) throw kotlinx.coroutines.CancellationException("下载已取消")
         val tmp = File(dir, file.name + ".part")
         tmp.delete()
         try {
@@ -2460,7 +2523,9 @@ suspend fun downloadUpdateApk(context: Context, info: GitHubUpdateInfo, onProgre
                 body.byteStream().use { input ->
                     FileOutputStream(tmp).use { output ->
                         while (true) {
+                            if (!currentCoroutineContext().isActive) throw kotlinx.coroutines.CancellationException("下载已取消")
                             val n = input.read(buf)
+                            if (!currentCoroutineContext().isActive) throw kotlinx.coroutines.CancellationException("下载已取消")
                             if (n < 0) break
                             output.write(buf, 0, n)
                             downloaded += n
@@ -2485,6 +2550,7 @@ suspend fun downloadUpdateApk(context: Context, info: GitHubUpdateInfo, onProgre
             }
         } catch (error: Throwable) {
             tmp.delete()
+            if (error is kotlinx.coroutines.CancellationException) throw error
             lastError = error
         }
     }
@@ -2584,6 +2650,7 @@ fun UpdateDialogCard(
     onDismiss: () -> Unit,
     onImmediate: () -> Unit,
     onBackground: () -> Unit,
+    onCancel: () -> Unit,
     onIgnore: () -> Unit,
     onGithub: () -> Unit,
     onInstall: () -> Unit,
@@ -2623,6 +2690,9 @@ fun UpdateDialogCard(
                             if (state.phase == "downloading") Text("${formatBytesShort(state.downloaded)} / ${formatBytesShort(total)}", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f))
                             if (state.slow) Text("下载网速偏慢，建议切换代理网络后重试。", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = Color(0xFFF59E0B))
                             if (state.error.isNotBlank()) Text(state.error, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444), lineHeight = 16.sp)
+                            if (state.phase == "downloading") Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = onCancel, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("取消更新", fontWeight = FontWeight.Black) }
+                            }
                         }
                     }
                 }
@@ -2642,7 +2712,7 @@ fun UpdateDialogCard(
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onIgnore, enabled = info.hasUpdate) { Text("忽略本版", fontWeight = FontWeight.Bold) }
-                TextButton(onClick = onBackground, enabled = state.phase != "downloading") { Text("后台下载", fontWeight = FontWeight.Bold) }
+                TextButton(onClick = onBackground, enabled = state.phase != "done") { Text("后台下载", fontWeight = FontWeight.Bold) }
                 TextButton(onClick = onGithub) { Text("GitHub", fontWeight = FontWeight.Bold) }
             }
         }
@@ -2650,7 +2720,7 @@ fun UpdateDialogCard(
 }
 
 @Composable
-fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () -> Unit, onInstall: () -> Unit) {
+fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () -> Unit, onCancel: () -> Unit, onInstall: () -> Unit) {
     if (state.phase == "idle") return
     Surface(
         modifier = Modifier
@@ -2675,7 +2745,7 @@ fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () ->
                 if (state.phase == "downloading") LinearProgressIndicator(progress = { state.percent / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(99.dp)), color = Color(0xFF2563EB), trackColor = Color(0xFF2563EB).copy(alpha = .12f))
             }
             Spacer(Modifier.width(8.dp))
-            if (state.phase == "done" && state.filePath.isNotBlank()) TextButton(onClick = onInstall) { Text("安装", fontWeight = FontWeight.Black) } else TextButton(onClick = onShow) { Text("详情", fontWeight = FontWeight.Black) }
+            if (state.phase == "downloading") TextButton(onClick = onCancel) { Text("取消", fontWeight = FontWeight.Black) } else if (state.phase == "done" && state.filePath.isNotBlank()) TextButton(onClick = onInstall) { Text("安装", fontWeight = FontWeight.Black) } else TextButton(onClick = onShow) { Text("详情", fontWeight = FontWeight.Black) }
             IconButton(onClick = onHide, modifier = Modifier.size(30.dp)) { Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f)) }
         }
     }
@@ -3117,13 +3187,13 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val pulse = rememberInfiniteTransition(label = "routerGlow")
     val glowAlpha by pulse.animateFloat(
         initialValue = .28f,
-        targetValue = .58f,
+        targetValue = .64f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowAlpha"
     )
     val glowScale by pulse.animateFloat(
         initialValue = 1.00f,
-        targetValue = 1.14f,
+        targetValue = 1.18f,
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
@@ -3132,16 +3202,50 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     var agentBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    val context = LocalContext.current
+    var showRouterUrlEditor by remember { mutableStateOf(false) }
+    var routerLanUrl by remember { mutableStateOf(prefs.routerLanUrl) }
+    var routerWanUrl by remember { mutableStateOf(prefs.routerWanUrl) }
+    fun normalizedRouterUrl(raw: String): String {
+        val value = raw.trim()
+        return if (value.isBlank() || value.contains("://")) value else "https://$value"
+    }
+    fun openRouterUrl() {
+        val lan = normalizedRouterUrl(routerLanUrl)
+        val wan = normalizedRouterUrl(routerWanUrl)
+        val target = if (prefs.favoriteNetworkMode == "wan") wan.ifBlank { lan } else lan.ifBlank { wan }
+        if (target.isBlank()) return
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
+    if (showRouterUrlEditor) {
+        RouterUrlDialog(
+            lanUrl = routerLanUrl,
+            wanUrl = routerWanUrl,
+            onLanChange = { routerLanUrl = it },
+            onWanChange = { routerWanUrl = it },
+            onDismiss = { showRouterUrlEditor = false },
+            onSave = {
+                val lan = normalizedRouterUrl(routerLanUrl)
+                val wan = normalizedRouterUrl(routerWanUrl)
+                routerLanUrl = lan
+                routerWanUrl = wan
+                prefs.routerLanUrl = lan
+                prefs.routerWanUrl = wan
+                showRouterUrlEditor = false
+            }
+        )
+    }
     Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(300.dp)
+                .size(320.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
                 .background(
                     Brush.radialGradient(
                         0.00f to LabV2.Green.copy(alpha = glowAlpha * .30f),
-                        0.42f to LabV2.Green.copy(alpha = glowAlpha * .22f),
-                        0.72f to LabV2.Green.copy(alpha = glowAlpha * .10f),
+                        0.46f to LabV2.Green.copy(alpha = glowAlpha * .22f),
+                        0.78f to LabV2.Green.copy(alpha = glowAlpha * .10f),
                         1.00f to Color.Transparent
                     )
                 )
@@ -3149,7 +3253,14 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         Image(
             painter = painterResource(R.drawable.router_skeuomorphic_v3),
             contentDescription = "路由器",
-            modifier = Modifier.size(150.dp),
+            modifier = Modifier
+                .size(150.dp)
+                .pointerInput(routerLanUrl, routerWanUrl, prefs.favoriteNetworkMode) {
+                    detectTapGestures(
+                        onTap = { openRouterUrl() },
+                        onDoubleTap = { showRouterUrlEditor = true }
+                    )
+                },
             contentScale = ContentScale.Fit
         )
     }
@@ -3220,6 +3331,51 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     }
 }
 
+@Composable
+private fun RouterUrlDialog(
+    lanUrl: String,
+    wanUrl: String,
+    onLanChange: (String) -> Unit,
+    onWanChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("路由器地址", fontWeight = FontWeight.Black, fontSize = 20.sp, color = LabV2.Ink) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("内网", Modifier.width(42.dp), fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    CompactTextField(
+                        value = lanUrl,
+                        onValueChange = onLanChange,
+                        placeholder = "192.168.5.1",
+                        leadingIcon = { Icon(Icons.Rounded.Router, null, Modifier.size(16.dp), tint = LabV2.Primary) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("外网", Modifier.width(42.dp), fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    CompactTextField(
+                        value = wanUrl,
+                        onValueChange = onWanChange,
+                        placeholder = "example.com",
+                        leadingIcon = { Icon(Icons.Rounded.Public, null, Modifier.size(16.dp), tint = LabV2.Cyan) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onSave, shape = RoundedCornerShape(16.dp)) { Text("保存", fontWeight = FontWeight.Black) } },
+        dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("取消", fontWeight = FontWeight.Bold) } },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = LAB_POPUP_SURFACE,
+        tonalElevation = 0.dp
+    )
+}
 @Composable
 private fun ScoreRuleRow(title: String, detail: String, points: Int, achieved: Boolean) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -7814,11 +7970,13 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
     val eventDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
         mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)
     }
-    val dayGroups = remember(state.events, eventDevices, state.deviceOverrides, state.hiddenEventDates) {
+    val visibleEvents = remember(state.events, eventDevices, state.deviceOverrides, state.hiddenEventDates) {
         applyEventDeviceNames(state.events, eventDevices, state.deviceOverrides)
             .filterNot { eventDayKey(it) in state.hiddenEventDates }
-            .groupBy(::eventDayKey)
-            .toSortedMap(reverseOrder())
+    }
+    val visibleEventBytes = remember(visibleEvents) { eventStorageBytes(visibleEvents) }
+    val dayGroups = remember(visibleEvents) {
+        visibleEvents.groupBy(::eventDayKey).toSortedMap(reverseOrder())
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -7834,7 +7992,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
             })
         }
         item { topNav() }
-        item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+        item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED), headerAction = { Text("${visibleEvents.size}条 · ${formatEventStorageBytes(visibleEventBytes)}", fontSize = 10.8.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted) }) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
         dayGroups.forEach { (date, events) ->
             item(key = "event-day-$date") {
                 EventDayHeaderCard(
@@ -7851,7 +8009,8 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
                         openedDaySwipe = null
                         expandedDays = expandedDays - date
                         state.hideEventDay(date)
-                    }
+                    },
+                    storageLabel = formatEventStorageBytes(eventStorageBytes(events))
                 )
             }
             if (date in expandedDays) {
@@ -7879,6 +8038,17 @@ private fun eventDayKey(event: EventItem): String {
     val millis = parseEventMillis(event.time) ?: return "日期未知"
     return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(millis))
 }
+private fun eventStorageBytes(events: List<EventItem>): Long = JSONArray(events.map { it.toJson() })
+    .toString()
+    .toByteArray(Charsets.UTF_8)
+    .size
+    .toLong()
+
+private fun formatEventStorageBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+    bytes >= 1024L -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
+    else -> "${bytes.coerceAtLeast(0L)} B"
+}
 
 @Composable
 private fun EventDayHeaderCard(
@@ -7889,7 +8059,8 @@ private fun EventDayHeaderCard(
     onSwipeOpen: (String) -> Unit,
     onSwipeClose: () -> Unit,
     onToggle: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    storageLabel: String
 ) {
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 78.dp.toPx() }
@@ -7958,7 +8129,7 @@ private fun EventDayHeaderCard(
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(if (date == todayDateString()) "今天" else date, fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-                    Text("$count 条事件", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                    Text("$count 条事件 · $storageLabel", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                 }
                 Icon(
                     if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
@@ -8501,14 +8672,16 @@ private fun mqttFailureText(raw: String): String {
 @Composable
 fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
     var hub by remember { mutableStateOf(prefs.hub) }
-    var credentialInput by remember { mutableStateOf("") }
+    var appToken by remember { mutableStateOf(prefs.token) }
+    var hookToken by remember { mutableStateOf(prefs.hookToken) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var mqttUrl by remember { mutableStateOf(prefs.mqttUrlOverride) }
     var msg by remember { mutableStateOf("") }
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     ExpressiveCard("连接设置", "MQTT 实时同步，断线自动重连并由 HTTP 校准兜底。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
-        LabeledInput("配对码", if (prefs.token.isBlank()) "APP-123456" else "已安全保存；重新配对时再填写", credentialInput, { credentialInput = it })
+        LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
+        LabeledInput("HOOK Token", "LabRelay / Lucky / Webhook HOOK_TOKEN", hookToken, { hookToken = it }, password = true)
         LabeledInput("MQTT", "自动读取 Hub；也可填写 wss://自己的域名:端口/mqtt", mqttUrl, { mqttUrl = it })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -8552,11 +8725,13 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                val suppliedCredential = credentialInput.trim()
-                val connectionChanged = prefs.hub != hub.trim().trimEnd('/') || (suppliedCredential.isNotBlank() && prefs.token != suppliedCredential) || prefs.hubDns != dns.trim()
+                val cleanAppToken = appToken.trim()
+                val cleanHookToken = hookToken.trim()
+                val connectionChanged = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hookToken != cleanHookToken || prefs.hubDns != dns.trim()
                 val mqttChanged = prefs.mqttUrlOverride != mqttUrl.trim()
                 prefs.hub = hub
-                if (suppliedCredential.isNotBlank()) prefs.token = suppliedCredential
+                prefs.token = cleanAppToken
+                prefs.hookToken = cleanHookToken
                 prefs.hubDns = dns
                 prefs.mqttUrlOverride = mqttUrl
                 prefs.addHistory("hub", hub)
@@ -8565,21 +8740,21 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                     if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)
                     state.startRealtime()
                 }
-                credentialInput = ""
                 toast(ctx, "已保存")
             }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Button(onClick = {
-                val suppliedCredential = credentialInput.trim()
-                val changed = prefs.hub != hub.trim().trimEnd('/') || (suppliedCredential.isNotBlank() && prefs.token != suppliedCredential) || prefs.hubDns != dns.trim()
+                val cleanAppToken = appToken.trim()
+                val cleanHookToken = hookToken.trim()
+                val changed = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hookToken != cleanHookToken || prefs.hubDns != dns.trim()
                 prefs.hub = hub
-                if (suppliedCredential.isNotBlank()) prefs.token = suppliedCredential
+                prefs.token = cleanAppToken
+                prefs.hookToken = cleanHookToken
                 prefs.hubDns = dns
                 prefs.mqttUrlOverride = mqttUrl
                 prefs.addHistory("hub", hub)
                 if (changed) state.markHubChanged()
-                credentialInput = ""
                 scope.launch {
                     msg = "正在校准数据"
                     runCatching {
@@ -8628,22 +8803,6 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun keepaliveWithRetry(attempts: Int = 3): String = withContext(Dispatchers.IO) {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         retryText("/api/sync/revision", true, attempts)
-    }
-
-    suspend fun ensureClientToken() = withContext(Dispatchers.IO) {
-        val candidate = prefs.token.trim().uppercase(Locale.ROOT)
-        if (!candidate.matches(Regex("APP-[0-9]{6}"))) return@withContext
-        val payload = JSONObject()
-            .put("pairingCode", candidate)
-            .put("clientType", "app")
-            .put("clientName", "极客网探 Android")
-        val root = JSONObject(postJson("/api/pair", payload.toString(), auth = false))
-        val token = root.optString("clientToken")
-        if (token.isBlank()) throw RuntimeException("Hub 未返回 Client Token")
-        prefs.token = token
-        root.optJSONObject("mqtt")?.let { prefs.mqttConfig = mqttConfigFromApi(it) }
-        prefs.syncRevision = 0L
-        prefs.lastFullSyncAt = 0L
     }
 
     suspend fun getMqttConfig(): HubMqttConfig = withContext(Dispatchers.IO) {

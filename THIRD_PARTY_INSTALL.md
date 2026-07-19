@@ -2,13 +2,16 @@
 
 按顺序操作：先安装 Hub，再安装锐捷路由器上的 LabRelay。
 
+
 ## 一、安装 Hub
 
-在 Docker 管理页面新建 Compose 项目，粘贴下面的配置。只需要修改 3 处：
+在 Docker 管理页面新建 Compose 项目，粘贴下面的配置。只需要修改 5 处：
 
 1. 两处 `192.168.x.x` 改为 Docker 宿主机的局域网 IPv4。
 2. 两处 `请改成自己的MQTT密码` 改成同一个强密码。
-3. 如果已有 HTTPS/WSS 反向代理，把 `HUB_ADVERTISE_URL` 和 `MQTT_PUBLIC_URL` 换成自己的公网地址。
+3. `请改成APP令牌` 改成一条强随机 `APP_TOKEN`。
+4. `请改成HOOK令牌` 改成另一条强随机 `HOOK_TOKEN`。
+5. 如果已有 HTTPS/WSS 反向代理，把 `HUB_ADVERTISE_URL` 和 `MQTT_PUBLIC_URL` 换成自己的公网地址。
 
 ```yaml
 services:
@@ -81,6 +84,8 @@ services:
       HUB_NAME: LabProbe Hub
       HUB_ADVERTISE_URL: http://192.168.x.x:58443
       PRIMARY_ROUTER_NAME: ""
+      APP_TOKEN: "请改成APP令牌"
+      HOOK_TOKEN: "请改成HOOK令牌"
       MQTT_PUBLIC_URL: ws://192.168.x.x:9001/mqtt
       MQTT_INTERNAL_HOST: 127.0.0.1
       MQTT_INTERNAL_PORT: 1883
@@ -96,28 +101,21 @@ services:
 
 启动后确认 `labprobe-hub` 和 `labprobe-mqtt` 都显示运行中。
 
-## 二、配对 APP
 
-1. 打开 `labprobe-hub` 容器日志，找到 `APP pairing code=APP-xxxxxx`。
-2. 打开 APP 的“我的 / 设置”。
-3. Hub 地址填写 `http://192.168.x.x:58443`。
-4. 配对码填写日志中的 `APP-xxxxxx`，保存并立即校准。
+## 二、配置 APP
 
-配对码只有 10 分钟有效且只能使用一次。过期后，在 `labprobe-hub` 容器终端执行：
+1. 打开 APP 的“我的 / 设置”。
+2. Hub 地址填写 `http://192.168.x.x:58443`。
+3. APP Token 填写 Compose 中的 `APP_TOKEN`。
+4. HOOK Token 填写 Compose 中的 `HOOK_TOKEN`。
+5. 保存并立即校准。
 
-```sh
-python /app/hub.py pairing-code --role app
-```
+APP 的 API 请求使用 `APP_TOKEN`。两个令牌都会由 Android Keystore 加密保存，不再输入或交换一次性配对码。
+
 
 ## 三、安装 LabRelay
 
-先在 `labprobe-hub` 容器终端生成 Agent 配对码：
-
-```sh
-python /app/hub.py pairing-code --role agent
-```
-
-然后 SSH 登录已适配的锐捷路由器，执行：
+SSH 登录已适配的锐捷路由器，执行：
 
 ```sh
 wget -O /tmp/labprobe-install.sh https://lab.net86.dynv6.net:27772/agent/install.sh \
@@ -127,9 +125,11 @@ wget -O /tmp/labprobe-install.sh https://lab.net86.dynv6.net:27772/agent/install
 安装时按提示操作：
 
 1. 是否安装：输入 `Y`。
-2. 自动发现的 Hub 是否正确：正确输入 `Y`。
-3. 输入刚生成的 `AGT-xxxxxx` 配对码。
+2. 自动发现的 Hub 是否正确：正确则输入 `Y`。
+3. 输入 Compose 中配置的 `HOOK_TOKEN`。
 4. 最终确认：输入 `Y`。
+
+也可以先设置 `HUB_URL` 与 `HOOK_TOKEN` 环境变量再运行安装器。重新填写令牌时执行 `sh /tmp/labprobe-install.sh configure`。
 
 完成后执行：
 
@@ -139,10 +139,10 @@ labrelay test-hub --config /etc/labprobe/agent.json
 tail -f /tmp/labprobe/labrelay-agent.log
 ```
 
+
 ## 四、Token 怎么填
 
-- 新 APP：只填一次性 `APP-xxxxxx` 配对码。
-- 新 LabRelay：安装时只填一次性 `AGT-xxxxxx` 配对码。
-- Compose：不需要填写 `APP_TOKEN`、`HOOK_TOKEN`。
-- MQTT：必须设置自己的 `MQTT_PASSWORD`，它与 APP/Agent 配对码不是一回事。
-- 只有继续使用旧版 APP、旧采集脚本或 Lucky Webhook 时，才需要额外配置兼容用的 `APP_TOKEN` 或 `HOOK_TOKEN`。
+- `APP_TOKEN`：Hub 与 APP 填写相同值，仅供 APP 管理和同步 API 使用。
+- `HOOK_TOKEN`：Hub、LabRelay、Lucky 与 Webhook 填写相同值，供路由器上报和 Hook 接口使用。
+- `MQTT_PASSWORD`：必须使用自己的强密码，与两个 Token 相互独立。
+- 三项凭据都不要使用示例占位值，也不要复用同一个值。

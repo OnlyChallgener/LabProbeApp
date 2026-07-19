@@ -56,7 +56,7 @@ private class SecureStringStore(context: Context, prefsName: String, private val
     }
 }
 
-/** Stores the Hub Client Token with a non-exportable Android Keystore key. */
+/** Stores APP_TOKEN with a non-exportable Android Keystore key. */
 class SecureTokenStore(context: Context) {
     private val delegate = SecureStringStore(context, "labprobe_secure", "labprobe_hub_client_token_v1")
     fun get(): String = delegate.get()
@@ -66,6 +66,12 @@ class SecureTokenStore(context: Context) {
 /** Stores MQTT credentials returned by the user's own Hub. */
 class SecureMqttStore(context: Context) {
     private val delegate = SecureStringStore(context, "labprobe_secure_mqtt", "labprobe_mqtt_credentials_v1")
+    fun get(): String = delegate.get()
+    fun set(value: String) = delegate.set(value)
+}
+/** Stores HOOK_TOKEN separately from APP_TOKEN. */
+class SecureHookTokenStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure_hook", "labprobe_hook_token_v1")
     fun get(): String = delegate.get()
     fun set(value: String) = delegate.set(value)
 }
