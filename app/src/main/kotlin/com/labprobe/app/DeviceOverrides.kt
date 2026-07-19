@@ -60,6 +60,62 @@ fun applyDeviceOverrides(devices: List<DeviceItem>, overrides: List<DeviceOverri
     }
 }
 
+fun applyEventDeviceNames(
+    events: List<EventItem>,
+    devices: List<DeviceItem>,
+    overrides: List<DeviceOverrideConfig>
+): List<EventItem> {
+    if (events.isEmpty()) return events
+    val devicesByMac = devices.filter { isValidMac(cleanMac(it.mac)) }
+        .associateBy { cleanMac(it.mac).lowercase(Locale.getDefault()) }
+    val overridesByMac = overrides.associateBy { cleanMac(it.mac).lowercase(Locale.getDefault()) }
+    val enriched = events.map { event ->
+        if (event.type != "device_online" && event.type != "device_offline") return@map event
+        val key = cleanMac(event.mac).lowercase(Locale.getDefault())
+        val device = devicesByMac[key]
+        val override = overridesByMac[key]
+        val localRemark = override?.remark.orEmpty().ifBlank { device?.remark.orEmpty() }
+        event.copy(
+            name = localRemark.ifBlank { event.remark }.ifBlank { device?.name.orEmpty() }.ifBlank { event.name },
+            remark = localRemark.ifBlank { event.remark },
+            manualType = override?.typeId.orEmpty().ifBlank { device?.manualType.orEmpty() }.ifBlank { event.manualType },
+            devType = device?.devType.orEmpty().ifBlank { event.devType },
+            manufacture = device?.manufacture.orEmpty().ifBlank { event.manufacture },
+            osType = device?.osType.orEmpty().ifBlank { event.osType },
+            hostName = device?.hostName.orEmpty().ifBlank { event.hostName }
+        )
+    }
+    val keys = enriched.asSequence()
+        .filter { it.type == "device_online" || it.type == "device_offline" }
+        .filterNot(::hasUsableEventDeviceName)
+        .sortedBy { parseEventMillis(it.time) ?: Long.MAX_VALUE }
+        .map(::unknownEventDeviceKey).distinct().toList()
+    val numbers = keys.withIndex().associate { (index, key) -> key to index + 1 }
+    return enriched.map { event ->
+        if ((event.type == "device_online" || event.type == "device_offline") && !hasUsableEventDeviceName(event)) {
+            event.copy(name = "未知设备${numbers[unknownEventDeviceKey(event)] ?: 1}")
+        } else event
+    }
+}
+
+private fun hasUsableEventDeviceName(event: EventItem): Boolean {
+    val name = event.name.trim()
+    if (name.isBlank()) return false
+    val normalized = name.lowercase(Locale.getDefault())
+    if (normalized in setOf("事件", "设备", "终端", "未知", "unknown", "device") || name.startsWith("未知设备")) return false
+    if (isValidMac(cleanMac(name)) || name == event.ip.trim()) return false
+    return true
+}
+
+private fun unknownEventDeviceKey(event: EventItem): String {
+    val mac = cleanMac(event.mac)
+    return when {
+        isValidMac(mac) -> "mac:${mac.lowercase(Locale.getDefault())}"
+        event.ip.isNotBlank() -> "ip:${event.ip.trim()}"
+        else -> "event:${event.id}"
+    }
+}
+
 fun overrideForDevice(device: DeviceItem, overrides: List<DeviceOverrideConfig>): DeviceOverrideConfig {
     val mac = cleanMac(device.mac)
     val old = overrides.firstOrNull { it.mac.equals(mac, ignoreCase = true) }

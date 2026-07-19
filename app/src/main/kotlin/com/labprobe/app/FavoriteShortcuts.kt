@@ -132,12 +132,13 @@ fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
     val current = favoriteShortcuts().toMutableList()
     var changes = 0
     markers.forEach { (title, address) ->
-        val wanUrl = normalizeFavoriteUrl(address)
-        if (wanUrl.isBlank()) return@forEach
+        val generatedWanUrl = webhookFavoriteOrigin(address)
+        if (generatedWanUrl.isBlank()) return@forEach
         val generatedId = "webhook-${Integer.toHexString(title.lowercase(Locale.ROOT).hashCode())}"
         val index = current.indexOfFirst { it.id == generatedId || it.title.equals(title, ignoreCase = true) }
         if (index >= 0) {
             val old = current[index]
+            val wanUrl = mergeWebhookFavoriteUrl(generatedWanUrl, old.wanUrl)
             val description = old.description.takeUnless { it == "Webhook 自动同步" }.orEmpty()
             if (old.id != generatedId || old.title != title || old.wanUrl != wanUrl || old.description != description) {
                 current[index] = old.copy(id = generatedId, title = title, description = description, wanUrl = wanUrl)
@@ -151,7 +152,7 @@ fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
                 iconType = "builtin",
                 iconValue = webhookBuiltinIcon(title),
                 lanUrl = "",
-                wanUrl = wanUrl,
+                wanUrl = generatedWanUrl,
                 order = current.size
             )
             changes++
@@ -197,6 +198,27 @@ private fun normalizeFavoriteUrl(raw: String): String {
     val value = raw.trim()
     if (value.isBlank()) return ""
     return if (value.contains("://")) value else "https://$value"
+}
+
+private fun webhookFavoriteOrigin(raw: String): String {
+    val normalized = normalizeFavoriteUrl(raw)
+    if (normalized.isBlank()) return ""
+    val uri = runCatching { Uri.parse(normalized) }.getOrNull() ?: return normalized
+    val scheme = uri.scheme.orEmpty()
+    val authority = uri.encodedAuthority.orEmpty()
+    return if (scheme.isNotBlank() && authority.isNotBlank()) "$scheme://$authority" else normalized
+}
+
+private fun mergeWebhookFavoriteUrl(origin: String, previous: String): String {
+    val old = normalizeFavoriteUrl(previous)
+    if (old.isBlank()) return origin
+    val uri = runCatching { Uri.parse(old) }.getOrNull() ?: return origin
+    val suffix = buildString {
+        uri.encodedPath.orEmpty().takeIf { it.isNotBlank() && it != "/" }?.let { append(it) }
+        uri.encodedQuery?.takeIf { it.isNotBlank() }?.let { append('?').append(it) }
+        uri.encodedFragment?.takeIf { it.isNotBlank() }?.let { append('#').append(it) }
+    }
+    return origin.trimEnd('/') + suffix
 }
 
 private fun FavoriteShortcut.openUrl(mode: String): String = when (mode) {
@@ -501,7 +523,7 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(if (existing == null) "添加收藏" else "编辑收藏", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-                if (webhookManaged) Text("标题和外网地址由 Webhook 自动维护", fontSize = 9.5.sp, color = LabV2.InkMuted, maxLines = 1)
+                if (webhookManaged) Text("标题和外网基础地址自动维护，可手动添加路径后缀", fontSize = 9.5.sp, color = LabV2.InkMuted, maxLines = 1)
             }
             IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(18.dp), tint = LabV2.InkMuted) }
         }
@@ -513,7 +535,10 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
             FavoriteInlineField("内网地址", draft.lanUrl, { draft = draft.copy(lanUrl = it) }, "192.168.5.10:8123", Modifier.weight(1f), uri = true)
         }
         Row(Modifier.fillMaxWidth()) {
-            FavoriteInlineField("外网地址", draft.wanUrl, { draft = draft.copy(wanUrl = it) }, "example.com", Modifier.weight(1f), uri = true, readOnly = webhookManaged)
+            FavoriteInlineField("外网地址", draft.wanUrl, { draft = draft.copy(wanUrl = it) }, "example.com/be72", Modifier.weight(1f), uri = true)
+        }
+        if (webhookManaged) {
+            Text("可在自动生成的端口后添加 /be72；后续同步会保留该后缀。", Modifier.padding(start = 53.dp), fontSize = 9.5.sp, color = LabV2.Primary)
         }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

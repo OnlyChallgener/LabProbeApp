@@ -343,6 +343,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("offline_hidden_keys_v1", v).apply()
     var cacheEvents: String get() = sp.getString("cache_events", "") ?: ""
         set(v) = sp.edit().putString("cache_events", v).apply()
+    var hiddenEventDatesJson: String get() = sp.getString("hidden_event_dates_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("hidden_event_dates_v1", v).apply()
     var eventNotificationBaselineReady: Boolean get() = sp.getBoolean("event_notification_baseline_ready", false)
         set(v) = sp.edit().putBoolean("event_notification_baseline_ready", v).apply()
     var wolDevicesJson: String get() = sp.getString("wol_devices_v1", "[]") ?: "[]"
@@ -935,6 +937,12 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         )
     )
     var events by mutableStateOf(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)))
+    var hiddenEventDates by mutableStateOf(
+        runCatching {
+            val array = JSONArray(prefs.hiddenEventDatesJson)
+            (0 until array.length()).map { array.optString(it) }.filter { it.isNotBlank() }.toSet()
+        }.getOrDefault(emptySet())
+    )
     var wolDevices by mutableStateOf(parseWolDevices(prefs.wolDevicesJson))
     var loading by mutableStateOf(false)
     var hubConnected by mutableStateOf(false)
@@ -1206,7 +1214,14 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (dataChanged && prefs.syncWebhookFavoriteShortcuts(events) > 0) favoriteSyncVersion++
         CertificateReminderCenter.notifyDue(appContext, prefs)
         if (dataChanged && (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty())) {
-            EventNotificationCenter.notifyNewEvents(appContext, events.filter { eventNotificationIdentity(it) !in previousEventKeys })
+            EventNotificationCenter.notifyNewEvents(
+                appContext,
+                applyEventDeviceNames(
+                    events.filter { eventNotificationIdentity(it) !in previousEventKeys },
+                    devices + onlineDevices + offlineDevices,
+                    deviceOverrides
+                )
+            )
         }
         prefs.eventNotificationBaselineReady = true
         if (dataChanged) {
@@ -1441,6 +1456,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         events = events.filterNot { it.id == event.id }
         prefs.cacheEvents = JSONArray(events.map { it.toJson() }).toString()
         message = "已删除事件，可通过刷新同步最新记录"
+    }
+
+    fun hideEventDay(date: String) {
+        if (date.isBlank()) return
+        hiddenEventDates = hiddenEventDates + date
+        prefs.hiddenEventDatesJson = JSONArray(hiddenEventDates.sorted()).toString()
+        message = "已删除 $date 的记录，每日总结不受影响"
     }
 }
 
@@ -7786,8 +7808,17 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
 fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, topNav: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     var openedSwipeId by remember { mutableStateOf<Int?>(null) }
+    var openedDaySwipe by remember { mutableStateOf<String?>(null) }
+    val today = remember { todayDateString() }
+    var expandedDays by remember { mutableStateOf(setOf(today)) }
     val eventDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
         mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)
+    }
+    val dayGroups = remember(state.events, eventDevices, state.deviceOverrides, state.hiddenEventDates) {
+        applyEventDeviceNames(state.events, eventDevices, state.deviceOverrides)
+            .filterNot { eventDayKey(it) in state.hiddenEventDates }
+            .groupBy(::eventDayKey)
+            .toSortedMap(reverseOrder())
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -7795,7 +7826,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
         verticalArrangement = Arrangement.spacedBy(LabV2.ListGap)
     ) {
         item {
-            CompactPageHeader(title = "记录", subtitle = "事件流 · 长按选择复制 · 左滑删除", action = {
+            CompactPageHeader(title = "记录", subtitle = "按天折叠 · 长按复制 · 左滑删除", action = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
                     AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
@@ -7804,20 +7835,139 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
         }
         item { topNav() }
         item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED)) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
-        items(state.events, key = { eventNotificationIdentity(it) }) { e ->
-            EventCompactCard(
-                e = e,
-                knownDevices = eventDevices,
-                openedSwipeId = openedSwipeId,
-                onSwipeOpen = { openedSwipeId = it },
-                onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
-                onDelete = {
-                    openedSwipeId = null
-                    scope.launch { state.deleteEvent(e) }
+        dayGroups.forEach { (date, events) ->
+            item(key = "event-day-$date") {
+                EventDayHeaderCard(
+                    date = date,
+                    count = events.size,
+                    expanded = date in expandedDays,
+                    openedDate = openedDaySwipe,
+                    onSwipeOpen = { openedDaySwipe = it },
+                    onSwipeClose = { if (openedDaySwipe == date) openedDaySwipe = null },
+                    onToggle = {
+                        expandedDays = if (date in expandedDays) expandedDays - date else expandedDays + date
+                    },
+                    onDelete = {
+                        openedDaySwipe = null
+                        expandedDays = expandedDays - date
+                        state.hideEventDay(date)
+                    }
+                )
+            }
+            if (date in expandedDays) {
+                items(events, key = { eventNotificationIdentity(it) }) { e ->
+                    EventCompactCard(
+                        e = e,
+                        knownDevices = eventDevices,
+                        openedSwipeId = openedSwipeId,
+                        onSwipeOpen = { openedSwipeId = it },
+                        onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
+                        onDelete = {
+                            openedSwipeId = null
+                            scope.launch { state.deleteEvent(e) }
+                        }
+                    )
                 }
-            )
+            }
         }
         item { Spacer(Modifier.height(2.dp)) }
+    }
+}
+
+private fun eventDayKey(event: EventItem): String {
+    Regex("""\d{4}-\d{2}-\d{2}""").find(event.time)?.value?.let { return it }
+    val millis = parseEventMillis(event.time) ?: return "日期未知"
+    return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(millis))
+}
+
+@Composable
+private fun EventDayHeaderCard(
+    date: String,
+    count: Int,
+    expanded: Boolean,
+    openedDate: String?,
+    onSwipeOpen: (String) -> Unit,
+    onSwipeClose: () -> Unit,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 78.dp.toPx() }
+    var targetOffsetPx by remember(date) { mutableStateOf(0f) }
+    var dragging by remember(date) { mutableStateOf(false) }
+    val offsetPx by animateFloatAsState(targetOffsetPx, tween(if (dragging) 0 else 180), label = "event-day-swipe")
+    LaunchedEffect(openedDate) {
+        if (openedDate != date && targetOffsetPx != 0f) targetOffsetPx = 0f
+    }
+    Box(Modifier.fillMaxWidth().height(58.dp)) {
+        if (offsetPx < -1f || targetOffsetPx < -1f) {
+            Surface(
+                onClick = {
+                    targetOffsetPx = 0f
+                    onSwipeClose()
+                    onDelete()
+                },
+                modifier = Modifier.align(Alignment.CenterEnd).width(78.dp).fillMaxHeight(),
+                shape = RoundedCornerShape(18.dp),
+                color = LabV2.Red
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Icon(Icons.Rounded.Delete, null, Modifier.size(20.dp), tint = Color.White)
+                    Text("删除当天", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+        Surface(
+            onClick = {
+                targetOffsetPx = 0f
+                onSwipeClose()
+                onToggle()
+            },
+            modifier = Modifier.fillMaxSize().offset { IntOffset(offsetPx.roundToInt(), 0) }
+                .pointerInput(date) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onDragEnd = {
+                            dragging = false
+                            targetOffsetPx = if (targetOffsetPx < -deleteWidthPx / 2f) {
+                                onSwipeOpen(date)
+                                -deleteWidthPx
+                            } else {
+                                onSwipeClose()
+                                0f
+                            }
+                        },
+                        onDragCancel = { dragging = false; targetOffsetPx = 0f; onSwipeClose() },
+                        onHorizontalDrag = { _, amount ->
+                            if (amount < 0) onSwipeOpen(date)
+                            targetOffsetPx = (targetOffsetPx + amount).coerceIn(-deleteWidthPx, 0f)
+                        }
+                    )
+                },
+            shape = RoundedCornerShape(18.dp),
+            color = LabV2.Field,
+            border = BorderStroke(1.dp, LabV2.Border)
+        ) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(LabV2.Primary.copy(alpha = .10f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(18.dp), tint = LabV2.Primary)
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(if (date == todayDateString()) "今天" else date, fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    Text("$count 条事件", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                }
+                Icon(
+                    if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    if (expanded) "收起" else "展开",
+                    Modifier.size(20.dp),
+                    tint = LabV2.InkMuted
+                )
+            }
+        }
     }
 }
 
@@ -8168,7 +8318,18 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
-        val localEvents = normalizeDeviceEvents(parseEvents(prefs.cacheEvents))
+        val localOverrides = parseDeviceOverrides(prefs.deviceOverridesJson)
+        val cachedDevices = applyDeviceOverrides(
+            parseDeviceArray(prefs.cacheDevices) +
+                parseDeviceArray(prefs.cacheOnlineDevices) +
+                parseDeviceArray(prefs.cacheOfflineDevices),
+            localOverrides
+        )
+        val localEvents = applyEventDeviceNames(
+            normalizeDeviceEvents(parseEvents(prefs.cacheEvents)),
+            cachedDevices,
+            localOverrides
+        )
         val localSnapshot = homeDailyFromEvents(localEvents, selected, "本地规范化事件")
         val localDevices = localDailyDeviceSummary(localEvents, selected)
         ExpressiveCard("概览", "上线 / 下线 / VPN-STUN / DDNS / 备注", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
@@ -8200,14 +8361,16 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
 fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Color, kind: String) {
     if (items.length() <= 0) return
     ExpressiveCard(title, "${items.length()} 条", icon, accent) {
-        for (i in 0 until items.length()) {
-            val o = items.optJSONObject(i) ?: continue
-            when (kind) {
-                "devices" -> DailyDeviceSummaryRow(o)
-                "address" -> DailyAddressSummaryRow(o)
-                else -> DailyTextSummaryRow(o)
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            for (i in 0 until items.length()) {
+                val o = items.optJSONObject(i) ?: continue
+                when (kind) {
+                    "devices" -> DailyDeviceSummaryRow(o)
+                    "address" -> DailyAddressSummaryRow(o)
+                    else -> DailyTextSummaryRow(o)
+                }
+                if (i < items.length() - 1) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
             }
-            if (i < items.length() - 1) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.10f))
         }
     }
 }
@@ -8224,11 +8387,12 @@ fun DailyDeviceSummaryRow(o: JSONObject) {
     cleanApiText(o.optString("lastIp")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     cleanApiText(o.optString("lastSignal")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     val fallbackDetail = lines.drop(1).joinToString(" · ")
-    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(name.ifBlank { "未知终端" }, fontSize = 12.6.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+        Text(name.ifBlank { "未知终端" }, fontSize = 12.6.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             detailParts.joinToString(" · ").ifBlank { fallbackDetail.ifBlank { "暂无详情" } },
             fontSize = 12.sp,
+            lineHeight = 14.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f),
             maxLines = 2

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
@@ -51,7 +52,8 @@ fun EditableDeviceTypeField(
     value: String,
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    label: String = "设备类型"
+    label: String = "设备类型",
+    showLeadingIcon: Boolean = false
 ) {
     val groups = selectableDeviceTypeGroups()
     var expanded by remember { mutableStateOf(false) }
@@ -65,6 +67,9 @@ fun EditableDeviceTypeField(
                 text = input
                 onChange(normalizeDeviceTypeToken(input).ifBlank { input.trim() })
             },
+            leadingIcon = if (showLeadingIcon) ({
+                Icon(Icons.Rounded.Category, null, Modifier.size(16.dp), tint = DEVICE_ICON_ACCENT)
+            }) else null,
             trailingIcon = {
                 IconButton(onClick = { expanded = true }, modifier = Modifier.size(30.dp)) {
                     Icon(Icons.Rounded.ArrowDropDown, null)

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,12 +17,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,19 +55,27 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Surface(shape = RoundedCornerShape(26.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                    CompactTextField(
-                        value = remark,
-                        onValueChange = { remark = it },
-                        placeholder = "例如：海尔电热水器 / 美的空调 / 绿联 DH4300",
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    EditableDeviceTypeField(
-                        value = typeInput,
-                        onChange = { typeInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = "设备类型（可输入/点箭头选择）"
-                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
+                            CompactTextField(
+                                value = remark,
+                                onValueChange = { remark = it },
+                                placeholder = "例如：客厅摄像头",
+                                modifier = Modifier.fillMaxWidth(),
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.EditNote, null, Modifier.size(16.dp), tint = DEVICE_ICON_ACCENT)
+                                }
+                            )
+                        }
+                        EditableDeviceTypeField(
+                            value = typeInput,
+                            onChange = { typeInput = it },
+                            modifier = Modifier.weight(1f),
+                            label = "设备类型",
+                            showLeadingIcon = true
+                        )
+                    }
                     Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
                     CompactTextField(
                         value = cleanMac(device.mac),

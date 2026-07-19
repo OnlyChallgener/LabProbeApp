@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -45,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,7 +68,8 @@ data class CertificateExpiryItem(
     val organization: String,
     val provider: String,
     val appliedOn: String,
-    val expiresOn: String
+    val expiresOn: String,
+    val url: String = ""
 )
 
 private const val CERTIFICATE_CHANNEL_ID = "labprobe_certificate_expiry_v1"
@@ -85,7 +89,8 @@ fun AppPrefs.certificates(): List<CertificateExpiryItem> {
             organization = item.optString("organization").trim(),
             provider = item.optString("provider").trim(),
             appliedOn = normalizeCertificateDate(item.optString("appliedOn")),
-            expiresOn = expiresOn
+            expiresOn = expiresOn,
+            url = item.optString("url").trim()
         )
     }.sortedBy { parseCertificateDate(it.expiresOn) ?: LocalDate.MAX }
 }
@@ -102,6 +107,7 @@ fun AppPrefs.saveCertificates(items: List<CertificateExpiryItem>) {
                 .put("provider", item.provider.trim())
                 .put("appliedOn", normalizeCertificateDate(item.appliedOn))
                 .put("expiresOn", normalizeCertificateDate(item.expiresOn))
+                .put("url", item.url.trim())
         )
     }
     certificateExpiryJson = array.toString()
@@ -129,6 +135,12 @@ private fun normalizeCertificateDate(raw: String): String = parseCertificateDate
 
 private fun CertificateExpiryItem.remainingDays(today: LocalDate = LocalDate.now()): Long? =
     parseCertificateDate(expiresOn)?.let { ChronoUnit.DAYS.between(today, it) }
+
+private fun certificateOpenUrl(raw: String): String {
+    val value = raw.trim()
+    if (value.isBlank()) return ""
+    return if (value.contains("://")) value else "https://$value"
+}
 
 private fun reminderMilestone(remaining: Long): Int? = when (remaining) {
     in 4L..7L -> 7
@@ -249,6 +261,7 @@ fun CertificateExpirySection(prefs: AppPrefs) {
 
 @Composable
 private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Unit, onDelete: () -> Unit) {
+    val context = LocalContext.current
     var menu by remember(item.id) { mutableStateOf(false) }
     val remaining = item.remainingDays()
     val accent = when {
@@ -272,6 +285,22 @@ private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Uni
                 Text(item.domain, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Surface(shape = RoundedCornerShape(99.dp), color = accent.copy(alpha = .12f)) {
                     Text(remainingText, Modifier.padding(horizontal = 7.dp, vertical = 3.dp), fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = accent, maxLines = 1)
+                }
+                if (item.url.isNotBlank()) {
+                    Surface(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(certificateOpenUrl(item.url))))
+                            }
+                        },
+                        modifier = Modifier.size(28.dp),
+                        shape = CircleShape,
+                        color = LabV2.Primary.copy(alpha = .10f)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.OpenInNew, "打开快捷网址", Modifier.size(15.dp), tint = LabV2.Primary)
+                        }
+                    }
                 }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(17.dp), tint = LabV2.InkMuted) }
@@ -309,6 +338,7 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
     var provider by remember(existing?.id) { mutableStateOf(existing?.provider.orEmpty()) }
     var appliedOn by remember(existing?.id) { mutableStateOf(existing?.appliedOn.orEmpty()) }
     var expiresOn by remember(existing?.id) { mutableStateOf(existing?.expiresOn.orEmpty()) }
+    var url by remember(existing?.id) { mutableStateOf(existing?.url.orEmpty()) }
     var error by remember(existing?.id) { mutableStateOf("") }
 
     CompactBottomSheet(title = if (existing == null) "添加证书" else "编辑证书", onDismiss = onDismiss, scrollable = true) {
@@ -324,6 +354,9 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
             CertificateInput("申请时间", appliedOn, { appliedOn = it }, "2026-07-17", Modifier.weight(1f))
             CertificateInput("到期时间", expiresOn, { expiresOn = it }, "2026-10-15", Modifier.weight(1f))
         }
+        Row(Modifier.fillMaxWidth()) {
+            CertificateInput("快捷网址", url, { url = it }, "https://example.com", Modifier.weight(1f), uri = true)
+        }
         if (error.isNotBlank()) Text(error, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Red)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.Black) }
@@ -338,7 +371,18 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
                         else -> ""
                     }
                     if (error.isBlank()) {
-                        onSave(CertificateExpiryItem(existing?.id ?: UUID.randomUUID().toString(), note.trim(), domain.trim(), organization.trim(), provider.trim(), normalizedApplied, normalizedExpiry))
+                        onSave(
+                            CertificateExpiryItem(
+                                id = existing?.id ?: UUID.randomUUID().toString(),
+                                note = note.trim(),
+                                domain = domain.trim(),
+                                organization = organization.trim(),
+                                provider = provider.trim(),
+                                appliedOn = normalizedApplied,
+                                expiresOn = normalizedExpiry,
+                                url = certificateOpenUrl(url)
+                            )
+                        )
                     }
                 },
                 modifier = Modifier.weight(1f).height(46.dp),
@@ -349,9 +393,9 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
 }
 
 @Composable
-private fun RowScope.CertificateInput(label: String, value: String, onValueChange: (String) -> Unit, placeholder: String, modifier: Modifier) {
+private fun RowScope.CertificateInput(label: String, value: String, onValueChange: (String) -> Unit, placeholder: String, modifier: Modifier, uri: Boolean = false) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, modifier = Modifier.padding(start = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
-        CompactTextField(value, onValueChange, Modifier.fillMaxWidth(), placeholder = placeholder, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
+        CompactTextField(value, onValueChange, Modifier.fillMaxWidth(), placeholder = placeholder, keyboardOptions = KeyboardOptions(keyboardType = if (uri) KeyboardType.Uri else KeyboardType.Text))
     }
 }
