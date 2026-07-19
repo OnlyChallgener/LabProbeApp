@@ -3421,7 +3421,6 @@ private fun HealthScoreRouterHero(
                     detectTapGestures(onTap = { onOpen() }, onDoubleTap = { onEdit() })
                 },
             contentScale = ContentScale.Fit,
-            filterQuality = FilterQuality.High
         )
     }
 }
