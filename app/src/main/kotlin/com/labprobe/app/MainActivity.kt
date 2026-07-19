@@ -171,10 +171,10 @@ object AppVersion {
     val CODE: Int get() = BuildConfig.VERSION_CODE
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.10.5 build133 · Token 权限与关注列表修复" to listOf(
-            "APP 仅保存和使用 APP_TOKEN，不再要求 HOOK_TOKEN",
-            "首页关注终端与设备页使用相同筛选",
-            "取消关注后首页立即同步移除设备"
+        "v0.10.6 build134 · 首页关注与概览显示修复" to listOf(
+            "首页关注终端只显示当前仍在关注列表中的设备",
+            "移出关注后首页立即同步隐藏，不再残留",
+            "今日概览底部同步说明支持横向滑动查看完整内容"
         )
     )
 }
@@ -3595,13 +3595,13 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 
 @Composable
 fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
+    val visibleDevices = remember(state.devices) { followedDeviceList(state.devices).take(4) }
     HealthCard(Modifier.clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
-        if (state.devices.isEmpty()) {
-            Text("暂无缓存，点击刷新。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        if (visibleDevices.isEmpty()) {
+            Text("暂无关注终端。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
-        val visibleDevices = remember(state.devices) { state.devices.take(4) }
         visibleDevices.forEachIndexed { idx, d ->
             HealthDeviceLine(d)
             if (idx != visibleDevices.lastIndex) Spacer(Modifier.height(11.dp))
@@ -3734,7 +3734,15 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
             HealthStatusBadge("备注", if (snapshot.hasNote) "1 条" else "0 条", Color(0xFF64748B), Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
-        Text(snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}",
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF64748B),
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
@@ -8772,7 +8780,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.5：APP 仅使用 APP_TOKEN，取消关注后首页同步移除。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.6：首页关注列表与今日概览底部滑动已修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
