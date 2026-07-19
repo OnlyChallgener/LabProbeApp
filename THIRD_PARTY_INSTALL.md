@@ -12,6 +12,14 @@
 3. `请改成APP令牌` 改成一条强随机 `APP_TOKEN`。
 4. `请改成HOOK令牌` 改成另一条强随机 `HOOK_TOKEN`。
 5. 如果已有 HTTPS/WSS 反向代理，把 `HUB_ADVERTISE_URL` 和 `MQTT_PUBLIC_URL` 换成自己的公网地址。
+先在 Linux、NAS 或 Docker 宿主机终端生成两条不同的随机 Token：
+
+```sh
+printf 'APP_TOKEN='; openssl rand -hex 32
+printf 'HOOK_TOKEN='; openssl rand -hex 32
+```
+
+复制两行输出并妥善保存。`APP_TOKEN` 与 `HOOK_TOKEN` 不要相同，也不要继续使用示例占位值。
 
 ```yaml
 services:
@@ -110,7 +118,7 @@ services:
 4. HOOK Token 填写 Compose 中的 `HOOK_TOKEN`。
 5. 保存并立即校准。
 
-APP 的 API 请求使用 `APP_TOKEN`。两个令牌都会由 Android Keystore 加密保存，不再输入或交换一次性配对码。
+APP 的 API 请求使用 `APP_TOKEN`。两个令牌都会由 Android Keystore 加密保存。
 
 
 ## 三、安装 LabRelay

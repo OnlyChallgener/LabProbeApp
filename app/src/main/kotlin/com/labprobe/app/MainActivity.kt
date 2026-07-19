@@ -171,7 +171,7 @@ object AppVersion {
     val CODE: Int get() = BuildConfig.VERSION_CODE
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.10.3 build131 · 记录折叠与本地备注优化" to listOf(
+        "v0.10.4 build132 · Token 鉴权与在线升级" to listOf(
             "MQTT 实时同步配合 HTTP 增量兜底和五分钟完整校准",
             "健康分和路由器光晕向周围扩散更明显",
             "Rust Agent 上次检查结果退出页面后继续保留"
@@ -8779,7 +8779,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.3：记录按天折叠、本地备注匹配与收藏快捷入口优化。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.4：恢复 APP_TOKEN 与 HOOK_TOKEN，并移除配对码流程。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
