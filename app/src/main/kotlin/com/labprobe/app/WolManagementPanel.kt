@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 @Composable
 fun WolManagementPanel(state: AppState) {
@@ -68,55 +69,63 @@ fun WolManagementPanel(state: AppState) {
     val candidates = remember(state.wolDevices, shared) { wolCandidatesFromDevices(shared, state.wolDevices) }
     val enabledCount = state.wolDevices.count { it.enabled }
 
-    ExpressiveCard("WOL 设备", null, Icons.Rounded.Power, Color(0xFF8B5CF6)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f))
-            Spacer(Modifier.weight(1f))
-            Button(
-                onClick = { showAdd = true },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-            ) {
-                Icon(Icons.Rounded.Add, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("添加", fontSize = 12.sp, fontWeight = FontWeight.Black)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        CompactListCard {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF8B5CF6).copy(alpha = .11f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Power, null, Modifier.size(19.dp), tint = Color(0xFF8B5CF6))
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text("WOL 设备", fontSize = 16.5.sp, lineHeight = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                }
+                Button(
+                    onClick = { showAdd = true },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                ) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("添加", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+                }
             }
         }
         if (runtimes.isEmpty()) {
-            Text("暂无 WOL 设备，点右上角添加。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontSize = 11.sp)
+            CompactListCard { Text("暂无 WOL 设备，点右上角添加。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontSize = 11.sp) }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                runtimes.forEach { item ->
-                    WolDeviceCard(
-                        item = item,
-                        onToggle = { state.toggleWolDevice(item.config.mac, it) },
-                        onEdit = { editing = item.config },
-                        onDelete = { state.deleteWolDevice(item.config.mac) },
-                        onWake = {
-                            scope.launch {
-                                val msg = runCatching { state.wakeMac(ctx, item.config.mac) }.getOrElse { "WOL失败：${it.message}" }
-                                toast(ctx, msg)
-                            }
+            runtimes.forEach { item ->
+                WolDeviceCard(
+                    item = item,
+                    onToggle = { state.toggleWolDevice(item.config.mac, it) },
+                    onEdit = { editing = item.config },
+                    onDelete = { state.deleteWolDevice(item.config.mac) },
+                    onWake = {
+                        scope.launch {
+                            val msg = runCatching { state.wakeMac(ctx, item.config.mac) }.getOrElse { "WOL失败：${it.message}" }
+                            toast(ctx, msg)
                         }
-                    )
-                }
+                    }
+                )
             }
         }
 
         if (candidates.isNotEmpty()) {
-            Text("自动候选", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontSize = 11.sp, fontWeight = FontWeight.Black)
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                candidates.forEach { c ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        SmallTypeIcon(c.profile)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(c.config.remark, fontWeight = FontWeight.Black, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${c.profile.label} · ${c.config.mac}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f), fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        OutlinedButton(onClick = { state.addOrUpdateWolDevice(c.config.copy(enabled = true, updatedAt = System.currentTimeMillis())) }, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)) {
-                            Text("加入", fontSize = 11.sp, fontWeight = FontWeight.Black)
+            CompactListCard {
+                Text("自动候选", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontSize = 11.sp, fontWeight = FontWeight.Black)
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    candidates.forEach { c ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            SmallTypeIcon(c.profile)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(c.config.remark, fontWeight = FontWeight.Black, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${c.profile.label} · ${c.config.mac}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .50f), fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            OutlinedButton(onClick = { state.addOrUpdateWolDevice(c.config.copy(enabled = true, updatedAt = System.currentTimeMillis())) }, shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)) {
+                                Text("加入", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                            }
                         }
                     }
                 }
@@ -155,18 +164,19 @@ private fun WolDeviceCard(
         shadowElevation = 2.dp,
         border = BorderStroke(1.dp, p.accent.copy(alpha = .10f))
     ) {
-        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SmallTypeIcon(p, 44)
-                Spacer(Modifier.width(10.dp))
+                SmallTypeIcon(p, 42)
+                Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(item.config.remark.ifBlank { item.config.mac }, Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        TypeBadge(p.label, p.accent)
-                    }
-                    Text("MAC：${item.config.mac}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.config.remark.ifBlank { item.config.mac }, fontSize = 14.5.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("MAC：${item.config.mac}", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Switch(checked = item.config.enabled, onCheckedChange = onToggle)
+                Spacer(Modifier.width(5.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    TypeBadge(p.label, p.accent)
+                    Switch(checked = item.config.enabled, onCheckedChange = onToggle)
+                }
             }
 
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -181,8 +191,8 @@ private fun WolDeviceCard(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(
                     onClick = onEdit,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.Edit, null, tint = p.accent, modifier = Modifier.size(14.dp))
@@ -191,8 +201,8 @@ private fun WolDeviceCard(
                 }
                 OutlinedButton(
                     onClick = onDelete,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
@@ -202,9 +212,9 @@ private fun WolDeviceCard(
                 Button(
                     onClick = onWake,
                     enabled = item.config.enabled && !item.online,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF14B8A6)),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f)
                 ) { Text("唤醒", fontSize = 11.sp, fontWeight = FontWeight.Black) }
             }
@@ -224,26 +234,18 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
     LabBottomSheet(onDismiss = onDismiss) {
         Text(if (initial == null) "添加 WOL 设备" else "编辑 WOL 设备", fontWeight = FontWeight.Black, fontSize = 20.sp)
         Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-            OutlinedTextField(
-                value = remark,
-                onValueChange = { remark = it },
-                label = { Text("备注名称") },
-                placeholder = { Text("例如：绿联 DH4300") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            CompactTextField(value = remark, onValueChange = { remark = it }, placeholder = "例如：绿联 DH4300", modifier = Modifier.fillMaxWidth())
             EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
-            OutlinedTextField(
+            Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = if (mac.isNotBlank() && !validMac) MaterialTheme.colorScheme.error else LabV2.InkMuted)
+            CompactTextField(
                 value = mac,
                 onValueChange = { mac = it.uppercase() },
-                label = { Text("MAC 地址") },
-                placeholder = { Text("6C:1F:F7:76:71:04") },
-                singleLine = true,
+                placeholder = "6C:1F:F7:76:71:04",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
-                isError = mac.isNotBlank() && !validMac,
-                supportingText = { Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF") },
                 modifier = Modifier.fillMaxWidth()
             )
+            Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF", fontSize = 10.sp, color = if (validMac) LabV2.InkMuted else MaterialTheme.colorScheme.error)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 DeviceTypeIconPreview(selectedRule, 44)
                 Spacer(Modifier.width(10.dp))
@@ -255,7 +257,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.Black) }
             Button(
                 enabled = validMac,
                 onClick = {
@@ -273,7 +275,8 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                     )
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = selectedRule.accent)
+                shape = RoundedCornerShape(22.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }
         Spacer(Modifier.heightIn(min = 8.dp))
@@ -306,34 +309,61 @@ private fun IconButtonLite(icon: androidx.compose.ui.graphics.vector.ImageVector
 
 fun mergeSharedDeviceState(watched: List<DeviceItem>, online: List<DeviceItem>): List<DeviceItem> {
     val map = linkedMapOf<String, DeviceItem>()
-    watched.forEach { if (it.mac.isNotBlank()) map[it.mac.lowercase()] = it }
+    watched.forEach { if (it.mac.isNotBlank()) map[cleanMac(it.mac)] = it }
     online.forEach { d ->
         if (d.mac.isBlank()) return@forEach
-        val old = map[d.mac.lowercase()]
-        map[d.mac.lowercase()] = if (old == null) d else mergePreferFreshDevice(old, d)
+        val key = cleanMac(d.mac)
+        val old = map[key]
+        map[key] = if (old == null) d else mergePreferFreshDevice(old, d)
     }
     return map.values.toList()
 }
 
-private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem = fresh.copy(
-    name = fresh.name.ifBlank { old.name },
-    ip = fresh.ip.ifBlank { old.ip },
-    ssid = fresh.ssid.ifBlank { old.ssid },
-    band = fresh.band.ifBlank { old.band },
-    rssi = fresh.rssi.ifBlank { old.rssi },
-    rxrate = fresh.rxrate.ifBlank { old.rxrate },
-    onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
-    offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
-    onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
-    lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
-    ipv6 = (fresh.ipv6 + old.ipv6).distinct(),
-    manufacture = fresh.manufacture.ifBlank { old.manufacture },
-    devType = fresh.devType.ifBlank { old.devType },
-    osType = fresh.osType.ifBlank { old.osType },
-    hostName = fresh.hostName.ifBlank { old.hostName },
-    wolMode = fresh.wolMode.ifBlank { old.wolMode },
-    connectType = fresh.connectType.ifBlank { old.connectType },
-    remark = fresh.remark.ifBlank { old.remark },
-    manualType = fresh.manualType.ifBlank { old.manualType },
-    wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride
-)
+private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem {
+    val oldTodayValid = old.todayOnlineDate == LocalDate.now().toString()
+    val mergedIpv6 = mergeIpv6Candidates(
+        fresh.ipv6Candidates,
+        fresh.ipv6.map { Ipv6AddressCandidate(it) },
+        old.ipv6Candidates,
+        old.ipv6.map { Ipv6AddressCandidate(it) }
+    ).take(24)
+    return fresh.copy(
+        name = fresh.name.ifBlank { old.name },
+        ip = fresh.ip.ifBlank { old.ip },
+        ssid = fresh.ssid.ifBlank { old.ssid },
+        band = fresh.band.ifBlank { old.band },
+        rssi = fresh.rssi.ifBlank { old.rssi },
+        rxrate = fresh.rxrate.ifBlank { old.rxrate },
+        onlineSince = fresh.onlineSince.ifBlank { old.onlineSince },
+        offlineAt = fresh.offlineAt.ifBlank { old.offlineAt },
+        onlineDurationText = fresh.onlineDurationText.ifBlank { old.onlineDurationText },
+        todayOnlineDurationSec = when {
+            fresh.todayOnlineDate.isNotBlank() -> fresh.todayOnlineDurationSec
+            oldTodayValid -> old.todayOnlineDurationSec
+            else -> 0L
+        },
+        todayOnlineDurationText = when {
+            fresh.todayOnlineDate.isNotBlank() -> fresh.todayOnlineDurationText
+            oldTodayValid -> old.todayOnlineDurationText
+            else -> ""
+        },
+        todayOnlineDate = fresh.todayOnlineDate.ifBlank { old.todayOnlineDate.takeIf { oldTodayValid }.orEmpty() },
+        lastSeenAt = fresh.lastSeenAt.ifBlank { old.lastSeenAt },
+        ipv6 = mergedIpv6.map { it.address },
+        ipv6Candidates = mergedIpv6,
+        manufacture = fresh.manufacture.ifBlank { old.manufacture },
+        devType = fresh.devType.ifBlank { old.devType },
+        osType = fresh.osType.ifBlank { old.osType },
+        hostName = fresh.hostName.ifBlank { old.hostName },
+        wolMode = fresh.wolMode.ifBlank { old.wolMode },
+        connectType = fresh.connectType.ifBlank { old.connectType },
+        remark = fresh.remark.ifBlank { old.remark },
+        manualType = fresh.manualType.ifBlank { old.manualType },
+        wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride,
+        followedOverride = fresh.followedOverride ?: old.followedOverride,
+        todayUpload = fresh.todayUpload.ifBlank { old.todayUpload },
+        todayDownload = fresh.todayDownload.ifBlank { old.todayDownload },
+        totalUpload = fresh.totalUpload.ifBlank { old.totalUpload },
+        totalDownload = fresh.totalDownload.ifBlank { old.totalDownload }
+    )
+}

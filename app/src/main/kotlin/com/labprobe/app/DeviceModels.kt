@@ -17,6 +17,7 @@ data class DeviceItem(
     val onlineDurationText: String,
     val lastSeenAt: String,
     val ipv6: List<String> = emptyList(),
+    val ipv6Candidates: List<Ipv6AddressCandidate> = emptyList(),
     val manufacture: String = "",
     val devType: String = "",
     val osType: String = "",
@@ -25,7 +26,15 @@ data class DeviceItem(
     val connectType: String = "",
     val remark: String = "",
     val manualType: String = "",
-    val wolEnabledOverride: Boolean? = null
+    val wolEnabledOverride: Boolean? = null,
+    val followedOverride: Boolean? = null,
+    val todayUpload: String = "",
+    val todayDownload: String = "",
+    val totalUpload: String = "",
+    val totalDownload: String = "",
+    val todayOnlineDurationSec: Long = 0L,
+    val todayOnlineDurationText: String = "",
+    val todayOnlineDate: String = ""
 )
 
 data class DeviceVisualProfile(
@@ -55,5 +64,11 @@ data class EventItem(
     val onlineSince: String = "",
     val offlineAt: String = "",
     val onlineDurationText: String = "",
-    val mac: String = ""
+    val mac: String = "",
+    val manufacture: String = "",
+    val devType: String = "",
+    val osType: String = "",
+    val hostName: String = "",
+    val remark: String = "",
+    val manualType: String = ""
 )

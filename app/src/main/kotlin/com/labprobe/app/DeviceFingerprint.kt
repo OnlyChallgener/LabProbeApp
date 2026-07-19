@@ -13,7 +13,8 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
     }
 
     val manualWol = d.wolEnabledOverride
-    val wol = manualWol ?: rule.wolDefault
+    val recommendation = wolRecommendationForDevice(d, rule.id)
+    val wol = manualWol ?: recommendation.recommended
     val confidence = when {
         d.manualType.isNotBlank() -> 98
         rule.id == "unknown" -> 52
@@ -22,14 +23,13 @@ fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
     val note = when {
         manualWol == true -> "已手动启用 WOL"
         manualWol == false -> "已手动关闭 WOL"
-        rule.wolDefault -> "${rule.label} 默认作为 WOL 候选"
-        else -> "${rule.label} 默认不显示 WOL"
+        else -> recommendation.reason
     }
     return DeviceVisualProfile(
         type = rule.id,
         label = rule.label,
         icon = deviceTypeIcon(rule.iconKey),
-        accent = rule.accent,
+        accent = DEVICE_ICON_ACCENT,
         wolCandidate = wol,
         confidence = confidence,
         note = note,
@@ -76,16 +76,44 @@ private fun strongNameType(d: DeviceItem): DeviceTypeRule? {
 
     if (nameText.isBlank()) return null
     return when {
+        listOf("儿童手表", "电话手表", "小天才", "米兔").any { nameText.contains(it) } -> deviceTypeById("child_watch")
+        listOf("smart ring", "galaxy ring").any { nameText.contains(it) } -> deviceTypeById("smart_ring")
         listOf("ipad", "matepad", "galaxy tab", "xiaoxin pad", "redmi pad", "mi pad", "pad", "平板").any { nameText.contains(it) } -> deviceTypeById("tablet")
-        listOf("iphone", "手机", "pixel", "oneplus", "oppo", "vivo", "iqoo", "realme", "meizu", "nubia").any { nameText.contains(it) } -> deviceTypeById("phone")
+        listOf("iphone", "苹果手机").any { nameText.contains(it) } -> deviceTypeById("iphone")
+        listOf("华为手机", "huawei phone", "mate60", "mate 60", "mate70", "mate 70", "pura", "nova").any { nameText.contains(it) } -> deviceTypeById("huawei_phone")
+        listOf("手机", "pixel", "oneplus", "oppo", "vivo", "iqoo", "realme", "meizu", "nubia").any { nameText.contains(it) } -> deviceTypeById("phone")
         listOf("macbook", "matebook", "magicbook", "redmibook", "laptop", "notebook", "笔记本").any { nameText.contains(it) } -> deviceTypeById("laptop")
-        listOf("mac mini", "macmini", "mini pc", "minipc", "nuc", "迷你主机", "小主机").any { nameText.contains(it) } -> deviceTypeById("mini_pc")
+        listOf("mac mini", "macmini", "mac-mini").any { nameText.contains(it) } -> deviceTypeById("mac_mini")
+        listOf("mini pc", "minipc", "nuc", "迷你主机", "小主机").any { nameText.contains(it) } -> deviceTypeById("mini_pc")
+        listOf("all in one", "all-in-one", "aio", "imac", "studio display", "一体机", "一体电脑").any { nameText.contains(it) } -> deviceTypeById("all_in_one")
+        listOf("usb dock", "usb-c dock", "type-c dock", "docking station", "usb hub", "thunderbolt dock").any { nameText.contains(it) } -> deviceTypeById("usb_dock")
+        listOf("wireless mouse", "bluetooth mouse", "magic mouse").any { nameText.contains(it) } -> deviceTypeById("wireless_mouse")
+        listOf("wireless keyboard", "bluetooth keyboard", "magic keyboard").any { nameText.contains(it) } -> deviceTypeById("wireless_keyboard")
         listOf("desktop", "台式", "台式机").any { nameText.contains(it) } -> deviceTypeById("desktop")
+        listOf("server", "服务器", "proxmox", "esxi").any { nameText.contains(it) } -> deviceTypeById("server")
+        listOf("industrial pc", "工控机").any { nameText.contains(it) } -> deviceTypeById("industrial")
         listOf("nas", "群晖", "威联通", "极空间", "飞牛").any { nameText.contains(it) } || ugreenNasModelTokens.any { nameText.contains(it) } -> deviceTypeById("nas")
+        listOf("soundbar", "sound bar", "回音壁", "条形音箱").any { nameText.contains(it) } -> deviceTypeById("soundbar")
+        listOf("airpods", "earbuds", "wireless earbuds", "tws", "无线耳机", "蓝牙耳机").any { nameText.contains(it) } -> deviceTypeById("wireless_earbuds")
+        listOf("headphones", "headset", "头戴耳机", "头戴式耳机", "耳麦").any { nameText.contains(it) } -> deviceTypeById("headphones")
         listOf("soundbox", "miaisoundbox", "小爱", "天猫精灵", "音箱", "音响", "speaker").any { nameText.contains(it) } -> deviceTypeById("speaker")
+        listOf("客厅灯", "living room light", "长方形吸顶灯", "矩形吸顶灯", "客厅吸顶灯").any { nameText.contains(it) } -> deviceTypeById("living_room_light")
+        listOf("床头灯", "小夜灯", "bedside lamp", "night lamp", "night light").any { nameText.contains(it) } -> deviceTypeById("bedside_lamp")
+        listOf("灯带", "light strip", "led strip").any { nameText.contains(it) } -> deviceTypeById("light_strip")
+        listOf("新风", "fresh air").any { nameText.contains(it) } -> deviceTypeById("fresh_air")
+        listOf("破壁机", "blender").any { nameText.contains(it) } -> deviceTypeById("blender")
+        listOf("吸尘", "vacuum").any { nameText.contains(it) } -> deviceTypeById("vacuum")
+        listOf("智能马桶", "马桶", "toilet").any { nameText.contains(it) } -> deviceTypeById("toilet")
+        listOf("steam oven", "combi oven", "steam grill", "蒸烤箱", "蒸箱", "烤箱").any { nameText.contains(it) } -> deviceTypeById("steam_oven")
+        listOf("智能灶", "智能燃气灶", "燃气灶", "灶具", "smart stove", "stove", "cooker").any { nameText.contains(it) } -> deviceTypeById("smart_stove")
+        listOf("燃气热水器", "gas water heater", "燃热", "天然气热水器").any { nameText.contains(it) } -> deviceTypeById("gas_water_heater")
         listOf("热水器", "water heater").any { nameText.contains(it) } -> deviceTypeById("water_heater")
+        listOf("空调伴侣", "aircon companion", "ac companion").any { nameText.contains(it) } -> deviceTypeById("aircon_companion")
         listOf("空调", "aircon", "air conditioner").any { nameText.contains(it) } -> deviceTypeById("aircon")
-        listOf("路由器", "router", "openwrt", "istoreos", "be72", "rg-", "reyee", "ruijie", "unifi").any { nameText.contains(it) } -> deviceTypeById("router")
+        listOf("power strip", "smart power strip", "powerstrip").any { nameText.contains(it) } -> deviceTypeById("power_strip")
+        listOf("desktop charger", "charging station", "gan charger", "multiport charger").any { nameText.contains(it) } -> deviceTypeById("desktop_charger")
+        listOf("软路由", "openwrt", "istoreos", "pfsense", "opnsense").any { nameText.contains(it) } -> deviceTypeById("soft_router")
+        listOf("路由器", "router", "be72", "rg-", "reyee", "ruijie", "unifi").any { nameText.contains(it) } -> deviceTypeById("router")
         else -> null
     }
 }
@@ -139,9 +167,4 @@ fun hasWifiInfo(d: DeviceItem): Boolean {
 
 fun connectionLabel(d: DeviceItem): String = if (hasWifiInfo(d)) "无线连接" else "有线设备"
 
-fun bestIpv6ForDisplay(v6: List<String>): String = v6
-    .map { it.substringBefore('/').trim() }
-    .filter { it.contains(':') && !it.startsWith("fe80:", ignoreCase = true) }
-    .distinct()
-    .firstOrNull()
-    .orEmpty()
+fun bestIpv6ForDisplay(v6: List<String>): String = pickBestIpv6(v6).best.orEmpty()
