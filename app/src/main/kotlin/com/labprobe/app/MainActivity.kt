@@ -3413,7 +3413,7 @@ private fun HealthScoreRouterHero(
                 )
         )
         Image(
-            painter = painterResource(id = R.drawable.router_skeuomorphic_v3),
+            painter = painterResource(R.drawable.router_skeuomorphic_v3),
             contentDescription = "路由器",
             modifier = Modifier
                 .size(196.dp)
@@ -3421,7 +3421,7 @@ private fun HealthScoreRouterHero(
                     detectTapGestures(onTap = { onOpen() }, onDoubleTap = { onEdit() })
                 },
             contentScale = ContentScale.Fit,
-            filterQuality = FilterQuality.High
+            
         )
     }
 }
