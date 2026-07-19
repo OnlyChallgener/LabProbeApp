@@ -3353,7 +3353,7 @@ private fun HealthScoreDetailHeader(onBack: () -> Unit) {
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text("评分细则", fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("评分细则", fontSize = 26.sp, lineHeight = 30.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             Text("网络健康构成 · Rust Agent 更新", fontSize = 11.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
         }
     }
@@ -3401,12 +3401,12 @@ private fun HealthScoreRouterHero(
             Modifier
                 .align(Alignment.BottomCenter)
                 .offset(y = (-25).dp)
-                .width(288.dp)
-                .height(64.dp)
+                .width(270.dp)
+                .height(58.dp)
                 .background(
                     Brush.radialGradient(
-                        0f to scoreColor.copy(alpha = .22f),
-                        .58f to scoreColor.copy(alpha = .10f),
+                        0f to scoreColor.copy(alpha = .18f),
+                        .58f to scoreColor.copy(alpha = .08f),
                         1f to Color.Transparent
                     ),
                     CircleShape
@@ -3420,7 +3420,8 @@ private fun HealthScoreRouterHero(
                 .pointerInput(routerLanUrl, routerWanUrl, networkMode) {
                     detectTapGestures(onTap = { onOpen() }, onDoubleTap = { onEdit() })
                 },
-            contentScale = ContentScale.Fit
+            contentScale = ContentScale.Fit,
+            filterQuality = FilterQuality.High
         )
     }
 }
@@ -3456,23 +3457,23 @@ private fun HealthScoreBreakdownCard(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
-                        .size(50.dp)
-                        .shadow(7.dp, RoundedCornerShape(17.dp), clip = false, ambientColor = scoreColor.copy(alpha = .16f), spotColor = scoreColor.copy(alpha = .12f))
-                        .clip(RoundedCornerShape(17.dp))
+                        .size(58.dp)
+                        .shadow(8.dp, RoundedCornerShape(19.dp), clip = false, ambientColor = scoreColor.copy(alpha = .18f), spotColor = scoreColor.copy(alpha = .14f))
+                        .clip(RoundedCornerShape(19.dp))
                         .background(
                             Brush.linearGradient(
                                 listOf(scoreColor.copy(alpha = .18f), scoreColor.copy(alpha = .08f))
                             )
                         )
-                        .border(1.dp, Color.White.copy(alpha = .85f), RoundedCornerShape(17.dp)),
+                        .border(1.dp, Color.White.copy(alpha = .85f), RoundedCornerShape(19.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(25.dp), tint = scoreColor)
+                    Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(31.dp), tint = scoreColor)
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.Bottom) {
-                        Text("当前得分", fontSize = 18.sp, lineHeight = 21.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                        Text("当前得分", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
                         Spacer(Modifier.width(8.dp))
                         Text(score.toString(), fontSize = 28.sp, lineHeight = 30.sp, fontWeight = FontWeight.Black, color = scoreColor)
                     }
@@ -3578,24 +3579,22 @@ private fun AgentUpdateDetailCard(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
-                        .size(50.dp)
-                        .shadow(6.dp, RoundedCornerShape(17.dp), clip = false, ambientColor = LabV2.Primary.copy(alpha = .15f), spotColor = LabV2.Primary.copy(alpha = .11f))
-                        .clip(RoundedCornerShape(17.dp))
+                        .size(58.dp)
+                        .shadow(7.dp, RoundedCornerShape(19.dp), clip = false, ambientColor = LabV2.Primary.copy(alpha = .17f), spotColor = LabV2.Primary.copy(alpha = .12f))
+                        .clip(RoundedCornerShape(19.dp))
                         .background(
                             Brush.linearGradient(
                                 listOf(Color(0xFFEAF4FF), Color(0xFFF4FAFF))
                             )
                         )
-                        .border(1.dp, Color.White, RoundedCornerShape(17.dp)),
+                        .border(1.dp, Color.White, RoundedCornerShape(19.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(Modifier.size(30.dp).clip(CircleShape).background(Color.White.copy(alpha = .72f)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Autorenew, null, Modifier.size(21.dp), tint = Color(0xFF4F9AF3))
-                    }
+                    Icon(Icons.Rounded.Sync, null, Modifier.size(31.dp), tint = Color(0xFF4F9AF3))
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Rust Agent 更新", fontSize = 18.sp, lineHeight = 21.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    Text("Rust Agent 更新", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
                     Text(
                         agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令",
                         fontSize = 11.2.sp,
@@ -3608,7 +3607,7 @@ private fun AgentUpdateDetailCard(
                 }
             }
 
-            Text(agentMessage, fontSize = 12.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+            Text(agentMessage, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
             agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
