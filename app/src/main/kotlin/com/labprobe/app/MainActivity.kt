@@ -174,7 +174,8 @@ object AppVersion {
         "v0.10.6 build134 · 首页关注与概览显示修复" to listOf(
             "首页关注终端只显示当前仍在关注列表中的设备",
             "移出关注后首页立即同步隐藏，不再残留",
-            "今日概览底部同步说明支持横向滑动查看完整内容"
+            "今日概览底部同步说明支持横向滑动查看完整内容",
+            "评分细则页面按轻盈薄荷白效果图精细重构"
         )
     )
 }
@@ -3167,7 +3168,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
 }
 
 @Composable
-fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack) {
+fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) {
     val data = state.status?.optJSONObject("data") ?: state.status
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
@@ -3179,38 +3180,141 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val badCount = state.events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }.coerceAtMost(4)
     val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
-    val pulse = rememberInfiniteTransition(label = "routerGlow")
-    val glowAlpha by pulse.animateFloat(
-        initialValue = .28f,
-        targetValue = .64f,
-        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
-        label = "routerGlowAlpha"
-    )
-    val glowScale by pulse.animateFloat(
-        initialValue = 1.00f,
-        targetValue = 1.18f,
-        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
-        label = "routerGlowScale"
-    )
+
     var agentInfo by remember { mutableStateOf(storedAgentUpdateInfo(prefs.agentUpdateInfoJson)) }
     var agentMessage by remember { mutableStateOf(prefs.agentUpdateMessage.ifBlank { "等待检查 Rust Agent 版本" }) }
     var agentBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-
     val context = LocalContext.current
+
     var showRouterUrlEditor by remember { mutableStateOf(false) }
     var routerLanUrl by remember { mutableStateOf(prefs.routerLanUrl) }
     var routerWanUrl by remember { mutableStateOf(prefs.routerWanUrl) }
+
     fun normalizedRouterUrl(raw: String): String {
         val value = raw.trim()
         return if (value.isBlank() || value.contains("://")) value else "https://$value"
     }
+
     fun openRouterUrl() {
         val lan = normalizedRouterUrl(routerLanUrl)
         val wan = normalizedRouterUrl(routerWanUrl)
         val target = if (prefs.favoriteNetworkMode == "wan") wan.ifBlank { lan } else lan.ifBlank { wan }
         if (target.isBlank()) return
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color(0xFFF0F8FF),
+                    .42f to Color(0xFFF7FBFD),
+                    1f to Color(0xFFFBFEFD)
+                )
+            )
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 92.dp, y = (-86).dp)
+                .size(285.dp)
+                .background(
+                    Brush.radialGradient(
+                        0f to Color(0xFF9FEFE4).copy(alpha = .28f),
+                        .58f to Color(0xFFC9F7F1).copy(alpha = .13f),
+                        1f to Color.Transparent
+                    ),
+                    CircleShape
+                )
+        )
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .offset(x = (-115).dp, y = 120.dp)
+                .size(230.dp)
+                .background(
+                    Brush.radialGradient(
+                        0f to Color.White.copy(alpha = .76f),
+                        .72f to Color.White.copy(alpha = .18f),
+                        1f to Color.Transparent
+                    ),
+                    CircleShape
+                )
+        )
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            HealthScoreDetailHeader(onBack)
+
+            HealthScoreRouterHero(
+                scoreColor = scoreColor,
+                routerLanUrl = routerLanUrl,
+                routerWanUrl = routerWanUrl,
+                networkMode = prefs.favoriteNetworkMode,
+                onOpen = { openRouterUrl() },
+                onEdit = { showRouterUrlEditor = true }
+            )
+
+            HealthScoreBreakdownCard(
+                score = score,
+                scoreColor = scoreColor,
+                hubOk = hubOk,
+                exitOk = exitOk,
+                vpnOk = vpnOk,
+                onlineCount = onlineCount,
+                badCount = badCount
+            )
+
+            AgentUpdateDetailCard(
+                agentInfo = agentInfo,
+                agentMessage = agentMessage,
+                agentBusy = agentBusy,
+                onCheck = {
+                    scope.launch {
+                        agentBusy = true
+                        runCatching { HubApi(prefs).getAgentUpdateStatus() }
+                            .onSuccess { info ->
+                                val checkedMessage = if (info.updateAvailable) "发现 Rust Agent 新版本" else info.message.ifBlank { "当前已是最新版本" }
+                                agentInfo = info
+                                agentMessage = checkedMessage
+                                prefs.agentUpdateInfoJson = info.toStoredJson()
+                                prefs.agentUpdateMessage = checkedMessage
+                            }
+                            .onFailure {
+                                val failedMessage = "检查失败：${it.message} · 已保留上次结果"
+                                agentMessage = failedMessage
+                                prefs.agentUpdateMessage = failedMessage
+                            }
+                        agentBusy = false
+                    }
+                },
+                onUpdate = {
+                    scope.launch {
+                        agentBusy = true
+                        runCatching { HubApi(prefs).requestAgentUpdate() }
+                            .onSuccess {
+                                val updateMessage = it.optString("message", "更新指令已发送")
+                                agentMessage = updateMessage
+                                prefs.agentUpdateMessage = updateMessage
+                            }
+                            .onFailure {
+                                val failedMessage = "下发失败：${it.message}"
+                                agentMessage = failedMessage
+                                prefs.agentUpdateMessage = failedMessage
+                            }
+                        agentBusy = false
+                    }
+                }
+            )
+            Spacer(Modifier.height(4.dp))
+        }
     }
 
     if (showRouterUrlEditor) {
@@ -3231,97 +3335,319 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
             }
         )
     }
-    Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
+}
+
+@Composable
+private fun HealthScoreDetailHeader(onBack: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            onClick = onBack,
+            modifier = Modifier.size(48.dp).shadow(7.dp, CircleShape, clip = false),
+            shape = CircleShape,
+            color = Color.White.copy(alpha = .96f),
+            border = BorderStroke(1.dp, Color.White)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.ArrowBack, null, Modifier.size(25.dp), tint = LabV2.Ink)
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("评分细则", fontSize = 26.sp, lineHeight = 30.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("网络健康构成 · Rust Agent 更新", fontSize = 11.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        }
+    }
+}
+
+@Composable
+private fun HealthScoreRouterHero(
+    scoreColor: Color,
+    routerLanUrl: String,
+    routerWanUrl: String,
+    networkMode: String,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit
+) {
+    val pulse = rememberInfiniteTransition(label = "scoreRouterGlow")
+    val glowAlpha by pulse.animateFloat(
+        initialValue = .30f,
+        targetValue = .58f,
+        animationSpec = infiniteRepeatable(tween(2300), repeatMode = RepeatMode.Reverse),
+        label = "scoreRouterGlowAlpha"
+    )
+    val glowScale by pulse.animateFloat(
+        initialValue = .97f,
+        targetValue = 1.12f,
+        animationSpec = infiniteRepeatable(tween(2300), repeatMode = RepeatMode.Reverse),
+        label = "scoreRouterGlowScale"
+    )
+
+    Box(Modifier.fillMaxWidth().height(252.dp), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .size(320.dp)
+                .size(336.dp)
                 .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
                 .background(
                     Brush.radialGradient(
-                        0.00f to LabV2.Green.copy(alpha = glowAlpha * .30f),
-                        0.46f to LabV2.Green.copy(alpha = glowAlpha * .22f),
-                        0.78f to LabV2.Green.copy(alpha = glowAlpha * .10f),
+                        0.00f to Color(0xFFB9F3E8).copy(alpha = glowAlpha * .60f),
+                        .42f to Color(0xFFD7F6F1).copy(alpha = glowAlpha * .38f),
+                        .72f to Color(0xFFE7F3FF).copy(alpha = glowAlpha * .20f),
                         1.00f to Color.Transparent
-                    )
+                    ),
+                    CircleShape
+                )
+        )
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .offset(y = (-25).dp)
+                .width(270.dp)
+                .height(58.dp)
+                .background(
+                    Brush.radialGradient(
+                        0f to scoreColor.copy(alpha = .18f),
+                        .58f to scoreColor.copy(alpha = .08f),
+                        1f to Color.Transparent
+                    ),
+                    CircleShape
                 )
         )
         Image(
             painter = painterResource(R.drawable.router_skeuomorphic_v3),
             contentDescription = "路由器",
             modifier = Modifier
-                .size(150.dp)
-                .pointerInput(routerLanUrl, routerWanUrl, prefs.favoriteNetworkMode) {
-                    detectTapGestures(
-                        onTap = { openRouterUrl() },
-                        onDoubleTap = { showRouterUrlEditor = true }
-                    )
+                .size(196.dp)
+                .pointerInput(routerLanUrl, routerWanUrl, networkMode) {
+                    detectTapGestures(onTap = { onOpen() }, onDoubleTap = { onEdit() })
                 },
-            contentScale = ContentScale.Fit
+            contentScale = ContentScale.Fit,
+            filterQuality = FilterQuality.High
         )
     }
+}
 
-    ExpressiveCard("当前得分 $score", "分数只由下列项目计算，满分按 99 分封顶", Icons.Rounded.VerifiedUser, scoreColor) {
-        ScoreRuleRow("基础运行分", "APP 可正常展示本地缓存", 64, true)
-        ScoreRuleRow("Hub 连接", if (hubOk) "已连接" else "未连接", 12, hubOk)
-        ScoreRuleRow("公网出口", if (exitOk) "已取得 IPv4/IPv6" else "暂无出口地址", 10, exitOk)
-        ScoreRuleRow("VPN / STUN", if (vpnOk) "已记录地址" else "暂无记录", 7, vpnOk)
-        ScoreRuleRow("在线设备", if (onlineCount > 0) "$onlineCount 台在线" else "暂无在线设备", 5, onlineCount > 0)
-        ScoreRuleRow("近期异常扣分", if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常", -(badCount * 2), badCount == 0)
-    }
+@Composable
+private fun HealthScoreBreakdownCard(
+    score: Int,
+    scoreColor: Color,
+    hubOk: Boolean,
+    exitOk: Boolean,
+    vpnOk: Boolean,
+    onlineCount: Int,
+    badCount: Int
+) {
+    val shape = RoundedCornerShape(30.dp)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, shape, clip = false, ambientColor = Color(0x1F4B7594), spotColor = Color(0x174B7594))
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color.White.copy(alpha = .98f),
+                        Color(0xFFF7FCFB).copy(alpha = .97f)
+                    )
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = .96f), shape)
+            .padding(horizontal = 16.dp, vertical = 17.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(58.dp)
+                        .shadow(8.dp, RoundedCornerShape(19.dp), clip = false, ambientColor = scoreColor.copy(alpha = .18f), spotColor = scoreColor.copy(alpha = .14f))
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(scoreColor.copy(alpha = .18f), scoreColor.copy(alpha = .08f))
+                            )
+                        )
+                        .border(1.dp, Color.White.copy(alpha = .85f), RoundedCornerShape(19.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(31.dp), tint = scoreColor)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text("当前得分", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                        Spacer(Modifier.width(8.dp))
+                        Text(score.toString(), fontSize = 28.sp, lineHeight = 30.sp, fontWeight = FontWeight.Black, color = scoreColor)
+                    }
+                    Text("分数只由下列项目计算，满分按 99 分封顶", fontSize = 11.2.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                }
+            }
 
-    ExpressiveCard("Rust Agent 更新", agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令", Icons.Rounded.SystemUpdateAlt, LabV2.Green) {
-        Text(agentMessage, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-        agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
-            Text("Agent 最后上报：$it", fontSize = 10.8.sp, color = LabV2.InkMuted)
+            HorizontalDivider(Modifier.padding(top = 5.dp, bottom = 2.dp), color = LabV2.Border.copy(alpha = .68f))
+
+            HealthScoreRuleRow(Icons.Rounded.Verified, "基础运行分", "APP 可正常展示本地缓存", 64, true)
+            HealthScoreRuleRow(Icons.Rounded.Router, "Hub 连接", if (hubOk) "已连接" else "未连接", 12, hubOk)
+            HealthScoreRuleRow(Icons.Rounded.Public, "公网出口", if (exitOk) "已取得 IPv4/IPv6" else "暂无出口地址", 10, exitOk)
+            HealthScoreRuleRow(Icons.Rounded.VpnKey, "VPN / STUN", if (vpnOk) "已记录地址" else "暂无记录", 7, vpnOk)
+            HealthScoreRuleRow(Icons.Rounded.Devices, "在线设备", if (onlineCount > 0) "$onlineCount 台在线" else "暂无在线设备", 5, onlineCount > 0)
+            HealthScoreRuleRow(Icons.Rounded.WarningAmber, "近期异常扣分", if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常", -(badCount * 2), true, penalty = badCount > 0)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        agentBusy = true
-                        runCatching { HubApi(prefs).getAgentUpdateStatus() }
-                            .onSuccess { info ->
-                                val checkedMessage = if (info.updateAvailable) "发现 Rust Agent 新版本" else info.message.ifBlank { "当前已是最新版本" }
-                                agentInfo = info
-                                agentMessage = checkedMessage
-                                prefs.agentUpdateInfoJson = info.toStoredJson()
-                                prefs.agentUpdateMessage = checkedMessage
-                            }
-                            .onFailure {
-                                val failedMessage = "检查失败：${it.message} · 已保留上次结果"
-                                agentMessage = failedMessage
-                                prefs.agentUpdateMessage = failedMessage
-                            }
-                        agentBusy = false
-                    }
-                },
-                enabled = !agentBusy,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Green),
-                border = BorderStroke(1.dp, LabV2.Green.copy(alpha = .34f))
-            ) { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("检查更新", fontWeight = FontWeight.Black) }
-            Button(
-                onClick = {
-                    scope.launch {
-                        agentBusy = true
-                        runCatching { HubApi(prefs).requestAgentUpdate() }
-                            .onSuccess {
-                                val updateMessage = it.optString("message", "更新指令已发送")
-                                agentMessage = updateMessage
-                                prefs.agentUpdateMessage = updateMessage
-                            }
-                            .onFailure {
-                                val failedMessage = "下发失败：${it.message}"
-                                agentMessage = failedMessage
-                                prefs.agentUpdateMessage = failedMessage
-                            }
-                        agentBusy = false
-                    }
-                },
-                enabled = !agentBusy && agentInfo?.updateAvailable == true,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = LabV2.Green)
-            ) { Icon(Icons.Rounded.SystemUpdateAlt, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即更新", fontWeight = FontWeight.Black) }
+    }
+}
+
+@Composable
+private fun HealthScoreRuleRow(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    points: Int,
+    active: Boolean,
+    penalty: Boolean = false
+) {
+    val displayPoints = if (points > 0 && !active) 0 else points
+    val accent = when {
+        penalty && displayPoints < 0 -> LabV2.Red
+        active -> LabV2.Green
+        else -> LabV2.InkFaint
+    }
+    val rowShape = RoundedCornerShape(20.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(rowShape)
+            .background(Color.White.copy(alpha = .66f))
+            .border(1.dp, LabV2.Border.copy(alpha = .38f), rowShape)
+            .padding(horizontal = 11.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(accent.copy(alpha = .11f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, Modifier.size(21.dp), tint = accent)
+        }
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+            Text(detail, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            when {
+                displayPoints > 0 -> "+$displayPoints"
+                else -> displayPoints.toString()
+            },
+            fontSize = 15.sp,
+            lineHeight = 18.sp,
+            fontWeight = FontWeight.Black,
+            color = when {
+                displayPoints < 0 -> LabV2.Red
+                displayPoints > 0 -> LabV2.Green
+                else -> LabV2.InkFaint
+            }
+        )
+    }
+}
+
+@Composable
+private fun AgentUpdateDetailCard(
+    agentInfo: AgentUpdateInfo?,
+    agentMessage: String,
+    agentBusy: Boolean,
+    onCheck: () -> Unit,
+    onUpdate: () -> Unit
+) {
+    val shape = RoundedCornerShape(30.dp)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .shadow(9.dp, shape, clip = false, ambientColor = Color(0x194B7594), spotColor = Color(0x124B7594))
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color.White.copy(alpha = .97f),
+                        Color(0xFFF4F9FF).copy(alpha = .96f)
+                    )
+                )
+            )
+            .border(1.dp, Color.White.copy(alpha = .96f), shape)
+            .padding(horizontal = 16.dp, vertical = 16.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(58.dp)
+                        .shadow(7.dp, RoundedCornerShape(19.dp), clip = false, ambientColor = LabV2.Primary.copy(alpha = .17f), spotColor = LabV2.Primary.copy(alpha = .12f))
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFEAF4FF), Color(0xFFF4FAFF))
+                            )
+                        )
+                        .border(1.dp, Color.White, RoundedCornerShape(19.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Sync, null, Modifier.size(31.dp), tint = Color(0xFF4F9AF3))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Rust Agent 更新", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    Text(
+                        agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令",
+                        fontSize = 11.2.sp,
+                        lineHeight = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (agentInfo != null) Color(0xFF2D7FE8) else LabV2.InkMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Text(agentMessage, fontSize = 12.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+
+            agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Rounded.Schedule, null, Modifier.size(16.dp), tint = LabV2.InkFaint)
+                    Text("Agent 最后上报：$it", fontSize = 10.8.sp, lineHeight = 14.sp, color = LabV2.InkMuted)
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onCheck,
+                    enabled = !agentBusy,
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Green),
+                    border = BorderStroke(1.dp, LabV2.Green.copy(alpha = .60f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp)
+                ) {
+                    Icon(Icons.Rounded.Refresh, null, Modifier.size(19.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("检查更新", fontSize = 13.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                }
+                Button(
+                    onClick = onUpdate,
+                    enabled = !agentBusy && agentInfo?.updateAvailable == true,
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LabV2.Green,
+                        contentColor = Color.White,
+                        disabledContainerColor = Color(0xFFE5E9EF),
+                        disabledContentColor = Color(0xFFA8B1BE)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp)
+                ) {
+                    Icon(Icons.Rounded.SystemUpdateAlt, null, Modifier.size(19.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("立即更新", fontSize = 13.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                }
+            }
         }
     }
 }
