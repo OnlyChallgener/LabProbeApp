@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -124,17 +126,29 @@ private data class RouterDashboardUi(
     val onlineDevices: Int = 0,
     val uploadBps: Long = 0,
     val downloadBps: Long = 0,
+    val ipv4Connections: Long = 0,
+    val ipv6Connections: Long = 0,
     val wanIpv4: String = "--",
     val wanGateway: String = "--",
+    val wanNetmask: String = "--",
     val connectionType: String = "--",
     val mtu: String = "--",
     val dnsServers: List<String> = emptyList(),
+    val wanOperator: String = "--",
+    val wanInterfaceDisplay: String = "WAN",
     val lanIpv4: String = "--",
+    val lanMac: String = "--",
+    val broadbandUser: String = "--",
+    val broadbandPassword: String = "--",
     val netmask: String = "--",
     val vlanId: String = "--",
     val dhcpLease: String = "--",
     val uplink: String = "--",
-    val ssid: String = "--",
+    val apName: String = "--",
+    val apHostName: String = "--",
+    val apManagementIp: String = "--",
+    val apSoftware: String = "--",
+    val apStations: String = "--",
     val bands: String = "--",
     val channels: String = "--",
     val apEnabled: Boolean = false,
@@ -147,6 +161,29 @@ private data class RouterDashboardUi(
 
 private fun JSONObject.obj(name: String): JSONObject = optJSONObject(name) ?: JSONObject()
 private fun JSONObject.array(name: String): JSONArray = optJSONArray(name) ?: JSONArray()
+
+
+private fun JSONObject.stringList(name: String): List<String> {
+    val array = optJSONArray(name)
+    if (array != null) {
+        return (0 until array.length())
+            .map { array.optString(it).trim() }
+            .filter { it.isNotBlank() && it != "null" }
+            .distinct()
+    }
+    return optString(name)
+        .split(',', ';')
+        .map(String::trim)
+        .filter { it.isNotBlank() && it != "null" }
+        .distinct()
+}
+
+private fun protocolLabel(value: String): String = when (value.trim().lowercase()) {
+    "pppoe" -> "PPPoE"
+    "dhcp", "dynamic", "auto" -> "DHCP"
+    "static", "manual" -> "静态 IP"
+    else -> value.trim().ifBlank { "--" }
+}
 
 private fun jsonNumber(root: JSONObject, key: String): Double {
     val value = root.opt(key)
@@ -216,37 +253,39 @@ private fun connectionType(network: JSONObject): String {
     return result.ifBlank { "--" }
 }
 
-private fun parseRouterDashboard(root: JSONObject?): RouterDashboardUi {
+private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = null): RouterDashboardUi {
     if (root == null) return RouterDashboardUi()
     val telemetry = root.obj("telemetry")
     val wanTelemetry = telemetry.obj("wan")
+    val connections = telemetry.obj("connections")
     val details = root.obj("details")
     val identity = details.obj("identity")
     val wan = details.obj("wan")
     val lan = details.obj("lan")
+    val ap = details.obj("ap")
     val wireless = details.obj("wireless")
     val network = details.obj("network")
 
+    // Backward compatibility for dashboards produced before ipinfo/ap_list were added.
     val ssids = wireless.array("ssidList")
-    var primarySsid = ""
+    var legacySsid = ""
     for (i in 0 until ssids.length()) {
         val item = ssids.optJSONObject(i) ?: continue
         if (!item.optBoolean("enabled", item.optString("enabled").equals("true", true))) continue
-        primarySsid = item.optString("ssidName").trim()
-        if (primarySsid.isNotBlank()) break
+        legacySsid = item.optString("ssidName").trim()
+        if (legacySsid.isNotBlank()) break
     }
-
     val radios = wireless.array("radioList")
-    var radioEnabled = false
-    val channelParts = mutableListOf<String>()
-    val bandParts = mutableListOf<String>()
+    var legacyRadioEnabled = false
+    val legacyChannels = mutableListOf<String>()
+    val legacyBands = mutableListOf<String>()
     for (i in 0 until radios.length()) {
         val item = radios.optJSONObject(i) ?: continue
-        if (item.optBoolean("enabled", item.optString("enabled").equals("true", true))) radioEnabled = true
-        val band = item.optString("band").ifBlank { item.optString("name") }.ifBlank { item.optString("radio") }
-        if (band.isNotBlank()) bandParts += band
-        val channel = item.optString("channel").ifBlank { item.optString("channelText") }
-        if (channel.isNotBlank()) channelParts += channel
+        if (item.optBoolean("enabled", item.optString("enabled").equals("true", true))) legacyRadioEnabled = true
+        item.optString("band").ifBlank { item.optString("name") }.ifBlank { item.optString("radio") }
+            .takeIf(String::isNotBlank)?.let(legacyBands::add)
+        item.optString("channel").ifBlank { item.optString("channelText") }
+            .takeIf(String::isNotBlank)?.let(legacyChannels::add)
     }
 
     val ports = buildList {
@@ -276,22 +315,36 @@ private fun parseRouterDashboard(root: JSONObject?): RouterDashboardUi {
         }
     }
 
-    val netmask = recursiveString(network, setOf("netmask", "subnetmask", "mask")) { it.count { ch -> ch == '.' } == 3 }
-    val vlan = recursiveString(network, setOf("vlanid", "vlan_id", "vid")) { value -> value.toIntOrNull()?.let { it in 0..4094 } == true }
-    val lanIp = lan.optString("ipv4").ifBlank {
-        recursiveString(network, setOf("lanip", "lan_ip", "ipaddr", "ipaddress")) {
-            it.startsWith("192.168.") || it.startsWith("10.") || it.startsWith("172.")
-        }
+    val fallbackNetmask = recursiveString(network, setOf("netmask", "subnetmask", "mask")) { it.count { ch -> ch == '.' } == 3 }
+    val fallbackVlan = recursiveString(network, setOf("vlanid", "vlan_id", "vid")) { value -> value.toIntOrNull()?.let { it in 0..4094 } == true }
+    val fallbackLanIp = recursiveString(network, setOf("lanip", "lan_ip", "ipaddr", "ipaddress")) {
+        it.startsWith("192.168.") || it.startsWith("10.") || it.startsWith("172.")
     }
-    val gateway = recursiveString(network, setOf("gateway", "gw", "gatewayip")) { isIpText(it) }
-    val mtu = recursiveString(network, setOf("mtu")) { it.toIntOrNull() != null }
-    val lease = recursiveString(network, setOf("leasetime", "lease", "lease_time", "dhcp_lease", "leaseText"))
-    val uplink = recursiveString(network, setOf("wanif", "wan_if", "interface", "uplink", "upstream"))
+    val fallbackGateway = recursiveString(network, setOf("gateway", "gw", "gatewayip")) { isIpText(it) }
+    val fallbackMtu = recursiveString(network, setOf("mtu")) { it.toIntOrNull() != null }
+    val fallbackLease = recursiveString(network, setOf("leasetime", "lease", "lease_time", "dhcp_lease", "leaseText"))
+    val fallbackUplink = recursiveString(network, setOf("wanif", "wan_if", "interface", "uplink", "upstream"))
 
-    val name = identity.optString("hostname").ifBlank { root.optString("router") }.ifBlank { "路由器" }
+    val wanDns = wan.stringList("dnsServers").ifEmpty { recursiveDns(network) }
+    val wanOperator = wan.optString("operator").ifBlank { "--" }
+    val wanInterfaceDisplay = wan.optString("interfaceDisplay").ifBlank { "WAN" }
+    val lanMac = credentials?.optString("lanMac").orEmpty().ifBlank { lan.optString("mac") }.ifBlank { "--" }
+    val broadbandUser = credentials?.optString("username").orEmpty().ifBlank { "--" }
+    val broadbandPassword = credentials?.optString("password").orEmpty().ifBlank { "--" }
+    val apBands = ap.stringList("bands").ifEmpty { legacyBands.distinct() }
+    val apChannels = ap.stringList("channels").ifEmpty { legacyChannels.distinct() }
+    val apStatus = ap.optString("status").trim()
+    val apOnline = when {
+        apStatus.isNotBlank() -> apStatus.equals("ON", true) || apStatus.equals("online", true) || apStatus == "1"
+        else -> legacyRadioEnabled
+    }
+    val model = ap.optString("model").ifBlank { identity.optString("model") }.ifBlank { "--" }
+    val hostName = ap.optString("hostName").ifBlank { identity.optString("hostname") }.ifBlank { "--" }
+    val displayName = identity.optString("hostname").ifBlank { hostName }.ifBlank { root.optString("router") }.ifBlank { "路由器" }
+
     return RouterDashboardUi(
-        name = name,
-        model = identity.optString("model").ifBlank { "--" },
+        name = displayName,
+        model = model,
         online = root.optBoolean("online", false),
         temperature = jsonNumber(telemetry, "temperatureC"),
         temperature2g = jsonNumber(telemetry, "temperature2gC"),
@@ -302,20 +355,34 @@ private fun parseRouterDashboard(root: JSONObject?): RouterDashboardUi {
         onlineDevices = telemetry.optInt("onlineDeviceCount", 0),
         uploadBps = wanTelemetry.optLong("uploadBps", 0),
         downloadBps = wanTelemetry.optLong("downloadBps", 0),
+        ipv4Connections = connections.optLong("ipv4", 0),
+        ipv6Connections = connections.optLong("ipv6", 0),
+        // WAN must use dev_sta ipinfo normalized by LabRelay.
         wanIpv4 = wan.optString("ipv4").ifBlank { "--" },
-        wanGateway = gateway.ifBlank { "--" },
-        connectionType = connectionType(network),
-        mtu = mtu.ifBlank { "--" },
-        dnsServers = recursiveDns(network),
-        lanIpv4 = lanIp.ifBlank { "--" },
-        netmask = netmask.ifBlank { "--" },
-        vlanId = vlan.ifBlank { "--" },
-        dhcpLease = lease.ifBlank { "--" },
-        uplink = uplink.ifBlank { "--" },
-        ssid = primarySsid.ifBlank { "--" },
-        bands = bandParts.distinct().joinToString(" / ").ifBlank { "2.4G / 5G" },
-        channels = channelParts.distinct().joinToString(" / ").ifBlank { "--" },
-        apEnabled = radioEnabled,
+        wanGateway = wan.optString("gateway").ifBlank { fallbackGateway }.ifBlank { "--" },
+        wanNetmask = wan.optString("netmask").ifBlank { "--" },
+        connectionType = protocolLabel(wan.optString("proto").ifBlank { connectionType(network) }),
+        mtu = wan.optString("mtu").ifBlank { fallbackMtu }.ifBlank { "--" },
+        dnsServers = wanDns,
+        wanOperator = wanOperator,
+        wanInterfaceDisplay = wanInterfaceDisplay,
+        lanIpv4 = lan.optString("ipv4").ifBlank { fallbackLanIp }.ifBlank { "--" },
+        lanMac = lanMac,
+        broadbandUser = broadbandUser,
+        broadbandPassword = broadbandPassword,
+        netmask = lan.optString("netmask").ifBlank { fallbackNetmask }.ifBlank { "--" },
+        vlanId = lan.optString("vlanId").ifBlank { fallbackVlan }.ifBlank { "--" },
+        dhcpLease = lan.optString("dhcpLease").ifBlank { fallbackLease }.ifBlank { "--" },
+        uplink = lan.optString("uplink").ifBlank { fallbackUplink }.ifBlank { "--" },
+        // AP must use dev_sta ap_list normalized by LabRelay.
+        apName = ap.optString("networkName").ifBlank { legacySsid }.ifBlank { "--" },
+        apHostName = hostName,
+        apManagementIp = ap.optString("managementIp").ifBlank { "--" },
+        apSoftware = ap.optString("software").ifBlank { "--" },
+        apStations = ap.optString("stationCount").ifBlank { "--" },
+        bands = apBands.joinToString(" / ").ifBlank { "--" },
+        channels = apChannels.joinToString(" / ").ifBlank { "--" },
+        apEnabled = apOnline,
         ports = ports,
         updatedAt = root.optString("telemetryAt").ifBlank { root.optString("receivedAt") }.ifBlank { "--" },
         telemetryStale = root.optBoolean("telemetryStale", true),
@@ -332,12 +399,15 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
     var showPortLegend by remember { mutableStateOf(false) }
     var showRouterEditor by remember { mutableStateOf(false) }
 
-    val rawUi = remember(state.routerDashboard) { parseRouterDashboard(state.routerDashboard) }
+    val rawUi = remember(state.routerDashboard, state.routerCredentials) { parseRouterDashboard(state.routerDashboard, state.routerCredentials) }
     val displayName = prefs.routerDisplayName.ifBlank { rawUi.name }
     val maskedWan = if (prefs.privacyMode) maskAddressForUi(rawUi.wanIpv4, true) else rawUi.wanIpv4
     val ui = rawUi.copy(name = displayName, wanIpv4 = maskedWan)
 
-    LaunchedEffect(Unit) { state.refreshRouterDashboard(silent = true) }
+    LaunchedEffect(Unit) {
+        state.refreshRouterDashboard(silent = true)
+        runCatching { state.requestRouterCredentialsRefresh() }
+    }
     LaunchedEffect(state.mqttConnected) {
         while (isActive) {
             delay(if (state.mqttConnected) 15_000L else 20_000L)
@@ -366,6 +436,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
             refreshing = true
             runCatching { state.requestRouterDashboardRefresh() }
                 .onFailure { state.refreshRouterDashboard(silent = false) }
+            runCatching { state.requestRouterCredentialsRefresh() }
             refreshing = false
         }
     }
@@ -444,42 +515,54 @@ private fun RouterHeroCard(
 ) {
     RouterGlassCard(contentPadding = PaddingValues(0.dp)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.weight(1.05f).height(172.dp).clickable(onClick = onOpenRouter),
+                Modifier.weight(.98f).height(160.dp).clickable(onClick = onOpenRouter),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(Modifier.fillMaxSize()) {
                     val c = center
-                    drawCircle(Color(0x1673A7FF), radius = size.minDimension * .42f, center = c)
-                    drawCircle(Color(0x1073A7FF), radius = size.minDimension * .32f, center = c)
+                    drawCircle(Color(0x1673A7FF), radius = size.minDimension * .43f, center = c)
+                    drawCircle(Color(0x0F73A7FF), radius = size.minDimension * .33f, center = c)
+                    drawCircle(Color(0x0873A7FF), radius = size.minDimension * .24f, center = c)
                     drawArc(
-                        color = Color(0x1173A7FF),
-                        startAngle = -10f,
-                        sweepAngle = 190f,
+                        color = Color(0x2073A7FF),
+                        startAngle = -28f,
+                        sweepAngle = 112f,
                         useCenter = false,
-                        style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round),
-                        size = Size(size.width * .76f, size.height * .76f),
-                        topLeft = Offset(size.width * .12f, size.height * .12f)
+                        style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round),
+                        size = Size(size.width * .80f, size.height * .80f),
+                        topLeft = Offset(size.width * .10f, size.height * .10f)
                     )
+                    drawArc(
+                        color = Color(0x1438D9C5),
+                        startAngle = 146f,
+                        sweepAngle = 76f,
+                        useCenter = false,
+                        style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round),
+                        size = Size(size.width * .66f, size.height * .66f),
+                        topLeft = Offset(size.width * .17f, size.height * .17f)
+                    )
+                    drawLine(Color(0x1273A7FF), Offset(size.width * .08f, size.height * .70f), Offset(size.width * .36f, size.height * .89f), 1.1.dp.toPx())
+                    drawLine(Color(0x0D73A7FF), Offset(size.width * .70f, size.height * .08f), Offset(size.width * .93f, size.height * .27f), 1.1.dp.toPx())
                 }
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.router_skeuomorphic_v3),
                     contentDescription = "路由器",
-                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                    modifier = Modifier.fillMaxSize().padding(3.dp),
                     contentScale = ContentScale.Fit
                 )
             }
-            Column(Modifier.weight(.95f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.weight(1.02f).padding(start = 1.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = CircleShape, color = LabV2.Green, modifier = Modifier.size(26.dp)) {
+                    Surface(shape = CircleShape, color = LabV2.Green, modifier = Modifier.size(25.dp)) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Bolt, null, Modifier.size(16.dp), tint = Color.White)
+                            Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp), tint = Color.White)
                         }
                     }
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(4.dp))
                     Text(
                         ui.name,
                         fontSize = 17.sp,
@@ -489,40 +572,47 @@ private fun RouterHeroCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(2.dp))
                     Icon(
                         Icons.Rounded.Edit,
                         null,
-                        Modifier.size(16.dp).clickable(onClick = onEdit),
+                        Modifier.size(15.dp).clickable(onClick = onEdit),
                         tint = Color(0xFF8B99B2)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(4.dp))
                     Surface(
                         shape = RoundedCornerShape(99.dp),
                         color = if (ui.online) Color(0xFFD9F8E5) else Color(0xFFFFE5E8)
                     ) {
                         Text(
                             if (ui.online) "在线" else "离线",
-                            Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
-                            fontSize = 10.sp,
+                            Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            fontSize = 9.6.sp,
                             fontWeight = FontWeight.Black,
                             color = if (ui.online) LabV2.Green else LabV2.Red
                         )
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     SpeedValue(Icons.Rounded.South, ui.downloadBps, "下载速率", LabV2.Green, Modifier.weight(1f))
                     SpeedValue(Icons.Rounded.North, ui.uploadBps, "上传速率", LabV2.Primary, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    ConnectionCountChip("IPv4连接数", ui.ipv4Connections, LabV2.Primary, Modifier.weight(1f))
+                    ConnectionCountChip("IPv6连接数", ui.ipv6Connections, Color(0xFF7C3AED), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
                     Text("实时数据稍旧，等待 Agent 更新", fontSize = 8.6.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
-        Surface(
-            color = Color.White.copy(alpha = .72f),
-            shape = RoundedCornerShape(22.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 7.dp)
+                .clip(RoundedCornerShape(21.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xFFF8FBFF), Color(0xFFF2F7FF), Color(0xFFF8FBFF))))
+                .border(1.dp, Color(0xFFE2EAF5), RoundedCornerShape(21.dp))
         ) {
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 HeroMetric(Icons.Rounded.DeviceThermostat, "温度", temperatureText(ui.temperature), LabV2.Green, Modifier.weight(1f))
@@ -554,15 +644,35 @@ private fun RouterHeroCard(
 
 @Composable
 private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color, modifier: Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = CircleShape, color = Color.Transparent, border = BorderStroke(1.2.dp, color), modifier = Modifier.size(28.dp)) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(17.dp), tint = color) }
+            Surface(shape = CircleShape, color = Color.Transparent, border = BorderStroke(1.dp, color), modifier = Modifier.size(24.dp)) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(14.dp), tint = color) }
             }
-            Spacer(Modifier.width(5.dp))
-            Text(formatBitRate(bps), fontSize = 14.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            Text(formatBitRate(bps), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
         }
-        Text(label, Modifier.padding(start = 33.dp), fontSize = 8.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(label, Modifier.padding(start = 28.dp), fontSize = 8.1.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+    }
+}
+
+@Composable
+private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = .065f),
+        border = BorderStroke(1.dp, color.copy(alpha = .13f))
+    ) {
+        Row(
+            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(label, fontSize = 7.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            Text(count.toString(), fontSize = 9.8.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+        }
     }
 }
 
@@ -620,11 +730,19 @@ private fun RealtimeMetric(icon: ImageVector, label: String, value: String, colo
     }
 }
 
+private data class RouterInfoItem(
+    val label: String,
+    val value: String,
+    val copyValue: String = value,
+    val valueColor: Color = Color(0xFF10264F)
+)
+
 @Composable
 private fun RouterNetworkCard(ui: RouterDashboardUi) {
     var wanExpanded by rememberSaveable { mutableStateOf(false) }
     var lanExpanded by rememberSaveable { mutableStateOf(false) }
     var apExpanded by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
     RouterGlassCard {
         SectionHeader(Icons.Rounded.Public, "网络详情", LabV2.Primary)
         ExpandableNetworkRow(
@@ -633,17 +751,18 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
             mainValue = ui.wanIpv4,
             middleLabel = "连接类型",
             middleValue = ui.connectionType,
-            rightLabel = "DNS 服务器",
-            rightValue = ui.dnsServers.ifEmpty { listOf("--") }.joinToString("\n"),
+            rightLabel = "运营商",
+            rightValue = ui.wanOperator,
             expanded = wanExpanded,
             onToggle = { wanExpanded = !wanExpanded }
         ) {
-            ExpandableInfoGrid(
-                listOf(
-                    "WAN IP" to ui.wanIpv4,
-                    "网关" to ui.wanGateway,
-                    "MTU" to ui.mtu,
-                    "DNS" to ui.dnsServers.ifEmpty { listOf("--") }.joinToString(" / ")
+            RouterInfoGrid(
+                context = context,
+                items = listOf(
+                    RouterInfoItem("网关", ui.wanGateway),
+                    RouterInfoItem("子网掩码", ui.wanNetmask),
+                    RouterInfoItem("MTU", ui.mtu),
+                    RouterInfoItem("宽带接口", ui.wanInterfaceDisplay)
                 )
             )
         }
@@ -659,12 +778,17 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
             expanded = lanExpanded,
             onToggle = { lanExpanded = !lanExpanded }
         ) {
-            ExpandableInfoGrid(
-                listOf(
-                    "LAN IP" to ui.lanIpv4,
-                    "子网掩码" to ui.netmask,
-                    "DHCP 租期" to ui.dhcpLease,
-                    "上网接口" to ui.uplink
+            RouterInfoGrid(
+                context = context,
+                items = listOf(
+                    RouterInfoItem("LAN IP", ui.lanIpv4),
+                    RouterInfoItem("MAC", ui.lanMac),
+                    RouterInfoItem("宽带账号", ui.broadbandUser),
+                    RouterInfoItem(
+                        "宽带密码",
+                        if (ui.broadbandPassword == "--") "--" else "••••••••",
+                        copyValue = ui.broadbandPassword
+                    )
                 )
             )
         }
@@ -672,21 +796,22 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
         ExpandableNetworkRow(
             icon = Icons.Rounded.Wifi,
             title = "AP 信息",
-            mainValue = ui.ssid,
-            middleLabel = "设备名称 / 型号",
-            middleValue = ui.model,
+            mainValue = ui.apName,
+            middleLabel = "主机名 / 型号",
+            middleValue = listOf(ui.apHostName, ui.model).filter { it != "--" }.distinct().joinToString(" / ").ifBlank { "--" },
             rightLabel = "状态",
             rightValue = if (ui.apEnabled) "● ON" else "● OFF",
             rightColor = if (ui.apEnabled) LabV2.Green else LabV2.Red,
             expanded = apExpanded,
             onToggle = { apExpanded = !apExpanded }
         ) {
-            ExpandableInfoGrid(
-                listOf(
-                    "网络名称 (SSID)" to ui.ssid,
-                    "频段" to ui.bands,
-                    "信道" to ui.channels,
-                    "状态" to if (ui.apEnabled) "ON" else "OFF"
+            RouterInfoGrid(
+                context = context,
+                items = listOf(
+                    RouterInfoItem("管理 IP", ui.apManagementIp),
+                    RouterInfoItem("频段", ui.bands),
+                    RouterInfoItem("信道", ui.channels),
+                    RouterInfoItem("软件版本", ui.apSoftware)
                 )
             )
         }
@@ -737,17 +862,26 @@ private fun ExpandableNetworkRow(
 }
 
 @Composable
-private fun ExpandableInfoGrid(items: List<Pair<String, String>>) {
+private fun RouterInfoGrid(context: android.content.Context, items: List<RouterInfoItem>) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFFF8FBFF)).padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).background(Color(0xFFF8FBFF)).padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         items.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { (label, value) ->
-                    Column(Modifier.weight(1f)) {
-                        Text(label, fontSize = 8.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
-                        Text(value, fontSize = 10.2.sp, lineHeight = 13.sp, color = Color(0xFF10264F), fontWeight = FontWeight.Black)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                row.forEach { item ->
+                    val canCopy = item.copyValue.isNotBlank() && item.copyValue != "--"
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable(enabled = canCopy) { copy(context, item.copyValue) },
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White.copy(alpha = .88f),
+                        border = BorderStroke(1.dp, Color(0xFFE7EEF7))
+                    ) {
+                        Column(Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(item.label, fontSize = 8.5.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(item.value, fontSize = 10.2.sp, lineHeight = 12.5.sp, color = item.valueColor, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (canCopy) Text("点按复制", fontSize = 7.3.sp, color = LabV2.Primary.copy(alpha = .66f), fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
                 if (row.size == 1) Spacer(Modifier.weight(1f))
@@ -772,11 +906,13 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
             Icon(Icons.Rounded.HelpOutline, null, Modifier.size(22.dp).clickable(onClick = onShowLegend), tint = Color(0xFF8392AA))
         }
         val ports = if (ui.ports.isEmpty()) (1..9).map { RouterPortUi("LAN$it", false, false, false, false) } else ui.ports.sortedBy { portSortKey(it.name) }
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 7.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            ports.forEach { RouterPortItem(it) }
+        Column(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ports.chunked(5).forEach { rowPorts ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    rowPorts.forEach { RouterPortItem(it) }
+                    repeat(5 - rowPorts.size) { Spacer(Modifier.width(56.dp)) }
+                }
+            }
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -793,7 +929,7 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
 @Composable
 private fun RouterPortItem(port: RouterPortUi) {
     val color = when {
-        !port.connected -> Color(0xFF2F3540)
+        !port.connected -> Color(0xFF9AA5B5)
         port.isWan -> Color(0xFF7651E8)
         port.isGame -> Color(0xFFFFB400)
         port.isHybrid -> Color(0xFF0EA5E9)
@@ -824,10 +960,10 @@ private fun EthernetPortIcon(color: Color, active: Boolean) {
     Canvas(Modifier.size(width = 36.dp, height = 34.dp)) {
         val path = Path().apply {
             moveTo(size.width * .14f, size.height * .18f)
-            lineTo(size.width * .34f, size.height * .18f)
-            lineTo(size.width * .40f, size.height * .06f)
-            lineTo(size.width * .60f, size.height * .06f)
-            lineTo(size.width * .66f, size.height * .18f)
+            lineTo(size.width * .39f, size.height * .18f)
+            lineTo(size.width * .43f, size.height * .09f)
+            lineTo(size.width * .57f, size.height * .09f)
+            lineTo(size.width * .61f, size.height * .18f)
             lineTo(size.width * .86f, size.height * .18f)
             lineTo(size.width * .92f, size.height * .88f)
             lineTo(size.width * .08f, size.height * .88f)
@@ -838,8 +974,8 @@ private fun EthernetPortIcon(color: Color, active: Boolean) {
             repeat(4) { index ->
                 drawRect(
                     Color.White.copy(alpha = .72f),
-                    topLeft = Offset(size.width * (.30f + index * .11f), size.height * .48f),
-                    size = Size(size.width * .055f, size.height * .18f)
+                    topLeft = Offset(size.width * (.32f + index * .105f), size.height * .50f),
+                    size = Size(size.width * .046f, size.height * .15f)
                 )
             }
         }
@@ -853,7 +989,7 @@ private fun PortLegendDialog(onDismiss: () -> Unit) {
         title = { Text("端口状态说明", fontWeight = FontWeight.Black, fontSize = 18.sp, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                PortLegendRow(Color(0xFF2F3540), "黑色", "未连接 / 空闲端口")
+                PortLegendRow(Color(0xFF9AA5B5), "灰色", "未连接 / 空闲端口")
                 PortLegendRow(Color(0xFFFFB400), "黄色", "GAME 口或低速连接")
                 PortLegendRow(Color(0xFF0EA5E9), "蓝色", "双WAN / 聚合口 / 特殊复用口")
                 PortLegendRow(Color(0xFF7651E8), "紫色", "WAN 主口")
@@ -934,14 +1070,27 @@ private fun RouterIdentityDialog(
 @Composable
 private fun RouterGlassCard(contentPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 12.dp), content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(25.dp)
-    Surface(
-        modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
-        shape = shape,
-        color = Color.White.copy(alpha = .92f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = .95f)),
-        shadowElevation = 0.dp,
-        tonalElevation = 0.dp
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(4.dp, shape, clip = false)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFFFDFEFF),
+                        Color(0xFFF7FAFF),
+                        Color(0xFFFBFDFF)
+                    )
+                )
+            )
+            .border(1.dp, Color(0xFFE7EEF7), shape)
     ) {
+        Canvas(Modifier.matchParentSize()) {
+            drawCircle(Color(0x0B4F8CFF), radius = size.minDimension * .42f, center = Offset(size.width * .90f, size.height * .04f))
+            drawLine(Color(0x0C5F8FFF), Offset(size.width * .68f, 0f), Offset(size.width, size.height * .32f), 1.dp.toPx())
+            drawLine(Color(0x0873A7FF), Offset(size.width * .78f, 0f), Offset(size.width, size.height * .22f), 1.dp.toPx())
+        }
         Column(Modifier.fillMaxWidth().padding(contentPadding), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
     }
 }

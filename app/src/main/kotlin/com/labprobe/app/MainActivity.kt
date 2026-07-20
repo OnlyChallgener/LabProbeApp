@@ -956,6 +956,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var mqttConnected by mutableStateOf(false)
     var mqttState by mutableStateOf<HubRealtimeState>(HubRealtimeState.Disabled)
     var routerDashboard by mutableStateOf<JSONObject?>(null)
+    var routerCredentials by mutableStateOf<JSONObject?>(null)
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
@@ -1059,6 +1060,26 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             if (latest != null) {
                 routerDashboard = latest
                 if (latest.optLong("refreshCompletedNonce", 0L) >= nonce) return nonce
+            }
+        }
+        return nonce
+    }
+
+    suspend fun refreshRouterCredentials(silent: Boolean = true) {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return
+        runCatching { HubApi(prefs).getRouterCredentials() }
+            .onSuccess { routerCredentials = it }
+            .onFailure { if (!silent) message = "路由器账号信息刷新失败：${it.message}" }
+    }
+
+    suspend fun requestRouterCredentialsRefresh(): Long {
+        val nonce = HubApi(prefs).requestRouterCredentialsRefresh()
+        repeat(8) {
+            delay(650L)
+            val latest = runCatching { HubApi(prefs).getRouterCredentials() }.getOrNull()
+            if (latest != null) {
+                routerCredentials = latest
+                if (latest.optLong("refreshCompletedNonce", 0L) >= nonce && !latest.optBoolean("stale", true)) return nonce
             }
         }
         return nonce
@@ -8911,6 +8932,11 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun getRouterDashboard(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/router/dashboard", true)) }
     suspend fun requestRouterDashboardRefresh(): Long = withContext(Dispatchers.IO) {
         JSONObject(postJson("/api/router/dashboard/refresh", "{}"))
+            .optLong("refreshNonce", 0L)
+    }
+    suspend fun getRouterCredentials(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/router/dashboard/credentials", true)) }
+    suspend fun requestRouterCredentialsRefresh(): Long = withContext(Dispatchers.IO) {
+        JSONObject(postJson("/api/router/dashboard/credentials/refresh", "{}"))
             .optLong("refreshNonce", 0L)
     }
     suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) { val path = if (online) "/api/devices?view=online" else "/api/devices"; val root = JSONObject(getText(path, true)); parseDeviceArray((root.optJSONArray("devices") ?: JSONArray()).toString()) }
