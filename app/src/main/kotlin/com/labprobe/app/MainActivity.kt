@@ -171,28 +171,19 @@ object AppVersion {
     val CODE: Int get() = BuildConfig.VERSION_CODE
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG = listOf(
-        "v0.10.9 build137 · 路由器状态正式版与存储修复" to listOf(
-            "路由器状态页保持精简端口布局并兼容 Hub 0.9.3",
-            "Hub 增量历史改为有界保存，避免数据库持续膨胀",
-            "LabRelay 0.2.4 继续提供分频路由器状态采集"
-        ),
-        "v0.10.8 build136 · 精简路由器端口状态" to listOf(
-            "端口区域只保留端口图标和端口名称",
-            "移除端口下方速率、双工和已连接重复文字",
-            "Hub v0.9.2 与 LabRelay v0.2.3 无需再次修改"
-        ),
-        "v0.10.7 build135 · 新增路由器状态仪表盘" to listOf(
-            "首页网络健康卡的出口按钮进入路由器状态页面",
-            "展示路由器温度、CPU、内存、WAN速率、网络配置和9口状态",
-            "支持 MQTT 实时更新、HTTP 兜底和手动刷新"
+        "v0.10.7 build137 · 新增路由器状态仪表盘并优化实时同步" to listOf(
+            "首页网络健康卡中的“出口”入口进入独立路由器状态页面",
+            "新增温度、CPU、内存、运行时间、在线终端、WAN速率、网络配置与物理端口状态",
+            "路由器状态使用MQTT实时更新，断线自动由HTTP兜底，并支持手动刷新",
+            "端口区域仅保留端口图标和名称，不显示重复速率、双工及连接状态文字",
+            "本次不调整其他页面UI和原有网络工具逻辑"
         ),
         "v0.10.6 build134 · 首页关注与概览显示修复" to listOf(
             "首页关注终端只显示当前仍在关注列表中的设备",
             "移出关注后首页立即同步隐藏，不再残留",
             "今日概览底部同步说明支持横向滑动查看完整内容"
         )
-    )
-}
+    )}
 
 private val LabTypography: Typography = run {
     val t = Typography()
@@ -8823,7 +8814,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.9：路由器状态仪表盘与有界存储正式版。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.7：新增路由器状态仪表盘与实时遥测。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
