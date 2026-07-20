@@ -1,0 +1,93 @@
+LabProbe 全量源码更新说明
+========================
+
+版本：
+- Android APP：v0.10.9 build137
+- Hub：v0.9.3
+- LabRelay：v0.2.4
+
+本次重点：
+1. 首页“出口”进入路由器状态页。
+2. 路由器状态页包含温度、CPU、内存、WAN速率、网络配置、SSID和9口状态。
+3. 端口区只显示端口图标和端口名称，不显示速率、双工和“已连接”重复文字。
+4. Hub 修复 SQLite revisions 无界增长：高频缓存不再复制整份JSON，设备流量/RSSI不写永久revision。
+5. revisions 默认最多5000条且不超过7天；旧APP游标过期会自动执行完整同步。
+6. Hub/Relay/App 其他页面与原有工具逻辑不做无关改动。
+
+目录：
+- LabProbeApp/：Android完整源码
+- labprobe-hub/：Hub + LabRelay完整源码
+
+一、更新本地 APP 仓库
+---------------------
+建议先把压缩包解压到 D:\Release\LabProbe-full，然后在 PowerShell 执行：
+
+  $Source = "D:\Release\LabProbe-full\LabProbeApp"
+  $Target = "D:\Github\LabProbeApp"
+  robocopy $Source $Target /E /XD .git build .gradle /XF local.properties signing.properties
+
+Git Bash：
+
+  cd /d/Github/LabProbeApp
+  git switch codex/app-v0102-polish
+  git status
+  git add -A
+  git commit -m "feat: router status v0.10.9 build137"
+  git push origin codex/app-v0102-polish
+
+GitHub Actions：Android Release APK → Run workflow → 选择 codex/app-v0102-polish。
+
+二、更新本地 Hub + Relay 仓库
+----------------------------
+PowerShell：
+
+  $Source = "D:\Release\LabProbe-full\labprobe-hub"
+  $Target = "D:\Github\labprobe-hub"
+  robocopy $Source $Target /E /XD .git __pycache__
+
+Git Bash：
+
+  cd /d/Github/labprobe-hub
+  git switch codex/mqtt-realtime-hub
+  git status
+  git add -A
+  git commit -m "fix: bounded sqlite storage hub 0.9.3 relay 0.2.4"
+  git push origin codex/mqtt-realtime-hub
+
+随后运行 Hub Docker 镜像工作流和 LabRelay ARM64 构建工作流。
+
+三、部署顺序
+------------
+1. 先更新 Hub v0.9.3，并保留原 data/config/backups/logs 挂载目录。
+2. 再升级路由器 LabRelay v0.2.4。
+3. 最后安装 APP v0.10.9 build137。
+
+不要删除或覆盖：
+- Hub data/
+- Hub config/
+- Hub backups/
+- Hub logs/
+- APP签名密钥与GitHub Secrets
+
+四、数据库说明
+--------------
+Hub 0.9.3 已自动限制 revision 数量和时间，不会再无限增长。
+默认环境变量：
+- REVISION_MAX_ROWS=5000
+- REVISION_MAX_AGE_DAYS=7
+- REVISION_PRUNE_INTERVAL_SEC=300
+
+你当前新数据库已恢复到MB级，旧的 labprobe.db.28GB.bad 在确认APP、备注、关注和端口规则正常后可以删除。
+若其他机器仍使用旧的膨胀数据库，先停止Hub容器，再执行：
+
+  python /app/scripts/repair_storage.py --vacuum
+
+该脚本先备份数据库，只裁剪旧revision，不删除当前documents数据。
+
+五、验证
+--------
+Hub源码已通过：
+- Python语法检查
+- 8项Hub/SQLite/路由器状态接口单元测试
+
+当前环境未包含Android SDK/Gradle完整缓存及Rust Cargo工具链，因此APP和Relay最终编译请以GitHub Actions为准。

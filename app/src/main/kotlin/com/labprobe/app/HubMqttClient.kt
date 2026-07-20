@@ -26,7 +26,8 @@ data class HubMqttConfig(
     val username: String = "",
     val password: String = "",
     val revisionTopic: String = "",
-    val availabilityTopic: String = ""
+    val availabilityTopic: String = "",
+    val dashboardTopic: String = ""
 ) {
     fun usable(): Boolean = enabled && publicUrl.isNotBlank() && revisionTopic.isNotBlank()
 
@@ -37,6 +38,7 @@ data class HubMqttConfig(
         .put("password", password)
         .put("revisionTopic", revisionTopic)
         .put("availabilityTopic", availabilityTopic)
+        .put("dashboardTopic", dashboardTopic)
         .toString()
 
     companion object {
@@ -50,7 +52,8 @@ data class HubMqttConfig(
                     username = root.optString("username"),
                     password = root.optString("password"),
                     revisionTopic = root.optString("revisionTopic"),
-                    availabilityTopic = root.optString("availabilityTopic")
+                    availabilityTopic = root.optString("availabilityTopic"),
+                    dashboardTopic = root.optString("dashboardTopic")
                 )
             }.getOrDefault(HubMqttConfig())
         }
@@ -69,7 +72,8 @@ sealed interface HubRealtimeState {
 class HubMqttClient(
     private val clientId: String,
     private val onState: (HubRealtimeState) -> Unit,
-    private val onRevision: (Long) -> Unit
+    private val onRevision: (Long) -> Unit,
+    private val onRouterDashboard: (String) -> Unit = {}
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var client: MqttAsyncClient? = null
@@ -166,6 +170,7 @@ class HubMqttClient(
                                 "offline" -> onState(HubRealtimeState.HttpFallback("Hub MQTT发布端离线"))
                             }
                         }
+                        activeConfig.dashboardTopic -> onRouterDashboard(String(message.payload, Charsets.UTF_8))
                     }
                 }
 
@@ -187,10 +192,14 @@ class HubMqttClient(
                         runCatching { mqtt.close() }
                         return
                     }
-                    val topics = listOf(activeConfig.revisionTopic, activeConfig.availabilityTopic)
-                        .filter { it.isNotBlank() }
-                        .distinct()
-                    mqtt.subscribe(topics.toTypedArray(), IntArray(topics.size) { 1 }, null, object : IMqttActionListener {
+                    val topicQos = listOf(
+                        activeConfig.revisionTopic to 1,
+                        activeConfig.availabilityTopic to 1,
+                        activeConfig.dashboardTopic to 0
+                    ).filter { it.first.isNotBlank() }.distinctBy { it.first }
+                    val topics = topicQos.map { it.first }
+                    val qoses = topicQos.map { it.second }.toIntArray()
+                    mqtt.subscribe(topics.toTypedArray(), qoses, null, object : IMqttActionListener {
                         override fun onSuccess(asyncActionToken: IMqttToken?) {
                             if (desired && run == generation) onState(HubRealtimeState.Connected)
                         }
