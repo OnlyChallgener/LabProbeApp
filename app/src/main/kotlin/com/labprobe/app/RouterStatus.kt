@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -126,8 +125,6 @@ private data class RouterDashboardUi(
     val onlineDevices: Int = 0,
     val uploadBps: Long = 0,
     val downloadBps: Long = 0,
-    val ipv4Connections: Long = 0,
-    val ipv6Connections: Long = 0,
     val wanIpv4: String = "--",
     val wanGateway: String = "--",
     val wanNetmask: String = "--",
@@ -257,7 +254,6 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
     if (root == null) return RouterDashboardUi()
     val telemetry = root.obj("telemetry")
     val wanTelemetry = telemetry.obj("wan")
-    val connections = telemetry.obj("connections")
     val details = root.obj("details")
     val identity = details.obj("identity")
     val wan = details.obj("wan")
@@ -355,8 +351,6 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         onlineDevices = telemetry.optInt("onlineDeviceCount", 0),
         uploadBps = wanTelemetry.optLong("uploadBps", 0),
         downloadBps = wanTelemetry.optLong("downloadBps", 0),
-        ipv4Connections = connections.optLong("ipv4", 0),
-        ipv6Connections = connections.optLong("ipv6", 0),
         // WAN must use dev_sta ipinfo normalized by LabRelay.
         wanIpv4 = wan.optString("ipv4").ifBlank { "--" },
         wanGateway = wan.optString("gateway").ifBlank { fallbackGateway }.ifBlank { "--" },
@@ -593,13 +587,9 @@ private fun RouterHeroCard(
                         )
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SpeedValue(Icons.Rounded.South, ui.downloadBps, "下载速率", LabV2.Green, Modifier.weight(1f))
                     SpeedValue(Icons.Rounded.North, ui.uploadBps, "上传速率", LabV2.Primary, Modifier.weight(1f))
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    ConnectionCountChip("IPv4连接数", ui.ipv4Connections, LabV2.Primary, Modifier.weight(1f))
-                    ConnectionCountChip("IPv6连接数", ui.ipv6Connections, Color(0xFF7C3AED), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
                     Text("实时数据稍旧，等待 Agent 更新", fontSize = 8.6.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
@@ -644,35 +634,15 @@ private fun RouterHeroCard(
 
 @Composable
 private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color, modifier: Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = CircleShape, color = Color.Transparent, border = BorderStroke(1.dp, color), modifier = Modifier.size(24.dp)) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(14.dp), tint = color) }
+            Surface(shape = CircleShape, color = Color.Transparent, border = BorderStroke(1.2.dp, color), modifier = Modifier.size(28.dp)) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(17.dp), tint = color) }
             }
-            Spacer(Modifier.width(4.dp))
-            Text(formatBitRate(bps), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Spacer(Modifier.width(5.dp))
+            Text(formatBitRate(bps), fontSize = 14.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
         }
-        Text(label, Modifier.padding(start = 28.dp), fontSize = 8.1.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-    }
-}
-
-@Composable
-private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = color.copy(alpha = .065f),
-        border = BorderStroke(1.dp, color.copy(alpha = .13f))
-    ) {
-        Row(
-            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(label, fontSize = 7.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
-            Spacer(Modifier.width(4.dp))
-            Text(count.toString(), fontSize = 9.8.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
-        }
+        Text(label, Modifier.padding(start = 33.dp), fontSize = 8.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
     }
 }
 
@@ -1086,7 +1056,7 @@ private fun RouterGlassCard(contentPadding: PaddingValues = PaddingValues(horizo
             )
             .border(1.dp, Color(0xFFE7EEF7), shape)
     ) {
-        Canvas(Modifier.matchParentSize()) {
+        Canvas(Modifier.fillMaxSize()) {
             drawCircle(Color(0x0B4F8CFF), radius = size.minDimension * .42f, center = Offset(size.width * .90f, size.height * .04f))
             drawLine(Color(0x0C5F8FFF), Offset(size.width * .68f, 0f), Offset(size.width, size.height * .32f), 1.dp.toPx())
             drawLine(Color(0x0873A7FF), Offset(size.width * .78f, 0f), Offset(size.width, size.height * .22f), 1.dp.toPx())
