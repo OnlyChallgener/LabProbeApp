@@ -5,6 +5,10 @@ on:
     branches:
       - main
       - codex/router-control-v01011-build141
+  pull_request:
+    branches:
+      - codex/router-status-v0107-build137
+      - main
   workflow_dispatch:
 
 jobs:
