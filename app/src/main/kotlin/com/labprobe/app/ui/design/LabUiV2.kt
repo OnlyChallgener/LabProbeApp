@@ -141,7 +141,8 @@ fun CompactPageHeader(
     subtitle: String? = null,
     onBack: (() -> Unit)? = null,
     action: (@Composable RowScope.() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compactTitle: Boolean = false
 ) {
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         if (onBack != null) {
@@ -159,7 +160,7 @@ fun CompactPageHeader(
             Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontSize = 21.sp, lineHeight = 24.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = if (compactTitle) 19.sp else 21.sp, lineHeight = if (compactTitle) 22.sp else 24.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!subtitle.isNullOrBlank()) {
                 Text(subtitle, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.South
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -121,6 +122,7 @@ private data class RouterDashboardUi(
     val temperature5g: Double = 0.0,
     val cpu: Double = 0.0,
     val memory: Double = 0.0,
+    val storage: Double = -1.0,
     val uptimeSeconds: Long = 0,
     val onlineDevices: Int = 0,
     val uploadBps: Long = 0,
@@ -139,6 +141,7 @@ private data class RouterDashboardUi(
     val wanInterfaceDisplay: String = "WAN",
     val lanIpv4: String = "--",
     val lanMac: String = "--",
+    val broadbandRemark: String = "--",
     val broadbandUser: String = "--",
     val broadbandPassword: String = "--",
     val netmask: String = "--",
@@ -357,6 +360,9 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
     val wanOperator = wan.optString("operator").ifBlank { "--" }
     val wanInterfaceDisplay = wan.optString("interfaceDisplay").ifBlank { "WAN" }
     val lanMac = credentials?.optString("lanMac").orEmpty().ifBlank { lan.optString("mac") }.ifBlank { "--" }
+    val broadbandRemark = lan.optString("broadbandRemark")
+        .ifBlank { recursiveString(network, setOf("service", "serviceName")) }
+        .ifBlank { "--" }
     val broadbandUser = credentials?.optString("username").orEmpty().ifBlank { "--" }
     val broadbandPassword = credentials?.optString("password").orEmpty().ifBlank { "--" }
     val apBands = ap.stringList("bands").ifEmpty { legacyBands.distinct() }
@@ -381,6 +387,7 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         temperature5g = jsonNumber(telemetry, "temperature5gC"),
         cpu = jsonNumber(telemetry, "cpuPercent"),
         memory = jsonNumber(telemetry, "memoryPercent"),
+        storage = if (telemetry.has("storagePercent") && !telemetry.isNull("storagePercent")) jsonNumber(telemetry, "storagePercent") else -1.0,
         uptimeSeconds = telemetry.optLong("uptimeSeconds", 0),
         onlineDevices = telemetry.optInt("onlineDeviceCount", 0),
         uploadBps = wanTelemetry.optLong("uploadBps", 0),
@@ -400,6 +407,7 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         wanInterfaceDisplay = wanInterfaceDisplay,
         lanIpv4 = lan.optString("ipv4").ifBlank { fallbackLanIp }.ifBlank { "--" },
         lanMac = lanMac,
+        broadbandRemark = broadbandRemark,
         broadbandUser = broadbandUser,
         broadbandPassword = broadbandPassword,
         netmask = lan.optString("netmask").ifBlank { fallbackNetmask }.ifBlank { "--" },
@@ -708,22 +716,25 @@ private fun RouterHeroCard(
 
 @Composable
 private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color, modifier: Modifier) {
+    val rate = bitRateParts(bps)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
                 color = Color.Transparent,
-                border = BorderStroke(1.dp, color),
-                modifier = Modifier.size(21.dp)
+                border = BorderStroke(.9.dp, color),
+                modifier = Modifier.size(18.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, null, Modifier.size(11.dp), tint = color)
+                    Icon(icon, null, Modifier.size(10.dp), tint = color)
                 }
             }
-            Spacer(Modifier.width(4.dp))
-            Text(formatBitRate(bps), fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Spacer(Modifier.width(2.dp))
+            Text(rate.first, fontSize = 9.7.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Spacer(Modifier.width(1.dp))
+            Text(rate.second, fontSize = 7.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
         }
-        Text(label, Modifier.padding(start = 25.dp), fontSize = 7.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(label, Modifier.padding(start = 21.dp), fontSize = 7.3.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
     }
 }
 
@@ -766,11 +777,15 @@ private fun HeroDivider() = Box(Modifier.width(1.dp).height(38.dp).background(Co
 private fun RouterRealtimeCard(ui: RouterDashboardUi) {
     RouterGlassCard {
         SectionHeader(Icons.Rounded.MonitorHeart, "实时状态", LabV2.Primary, ui.updatedAt)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RealtimeMetric(Icons.Rounded.Wifi, "2.4G", temperatureText(ui.temperature2g), LabV2.Green, ui.temperature2g / 100.0, Modifier.weight(1f))
-            RealtimeMetric(Icons.Rounded.Wifi, "5G", temperatureText(ui.temperature5g), LabV2.Primary, ui.temperature5g / 100.0, Modifier.weight(1f))
-            RealtimeMetric(Icons.Rounded.Memory, "CPU", percentText(ui.cpu), Color(0xFF7C3AED), ui.cpu / 100.0, Modifier.weight(1f))
-            RealtimeMetric(Icons.Rounded.DeveloperBoard, "内存", percentText(ui.memory), Color(0xFFFF8A00), ui.memory / 100.0, Modifier.weight(1f))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            RealtimeMetric(Icons.Rounded.Wifi, "2.4G", temperatureText(ui.temperature2g), LabV2.Green, ui.temperature2g / 100.0, Modifier.width(82.dp))
+            RealtimeMetric(Icons.Rounded.Wifi, "5G", temperatureText(ui.temperature5g), LabV2.Primary, ui.temperature5g / 100.0, Modifier.width(82.dp))
+            RealtimeMetric(Icons.Rounded.Memory, "CPU", percentText(ui.cpu), Color(0xFF7C3AED), ui.cpu / 100.0, Modifier.width(82.dp))
+            RealtimeMetric(Icons.Rounded.DeveloperBoard, "内存", percentText(ui.memory), Color(0xFFFF8A00), ui.memory / 100.0, Modifier.width(82.dp))
+            RealtimeMetric(Icons.Rounded.Storage, "存储", percentText(ui.storage), Color(0xFF0EA5E9), ui.storage.coerceAtLeast(0.0) / 100.0, Modifier.width(82.dp))
         }
     }
 }
@@ -831,19 +846,18 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
             RouterInfoGrid(
                 context = context,
                 items = listOf(
-                    RouterInfoItem("网关", ui.wanGateway),
                     RouterInfoItem(
                         "历史流量",
                         historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
-                        copyValue = historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
-                        supportingText = "上传 / 下载流量"
+                        copyValue = historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes)
                     ),
-                    RouterInfoItem("MTU", ui.mtu),
                     RouterInfoItem(
                         "DNS",
                         ui.dnsServers.take(2).joinToString("\n").ifBlank { "--" },
                         copyValue = ui.dnsServers.joinToString("\n").ifBlank { "--" }
-                    )
+                    ),
+                    RouterInfoItem("网关", ui.wanGateway),
+                    RouterInfoItem("MTU", ui.mtu)
                 )
             )
         }
@@ -862,7 +876,7 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
             RouterInfoGrid(
                 context = context,
                 items = listOf(
-                    RouterInfoItem("LAN IP", ui.lanIpv4),
+                    RouterInfoItem("备注", ui.broadbandRemark),
                     RouterInfoItem("MAC", ui.lanMac),
                     RouterInfoItem("宽带账号", ui.broadbandUser),
                     RouterInfoItem(
@@ -1209,6 +1223,13 @@ private fun uptimeText(seconds: Long): String = when {
     else -> "${seconds / 60} 分"
 }
 private fun compactDecimal(value: Double): String = String.format("%.2f", value).trimEnd('0').trimEnd('.')
+private fun bitRateParts(bps: Long): Pair<String, String> = when {
+    bps <= 0 -> "0" to "Kbps"
+    bps < 1_000 -> bps.toString() to "bps"
+    bps < 1_000_000 -> compactDecimal(bps / 1_000.0) to "Kbps"
+    bps < 1_000_000_000 -> compactDecimal(bps / 1_000_000.0) to "Mbps"
+    else -> compactDecimal(bps / 1_000_000_000.0) to "Gbps"
+}
 private fun formatBitRate(bps: Long): String = when {
     bps <= 0 -> "0 Kbps"
     bps < 1_000 -> "$bps bps"

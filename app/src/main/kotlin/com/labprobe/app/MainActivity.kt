@@ -243,8 +243,8 @@ class AppPrefs(context: Context) {
         if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
         if (sp.contains("token")) sp.edit().remove("token").apply()
     }
-    var hub: String get() = sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB
-        set(v) = sp.edit().putString("hub", v.trim().trimEnd('/')).apply()
+    var hub: String get() = normalizeHubAddressForDisplay(sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+        set(v) = sp.edit().putString("hub", normalizeHubAddressForDisplay(v)).apply()
     var token: String get() = secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
         set(v) = secureTokenStore.set(v)
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
@@ -293,9 +293,30 @@ class AppPrefs(context: Context) {
     private fun historyLimit(key: String): Int = if (key.contains("ssh_cmd", true)) 6 else 3
     private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(historyLimit(key))
     private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(historyLimit(key)).joinToString("\n")).apply() }
-    fun history(key: String): List<String> = getHistory("history_" + key)
-    fun addHistory(key: String, value: String) { val v = value.trim(); if (v.isNotBlank()) putHistory("history_" + key, listOf(v) + getHistory("history_" + key).filter { it != v }) }
-    fun removeHistory(key: String, value: String) { putHistory("history_" + key, getHistory("history_" + key).filter { it != value }) }
+    fun history(key: String): List<String> {
+        val values = getHistory("history_" + key)
+        return if (key.equals("hub", true)) values.map(::normalizeHubAddressForDisplay).filter(String::isNotBlank).distinct() else values
+    }
+    fun addHistory(key: String, value: String) {
+        val v = if (key.equals("hub", true)) normalizeHubAddressForDisplay(value) else value.trim()
+        if (v.isBlank()) return
+        val old = getHistory("history_" + key)
+        val filtered = if (key.equals("hub", true)) {
+            old.filter { normalizeHubAddressForDisplay(it) != v }
+        } else {
+            old.filter { it != v }
+        }
+        putHistory("history_" + key, listOf(v) + filtered)
+    }
+    fun removeHistory(key: String, value: String) {
+        val target = if (key.equals("hub", true)) normalizeHubAddressForDisplay(value) else value
+        putHistory(
+            "history_" + key,
+            getHistory("history_" + key).filter {
+                if (key.equals("hub", true)) normalizeHubAddressForDisplay(it) != target else it != target
+            }
+        )
+    }
 
     fun dnsQueryHistory(): List<DnsQueryHistory> {
         val arr = runCatching { JSONArray(sp.getString("dns_query_history", "[]") ?: "[]") }.getOrElse { JSONArray() }
@@ -364,8 +385,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putLong("sync_revision_v1", v.coerceAtLeast(0L)).apply()
     var lastFullSyncAt: Long get() = sp.getLong("last_full_sync_at_v1", 0L)
         set(v) = sp.edit().putLong("last_full_sync_at_v1", v.coerceAtLeast(0L)).apply()
-    var syncHub: String get() = sp.getString("sync_hub_v1", "") ?: ""
-        set(v) = sp.edit().putString("sync_hub_v1", v.trim().trimEnd('/')).apply()
+    var syncHub: String get() = normalizeHubAddressForDisplay(sp.getString("sync_hub_v1", "") ?: "")
+        set(v) = sp.edit().putString("sync_hub_v1", normalizeHubAddressForDisplay(v)).apply()
 
     var pingHost: String get() = sp.getString("ping_host", "223.5.5.5") ?: "223.5.5.5"
         set(v) = sp.edit().putString("ping_host", v).apply()
@@ -885,6 +906,23 @@ private fun storedAgentUpdateInfo(raw: String): AgentUpdateInfo? {
             lastSeenAt = root.optString("lastSeenAt", "")
         )
     }.getOrNull()
+}
+
+private fun agentCleanupSummary(root: JSONObject): String {
+    val bytes = root.optLong("reclaimedBytes", 0L).coerceAtLeast(0L)
+    val rows = root.optJSONArray("cleanedItems") ?: JSONArray()
+    val labels = buildList {
+        for (index in 0 until rows.length()) {
+            val item = rows.optJSONObject(index) ?: continue
+            val name = item.optString("name").trim()
+            val count = item.optInt("count", 0)
+            if (name.isNotBlank()) add(if (count > 0) "$name（$count 项）" else name)
+        }
+    }
+    val errors = root.optJSONArray("errors")?.length() ?: 0
+    val headline = "清理完成 · 回收 ${formatBytesShort(bytes)}"
+    val detail = if (labels.isEmpty()) "没有发现可清理的备份或临时日志" else "已清理：${labels.joinToString("、")}"
+    return if (errors > 0) "$headline\n$detail · $errors 项未能删除" else "$headline\n$detail"
 }
 
 class HubSyncUnsupported(message: String) : RuntimeException(message)
@@ -1863,7 +1901,13 @@ fun ScreenShell(
 }
 
 @Composable
-fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun DetailShell(
+    title: String,
+    subtitle: String,
+    onBack: () -> Unit,
+    compactHeader: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -1871,7 +1915,7 @@ fun DetailShell(title: String, subtitle: String, onBack: () -> Unit, content: @C
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
     ) {
-        CompactPageHeader(title = title, subtitle = subtitle, onBack = onBack)
+        CompactPageHeader(title = title, subtitle = subtitle, onBack = onBack, compactTitle = compactHeader)
         content()
         Spacer(Modifier.height(2.dp))
     }
@@ -3214,7 +3258,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
 }
 
 @Composable
-fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack) {
+fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack, compactHeader = true) {
     val data = state.status?.optJSONObject("data") ?: state.status
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
@@ -3241,6 +3285,8 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     )
     var agentInfo by remember { mutableStateOf(storedAgentUpdateInfo(prefs.agentUpdateInfoJson)) }
     var agentMessage by remember { mutableStateOf(prefs.agentUpdateMessage.ifBlank { "等待检查 Rust Agent 版本" }) }
+    var cleanupMessage by remember { mutableStateOf("可清理所有 Agent 备份和非必要临时日志") }
+    var showCleanupConfirm by remember { mutableStateOf(false) }
     var agentBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -3276,6 +3322,66 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 prefs.routerWanUrl = wan
                 showRouterUrlEditor = false
             }
+        )
+    }
+    if (showCleanupConfirm) {
+        AlertDialog(
+            onDismissRequest = { if (!agentBusy) showCleanupConfirm = false },
+            title = { Text("清理 Agent 文件", fontWeight = FontWeight.Black, fontSize = 17.sp, color = LabV2.Ink) },
+            text = {
+                Text(
+                    "将删除路由器上的所有 Agent 备份、更新/安装日志和已失效的临时安装文件。不会删除 Agent 配置、运行程序或当前状态数据。",
+                    fontSize = 11.5.sp,
+                    lineHeight = 17.sp,
+                    color = LabV2.InkMuted,
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCleanupConfirm = false
+                        scope.launch {
+                            agentBusy = true
+                            cleanupMessage = "正在等待路由器执行清理…"
+                            runCatching {
+                                val requested = HubApi(prefs).requestAgentCleanup()
+                                val commandId = requested.optString("commandId")
+                                if (commandId.isBlank()) error("Hub 未返回清理任务编号")
+                                var finished: JSONObject? = null
+                                for (attempt in 0 until 45) {
+                                    delay(1_000)
+                                    val status = HubApi(prefs).getAgentCleanupStatus(commandId)
+                                    when (status.optString("state")) {
+                                        "completed" -> {
+                                            finished = status
+                                            break
+                                        }
+                                        "failed" -> error(status.optString("message").ifBlank { "路由器清理失败" })
+                                    }
+                                }
+                                finished ?: error("清理任务等待超时，请稍后重新查看")
+                            }.onSuccess {
+                                cleanupMessage = agentCleanupSummary(it)
+                            }.onFailure {
+                                cleanupMessage = "清理失败：${it.message}"
+                            }
+                            agentBusy = false
+                        }
+                    },
+                    enabled = !agentBusy,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
+                    shape = RoundedCornerShape(15.dp)
+                ) { Text("确认清理", fontWeight = FontWeight.Black) }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showCleanupConfirm = false }, enabled = !agentBusy, shape = RoundedCornerShape(15.dp)) {
+                    Text("取消", fontWeight = FontWeight.Bold)
+                }
+            },
+            shape = RoundedCornerShape(25.dp),
+            containerColor = LAB_POPUP_SURFACE,
+            tonalElevation = 0.dp
         )
     }
     Box(Modifier.fillMaxWidth().height(196.dp), contentAlignment = Alignment.Center) {
@@ -3328,19 +3434,35 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         )
     }
 
-    ExpressiveCard("当前得分 $score", "分数只由下列项目计算，满分按 99 分封顶", Icons.Rounded.VerifiedUser, scoreColor) {
+    HealthDetailCard(
+        title = "当前得分 $score",
+        subtitle = "分数只由下列项目计算，满分按 99 分封顶",
+        accent = scoreColor,
+        headerIcon = Icons.Rounded.WorkspacePremium
+    ) {
         ScoreRuleRow("基础运行分", "APP 可正常展示本地缓存", 64, true)
         ScoreRuleRow("Hub 连接", if (hubOk) "已连接" else "未连接", 12, hubOk)
         ScoreRuleRow("公网出口", if (exitOk) "已取得 IPv4/IPv6" else "暂无出口地址", 10, exitOk)
         ScoreRuleRow("VPN / STUN", if (vpnOk) "已记录地址" else "暂无记录", 7, vpnOk)
         ScoreRuleRow("在线设备", if (onlineCount > 0) "$onlineCount 台在线" else "暂无在线设备", 5, onlineCount > 0)
-        ScoreRuleRow("近期异常扣分", if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常", -(badCount * 2), badCount == 0)
+        ScoreRuleRow(
+            "近期异常扣分",
+            if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常",
+            -(badCount * 2),
+            badCount == 0,
+            isLast = true
+        )
     }
 
-    ExpressiveCard("Rust Agent 更新", agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令", Icons.Rounded.SystemUpdateAlt, LabV2.Green) {
-        Text(agentMessage, modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
+    HealthDetailCard(
+        title = "Rust Agent 更新",
+        subtitle = agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令",
+        accent = LabV2.Green,
+        headerIcon = Icons.Rounded.Handyman
+    ) {
+        Text(agentMessage, modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = 10.6.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
         agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
-            Text("Agent 最后上报：$it", modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = 10.2.sp, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
+            Text("Agent 最后上报：$it", modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = 9.8.sp, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
@@ -3367,7 +3489,11 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Green),
                 border = BorderStroke(1.dp, LabV2.Green.copy(alpha = .34f))
-            ) { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("检查更新", fontWeight = FontWeight.Black) }
+            ) {
+                Icon(Icons.Rounded.TravelExplore, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("检查更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+            }
             Button(
                 onClick = {
                     scope.launch {
@@ -3389,8 +3515,33 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 enabled = !agentBusy && agentInfo?.updateAvailable == true,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = LabV2.Green)
-            ) { Icon(Icons.Rounded.SystemUpdateAlt, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即更新", fontWeight = FontWeight.Black) }
+            ) {
+                Icon(Icons.Rounded.CloudDownload, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+            }
         }
+        OutlinedButton(
+            onClick = { showCleanupConfirm = true },
+            enabled = !agentBusy,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD97706)),
+            border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = .45f)),
+            shape = RoundedCornerShape(15.dp)
+        ) {
+            Icon(Icons.Rounded.CleaningServices, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("一键清理", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+        }
+        Text(
+            cleanupMessage,
+            fontSize = 9.9.sp,
+            lineHeight = 14.sp,
+            color = if (cleanupMessage.startsWith("清理失败")) LabV2.Red else LabV2.InkMuted,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -3440,17 +3591,99 @@ private fun RouterUrlDialog(
     )
 }
 @Composable
-private fun ScoreRuleRow(title: String, detail: String, points: Int, achieved: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(25.dp).clip(CircleShape).background((if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .10f)), contentAlignment = Alignment.Center) {
-            Icon(if (achieved) Icons.Rounded.Check else Icons.Rounded.Remove, null, tint = if (achieved) LabV2.Green else LabV2.InkMuted, modifier = Modifier.size(13.dp))
+private fun HealthDetailCard(
+    title: String,
+    subtitle: String,
+    accent: Color,
+    headerIcon: ImageVector,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    LabV2Card {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(Brush.linearGradient(listOf(accent.copy(alpha = .18f), accent.copy(alpha = .07f))))
+                    .border(1.dp, accent.copy(alpha = .18f), RoundedCornerShape(11.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = .86f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(headerIcon, null, Modifier.size(16.dp), tint = accent)
+                }
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                )
+            }
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    subtitle,
+                    fontSize = 9.8.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LabV2.InkMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 12.5.sp
+                )
+            }
+        }
+        content()
+    }
+}
+
+@Composable
+private fun ScoreRuleRow(title: String, detail: String, points: Int, achieved: Boolean, isLast: Boolean = false) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 43.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(27.dp).height(43.dp), contentAlignment = Alignment.Center) {
+            if (!isLast) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .width(1.dp)
+                        .height(22.dp)
+                        .background((if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .18f))
+                )
+            }
+            Surface(
+                modifier = Modifier.size(24.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = (if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .09f),
+                border = BorderStroke(1.dp, (if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .18f))
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        if (achieved) Icons.Rounded.DoneAll else Icons.Rounded.HorizontalRule,
+                        null,
+                        tint = if (achieved) LabV2.Green else LabV2.InkMuted,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
         }
         Spacer(Modifier.width(7.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Text(detail, fontSize = 9.8.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(title, fontSize = 10.2.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text(detail, fontSize = 9.2.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text(if (points > 0) "+$points" else "$points", fontSize = 11.4.sp, fontWeight = FontWeight.Black, color = if (points < 0) LabV2.Red else if (achieved) LabV2.Green else LabV2.InkMuted)
+        Text(
+            if (points > 0) "+$points" else "$points",
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Black,
+            color = if (points < 0) LabV2.Red else if (achieved) LabV2.Green else LabV2.InkMuted
+        )
     }
 }
 
@@ -8746,7 +8979,7 @@ private fun mqttFailureText(raw: String): String {
 
 @Composable
 fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
-    var hub by remember { mutableStateOf(prefs.hub) }
+    var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var mqttUrl by remember { mutableStateOf(prefs.mqttUrlOverride) }
@@ -8798,14 +9031,16 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
+                val cleanHub = normalizeHubAddressForDisplay(hub)
                 val cleanAppToken = appToken.trim()
-                val connectionChanged = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
+                val connectionChanged = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
                 val mqttChanged = prefs.mqttUrlOverride != mqttUrl.trim()
-                prefs.hub = hub
+                hub = cleanHub
+                prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
                 prefs.mqttUrlOverride = mqttUrl
-                prefs.addHistory("hub", hub)
+                prefs.addHistory("hub", cleanHub)
                 if (connectionChanged) state.markHubChanged() else state.markHubSavedWithoutConnectionChange()
                 if (mqttChanged || connectionChanged) scope.launch {
                     if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)
@@ -8816,13 +9051,15 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Button(onClick = {
+                val cleanHub = normalizeHubAddressForDisplay(hub)
                 val cleanAppToken = appToken.trim()
-                val changed = prefs.hub != hub.trim().trimEnd('/') || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
-                prefs.hub = hub
+                val changed = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
+                hub = cleanHub
+                prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
                 prefs.mqttUrlOverride = mqttUrl
-                prefs.addHistory("hub", hub)
+                prefs.addHistory("hub", cleanHub)
                 if (changed) state.markHubChanged()
                 scope.launch {
                     msg = "正在校准数据"
@@ -8954,6 +9191,12 @@ class HubApi(private val prefs: AppPrefs) {
     }
     suspend fun requestAgentUpdate(): JSONObject = withContext(Dispatchers.IO) {
         JSONObject(postJson("/api/agent/update", JSONObject().put("manifestUrl", UpdateRepository.AGENT_MANIFEST).put("installerUrl", UpdateRepository.AGENT_INSTALLER).toString()))
+    }
+    suspend fun requestAgentCleanup(): JSONObject = withContext(Dispatchers.IO) {
+        JSONObject(postJson("/api/agent/cleanup", "{}"))
+    }
+    suspend fun getAgentCleanupStatus(commandId: String): JSONObject = withContext(Dispatchers.IO) {
+        JSONObject(getText("/api/agent/cleanup/status?commandId=${URLEncoder.encode(commandId, "UTF-8")}", true))
     }
     suspend fun deleteEvent(id: Int): String = withContext(Dispatchers.IO) { deleteText("/api/events/$id") }
     suspend fun sendWol(mac: String): JSONObject = withContext(Dispatchers.IO) { JSONObject(postJson("/api/wol", JSONObject().put("mac", mac).toString())) }
