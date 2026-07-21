@@ -16,13 +16,14 @@ jobs:
         with:
           ref: codex/router-control-v01011-build141
           fetch-depth: 0
-      - name: Wire routes and industrial router rail
+      - name: Wire routes, industrial rail and normalize imports
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          p = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt')
-          s = p.read_text(encoding='utf-8')
+
+          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt')
+          s = main.read_text(encoding='utf-8')
 
           old_route = '                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)'
           new_routes = '''                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
@@ -88,7 +89,19 @@ jobs:
           if marker in s and 'onDdns = { open("tool_router_ddns") }' not in s:
               s = s.replace(marker, rail + marker, 1)
 
-          p.write_text(s, encoding='utf-8')
+          main.write_text(s, encoding='utf-8')
+
+          ui = Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt')
+          lines = ui.read_text(encoding='utf-8').splitlines()
+          normalized = []
+          seen_corner = False
+          for line in lines:
+              if line == 'import androidx.compose.ui.geometry.CornerRadius':
+                  if seen_corner:
+                      continue
+                  seen_corner = True
+              normalized.append(line)
+          ui.write_text('\n'.join(normalized) + '\n', encoding='utf-8')
           PY
       - name: Commit integration when needed
         shell: bash
@@ -99,6 +112,6 @@ jobs:
           fi
           git config user.name "LabProbe CI"
           git config user.email "actions@users.noreply.github.com"
-          git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          git commit -m "feat: wire router-control routes and industrial feature rail"
+          git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          git commit -m "feat: finish router-control integration and normalize imports"
           git push origin HEAD:codex/router-control-v01011-build141
