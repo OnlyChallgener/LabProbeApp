@@ -5,15 +5,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.TimeUnit
 
 /** Shared router connection state shown throughout the toolbox. */
 data class RouterConnectionSnapshot(
@@ -67,58 +62,40 @@ object RouterConnectionStore {
     }
 }
 
-/** Product-level client for Hub 0.9.9 router-control endpoints. */
+/** Product-level client for Hub router-control endpoints. All transport and auth go through HubApi. */
 class RouterControlApi(private val prefs: AppPrefs) {
-    private val jsonType = "application/json; charset=utf-8".toMediaType()
-    private val client = OkHttpClient.Builder()
-        .dns(CustomDns(prefs.hubDns))
-        .connectTimeout(7, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .build()
+    private val hubApi = HubApi(prefs)
 
-    private fun builder(path: String): Request.Builder = Request.Builder()
-        .url(joinUrl(prefs.hub, path))
-        .header("Accept", "application/json")
-        .apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }
-
-    private fun execute(request: Request): JSONObject {
-        client.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            val root = runCatching { JSONObject(text) }.getOrElse {
-                val message = if (!response.isSuccessful) "HTTP ${response.code}" else "Hub 返回内容无法解析"
-                if (request.url.encodedPath.startsWith("/api/router/")) RouterConnectionStore.markFailure(message)
-                error(message)
+    private fun execute(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
+        return try {
+            val root = hubApi.requestJson(path, method, body)
+            if (root.has("ok") && !root.optBoolean("ok")) {
+                throw RouterStatusUnavailableException()
             }
-            if (!response.isSuccessful || !root.optBoolean("ok", false)) {
-                val message = cleanApiText(root.optString("message")).ifBlank {
-                    cleanApiText(root.optString("error")).ifBlank { "HTTP ${response.code}" }
-                }
-                if (request.url.encodedPath.startsWith("/api/router/")) RouterConnectionStore.markFailure(message)
-                error(message)
-            }
-            if (request.url.encodedPath.startsWith("/api/router/") && !request.url.encodedPath.endsWith("/config")) {
+            if (!path.substringBefore('?').endsWith("/config")) {
                 RouterConnectionStore.markSuccess()
             }
-            return root
+            root
+        } catch (error: HubAuthenticationException) {
+            throw error
+        } catch (error: RouterStatusUnavailableException) {
+            RouterConnectionStore.markFailure(error.message ?: "Hub无法获取路由器状态")
+            throw error
+        } catch (_: Exception) {
+            val error = RouterStatusUnavailableException()
+            RouterConnectionStore.markFailure(error.message ?: "Hub无法获取路由器状态")
+            throw error
         }
     }
 
     private suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {
-        execute(builder(path).get().build())
+        execute(path)
     }
 
-    private suspend fun send(path: String, method: String, body: JSONObject = JSONObject()): JSONObject = withContext(Dispatchers.IO) {
-        val requestBody = body.toString().toRequestBody(jsonType)
-        val request = when (method) {
-            "POST" -> builder(path).post(requestBody).build()
-            "PUT" -> builder(path).put(requestBody).build()
-            "PATCH" -> builder(path).patch(requestBody).build()
-            "DELETE" -> builder(path).delete(requestBody).build()
-            else -> error("Unsupported method $method")
+    private suspend fun send(path: String, method: String, body: JSONObject = JSONObject()): JSONObject =
+        withContext(Dispatchers.IO) {
+            execute(path, method, body)
         }
-        execute(request)
-    }
 
     suspend fun capabilities(): RouterCapabilities {
         val root = get("/api/router/capabilities")

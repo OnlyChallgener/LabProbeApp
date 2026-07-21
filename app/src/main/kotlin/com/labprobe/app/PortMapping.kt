@@ -45,10 +45,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.Inet6Address
@@ -56,7 +52,6 @@ import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -181,11 +176,7 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
 }
 
 class PortMapApi(private val prefs: AppPrefs) {
-    private val client = OkHttpClient.Builder()
-        .dns(CustomDns(prefs.hubDns))
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+    private val hubApi = HubApi(prefs)
 
     suspend fun list(): Pair<List<PortMapRule>, PortMapAgentInfo> = withContext(Dispatchers.IO) {
         val root = JSONObject(get("/api/portmaps"))
@@ -237,24 +228,10 @@ class PortMapApi(private val prefs: AppPrefs) {
         }
     }
 
-    private fun requestBuilder(path: String): Request.Builder = Request.Builder()
-        .url(joinUrl(prefs.hub, path))
-        .apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }
-
-    private fun execute(req: Request): String {
-        val response = client.newCall(req).execute()
-        val text = response.body?.string().orEmpty()
-        if (!response.isSuccessful) {
-            val reason = runCatching { JSONObject(text).optString("error") }.getOrNull().orEmpty().ifBlank { text }
-            throw RuntimeException("HTTP ${response.code}: ${reason.ifBlank { "请求失败" }}")
-        }
-        return text
-    }
-
-    private fun get(path: String): String = execute(requestBuilder(path).get().build())
-    private fun post(path: String, json: String): String = execute(requestBuilder(path).post(json.toRequestBody("application/json; charset=utf-8".toMediaType())).build())
-    private fun put(path: String, json: String): String = execute(requestBuilder(path).put(json.toRequestBody("application/json; charset=utf-8".toMediaType())).build())
-    private fun deleteRequest(path: String): String = execute(requestBuilder(path).delete().build())
+    private fun get(path: String): String = hubApi.requestText(path)
+    private fun post(path: String, json: String): String = hubApi.requestText(path, "POST", json)
+    private fun put(path: String, json: String): String = hubApi.requestText(path, "PUT", json)
+    private fun deleteRequest(path: String): String = hubApi.requestText(path, "DELETE")
 }
 
 private fun compactPortCapabilities(raw: Any?): String = when (raw) {

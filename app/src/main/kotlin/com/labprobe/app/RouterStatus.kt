@@ -511,6 +511,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         RouterStatusHeader(onBack)
+        if (state.routerDashboardError.isNotBlank()) RouterHubStatusError(state.routerDashboardError)
         RouterHeroCard(
             ui = ui,
             refreshing = refreshing,
@@ -546,6 +547,29 @@ private fun RouterStatusHeader(onBack: () -> Unit) {
     }
 }
 
+@Composable
+private fun RouterHubStatusError(error: String) {
+    val isAuthError = error.startsWith("Hub API认证失败")
+    RouterGlassCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.ErrorOutline, null, tint = Color(0xFFDC2626), modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(
+                    if (isAuthError) "Hub API认证失败" else "Hub无法获取路由器状态",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF991B1B)
+                )
+                Text(
+                    if (isAuthError) "请检查 APP Token 后重试" else "请检查 Hub 连接后重试",
+                    fontSize = 10.sp,
+                    color = Color(0xFF7F1D1D)
+                )
+            }
+        }
+    }
+}
 @Composable
 private fun RouterHeroCard(
     ui: RouterDashboardUi,
