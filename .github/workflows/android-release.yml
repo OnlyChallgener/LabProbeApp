@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - codex/router-control-v01011-build141
   workflow_dispatch:
 
 jobs:
