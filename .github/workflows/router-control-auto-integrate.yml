@@ -1,0 +1,104 @@
+name: Router Control Auto Integrate
+
+on:
+  push:
+    branches:
+      - codex/router-control-v01011-build141
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/router-control-v01011-build141
+          fetch-depth: 0
+      - name: Wire routes and industrial router rail
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+
+          old_route = '                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)'
+          new_routes = '''                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
+                        "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
+                        "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
+                        "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
+                        "tool_router_login" -> RouterLoginSettingsScreen(prefs, backFromTool)'''
+          if old_route in s:
+              s = s.replace(old_route, new_routes, 1)
+
+          old_effect = '''    LaunchedEffect(prefs.hub, prefs.token) {
+        reloadNetworkProfile(forceCarrier = true)
+    }
+
+    ExpressiveCard'''
+          new_effect = '''    LaunchedEffect(prefs.hub, prefs.token) {
+        reloadNetworkProfile(forceCarrier = true)
+    }
+
+    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
+    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
+    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
+    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
+    var routerUpnpEnabled by remember { mutableStateOf(false) }
+    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
+        val api = RouterControlApi(prefs)
+        runCatching { api.firewall() }.onSuccess { state ->
+            routerFirewallEnabled = state.rules.count { it.enabled }
+        }
+        runCatching { api.ddns() }.onSuccess { records ->
+            routerDdnsHealthy = records.count {
+                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
+            }
+        }
+        runCatching { api.nativePortMappings() }.onSuccess { routerNativeMappingCount = it.size }
+        runCatching { api.upnp() }.onSuccess {
+            routerUpnpEnabled = it.enabled
+            routerUpnpMappingCount = it.mappings.size
+        }
+        runCatching { api.diagnostic() }.onSuccess { routerDiagnosticErrors = it.errorCount }
+    }
+
+    ExpressiveCard'''
+          if old_effect in s:
+              s = s.replace(old_effect, new_effect, 1)
+
+          marker = '    val toolSections = remember {'
+          rail = '''    RouterFeatureRail(
+        firewallEnabled = routerFirewallEnabled,
+        ddnsHealthy = routerDdnsHealthy,
+        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
+        upnpEnabled = routerUpnpEnabled,
+        diagnosticErrors = routerDiagnosticErrors,
+        onMapping = { open("tool_portmap") },
+        onDdns = { open("tool_router_ddns") },
+        onFirewall = { open("tool_router_firewall") },
+        onDiagnostic = { open("tool_router_diag") }
+    )
+
+'''
+          if marker in s and 'onDdns = { open("tool_router_ddns") }' not in s:
+              s = s.replace(marker, rail + marker, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit integration when needed
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No integration changes needed."
+            exit 0
+          fi
+          git config user.name "LabProbe CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          git commit -m "feat: wire router-control routes and industrial feature rail"
+          git push origin HEAD:codex/router-control-v01011-build141
