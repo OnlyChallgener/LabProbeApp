@@ -125,6 +125,10 @@ private data class RouterDashboardUi(
     val onlineDevices: Int = 0,
     val uploadBps: Long = 0,
     val downloadBps: Long = 0,
+    val totalUploadBytes: Long = 0,
+    val totalDownloadBytes: Long = 0,
+    val ipv4Connections: Long = 0,
+    val ipv6Connections: Long = 0,
     val wanIpv4: String = "--",
     val wanGateway: String = "--",
     val wanNetmask: String = "--",
@@ -145,6 +149,8 @@ private data class RouterDashboardUi(
     val apHostName: String = "--",
     val apManagementIp: String = "--",
     val apSoftware: String = "--",
+    val apWorkMode: String = "--",
+    val channelUtilization: String = "--",
     val apStations: String = "--",
     val bands: String = "--",
     val channels: String = "--",
@@ -180,6 +186,31 @@ private fun protocolLabel(value: String): String = when (value.trim().lowercase(
     "dhcp", "dynamic", "auto" -> "DHCP"
     "static", "manual" -> "静态 IP"
     else -> value.trim().ifBlank { "--" }
+}
+
+private fun workModeLabel(forwardMode: String, relayMode: String): String {
+    val forward = forwardMode.trim().uppercase()
+    val relay = relayMode.trim().lowercase()
+    return when {
+        relay.isNotBlank() && relay !in setOf("none", "off", "0", "false") -> "中继模式"
+        forward in setOf("ROUTER", "ROUTE", "GATEWAY") -> "路由模式"
+        forward in setOf("AP", "ACCESS_POINT", "ACCESSPOINT") -> "AP模式"
+        forward in setOf("BRIDGE", "BRIDGED") -> "桥接模式"
+        forward in setOf("REPEATER", "RELAY", "WISP") -> "中继模式"
+        forward.contains("MESH") -> "Mesh节点"
+        forward.isNotBlank() -> forwardMode.trim()
+        else -> "--"
+    }
+}
+
+private fun channelUtilizationLabel(values: List<String>): String {
+    val normalized = values
+        .flatMap { it.split(',', ';', '/', ' ') }
+        .map { it.trim().trimEnd('%') }
+        .filter { it.isNotBlank() && it != "null" }
+        .take(2)
+        .map { value -> value.toDoubleOrNull()?.roundToInt()?.coerceIn(0, 100)?.let { "$it%" } ?: value }
+    return normalized.joinToString(" / ").ifBlank { "--" }
 }
 
 private fun jsonNumber(root: JSONObject, key: String): Double {
@@ -254,6 +285,7 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
     if (root == null) return RouterDashboardUi()
     val telemetry = root.obj("telemetry")
     val wanTelemetry = telemetry.obj("wan")
+    val connections = telemetry.obj("connections")
     val details = root.obj("details")
     val identity = details.obj("identity")
     val wan = details.obj("wan")
@@ -329,6 +361,8 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
     val broadbandPassword = credentials?.optString("password").orEmpty().ifBlank { "--" }
     val apBands = ap.stringList("bands").ifEmpty { legacyBands.distinct() }
     val apChannels = ap.stringList("channels").ifEmpty { legacyChannels.distinct() }
+    val apChannelUtilization = ap.stringList("channelUtilization")
+        .ifEmpty { ap.stringList("chutil") }
     val apStatus = ap.optString("status").trim()
     val apOnline = when {
         apStatus.isNotBlank() -> apStatus.equals("ON", true) || apStatus.equals("online", true) || apStatus == "1"
@@ -351,6 +385,10 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         onlineDevices = telemetry.optInt("onlineDeviceCount", 0),
         uploadBps = wanTelemetry.optLong("uploadBps", 0),
         downloadBps = wanTelemetry.optLong("downloadBps", 0),
+        totalUploadBytes = wanTelemetry.optLong("totalUploadBytes", 0),
+        totalDownloadBytes = wanTelemetry.optLong("totalDownloadBytes", 0),
+        ipv4Connections = connections.optLong("ipv4", 0),
+        ipv6Connections = connections.optLong("ipv6", 0),
         // WAN must use dev_sta ipinfo normalized by LabRelay.
         wanIpv4 = wan.optString("ipv4").ifBlank { "--" },
         wanGateway = wan.optString("gateway").ifBlank { fallbackGateway }.ifBlank { "--" },
@@ -373,6 +411,8 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         apHostName = hostName,
         apManagementIp = ap.optString("managementIp").ifBlank { "--" },
         apSoftware = ap.optString("software").ifBlank { "--" },
+        apWorkMode = workModeLabel(ap.optString("workMode").ifBlank { ap.optString("forwardMode") }, ap.optString("relayMode")),
+        channelUtilization = channelUtilizationLabel(apChannelUtilization),
         apStations = ap.optString("stationCount").ifBlank { "--" },
         bands = apBands.joinToString(" / ").ifBlank { "--" },
         channels = apChannels.joinToString(" / ").ifBlank { "--" },
@@ -517,35 +557,60 @@ private fun RouterHeroCard(
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(Modifier.fillMaxSize()) {
-                    val c = center
-                    drawCircle(Color(0x1673A7FF), radius = size.minDimension * .43f, center = c)
-                    drawCircle(Color(0x0F73A7FF), radius = size.minDimension * .33f, center = c)
-                    drawCircle(Color(0x0873A7FF), radius = size.minDimension * .24f, center = c)
+                    val c = Offset(size.width * .50f, size.height * .51f)
+                    val radius = size.minDimension
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color(0x244AA8FF), Color(0x0D73A7FF), Color.Transparent),
+                            center = c,
+                            radius = radius * .52f
+                        ),
+                        radius = radius * .52f,
+                        center = c
+                    )
+                    drawCircle(Color(0x2873A7FF), radius = radius * .43f, center = c, style = Stroke(1.25.dp.toPx()))
+                    drawCircle(Color(0x1A42D6C5), radius = radius * .34f, center = c, style = Stroke(1.dp.toPx()))
+                    drawCircle(Color(0x1273A7FF), radius = radius * .26f, center = c, style = Stroke(.8.dp.toPx()))
                     drawArc(
-                        color = Color(0x2073A7FF),
-                        startAngle = -28f,
-                        sweepAngle = 112f,
+                        color = Color(0x4973A7FF),
+                        startAngle = -34f,
+                        sweepAngle = 104f,
                         useCenter = false,
-                        style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round),
-                        size = Size(size.width * .80f, size.height * .80f),
-                        topLeft = Offset(size.width * .10f, size.height * .10f)
+                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+                        size = Size(size.width * .82f, size.height * .82f),
+                        topLeft = Offset(size.width * .09f, size.height * .09f)
                     )
                     drawArc(
-                        color = Color(0x1438D9C5),
-                        startAngle = 146f,
-                        sweepAngle = 76f,
+                        color = Color(0x3638D9C5),
+                        startAngle = 142f,
+                        sweepAngle = 82f,
                         useCenter = false,
-                        style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round),
-                        size = Size(size.width * .66f, size.height * .66f),
-                        topLeft = Offset(size.width * .17f, size.height * .17f)
+                        style = Stroke(width = 1.55.dp.toPx(), cap = StrokeCap.Round),
+                        size = Size(size.width * .68f, size.height * .68f),
+                        topLeft = Offset(size.width * .16f, size.height * .16f)
                     )
-                    drawLine(Color(0x1273A7FF), Offset(size.width * .08f, size.height * .70f), Offset(size.width * .36f, size.height * .89f), 1.1.dp.toPx())
-                    drawLine(Color(0x0D73A7FF), Offset(size.width * .70f, size.height * .08f), Offset(size.width * .93f, size.height * .27f), 1.1.dp.toPx())
+                    val nodes = listOf(
+                        Offset(size.width * .10f, size.height * .68f),
+                        Offset(size.width * .28f, size.height * .85f),
+                        Offset(size.width * .73f, size.height * .14f),
+                        Offset(size.width * .91f, size.height * .30f),
+                        Offset(size.width * .88f, size.height * .76f)
+                    )
+                    drawLine(Color(0x2673A7FF), nodes[0], nodes[1], 1.15.dp.toPx())
+                    drawLine(Color(0x1F73A7FF), nodes[2], nodes[3], 1.15.dp.toPx())
+                    drawLine(Color(0x1838D9C5), Offset(size.width * .72f, size.height * .67f), nodes[4], 1.dp.toPx())
+                    nodes.forEachIndexed { index, node ->
+                        drawCircle(
+                            color = if (index == 1 || index == 4) Color(0x8242D6C5) else Color(0x7073A7FF),
+                            radius = if (index == 1 || index == 4) 2.4.dp.toPx() else 1.8.dp.toPx(),
+                            center = node
+                        )
+                    }
                 }
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.router_skeuomorphic_v3),
                     contentDescription = "路由器",
-                    modifier = Modifier.fillMaxSize().padding(3.dp),
+                    modifier = Modifier.fillMaxSize().padding(7.dp),
                     contentScale = ContentScale.Fit
                 )
             }
@@ -557,23 +622,28 @@ private fun RouterHeroCard(
                         }
                     }
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        ui.name,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF10264F),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(2.dp))
-                    Icon(
-                        Icons.Rounded.Edit,
-                        null,
-                        Modifier.size(15.dp).clickable(onClick = onEdit),
-                        tint = Color(0xFF8B99B2)
-                    )
-                    Spacer(Modifier.width(4.dp))
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            ui.name,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color(0xFF10264F),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 102.dp)
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Icon(
+                            Icons.Rounded.Edit,
+                            null,
+                            Modifier.size(15.dp).clickable(onClick = onEdit),
+                            tint = Color(0xFF8B99B2)
+                        )
+                    }
+                    Spacer(Modifier.width(3.dp))
                     Surface(
                         shape = RoundedCornerShape(99.dp),
                         color = if (ui.online) Color(0xFFD9F8E5) else Color(0xFFFFE5E8)
@@ -587,9 +657,13 @@ private fun RouterHeroCard(
                         )
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     SpeedValue(Icons.Rounded.South, ui.downloadBps, "下载速率", LabV2.Green, Modifier.weight(1f))
                     SpeedValue(Icons.Rounded.North, ui.uploadBps, "上传速率", LabV2.Primary, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ConnectionCountChip("IPv4 连接数", ui.ipv4Connections, LabV2.Primary, Modifier.weight(1f))
+                    ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF7C3AED), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
                     Text("实时数据稍旧，等待 Agent 更新", fontSize = 8.6.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
@@ -634,15 +708,42 @@ private fun RouterHeroCard(
 
 @Composable
 private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color, modifier: Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = CircleShape, color = Color.Transparent, border = BorderStroke(1.2.dp, color), modifier = Modifier.size(28.dp)) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(17.dp), tint = color) }
+            Surface(
+                shape = CircleShape,
+                color = Color.Transparent,
+                border = BorderStroke(1.dp, color),
+                modifier = Modifier.size(21.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, null, Modifier.size(11.dp), tint = color)
+                }
             }
-            Spacer(Modifier.width(5.dp))
-            Text(formatBitRate(bps), fontSize = 14.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            Text(formatBitRate(bps), fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
         }
-        Text(label, Modifier.padding(start = 33.dp), fontSize = 8.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(label, Modifier.padding(start = 25.dp), fontSize = 7.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+    }
+}
+
+@Composable
+private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = .065f),
+        border = BorderStroke(1.dp, color.copy(alpha = .13f))
+    ) {
+        Row(
+            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(label, fontSize = 7.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            Text(count.toString(), fontSize = 10.1.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+        }
     }
 }
 
@@ -689,7 +790,7 @@ private fun RealtimeMetric(icon: ImageVector, label: String, value: String, colo
                 Spacer(Modifier.width(4.dp))
                 Text(label, fontSize = 8.8.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
             }
-            Text(value, fontSize = 15.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F), maxLines = 1)
+            Text(value, fontSize = 14.2.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F), maxLines = 1)
             LinearProgressIndicator(
                 progress = { animated },
                 modifier = Modifier.fillMaxWidth().height(3.5.dp).clip(RoundedCornerShape(99.dp)),
@@ -704,7 +805,8 @@ private data class RouterInfoItem(
     val label: String,
     val value: String,
     val copyValue: String = value,
-    val valueColor: Color = Color(0xFF10264F)
+    val valueColor: Color = Color(0xFF10264F),
+    val supportingText: String = ""
 )
 
 @Composable
@@ -730,9 +832,18 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
                 context = context,
                 items = listOf(
                     RouterInfoItem("网关", ui.wanGateway),
-                    RouterInfoItem("子网掩码", ui.wanNetmask),
+                    RouterInfoItem(
+                        "历史流量",
+                        historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
+                        copyValue = historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
+                        supportingText = "上传 / 下载流量"
+                    ),
                     RouterInfoItem("MTU", ui.mtu),
-                    RouterInfoItem("宽带接口", ui.wanInterfaceDisplay)
+                    RouterInfoItem(
+                        "DNS",
+                        ui.dnsServers.take(2).joinToString("\n").ifBlank { "--" },
+                        copyValue = ui.dnsServers.joinToString("\n").ifBlank { "--" }
+                    )
                 )
             )
         }
@@ -778,10 +889,10 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
             RouterInfoGrid(
                 context = context,
                 items = listOf(
-                    RouterInfoItem("管理 IP", ui.apManagementIp),
+                    RouterInfoItem("工作模式", ui.apWorkMode),
                     RouterInfoItem("频段", ui.bands),
                     RouterInfoItem("信道", ui.channels),
-                    RouterInfoItem("软件版本", ui.apSoftware)
+                    RouterInfoItem("信道利用率", ui.channelUtilization)
                 )
             )
         }
@@ -838,6 +949,7 @@ private fun RouterInfoGrid(context: android.content.Context, items: List<RouterI
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         items.chunked(2).forEach { row ->
+            val rowHasSupportingText = row.any { it.supportingText.isNotBlank() }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 row.forEach { item ->
                     val canCopy = item.copyValue.isNotBlank() && item.copyValue != "--"
@@ -847,10 +959,18 @@ private fun RouterInfoGrid(context: android.content.Context, items: List<RouterI
                         color = Color.White.copy(alpha = .88f),
                         border = BorderStroke(1.dp, Color(0xFFE7EEF7))
                     ) {
-                        Column(Modifier.padding(horizontal = 9.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(item.label, fontSize = 8.5.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            Text(item.value, fontSize = 10.2.sp, lineHeight = 12.5.sp, color = item.valueColor, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (canCopy) Text("点按复制", fontSize = 7.3.sp, color = LabV2.Primary.copy(alpha = .66f), fontWeight = FontWeight.SemiBold)
+                        Column(Modifier.padding(horizontal = 9.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(item.label, fontSize = 9.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(item.value, fontSize = 11.2.sp, lineHeight = 13.5.sp, color = item.valueColor, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (rowHasSupportingText) {
+                                Text(
+                                    item.supportingText.ifBlank { " " },
+                                    fontSize = 7.4.sp,
+                                    color = LabV2.InkMuted.copy(alpha = .78f),
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
@@ -1088,13 +1208,30 @@ private fun uptimeText(seconds: Long): String = when {
     seconds >= 3_600 -> "${seconds / 3_600} 小时"
     else -> "${seconds / 60} 分"
 }
+private fun compactDecimal(value: Double): String = String.format("%.2f", value).trimEnd('0').trimEnd('.')
 private fun formatBitRate(bps: Long): String = when {
     bps <= 0 -> "0 Kbps"
     bps < 1_000 -> "$bps bps"
-    bps < 1_000_000 -> String.format("%.2f Kbps", bps / 1_000.0)
-    bps < 1_000_000_000 -> String.format("%.2f Mbps", bps / 1_000_000.0)
-    else -> String.format("%.2f Gbps", bps / 1_000_000_000.0)
+    bps < 1_000_000 -> "${compactDecimal(bps / 1_000.0)} Kbps"
+    bps < 1_000_000_000 -> "${compactDecimal(bps / 1_000_000.0)} Mbps"
+    else -> "${compactDecimal(bps / 1_000_000_000.0)} Gbps"
 }
+private fun formatTrafficBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 MB"
+    val kb = 1024.0
+    val mb = kb * 1024.0
+    val gb = mb * 1024.0
+    val tb = gb * 1024.0
+    return when {
+        bytes >= tb -> "${compactDecimal(bytes / tb)} TB"
+        bytes >= gb -> "${compactDecimal(bytes / gb)} GB"
+        bytes >= mb -> "${compactDecimal(bytes / mb)} MB"
+        else -> "${compactDecimal(bytes / kb)} KB"
+    }
+}
+private fun historyTrafficText(uploadBytes: Long, downloadBytes: Long): String =
+    if (uploadBytes <= 0 && downloadBytes <= 0) "--"
+    else "↑${formatTrafficBytes(uploadBytes)} / ↓${formatTrafficBytes(downloadBytes)}"
 private fun portSortKey(name: String): Int = when {
     name.equals("WAN", true) -> 5
     name.contains("LAN6", true) -> 1
