@@ -75,6 +75,13 @@ jobs:
           tail -n 160 /tmp/gradle-build.log
           exit $STATUS
 
+      - name: Upload Gradle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-control-gradle-log
+          path: /tmp/gradle-build.log
+
       - name: Verify release APK exists
         shell: bash
         run: |
