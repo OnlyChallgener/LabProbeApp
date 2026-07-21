@@ -81,17 +81,7 @@ fun RouterFeatureRail(
                     Icon(Icons.Rounded.Settings, "路由器连接", Modifier.size(16.dp), tint = RouterBlue)
                 }
             }
-            Spacer(Modifier.width(5.dp))
-            Surface(
-                onClick = onConnection,
-                shape = CircleShape,
-                color = RouterBlue.copy(alpha = .08f),
-                modifier = Modifier.size(30.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Settings, "路由器连接", Modifier.size(16.dp), tint = RouterBlue)
-                }
-            }
+
         }
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
