@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/router-control-v01011-build141
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,154 +18,9 @@ jobs:
           ref: codex/router-control-v01011-build141
           fetch-depth: 0
 
-      - name: Wire routes, toolbox rail and password copy
+      - name: Apply toolbox router-control integration
         shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt')
-          s = main.read_text(encoding='utf-8')
-
-          # Route integration: retain the existing IPv6 mapping entry, but wrap it
-          # with the three-page mapping suite and add the new router feature pages.
-          old_route = '                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)'
-          new_routes = '''                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
-                        "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
-                        "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
-                        "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
-                        "tool_router_login" -> RouterLoginSettingsScreen(prefs, backFromTool)'''
-          if old_route in s:
-              s = s.replace(old_route, new_routes, 1)
-
-          # Insert router summary state only inside ToolsHomeScreen. Do not touch
-          # Home, Devices, Industrial/device detail, Settings or other screens.
-          function_token = 'fun ToolsHomeScreen('
-          function_at = s.find(function_token)
-          if function_at < 0:
-              raise SystemExit('ToolsHomeScreen not found')
-          body_at = s.find('{', function_at)
-          if body_at < 0:
-              raise SystemExit('ToolsHomeScreen body not found')
-
-          state_marker = '    var routerFirewallEnabled by remember { mutableIntStateOf(0) }'
-          state_block = '''
-    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
-    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
-    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
-    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
-    var routerUpnpEnabled by remember { mutableStateOf(false) }
-    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
-        if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
-        val api = RouterControlApi(prefs)
-        runCatching { api.firewall() }.onSuccess { state ->
-            routerFirewallEnabled = state.rules.count { it.enabled }
-        }
-        runCatching { api.ddns() }.onSuccess { records ->
-            routerDdnsHealthy = records.count {
-                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
-            }
-        }
-        runCatching { api.nativePortMappings() }.onSuccess {
-            routerNativeMappingCount = it.size
-        }
-        runCatching { api.upnp() }.onSuccess {
-            routerUpnpEnabled = it.enabled
-            routerUpnpMappingCount = it.mappings.size
-        }
-        runCatching { api.diagnostic() }.onSuccess {
-            routerDiagnosticErrors = it.errorCount
-        }
-    }
-'''
-          function_tail = s[body_at:]
-          if state_marker not in function_tail:
-              s = s[:body_at + 1] + state_block + s[body_at + 1:]
-
-          # The rail belongs to the toolbox page. Put it immediately before the
-          # existing toolbox sections so all old cards, grouping and ordering remain.
-          tool_sections_at = s.find('    val toolSections = remember {', body_at)
-          if tool_sections_at < 0:
-              raise SystemExit('toolSections marker not found inside ToolsHomeScreen')
-          rail_marker = 'onDdns = { open("tool_router_ddns") }'
-          rail_block = '''    RouterFeatureRail(
-        firewallEnabled = routerFirewallEnabled,
-        ddnsHealthy = routerDdnsHealthy,
-        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
-        upnpEnabled = routerUpnpEnabled,
-        diagnosticErrors = routerDiagnosticErrors,
-        onConnection = { open("tool_router_login") },
-        onMapping = { open("tool_portmap") },
-        onDdns = { open("tool_router_ddns") },
-        onFirewall = { open("tool_router_firewall") },
-        onDiagnostic = { open("tool_router_diag") }
-    )
-
-'''
-          if rail_marker not in s[body_at:tool_sections_at + 5000]:
-              s = s[:tool_sections_at] + rail_block + s[tool_sections_at:]
-
-          main.write_text(s, encoding='utf-8')
-
-          ui = Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt')
-          u = ui.read_text(encoding='utf-8')
-
-          # Remove duplicate imports from the generated source.
-          lines = u.splitlines()
-          normalized = []
-          seen_corner = False
-          for line in lines:
-              if line == 'import androidx.compose.ui.geometry.CornerRadius':
-                  if seen_corner:
-                      continue
-                  seen_corner = True
-              normalized.append(line)
-          u = '\n'.join(normalized) + '\n'
-
-          # Add a small connection/settings button to the toolbox rail header.
-          old_signature = '''    diagnosticErrors: Int,
-    onMapping: () -> Unit,'''
-          new_signature = '''    diagnosticErrors: Int,
-    onConnection: () -> Unit,
-    onMapping: () -> Unit,'''
-          if old_signature in u:
-              u = u.replace(old_signature, new_signature, 1)
-
-          old_header = '''            Spacer(Modifier.weight(1f))
-            Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)'''
-          new_header = '''            Spacer(Modifier.weight(1f))
-            Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-            Spacer(Modifier.width(5.dp))
-            Surface(
-                onClick = onConnection,
-                shape = CircleShape,
-                color = RouterBlue.copy(alpha = .08f),
-                modifier = Modifier.size(30.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Settings, null, Modifier.size(16.dp), tint = RouterBlue)
-                }
-            }'''
-          if old_header in u:
-              u = u.replace(old_header, new_header, 1)
-
-          # User enters the router password directly. Encryption is internal to Hub
-          # and must never look like a user-facing decryption step.
-          replacements = {
-              'DetailShell("路由器连接","Hub 模拟登录 · 凭据加密保存",onBack)':
-                  'DetailShell("路由器连接","Hub 模拟登录 · 管理密码由你输入",onBack)',
-              'Text(config.serialNumber.ifBlank{"保存后自动测试登录"},fontSize=10.2.sp,color=RouterMuted)':
-                  'Text(config.serialNumber.ifBlank{"输入管理密码后保存并测试"},fontSize=10.2.sp,color=RouterMuted)',
-              'Text("密钥仅保存在Hub，不返回APP",fontSize=10.3.sp,color=RouterMuted)':
-                  'Text("密钥由你输入；保存后不回显",fontSize=10.3.sp,color=RouterMuted)'
-          }
-          for old, new in replacements.items():
-              u = u.replace(old, new)
-
-          ui.write_text(u, encoding='utf-8')
-          PY
+        run: python scripts/integrate_router_control.py
 
       - name: Commit integration when needed
         shell: bash
@@ -176,6 +32,7 @@ jobs:
           git config user.name "LabProbe CI"
           git config user.email "actions@users.noreply.github.com"
           git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
-                  app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          git commit -m "fix: place router suite in toolbox and simplify password flow"
+                  app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt \
+                  app/src/main/kotlin/com/labprobe/app/DeviceCodec.kt
+          git commit -m "feat: finish toolbox router-control integration"
           git push origin HEAD:codex/router-control-v01011-build141
