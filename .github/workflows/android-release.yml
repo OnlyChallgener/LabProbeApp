@@ -25,30 +25,11 @@ jobs:
           ref: codex/router-control-v01011-build141
           fetch-depth: 0
 
-      - name: Apply exact router-control integration patch
+      - name: Normalize router-control source
         shell: bash
         run: |
-          set -e
-          if ! grep -q '"tool_router_firewall" -> RouterFirewallScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt; then
-            git apply --check router-control-integration.patch
-            git apply router-control-integration.patch
-          else
-            echo "MainActivity integration is already present."
-          fi
-          python - <<'PY'
-          from pathlib import Path
-          ui = Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt')
-          lines = ui.read_text(encoding='utf-8').splitlines()
-          normalized = []
-          seen = set()
-          for line in lines:
-              if line.startswith('import ') and line in seen:
-                  continue
-              if line.startswith('import '):
-                  seen.add(line)
-              normalized.append(line)
-          ui.write_text('\n'.join(normalized) + '\n', encoding='utf-8')
-          PY
+          python scripts/integrate_router_control.py
+          python scripts/cleanup_router_control.py
 
       - name: Remove legacy Java sources
         shell: bash
@@ -121,22 +102,20 @@ jobs:
           name: router-control-gradle-log
           path: /tmp/gradle-build.log
 
-      - name: Persist verified source integration
+      - name: Persist verified cleanup
         if: success()
         shell: bash
         run: |
-          rm -f .github/workflows/router-control-auto-integrate.yml
           if git diff --quiet; then
-            echo "Source already integrated."
+            echo "Source already normalized."
             exit 0
           fi
           git config user.name "LabProbe CI"
           git config user.email "actions@users.noreply.github.com"
           git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
                   app/src/main/kotlin/com/labprobe/app/DeviceCodec.kt \
-                  app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt \
-                  .github/workflows/router-control-auto-integrate.yml
-          git commit -m "feat: persist verified router-control integration"
+                  app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          git commit -m "fix: persist verified router-control cleanup"
           git push origin HEAD:codex/router-control-v01011-build141
 
       - name: Verify release APK exists
