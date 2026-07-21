@@ -1,5 +1,8 @@
 package com.labprobe.app
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -12,14 +15,66 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
-/** Product-level client for Hub 0.9.8 router-control endpoints. */
+/** Shared router connection state shown throughout the toolbox. */
+data class RouterConnectionSnapshot(
+    val configured: Boolean = false,
+    val connected: Boolean = false,
+    val address: String = "",
+    val statusText: String = "未配置",
+    val sessionRemainingSeconds: Int = 0,
+    val lastSuccessAt: Long = 0L,
+    val lastError: String = ""
+)
+
+object RouterConnectionStore {
+    var snapshot by mutableStateOf(RouterConnectionSnapshot())
+        private set
+
+    fun apply(config: RouterLoginConfig) {
+        snapshot = RouterConnectionSnapshot(
+            configured = config.passwordConfigured,
+            connected = config.connected,
+            address = config.address,
+            statusText = config.statusText.ifBlank {
+                when {
+                    config.connected -> "已连接"
+                    config.passwordConfigured -> "连接异常"
+                    else -> "未配置"
+                }
+            },
+            sessionRemainingSeconds = config.sessionRemainingSeconds,
+            lastSuccessAt = config.lastSuccessAt,
+            lastError = config.lastError
+        )
+    }
+
+    fun markSuccess() {
+        snapshot = snapshot.copy(
+            configured = true,
+            connected = true,
+            statusText = "已连接",
+            lastSuccessAt = System.currentTimeMillis() / 1000L,
+            lastError = ""
+        )
+    }
+
+    fun markFailure(message: String) {
+        snapshot = snapshot.copy(
+            connected = false,
+            statusText = if (snapshot.configured) "连接异常" else "未配置",
+            lastError = message
+        )
+    }
+}
+
+/** Product-level client for Hub 0.9.9 router-control endpoints. */
 class RouterControlApi(private val prefs: AppPrefs) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     private val client = OkHttpClient.Builder()
         .dns(CustomDns(prefs.hubDns))
         .connectTimeout(7, TimeUnit.SECONDS)
-        .readTimeout(18, TimeUnit.SECONDS)
-        .writeTimeout(18, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private fun builder(path: String): Request.Builder = Request.Builder()
@@ -31,14 +86,19 @@ class RouterControlApi(private val prefs: AppPrefs) {
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             val root = runCatching { JSONObject(text) }.getOrElse {
-                if (!response.isSuccessful) error("HTTP ${response.code}")
-                error("Hub 返回内容无法解析")
+                val message = if (!response.isSuccessful) "HTTP ${response.code}" else "Hub 返回内容无法解析"
+                if (request.url.encodedPath.startsWith("/api/router/")) RouterConnectionStore.markFailure(message)
+                error(message)
             }
             if (!response.isSuccessful || !root.optBoolean("ok", false)) {
                 val message = cleanApiText(root.optString("message")).ifBlank {
                     cleanApiText(root.optString("error")).ifBlank { "HTTP ${response.code}" }
                 }
+                if (request.url.encodedPath.startsWith("/api/router/")) RouterConnectionStore.markFailure(message)
                 error(message)
+            }
+            if (request.url.encodedPath.startsWith("/api/router/") && !request.url.encodedPath.endsWith("/config")) {
+                RouterConnectionStore.markSuccess()
             }
             return root
         }
@@ -75,15 +135,9 @@ class RouterControlApi(private val prefs: AppPrefs) {
         )
     }
 
-    suspend fun routerConfig(): RouterLoginConfig {
-        val root = get("/api/router/config")
-        return RouterLoginConfig(
-            address = cleanApiText(root.optString("address")),
-            passwordConfigured = root.optBoolean("passwordConfigured"),
-            sessionSeconds = root.optInt("sessionSeconds", 3600),
-            sessionActive = root.optBoolean("sessionActive"),
-            serialNumber = cleanApiText(root.optString("serialNumber"))
-        )
+    suspend fun routerConfig(includeSecret: Boolean = true, probe: Boolean = true): RouterLoginConfig {
+        val root = get("/api/router/config?includeSecret=${if (includeSecret) 1 else 0}&probe=${if (probe) 1 else 0}")
+        return parseRouterConfig(root).also(RouterConnectionStore::apply)
     }
 
     suspend fun saveRouterConfig(address: String, password: String?, sessionSeconds: Int): RouterLoginConfig {
@@ -92,122 +146,85 @@ class RouterControlApi(private val prefs: AppPrefs) {
             .put("sessionSeconds", sessionSeconds.coerceIn(600, 7200))
             .put("test", true)
         if (password != null) body.put("password", password)
-        val root = send("/api/router/config", "PUT", body)
-        return RouterLoginConfig(
-            address = cleanApiText(root.optString("address")),
-            passwordConfigured = root.optBoolean("passwordConfigured"),
-            sessionSeconds = root.optInt("sessionSeconds", 3600),
-            sessionActive = root.optBoolean("sessionActive"),
-            serialNumber = cleanApiText(root.optString("serialNumber"))
-        )
+        return parseRouterConfig(send("/api/router/config", "PUT", body)).also(RouterConnectionStore::apply)
     }
 
     suspend fun nativePortMappings(force: Boolean = false): List<NativePortMapRule> {
         val data = get("/api/router/port-mapping${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()
-        val arr = data.optJSONArray("portMapping") ?: data.optJSONArray("list") ?: JSONArray()
-        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let(::parseNativePortRule) }
+        return parseNativePortRules(data)
     }
 
-    suspend fun addNativePortMapping(rule: NativePortMapRule): List<NativePortMapRule> {
-        val root = send("/api/router/port-mapping", "POST", rule.toJson())
-        return parseNativePortRulesFromWrite(root)
-    }
+    suspend fun addNativePortMapping(rule: NativePortMapRule): List<NativePortMapRule> =
+        parseNativePortRules(send("/api/router/port-mapping", "POST", rule.toJson()).optJSONObject("data") ?: JSONObject())
 
     suspend fun updateNativePortMapping(oldName: String, rule: NativePortMapRule): List<NativePortMapRule> {
         val safe = URLEncoder.encode(oldName, StandardCharsets.UTF_8.toString()).replace("+", "%20")
-        val root = send("/api/router/port-mapping/$safe", "PUT", rule.toJson())
-        return parseNativePortRulesFromWrite(root)
+        return parseNativePortRules(send("/api/router/port-mapping/$safe", "PUT", rule.toJson()).optJSONObject("data") ?: JSONObject())
     }
 
     suspend fun deleteNativePortMapping(ruleName: String): List<NativePortMapRule> {
         val safe = URLEncoder.encode(ruleName, StandardCharsets.UTF_8.toString()).replace("+", "%20")
-        val root = send("/api/router/port-mapping/$safe", "DELETE")
-        return parseNativePortRulesFromWrite(root)
+        return parseNativePortRules(send("/api/router/port-mapping/$safe", "DELETE").optJSONObject("data") ?: JSONObject())
     }
 
-    private fun parseNativePortRulesFromWrite(root: JSONObject): List<NativePortMapRule> {
-        val data = root.optJSONObject("data") ?: JSONObject()
-        val arr = data.optJSONArray("portMapping") ?: data.optJSONArray("list") ?: JSONArray()
-        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::parseNativePortRule) }
-    }
+    suspend fun upnp(force: Boolean = false): UpnpState =
+        parseUpnp(get("/api/router/upnp${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject())
 
-    suspend fun upnp(force: Boolean = false): UpnpState {
-        val data = get("/api/router/upnp${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()
-        return parseUpnp(data)
-    }
+    suspend fun setUpnp(enabled: Boolean, wan: String): UpnpState =
+        parseUpnp(send("/api/router/upnp", "PUT", JSONObject().put("enabled", enabled).put("wan", wan)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun setUpnp(enabled: Boolean, wan: String): UpnpState {
-        val root = send("/api/router/upnp", "PUT", JSONObject().put("enabled", enabled).put("wan", wan))
-        return parseUpnp(root.optJSONObject("data") ?: JSONObject())
-    }
+    suspend fun firewall(force: Boolean = false): FirewallState =
+        parseFirewall(get("/api/router/firewall${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject())
 
-    suspend fun firewall(force: Boolean = false): FirewallState {
-        val data = get("/api/router/firewall${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()
-        return parseFirewall(data)
-    }
+    suspend fun addFirewallRule(rule: FirewallRule): FirewallState =
+        parseFirewall(send("/api/router/firewall/rules", "POST", rule.toJson(false)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun addFirewallRule(rule: FirewallRule): FirewallState {
-        val root = send("/api/router/firewall/rules", "POST", rule.toJson(includeUuid = false))
-        return parseFirewall(root.optJSONObject("data") ?: JSONObject())
-    }
+    suspend fun updateFirewallRule(rule: FirewallRule): FirewallState =
+        parseFirewall(send("/api/router/firewall/rules/${rule.uuid}", "PUT", rule.toJson(true)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun updateFirewallRule(rule: FirewallRule): FirewallState {
-        val root = send("/api/router/firewall/rules/${rule.uuid}", "PUT", rule.toJson(includeUuid = true))
-        return parseFirewall(root.optJSONObject("data") ?: JSONObject())
-    }
+    suspend fun setFirewallEnabled(uuid: String, enabled: Boolean): FirewallState =
+        parseFirewall(send("/api/router/firewall/rules/$uuid/enabled", "PATCH", JSONObject().put("enabled", enabled)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun setFirewallEnabled(uuid: String, enabled: Boolean): FirewallState {
-        val root = send("/api/router/firewall/rules/$uuid/enabled", "PATCH", JSONObject().put("enabled", enabled))
-        return parseFirewall(root.optJSONObject("data") ?: JSONObject())
-    }
+    suspend fun deleteFirewallRule(uuid: String): FirewallState =
+        parseFirewall(send("/api/router/firewall/rules/$uuid", "DELETE").optJSONObject("data") ?: JSONObject())
 
-    suspend fun deleteFirewallRule(uuid: String): FirewallState {
-        val root = send("/api/router/firewall/rules/$uuid", "DELETE")
-        return parseFirewall(root.optJSONObject("data") ?: JSONObject())
-    }
+    suspend fun reorderFirewall(scope: String, uuids: List<String>): FirewallState =
+        parseFirewall(send("/api/router/firewall/reorder", "POST", JSONObject().put("scope", scope).put("uuids", JSONArray(uuids))).optJSONObject("data") ?: JSONObject())
 
-    suspend fun reorderFirewall(scope: String, uuids: List<String>): FirewallState {
-        val root = send("/api/router/firewall/reorder", "POST", JSONObject().put("scope", scope).put("uuids", JSONArray(uuids)))
-        return parseFirewall(root.optJSONObject("data") ?: JSONObject())
-    }
+    suspend fun ddns(force: Boolean = false): List<DdnsRecord> =
+        parseDdnsList(get("/api/router/ddns${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject())
 
-    suspend fun ddns(force: Boolean = false): List<DdnsRecord> {
-        val data = get("/api/router/ddns${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()
-        val arr = data.optJSONArray("list") ?: JSONArray()
-        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::parseDdns) }
-    }
+    suspend fun addDdns(record: DdnsRecord, password: String): List<DdnsRecord> =
+        parseDdnsList(send("/api/router/ddns", "POST", record.toJson(password)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun addDdns(record: DdnsRecord, password: String): List<DdnsRecord> {
-        val root = send("/api/router/ddns", "POST", record.toJson(password))
-        return parseDdnsWrite(root)
-    }
+    suspend fun updateDdns(record: DdnsRecord, password: String?): List<DdnsRecord> =
+        parseDdnsList(send("/api/router/ddns/${record.serviceId}", "PUT", record.toJson(password)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun updateDdns(record: DdnsRecord, password: String?): List<DdnsRecord> {
-        val root = send("/api/router/ddns/${record.serviceId}", "PUT", record.toJson(password))
-        return parseDdnsWrite(root)
-    }
+    suspend fun deleteDdns(serviceId: String): List<DdnsRecord> =
+        parseDdnsList(send("/api/router/ddns/$serviceId", "DELETE").optJSONObject("data") ?: JSONObject())
 
-    suspend fun deleteDdns(serviceId: String): List<DdnsRecord> {
-        val root = send("/api/router/ddns/$serviceId", "DELETE")
-        return parseDdnsWrite(root)
-    }
-
-    private fun parseDdnsWrite(root: JSONObject): List<DdnsRecord> {
-        val data = root.optJSONObject("data") ?: JSONObject()
-        val arr = data.optJSONArray("list") ?: JSONArray()
-        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::parseDdns) }
-    }
-
-    suspend fun diagnostic(): RouterDiagnostic {
-        val data = get("/api/router/diagnostic").optJSONObject("data") ?: JSONObject()
-        return parseDiagnostic(data)
-    }
+    suspend fun diagnostic(): RouterDiagnostic =
+        parseDiagnostic(get("/api/router/diagnostic").optJSONObject("data") ?: JSONObject())
 
     suspend fun startDiagnostic(): RouterDiagnostic {
         send("/api/router/diagnostic", "POST")
         return diagnostic()
     }
 }
+
+private fun parseRouterConfig(root: JSONObject) = RouterLoginConfig(
+    address = cleanApiText(root.optString("address")),
+    password = root.optString("password"),
+    passwordConfigured = root.optBoolean("passwordConfigured"),
+    sessionSeconds = root.optInt("sessionSeconds", 3600),
+    sessionActive = root.optBoolean("sessionActive"),
+    connected = root.optBoolean("connected", root.optBoolean("sessionActive")),
+    serialNumber = cleanApiText(root.optString("serialNumber")),
+    statusText = cleanApiText(root.optString("statusText")),
+    sessionRemainingSeconds = root.optInt("sessionRemainingSeconds", 0),
+    lastSuccessAt = root.optLong("lastSuccessAt", 0L),
+    lastError = cleanApiText(root.optString("lastError"))
+)
 
 data class RouterCapabilities(
     val configured: Boolean = false,
@@ -222,10 +239,16 @@ data class RouterCapabilities(
 
 data class RouterLoginConfig(
     val address: String = "",
+    val password: String = "",
     val passwordConfigured: Boolean = false,
     val sessionSeconds: Int = 3600,
     val sessionActive: Boolean = false,
-    val serialNumber: String = ""
+    val connected: Boolean = false,
+    val serialNumber: String = "",
+    val statusText: String = "",
+    val sessionRemainingSeconds: Int = 0,
+    val lastSuccessAt: Long = 0L,
+    val lastError: String = ""
 )
 
 data class NativePortMapRule(
@@ -247,22 +270,29 @@ data class NativePortMapRule(
         .put("proto", proto)
 }
 
-private fun parseNativePortRule(o: JSONObject) = NativePortMapRule(
-    ruleName = cleanApiText(o.optString("ruleName")),
-    src = cleanApiText(o.optString("src", "wan")),
-    srcIp = cleanApiText(o.optString("srcIp")),
-    srcPort = cleanApiText(o.optString("srcPort")),
-    destIp = cleanApiText(o.optString("destIp")),
-    destPort = cleanApiText(o.optString("destPort")),
-    proto = cleanApiText(o.optString("proto", "tcp"))
-)
+private fun parseNativePortRules(data: JSONObject): List<NativePortMapRule> {
+    val arr = data.optJSONArray("portMapping") ?: data.optJSONArray("list") ?: JSONArray()
+    return (0 until arr.length()).mapNotNull { i ->
+        arr.optJSONObject(i)?.let { o ->
+            NativePortMapRule(
+                ruleName = cleanApiText(o.optString("ruleName")),
+                src = cleanApiText(o.optString("src", "wan")),
+                srcIp = cleanApiText(o.optString("srcIp")),
+                srcPort = cleanApiText(o.optString("srcPort")),
+                destIp = cleanApiText(o.optString("destIp")),
+                destPort = cleanApiText(o.optString("destPort")),
+                proto = cleanApiText(o.optString("proto", "tcp"))
+            )
+        }
+    }
+}
 
 data class UpnpMapping(
-    val name: String,
-    val clientIp: String,
-    val protocol: String,
-    val internalPort: String,
-    val externalPort: String
+    val name: String = "",
+    val clientIp: String = "",
+    val protocol: String = "",
+    val internalPort: String = "",
+    val externalPort: String = ""
 )
 
 data class UpnpState(
@@ -290,7 +320,7 @@ private fun parseUpnp(o: JSONObject): UpnpState {
     )
 }
 
-data class FirewallStats(val packets: Long = 0, val bytes: Long = 0)
+data class FirewallStats(val packets: Long = 0L, val bytes: Long = 0L)
 
 data class FirewallRule(
     val uuid: String = "",
@@ -318,8 +348,8 @@ data class FirewallRule(
         put("proto", proto)
         put("srcIP", srcIP.trim())
         put("destIP", destIP.trim())
-        put("srcPort", if (proto in setOf("tcp", "udp")) srcPort.trim() else "")
-        put("destPort", if (proto in setOf("tcp", "udp")) destPort.trim() else "")
+        put("srcPort", srcPort.trim())
+        put("destPort", destPort.trim())
         put("target", target)
         put("enable", if (enabled) "1" else "0")
         put("ipv6SuffixSrc", ipv6SuffixSrc.trim())
@@ -331,42 +361,36 @@ data class FirewallRule(
 
 data class FirewallState(
     val rules: List<FirewallRule> = emptyList(),
-    val order: Map<String, List<String>> = emptyMap(),
-    val maxRules: Int = 20,
-    val defaultPolicy: String = "RETURN"
+    val order: JSONObject = JSONObject(),
+    val maxRules: Int = 20
 )
 
-private fun parseFirewall(o: JSONObject): FirewallState {
-    val arr = o.optJSONArray("list") ?: JSONArray()
+private fun parseFirewall(data: JSONObject): FirewallState {
+    val arr = data.optJSONArray("list") ?: JSONArray()
     val rules = (0 until arr.length()).mapNotNull { i ->
-        arr.optJSONObject(i)?.let { r ->
-            val s = r.optJSONObject("stats") ?: JSONObject()
+        arr.optJSONObject(i)?.let { o ->
+            val stats = o.optJSONObject("stats") ?: JSONObject()
             FirewallRule(
-                uuid = cleanApiText(r.optString("uuid")),
-                ruleName = cleanApiText(r.optString("ruleName")),
-                direction = cleanApiText(r.optString("direction", "forward")),
-                ipVersion = cleanApiText(r.optString("ipVersion", "ipv4")),
-                proto = cleanApiText(r.optString("proto", "tcp")),
-                srcIP = cleanApiText(r.optString("srcIP")),
-                destIP = cleanApiText(r.optString("destIP")),
-                srcPort = cleanApiText(r.optString("srcPort")),
-                destPort = cleanApiText(r.optString("destPort")),
-                target = cleanApiText(r.optString("target", "ACCEPT")),
-                enabled = r.optString("enable", "1") == "1",
-                ipv6SuffixSrc = cleanApiText(r.optString("ipv6SuffixSrc")),
-                ipv6SuffixDest = cleanApiText(r.optString("ipv6SuffixDest")),
-                inIface = cleanApiText(r.optString("inIface")),
-                outIface = cleanApiText(r.optString("outIface")),
-                stats = FirewallStats(s.optLong("packets"), s.optLong("bytes"))
+                uuid = cleanApiText(o.optString("uuid")),
+                ruleName = cleanApiText(o.optString("ruleName")),
+                direction = cleanApiText(o.optString("direction", "forward")),
+                ipVersion = cleanApiText(o.optString("ipVersion", "ipv4")),
+                proto = cleanApiText(o.optString("proto", "tcp")),
+                srcIP = cleanApiText(o.optString("srcIP")),
+                destIP = cleanApiText(o.optString("destIP")),
+                srcPort = cleanApiText(o.optString("srcPort")),
+                destPort = cleanApiText(o.optString("destPort")),
+                target = cleanApiText(o.optString("target", "ACCEPT")),
+                enabled = o.optString("enable", "1") != "0",
+                ipv6SuffixSrc = cleanApiText(o.optString("ipv6SuffixSrc")),
+                ipv6SuffixDest = cleanApiText(o.optString("ipv6SuffixDest")),
+                inIface = cleanApiText(o.optString("inIface")),
+                outIface = cleanApiText(o.optString("outIface")),
+                stats = FirewallStats(stats.optLong("packets"), stats.optLong("bytes"))
             )
         }
     }
-    val orderObject = o.optJSONObject("order") ?: JSONObject()
-    val order = orderObject.keys().asSequence().associateWith { key ->
-        val values = orderObject.optJSONArray(key) ?: JSONArray()
-        (0 until values.length()).map { values.optString(it) }
-    }
-    return FirewallState(rules, order, o.optInt("maxLen", 20), cleanApiText(o.optString("defaultPolicy", "RETURN")))
+    return FirewallState(rules, data.optJSONObject("order") ?: JSONObject(), data.optInt("maxLen", 20))
 }
 
 data class DdnsRecord(
@@ -374,78 +398,93 @@ data class DdnsRecord(
     val provider: String = "aliyun.com",
     val domain: String = "",
     val username: String = "",
-    val useIpv6: Boolean = true,
     val enabled: Boolean = true,
+    val useIpv6: Boolean = true,
     val interfaceName: String = "wan",
     val status: String = "",
     val ip: String = "",
     val passwordConfigured: Boolean = false
 ) {
-    fun toJson(password: String?): JSONObject = JSONObject().apply {
-        if (serviceId.isNotBlank()) put("service", serviceId)
+    fun toJson(password: String?) = JSONObject().apply {
         put("service_name", provider)
         put("domain", domain.trim())
         put("username", username.trim())
-        if (password != null) put("password", password)
-        put("interface", interfaceName)
+        put("enable", if (enabled) "1" else "0")
         put("use_ipv6", if (useIpv6) "1" else "0")
-        put("enabled", if (enabled) "1" else "0")
+        put("interface", interfaceName)
+        if (password != null) put("password", password)
     }
 }
 
-private fun parseDdns(o: JSONObject) = DdnsRecord(
-    serviceId = cleanApiText(o.optString("service")),
-    provider = cleanApiText(o.optString("service_name")),
-    domain = cleanApiText(o.optString("domain")),
-    username = cleanApiText(o.optString("username")),
-    useIpv6 = o.optString("use_ipv6", "0") == "1",
-    enabled = o.optString("enabled", "1") == "1",
-    interfaceName = cleanApiText(o.optString("interface", "wan")),
-    status = cleanApiText(o.optString("status")),
-    ip = cleanApiText(o.optString("ip")),
-    passwordConfigured = o.optBoolean("passwordConfigured")
-)
+private fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
+    val arr = data.optJSONArray("list") ?: data.optJSONArray("data") ?: JSONArray()
+    return (0 until arr.length()).mapNotNull { i ->
+        arr.optJSONObject(i)?.let { o ->
+            DdnsRecord(
+                serviceId = cleanApiText(o.optString("service")).ifBlank { cleanApiText(o.optString("id")) },
+                provider = cleanApiText(o.optString("service_name")).ifBlank { cleanApiText(o.optString("provider", "aliyun.com")) },
+                domain = cleanApiText(o.optString("domain")),
+                username = cleanApiText(o.optString("username")),
+                enabled = o.optString("enable", "1") != "0",
+                useIpv6 = o.optString("use_ipv6", "1") == "1",
+                interfaceName = cleanApiText(o.optString("interface")).ifBlank { cleanApiText(o.optString("wan", "wan")) },
+                status = cleanApiText(o.optString("status")),
+                ip = cleanApiText(o.optString("ip")),
+                passwordConfigured = o.optBoolean("passwordConfigured")
+            )
+        }
+    }
+}
 
-data class DiagnosticItem(
-    val type: String,
-    val status: String,
-    val title: String,
-    val result: String,
-    val tips: String,
-    val advise: String,
-    val port: String
+data class RouterDiagnosticItem(
+    val type: String = "",
+    val title: String = "",
+    val status: String = "",
+    val result: String = "",
+    val tips: String = "",
+    val advise: String = "",
+    val port: String = ""
 )
 
 data class RouterDiagnostic(
     val progress: String = "0%",
     val errorCount: Int = 0,
-    val startTime: String = "",
-    val items: List<DiagnosticItem> = emptyList()
+    val items: List<RouterDiagnosticItem> = emptyList()
 )
 
-private fun parseDiagnostic(o: JSONObject): RouterDiagnostic {
-    val groups = o.optJSONArray("list") ?: JSONArray()
-    val rows = mutableListOf<DiagnosticItem>()
+private fun parseDiagnostic(data: JSONObject): RouterDiagnostic {
+    val groups = data.optJSONArray("list") ?: JSONArray()
+    val rows = mutableListOf<RouterDiagnosticItem>()
     for (i in 0 until groups.length()) {
         val group = groups.optJSONObject(i) ?: continue
         val children = group.optJSONArray("list") ?: JSONArray()
+        if (children.length() == 0) {
+            rows += RouterDiagnosticItem(
+                type = cleanApiText(group.optString("type")),
+                title = cleanApiText(group.optString("item")),
+                status = cleanApiText(group.optString("status")),
+                result = cleanApiText(group.optString("result")),
+                tips = cleanApiText(group.optString("tips")),
+                advise = cleanApiText(group.optString("advise"))
+            )
+        }
         for (j in 0 until children.length()) {
             val child = children.optJSONObject(j) ?: continue
-            rows += DiagnosticItem(
+            val childData = child.optJSONObject("data") ?: JSONObject()
+            rows += RouterDiagnosticItem(
                 type = cleanApiText(group.optString("type")),
-                status = cleanApiText(child.optString("status", group.optString("status"))),
                 title = cleanApiText(child.optString("item")),
+                status = cleanApiText(child.optString("status")),
                 result = cleanApiText(child.optString("result")),
                 tips = cleanApiText(child.optString("tips")),
                 advise = cleanApiText(child.optString("advise")).replace("<br>", "\n", true),
-                port = cleanApiText(child.optJSONObject("data")?.optString("port"))
+                port = cleanApiText(childData.optString("port"))
             )
         }
     }
     return RouterDiagnostic(
-        progress = cleanApiText(o.optString("process", "0%")),
-        errorCount = o.optString("error_count", "0").toIntOrNull() ?: 0,
-        startTime = cleanApiText(o.optString("start_time")),
+        progress = cleanApiText(data.optString("process", "0%")),
+        errorCount = data.optString("error_count", "0").toIntOrNull() ?: 0,
         items = rows
     )
 }
