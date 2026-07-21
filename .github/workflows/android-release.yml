@@ -62,12 +62,18 @@ jobs:
           echo "Fixed signing key prepared. Release APK will use the configured Labprobe signing key."
 
       - name: Build release APK
+        shell: bash
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
           LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
           LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --stacktrace
+        run: |
+          set +e
+          gradle :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-build.log 2>&1
+          STATUS=$?
+          tail -n 160 /tmp/gradle-build.log
+          exit $STATUS
 
       - name: Verify release APK exists
         shell: bash
