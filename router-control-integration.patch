@@ -1,0 +1,169 @@
+--- a/app/src/main/kotlin/com/labprobe/app/MainActivity.kt
++++ b/app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+@@ -1832,7 +1832,11 @@
+                         "tool_roam" -> WifiRoamingScreen(prefs, backFromTool)
+                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
+                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
+-                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)
++                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
++                        "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
++                        "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
++                        "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
++                        "tool_router_login" -> RouterLoginSettingsScreen(prefs, backFromTool)
+                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                         } }
+                     }
+@@ -4568,6 +4572,7 @@
+                 DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFF64748B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true, valueColor = deviceSignalValueColor(d.rssi))
+             }
+             DeviceTodayTrafficBar(d)
++            DeviceRealtimeStatusBar(d)
+             DeviceFooterLine(d = d, showTime = true)
+         } else {
+             WiredDeviceInfo(d = d, ip4 = ip4, ipv6Pick = v6Pick)
+@@ -4595,6 +4600,7 @@
+             allowScroll = true
+         )
+         DeviceTodayTrafficBar(d)
++        DeviceRealtimeStatusBar(d)
+         DeviceFooterLine(d = d, showTime = false)
+     }
+ }
+@@ -4652,6 +4658,42 @@
+     }
+ }
+ 
++
++@Composable
++fun DeviceRealtimeStatusBar(d: DeviceItem) {
++    if (!d.online) return
++    val upload = formatDeviceRealtimeRate(d.realtimeUploadBytes)
++    val download = formatDeviceRealtimeRate(d.realtimeDownloadBytes)
++    Surface(
++        modifier = Modifier.fillMaxWidth(),
++        shape = RoundedCornerShape(17.dp),
++        color = Color(0xFF2563EB).copy(alpha = .05f),
++        border = BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .10f))
++    ) {
++        Row(
++            Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 5.dp),
++            verticalAlignment = Alignment.CenterVertically
++        ) {
++            Text("实时", fontSize = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
++            Spacer(Modifier.width(7.dp))
++            Text("↑ $upload", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), maxLines = 1)
++            Spacer(Modifier.width(9.dp))
++            Text("↓ $download", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
++            Spacer(Modifier.weight(1f))
++            Text("连接 ${d.connectionCount}", fontSize = 10.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1)
++        }
++    }
++}
++
++private fun formatDeviceRealtimeRate(bytesPerSecond: Long): String {
++    val bits = bytesPerSecond.coerceAtLeast(0L) * 8.0
++    return when {
++        bits < 1_000.0 -> "${bits.toLong()} bps"
++        bits < 1_000_000.0 -> String.format(Locale.US, "%.0f Kbps", bits / 1_000.0)
++        else -> String.format(Locale.US, "%.2f Mbps", bits / 1_000_000.0)
++    }
++}
++
+ @Composable
+ fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
+     val timeText = if (showTime) {
+@@ -4785,6 +4827,31 @@
+         reloadNetworkProfile(forceCarrier = true)
+     }
+ 
++    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
++    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
++    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
++    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
++    var routerUpnpEnabled by remember { mutableStateOf(false) }
++    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
++
++    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
++        val api = RouterControlApi(prefs)
++        runCatching { api.firewall() }.onSuccess { state ->
++            routerFirewallEnabled = state.rules.count { it.enabled }
++        }
++        runCatching { api.ddns() }.onSuccess { records ->
++            routerDdnsHealthy = records.count {
++                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
++            }
++        }
++        runCatching { api.nativePortMappings() }.onSuccess { routerNativeMappingCount = it.size }
++        runCatching { api.upnp() }.onSuccess {
++            routerUpnpEnabled = it.enabled
++            routerUpnpMappingCount = it.mappings.size
++        }
++        runCatching { api.diagnostic() }.onSuccess { routerDiagnosticErrors = it.errorCount }
++    }
++
+     ExpressiveCard("网络状态", "本机接口 · 最近 NAT / 延迟结果", Icons.Rounded.Public, Color(0xFF2563EB)) {
+         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+             Text("当前网络", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+@@ -4828,6 +4895,18 @@
+             }
+         }
+     }
++    RouterFeatureRail(
++        firewallEnabled = routerFirewallEnabled,
++        ddnsHealthy = routerDdnsHealthy,
++        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
++        upnpEnabled = routerUpnpEnabled,
++        diagnosticErrors = routerDiagnosticErrors,
++        onMapping = { open("tool_portmap") },
++        onDdns = { open("tool_router_ddns") },
++        onFirewall = { open("tool_router_firewall") },
++        onDiagnostic = { open("tool_router_diag") }
++    )
++
+     val toolSections = remember {
+         mapOf(
+             "net" to listOf(
+--- a/app/src/main/kotlin/com/labprobe/app/DeviceCodec.kt
++++ b/app/src/main/kotlin/com/labprobe/app/DeviceCodec.kt
+@@ -121,7 +121,16 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
+             groupKeys = listOf("realtimeTraffic", "realTimeTraffic", "totalTraffic", "trafficTotal", "realtimeFlow", "realTimeFlow", "totalFlow", "bootTraffic", "currentTraffic", "实时总流量"),
+             directionKeys = listOf("download", "down", "rx", "downstream", "received", "receive", "downloadBytes", "downBytes", "rxBytes", "下行", "下载"),
+             directionLabels = listOf("下行", "下载", "download", "down", "rx")
+-        )
++        ),
++        realtimeUploadBytes = firstLong(
++            o,
++            "realtimeUpload", "realtimeUploadBytes", "currentUpload", "flowUp", "realtime_up"
++        ),
++        realtimeDownloadBytes = firstLong(
++            o,
++            "realtimeDownload", "realtimeDownloadBytes", "currentDownload", "flowDown", "realtime_down"
++        ),
++        connectionCount = firstLong(o, "connectionCount", "flow_cnt", "flowCount", "connections").toInt().coerceAtLeast(0)
+     )
+ }
++
++private fun firstLong(root: JSONObject, vararg keys: String): Long {
++    keys.forEach { key ->
++        if (!root.has(key) || root.isNull(key)) return@forEach
++        val raw = root.opt(key)
++        val value = when (raw) {
++            is Number -> raw.toLong()
++            is String -> raw.trim().toDoubleOrNull()?.toLong()
++            else -> null
++        }
++        if (value != null) return value.coerceAtLeast(0L)
++    }
++    return 0L
++}
+ 
+ private val TRAFFIC_CONTAINER_KEYS = listOf("traffic", "flow", "trafficStats", "flowStats", "statistics", "stats", "流量")
+@@ -316,6 +325,9 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
+     .put("todayDownload", todayDownload)
+     .put("totalUpload", totalUpload)
+     .put("totalDownload", totalDownload)
++    .put("realtimeUpload", realtimeUploadBytes)
++    .put("realtimeDownload", realtimeDownloadBytes)
++    .put("connectionCount", connectionCount)
+ 
+ fun EventItem.toJson(): JSONObject = JSONObject()
