@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -115,10 +116,10 @@ private fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifier
         val stroke = Stroke(width = w * .065f, cap = StrokeCap.Round, join = StrokeJoin.Round)
         when (glyph) {
             RouterGlyph.Mapping, RouterGlyph.Port -> {
-                drawRoundRect(color.copy(alpha = .14f), Offset(w*.02f,h*.18f), Size(w*.34f,h*.52f), w*.10f,w*.10f)
-                drawRoundRect(color.copy(alpha = .14f), Offset(w*.64f,h*.30f), Size(w*.34f,h*.52f), w*.10f,w*.10f)
-                drawRoundRect(color, Offset(w*.05f,h*.21f), Size(w*.28f,h*.46f), w*.08f,w*.08f, style=stroke)
-                drawRoundRect(color, Offset(w*.67f,h*.33f), Size(w*.28f,h*.46f), w*.08f,w*.08f, style=stroke)
+                drawRoundRect(color.copy(alpha = .14f), Offset(w*.02f,h*.18f), Size(w*.34f,h*.52f), CornerRadius(w*.10f,w*.10f))
+                drawRoundRect(color.copy(alpha = .14f), Offset(w*.64f,h*.30f), Size(w*.34f,h*.52f), CornerRadius(w*.10f,w*.10f))
+                drawRoundRect(color, Offset(w*.05f,h*.21f), Size(w*.28f,h*.46f), CornerRadius(w*.08f,w*.08f), style=stroke)
+                drawRoundRect(color, Offset(w*.67f,h*.33f), Size(w*.28f,h*.46f), CornerRadius(w*.08f,w*.08f), style=stroke)
                 drawLine(color, Offset(w*.36f,h*.48f), Offset(w*.65f,h*.48f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(w*.57f,h*.39f), Offset(w*.65f,h*.48f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(w*.57f,h*.57f), Offset(w*.65f,h*.48f), stroke.width, StrokeCap.Round)
@@ -149,8 +150,8 @@ private fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifier
                 drawPath(p,color,style=stroke)
             }
             RouterGlyph.Upnp -> {
-                drawRoundRect(color.copy(alpha=.12f),Offset(w*.18f,h*.47f),Size(w*.64f,h*.34f),w*.12f,w*.12f)
-                drawRoundRect(color,Offset(w*.18f,h*.47f),Size(w*.64f,h*.34f),w*.12f,w*.12f,style=stroke)
+                drawRoundRect(color.copy(alpha=.12f),Offset(w*.18f,h*.47f),Size(w*.64f,h*.34f),CornerRadius(w*.12f,w*.12f))
+                drawRoundRect(color,Offset(w*.18f,h*.47f),Size(w*.64f,h*.34f),CornerRadius(w*.12f,w*.12f),style=stroke)
                 drawCircle(color,w*.035f,Offset(w*.33f,h*.64f));drawCircle(color,w*.035f,Offset(w*.48f,h*.64f))
                 drawArc(color,210f,120f,false,Offset(w*.27f,h*.05f),Size(w*.46f,h*.40f),style=stroke)
             }
@@ -659,7 +660,7 @@ private fun PremiumCard(accent:Color,modifier:Modifier=Modifier,content:@Composa
 private fun CompactField(label:String,value:String,hint:String,modifier:Modifier=Modifier,keyboardType:KeyboardType=KeyboardType.Text,onChange:(String)->Unit){Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){Text(label,fontSize=10.2.sp,fontWeight=FontWeight.Bold,color=RouterMuted);OutlinedTextField(value=value,onValueChange=onChange,modifier=Modifier.fillMaxWidth().height(48.dp),singleLine=true,placeholder={Text(hint,fontSize=11.5.sp)},keyboardOptions=KeyboardOptions(keyboardType=keyboardType),shape=RoundedCornerShape(14.dp),textStyle=LocalTextStyle.current.copy(fontSize=12.8.sp),colors=OutlinedTextFieldDefaults.colors(unfocusedBorderColor=RouterBorder,focusedBorderColor=RouterBlue,unfocusedContainerColor=RouterField,focusedContainerColor=Color.White))}}
 
 @Composable
-private fun CompactChoice(label:String,value:String,options:List<String>,modifier:Modifier=Modifier,onPick:(String)->Unit){var expanded by remember{mutableStateOf(false)};Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){if(label.isNotBlank())Text(label,fontSize=10.2.sp,fontWeight=FontWeight.Bold,color=RouterMuted);Box{Surface(Modifier.fillMaxWidth().height(44.dp).clickable{expanded=true},shape=RoundedCornerShape(14.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(value,Modifier.weight(1f),fontSize=11.8.sp,fontWeight=FontWeight.Bold,color=RouterInk,maxLines=1,overflow=TextOverflow.Ellipsis);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}};DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(14.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(option,fontSize=12.sp,fontWeight=if(option==value)FontWeight.Black else FontWeight.SemiBold)},leadingIcon=if(option==value){{Icon(Icons.Rounded.Check,null,Modifier.size(16.dp),tint=RouterBlue)}}else null,onClick={expanded=false;onPick(option)})}}}}}
+private fun CompactChoice(label:String,value:String,options:List<String>,modifier:Modifier=Modifier,onPick:(String)->Unit){var expanded by remember{mutableStateOf(false)};Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){if(label.isNotBlank())Text(label,fontSize=10.2.sp,fontWeight=FontWeight.Bold,color=RouterMuted);Box{Surface(Modifier.fillMaxWidth().height(44.dp).clickable{expanded=true},shape=RoundedCornerShape(14.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(value,Modifier.weight(1f),fontSize=11.8.sp,fontWeight=FontWeight.Bold,color=RouterInk,maxLines=1,overflow=TextOverflow.Ellipsis);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}};DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(14.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(option,fontSize=12.sp,fontWeight=if(option==value)FontWeight.Black else FontWeight.SemiBold)},leadingIcon=if(option==value)({ Icon(Icons.Rounded.Check,null,Modifier.size(16.dp),tint=RouterBlue) })else null,onClick={expanded=false;onPick(option)})}}}}}
 
 @Composable
 private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier=Modifier,onClick:()->Unit){Surface(onClick=onClick,modifier=modifier.height(35.dp),shape=RoundedCornerShape(12.dp),color=if(selected)RouterBlue else RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,if(selected)RouterBlue else RouterBorder)){Box(contentAlignment=Alignment.Center){Text(text,fontSize=11.2.sp,fontWeight=FontWeight.Black,color=if(selected)Color.White else RouterMuted)}}}
