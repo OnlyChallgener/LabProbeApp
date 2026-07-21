@@ -25,105 +25,43 @@ jobs:
           ref: codex/router-control-v01011-build141
           fetch-depth: 0
 
-      - name: Apply router-control integration
+      - name: Apply exact router-control integration patch
         shell: bash
         run: |
+          set -e
+          if ! grep -q '"tool_router_firewall" -> RouterFirewallScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt; then
+            git apply --check router-control-integration.patch
+            git apply router-control-integration.patch
+          else
+            echo "MainActivity integration is already present."
+          fi
           python - <<'PY'
           from pathlib import Path
-
-          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt')
-          s = main.read_text(encoding='utf-8')
-
-          old_route = '                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)'
-          new_routes = '''                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
-                        "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
-                        "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
-                        "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
-                        "tool_router_login" -> RouterLoginSettingsScreen(prefs, backFromTool)'''
-          if old_route in s:
-              s = s.replace(old_route, new_routes, 1)
-
-          old_effect = '''    LaunchedEffect(prefs.hub, prefs.token) {
-        reloadNetworkProfile(forceCarrier = true)
-    }
-
-    ExpressiveCard'''
-          new_effect = '''    LaunchedEffect(prefs.hub, prefs.token) {
-        reloadNetworkProfile(forceCarrier = true)
-    }
-
-    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
-    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
-    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
-    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
-    var routerUpnpEnabled by remember { mutableStateOf(false) }
-    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
-        val api = RouterControlApi(prefs)
-        runCatching { api.firewall() }.onSuccess { state ->
-            routerFirewallEnabled = state.rules.count { it.enabled }
-        }
-        runCatching { api.ddns() }.onSuccess { records ->
-            routerDdnsHealthy = records.count {
-                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
-            }
-        }
-        runCatching { api.nativePortMappings() }.onSuccess { routerNativeMappingCount = it.size }
-        runCatching { api.upnp() }.onSuccess {
-            routerUpnpEnabled = it.enabled
-            routerUpnpMappingCount = it.mappings.size
-        }
-        runCatching { api.diagnostic() }.onSuccess { routerDiagnosticErrors = it.errorCount }
-    }
-
-    ExpressiveCard'''
-          if old_effect in s:
-              s = s.replace(old_effect, new_effect, 1)
-
-          marker = '    val toolSections = remember {'
-          rail = '''    RouterFeatureRail(
-        firewallEnabled = routerFirewallEnabled,
-        ddnsHealthy = routerDdnsHealthy,
-        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
-        upnpEnabled = routerUpnpEnabled,
-        diagnosticErrors = routerDiagnosticErrors,
-        onMapping = { open("tool_portmap") },
-        onDdns = { open("tool_router_ddns") },
-        onFirewall = { open("tool_router_firewall") },
-        onDiagnostic = { open("tool_router_diag") }
-    )
-
-'''
-          if marker in s and 'onDdns = { open("tool_router_ddns") }' not in s:
-              s = s.replace(marker, rail + marker, 1)
-          main.write_text(s, encoding='utf-8')
-
           ui = Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt')
           lines = ui.read_text(encoding='utf-8').splitlines()
           normalized = []
-          seen_corner = False
+          seen = set()
           for line in lines:
-              if line == 'import androidx.compose.ui.geometry.CornerRadius':
-                  if seen_corner:
-                      continue
-                  seen_corner = True
+              if line.startswith('import ') and line in seen:
+                  continue
+              if line.startswith('import '):
+                  seen.add(line)
               normalized.append(line)
           ui.write_text('\n'.join(normalized) + '\n', encoding='utf-8')
           PY
 
       - name: Remove legacy Java sources
         shell: bash
-        run: |
-          rm -rf app/src/main/java
-          echo "Legacy Java sources removed before build."
+        run: rm -rf app/src/main/java
 
-      - name: Upload router-control source snapshot
+      - name: Upload integrated source snapshot
         uses: actions/upload-artifact@v4
         with:
           name: router-control-source-snapshot
           path: |
             app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+            app/src/main/kotlin/com/labprobe/app/DeviceModels.kt
+            app/src/main/kotlin/com/labprobe/app/DeviceCodec.kt
             app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
             app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
 
@@ -156,7 +94,7 @@ jobs:
         run: |
           set -e
           if [ -z "$LABPROBE_KEYSTORE_BASE64" ]; then
-            echo "::error::LABPROBE_KEYSTORE_BASE64 is not configured. Release APK cannot be signed with the fixed key."
+            echo "::error::LABPROBE_KEYSTORE_BASE64 is not configured."
             exit 1
           fi
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
@@ -173,7 +111,7 @@ jobs:
           set +e
           gradle :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-build.log 2>&1
           STATUS=$?
-          tail -n 180 /tmp/gradle-build.log
+          tail -n 200 /tmp/gradle-build.log
           exit $STATUS
 
       - name: Upload Gradle log
@@ -195,6 +133,7 @@ jobs:
           git config user.name "LabProbe CI"
           git config user.email "actions@users.noreply.github.com"
           git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
+                  app/src/main/kotlin/com/labprobe/app/DeviceCodec.kt \
                   app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt \
                   .github/workflows/router-control-auto-integrate.yml
           git commit -m "feat: persist verified router-control integration"
@@ -208,7 +147,6 @@ jobs:
         id: app_version
         shell: bash
         run: |
-          set -e
           VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
           VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
