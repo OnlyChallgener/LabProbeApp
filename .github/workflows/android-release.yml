@@ -25,6 +25,14 @@ jobs:
           rm -rf app/src/main/java
           echo "Legacy Java sources removed before build."
 
+      - name: Upload router-control source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-control-source-snapshot
+          path: |
+            app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
+            app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
