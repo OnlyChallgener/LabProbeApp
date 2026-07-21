@@ -935,7 +935,9 @@ class HubSyncUnsupported(message: String) : RuntimeException(message)
 class HubRevisionGap(message: String) : RuntimeException(message)
 class HubHttpException(val statusCode: Int, message: String) : RuntimeException(message)
 class HubAuthenticationException(val statusCode: Int, message: String) : RuntimeException(message)
-class RouterStatusUnavailableException(message: String = "Hub无法获取路由器状态") : RuntimeException(message)
+open class HubRouterNoDataException(message: String = "Hub 在线，但没有路由器数据") : RuntimeException(message)
+class HubRouterLoginException(message: String = "Hub 登录路由器失败") : RuntimeException(message)
+class RouterStatusUnavailableException(message: String = "Hub 在线，但没有路由器数据") : HubRouterNoDataException(message)
 
 class AppState(private val prefs: AppPrefs, context: Context) {
     private val appContext = context.applicationContext
@@ -1844,7 +1846,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
-                        "tool_router_login" -> RouterLoginSettingsScreen(prefs, backFromTool)
+                        "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool)
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
                     }
@@ -9275,7 +9277,10 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
 private class HubAuthInterceptor(private val tokenProvider: () -> String) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
         val request = chain.request()
-        if (!request.url.encodedPath.startsWith("/api/")) return chain.proceed(request)
+        val path = request.url.encodedPath
+        // Hub may be deployed under a reverse-proxy path prefix. Match any /api/
+        // segment so every Hub API request, including /api/router/*, is authorized.
+        if (!path.contains("/api/")) return chain.proceed(request)
 
         val appToken = tokenProvider().trim()
         if (appToken.isBlank()) {
@@ -9463,11 +9468,12 @@ class HubApi(private val prefs: AppPrefs) {
 
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
+            routerApiException(request.url.encodedPath, text)?.let { throw it }
             if (response.code == 401 || response.code == 403) {
-                throw HubAuthenticationException(response.code, "Hub API认证失败：请检查 APP_TOKEN")
+                throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
             }
             if (!response.isSuccessful) {
-                if (request.url.encodedPath.startsWith("/api/router/")) {
+                if (request.url.encodedPath.contains("/api/router/")) {
                     throw RouterStatusUnavailableException()
                 }
                 throw HubHttpException(response.code, "HTTP ${response.code}: $text")
@@ -9477,8 +9483,26 @@ class HubApi(private val prefs: AppPrefs) {
     }
 
     private fun requireRouterStatus(root: JSONObject): JSONObject {
-        if (root.has("ok") && !root.optBoolean("ok")) throw RouterStatusUnavailableException()
+        if (root.has("ok") && !root.optBoolean("ok")) {
+            routerApiException("/api/router", root.toString())?.let { throw it }
+            throw RouterStatusUnavailableException()
+        }
         return root
+    }
+
+    private fun routerApiException(path: String, text: String): RuntimeException? {
+        if (!path.contains("/api/router")) return null
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        if (root.optBoolean("ok", false)) return null
+        val code = root.optString("error").ifBlank { root.optString("errorCode") }.uppercase(Locale.ROOT)
+        val message = root.optString("message").trim()
+        return when (code) {
+            "HUB_NO_ROUTER_DATA", "ROUTER_NOT_CONFIGURED" ->
+                HubRouterNoDataException(message.ifBlank { "Hub 在线，但没有路由器数据" })
+            "LOGIN_FAILED", "AUTH_EXPIRED", "ROUTER_UNREACHABLE", "RPC_TIMEOUT", "RPC_HTTP_ERROR", "RPC_INVALID_RESPONSE", "RPC_PATH_NOT_FOUND" ->
+                HubRouterLoginException(message.ifBlank { "Hub 登录路由器失败" })
+            else -> null
+        }
     }
 }
 

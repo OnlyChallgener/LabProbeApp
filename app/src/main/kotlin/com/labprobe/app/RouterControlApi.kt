@@ -10,44 +10,39 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/** Shared router connection state shown throughout the toolbox. */
+/** App-facing state. Router credentials and eWeb session details remain in Hub only. */
 data class RouterConnectionSnapshot(
-    val configured: Boolean = false,
     val connected: Boolean = false,
-    val address: String = "",
-    val statusText: String = "未配置",
-    val sessionRemainingSeconds: Int = 0,
+    val statusText: String = "Waiting for Hub status",
     val lastSuccessAt: Long = 0L,
     val lastError: String = ""
+)
+
+data class RouterHubStatus(
+    val state: String = "no_router_data",
+    val connected: Boolean = false,
+    val message: String = "Hub is online, but router data is unavailable",
+    val errorCode: String = "HUB_NO_ROUTER_DATA",
+    val lastSuccessAt: Long = 0L
 )
 
 object RouterConnectionStore {
     var snapshot by mutableStateOf(RouterConnectionSnapshot())
         private set
 
-    fun apply(config: RouterLoginConfig) {
+    fun apply(status: RouterHubStatus) {
         snapshot = RouterConnectionSnapshot(
-            configured = config.passwordConfigured,
-            connected = config.connected,
-            address = config.address,
-            statusText = config.statusText.ifBlank {
-                when {
-                    config.connected -> "已连接"
-                    config.passwordConfigured -> "连接异常"
-                    else -> "未配置"
-                }
-            },
-            sessionRemainingSeconds = config.sessionRemainingSeconds,
-            lastSuccessAt = config.lastSuccessAt,
-            lastError = config.lastError
+            connected = status.connected,
+            statusText = status.message,
+            lastSuccessAt = status.lastSuccessAt,
+            lastError = if (status.connected) "" else status.message
         )
     }
 
     fun markSuccess() {
         snapshot = snapshot.copy(
-            configured = true,
             connected = true,
-            statusText = "已连接",
+            statusText = "Hub router data is available",
             lastSuccessAt = System.currentTimeMillis() / 1000L,
             lastError = ""
         )
@@ -56,7 +51,7 @@ object RouterConnectionStore {
     fun markFailure(message: String) {
         snapshot = snapshot.copy(
             connected = false,
-            statusText = if (snapshot.configured) "连接异常" else "未配置",
+            statusText = message,
             lastError = message
         )
     }
@@ -72,22 +67,23 @@ class RouterControlApi(private val prefs: AppPrefs) {
             if (root.has("ok") && !root.optBoolean("ok")) {
                 throw RouterStatusUnavailableException()
             }
-            if (!path.substringBefore('?').endsWith("/config")) {
+            if (!path.substringBefore('?').endsWith("/status")) {
                 RouterConnectionStore.markSuccess()
             }
             root
         } catch (error: HubAuthenticationException) {
             throw error
-        } catch (error: RouterStatusUnavailableException) {
-            RouterConnectionStore.markFailure(error.message ?: "Hub无法获取路由器状态")
+        } catch (error: HubRouterNoDataException) {
+            RouterConnectionStore.markFailure(error.message ?: "Hub is online, but router data is unavailable")
             throw error
-        } catch (_: Exception) {
-            val error = RouterStatusUnavailableException()
-            RouterConnectionStore.markFailure(error.message ?: "Hub无法获取路由器状态")
+        } catch (error: HubRouterLoginException) {
+            RouterConnectionStore.markFailure(error.message ?: "Hub could not log in to the router")
+            throw error
+        } catch (error: Exception) {
+            RouterConnectionStore.markFailure(error.message ?: "Hub router request failed")
             throw error
         }
     }
-
     private suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {
         execute(path)
     }
@@ -112,20 +108,16 @@ class RouterControlApi(private val prefs: AppPrefs) {
         )
     }
 
-    suspend fun routerConfig(includeSecret: Boolean = true, probe: Boolean = true): RouterLoginConfig {
-        val root = get("/api/router/config?includeSecret=${if (includeSecret) 1 else 0}&probe=${if (probe) 1 else 0}")
-        return parseRouterConfig(root).also(RouterConnectionStore::apply)
+    suspend fun hubStatus(): RouterHubStatus {
+        val root = get("/api/router/status")
+        return RouterHubStatus(
+            state = cleanApiText(root.optString("state", "no_router_data")),
+            connected = root.optBoolean("connected", false),
+            message = cleanApiText(root.optString("message", "Hub is online, but router data is unavailable")),
+            errorCode = cleanApiText(root.optString("errorCode", "HUB_NO_ROUTER_DATA")),
+            lastSuccessAt = root.optLong("lastSuccessAt", 0L)
+        ).also(RouterConnectionStore::apply)
     }
-
-    suspend fun saveRouterConfig(address: String, password: String?, sessionSeconds: Int): RouterLoginConfig {
-        val body = JSONObject()
-            .put("address", address.trim())
-            .put("sessionSeconds", sessionSeconds.coerceIn(600, 7200))
-            .put("test", true)
-        if (password != null) body.put("password", password)
-        return parseRouterConfig(send("/api/router/config", "PUT", body)).also(RouterConnectionStore::apply)
-    }
-
     suspend fun nativePortMappings(force: Boolean = false): List<NativePortMapRule> {
         val data = get("/api/router/port-mapping${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()
         return parseNativePortRules(data)
@@ -189,20 +181,6 @@ class RouterControlApi(private val prefs: AppPrefs) {
     }
 }
 
-private fun parseRouterConfig(root: JSONObject) = RouterLoginConfig(
-    address = cleanApiText(root.optString("address")),
-    password = root.optString("password"),
-    passwordConfigured = root.optBoolean("passwordConfigured"),
-    sessionSeconds = root.optInt("sessionSeconds", 3600),
-    sessionActive = root.optBoolean("sessionActive"),
-    connected = root.optBoolean("connected", root.optBoolean("sessionActive")),
-    serialNumber = cleanApiText(root.optString("serialNumber")),
-    statusText = cleanApiText(root.optString("statusText")),
-    sessionRemainingSeconds = root.optInt("sessionRemainingSeconds", 0),
-    lastSuccessAt = root.optLong("lastSuccessAt", 0L),
-    lastError = cleanApiText(root.optString("lastError"))
-)
-
 data class RouterCapabilities(
     val configured: Boolean = false,
     val dashboard: Boolean = false,
@@ -212,20 +190,6 @@ data class RouterCapabilities(
     val upnp: Boolean = false,
     val ddns: Boolean = false,
     val diagnostic: Boolean = false
-)
-
-data class RouterLoginConfig(
-    val address: String = "",
-    val password: String = "",
-    val passwordConfigured: Boolean = false,
-    val sessionSeconds: Int = 3600,
-    val sessionActive: Boolean = false,
-    val connected: Boolean = false,
-    val serialNumber: String = "",
-    val statusText: String = "",
-    val sessionRemainingSeconds: Int = 0,
-    val lastSuccessAt: Long = 0L,
-    val lastError: String = ""
 )
 
 data class NativePortMapRule(

@@ -713,102 +713,72 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
 }
 
 @Composable
-fun RouterLoginSettingsScreen(prefs: AppPrefs, onBack: () -> Unit) {
+fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
     val scope = rememberCoroutineScope()
-    var config by remember { mutableStateOf(RouterLoginConfig()) }
-    var address by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var showPassword by remember { mutableStateOf(false) }
-    var seconds by remember { mutableStateOf("3600") }
-    var saving by remember { mutableStateOf(false) }
-    var hubError by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf(RouterHubStatus()) }
+    var error by remember { mutableStateOf("") }
+    var refreshing by remember { mutableStateOf(false) }
 
-    suspend fun loadConfig(includeSecret: Boolean) {
-        runCatching { api.routerConfig(includeSecret = includeSecret, probe = true) }
+    suspend fun refreshStatus() {
+        refreshing = true
+        runCatching { api.hubStatus() }
             .onSuccess {
-                config = if (includeSecret) it else it.copy(password = password)
-                if (includeSecret) {
-                    address = it.address
-                    password = it.password
-                    seconds = it.sessionSeconds.toString()
-                }
-                hubError = ""
+                status = it
+                error = ""
             }
-            .onFailure { hubError = it.message ?: "Hub无法获取路由器状态" }
+            .onFailure {
+                error = when (it) {
+                    is HubAuthenticationException -> "APP_TOKEN 错误：请检查 Hub API Authorization"
+                    is HubRouterNoDataException -> "Hub 在线，但没有路由器数据"
+                    is HubRouterLoginException -> "Hub 登录路由器失败"
+                    else -> it.message ?: "Hub 状态请求失败"
+                }
+            }
+        refreshing = false
     }
 
-    LaunchedEffect(Unit) {
-        loadConfig(includeSecret = true)
-        while (true) {
-            delay(15_000)
-            loadConfig(includeSecret = false)
-        }
+    LaunchedEffect(Unit) { refreshStatus() }
+
+    val headline = when (status.state) {
+        "ready" -> "Hub 已连接路由器"
+        "router_login_failed" -> "Hub 登录路由器失败"
+        else -> "Hub 在线，但没有路由器数据"
     }
+    val detail = when {
+        error.isNotBlank() -> error
+        status.connected -> "路由器登录 Cookie 与会话由 Hub 自动维护"
+        else -> status.message
+    }
+    val accent = if (status.connected && error.isBlank()) RouterGreen else RouterRed
 
-    val hubConnected = config.connected || config.sessionActive
-    val available = hubConnected && hubError.isBlank()
-    val deviceName = config.serialNumber.ifBlank { config.address.ifBlank { "等待 Hub 返回设备信息" } }
-    val statusColor = if (available) RouterGreen else RouterRed
-    val statusText = if (available) "Hub已连接" else "Hub无法获取路由器状态"
-    val syncText = routerLastSyncText(config.lastSuccessAt)
-
-    RouterFormPage("路由器连接", "Hub 管理路由器密码并保持登录", onBack) {
-        PremiumCard(statusColor) {
+    RouterFormPage("Hub 状态", "路由器登录与会话由 Hub 维护", onBack) {
+        PremiumCard(accent) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                RouterGlyphIcon(RouterGlyph.Connection, statusColor, Modifier.size(30.dp))
+                RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(30.dp))
                 Spacer(Modifier.width(9.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(statusText, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
-                    Text(deviceName, fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(syncText, fontSize = 9.6.sp, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(headline, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+                    Text(detail, fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = RouterMuted, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (status.lastSuccessAt > 0L) Text(routerLastSyncText(status.lastSuccessAt), fontSize = 9.6.sp, color = RouterMuted)
                 }
-                Surface(shape = RoundedCornerShape(99.dp), color = statusColor.copy(alpha = .09f)) {
-                    Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(6.dp).background(statusColor, CircleShape))
-                        Spacer(Modifier.width(5.dp))
-                        Text(if (available) "正常" else "异常", fontSize = 9.2.sp, fontWeight = FontWeight.Black, color = statusColor)
-                    }
+                Surface(shape = RoundedCornerShape(99.dp), color = accent.copy(alpha = .09f)) {
+                    Text(if (status.connected && error.isBlank()) "正常" else "异常", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = 9.2.sp, fontWeight = FontWeight.Black, color = accent)
                 }
             }
         }
-        CompactField("管理地址", address, "192.168.5.1", keyboardType = KeyboardType.Uri) { address = it.take(160) }
-        CompactPasswordField("管理密码", password, "请输入路由器管理密码", showPassword, { showPassword = !showPassword }) { password = it.take(128) }
-        CompactField("会话超时（600-7200秒）", seconds, "3600", keyboardType = KeyboardType.Number) { seconds = it.filter(Char::isDigit).take(4) }
-        val displayMessage = hubError.ifBlank { message }
-        if (displayMessage.isNotBlank()) CompactMessage(displayMessage, if (hubError.isBlank()) RouterGreen else RouterRed)
         Button(
-            onClick = {
-                scope.launch {
-                    saving = true
-                    runCatching { api.saveRouterConfig(address, password, seconds.toIntOrNull() ?: 3600) }
-                        .onSuccess {
-                            config = it.copy(password = password)
-                            hubError = ""
-                            message = "配置已保存给 Hub"
-                        }
-                        .onFailure {
-                            hubError = it.message ?: "Hub无法获取路由器状态"
-                            message = ""
-                        }
-                    saving = false
-                }
-            },
-            enabled = !saving,
+            onClick = { scope.launch { refreshStatus() } },
+            enabled = !refreshing,
             modifier = Modifier.fillMaxWidth().height(42.dp),
             shape = RoundedCornerShape(13.dp),
             colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)
         ) {
-            if (saving) {
-                CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
-            } else {
-                Text("保存并测试连接", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
-            }
+            if (refreshing) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
+            else Text("刷新 Hub 状态", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
         }
     }
 }
-
 private fun routerLastSyncText(lastSuccessAt: Long): String {
     if (lastSuccessAt <= 0L) return "最近同步：等待 Hub 同步"
     val seconds = (System.currentTimeMillis() / 1000L - lastSuccessAt).coerceAtLeast(0L)
