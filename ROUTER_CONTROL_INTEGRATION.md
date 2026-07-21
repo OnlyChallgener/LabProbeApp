@@ -7,7 +7,7 @@
 - `RouterControlApi.kt`：Hub 0.9.8 路由器白名单 API 客户端
 - `RouterControlUi.kt`：商业级紧凑手机页面、Canvas 小图标、映射与 UPnP 横向分页、防火墙、DDNS+证书、网络自检、路由器连接设置
 - APP 版本：`0.10.11`，build `141`
-- GitHub Actions 会编译签名 APK，并保留完整 Gradle 日志用于修复
+- GitHub Actions 会先接入路由与工业页卡片，再编译签名 APK，并保留完整 Gradle 日志
 
 ## 1. 接入 MainActivity 路由
 
