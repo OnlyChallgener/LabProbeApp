@@ -805,7 +805,7 @@ private fun RealtimeMetric(icon: ImageVector, label: String, value: String, colo
                 Spacer(Modifier.width(4.dp))
                 Text(label, fontSize = 8.8.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
             }
-            Text(value, fontSize = 14.2.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F), maxLines = 1)
+            Text(value, fontSize = 13.2.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F), maxLines = 1)
             LinearProgressIndicator(
                 progress = { animated },
                 modifier = Modifier.fillMaxWidth().height(3.5.dp).clip(RoundedCornerShape(99.dp)),

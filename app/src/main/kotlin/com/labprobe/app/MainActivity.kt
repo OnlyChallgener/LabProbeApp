@@ -629,12 +629,17 @@ class AppPrefs(context: Context) {
                     output = o.optString("output")
                 )
             }
-        }.getOrDefault(emptyList()).take(6)
+        }.getOrDefault(emptyList()).take(30)
     }
+
+    fun sshResultsStorageBytes(): Long = (sp.getString("ssh_results_v1", "[]") ?: "[]")
+        .toByteArray(Charsets.UTF_8)
+        .size
+        .toLong()
 
     fun addSshResult(entry: SshResultEntry) {
         val arr = JSONArray()
-        (listOf(entry) + sshResults()).distinctBy { it.id }.take(6).forEach { r ->
+        (listOf(entry) + sshResults()).distinctBy { it.id }.take(30).forEach { r ->
             arr.put(JSONObject()
                 .put("id", r.id)
                 .put("time", r.time)
@@ -1735,6 +1740,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                 "device_detail" -> "devices"
                 "settings" -> settingsReturnRoute
                 "tool_nat_history" -> "tool_nat"
+                "tool_ssh_history" -> "tool_ssh"
                 else -> toolReturnRoute ?: "tools"
             }
             if (!route.startsWith("tool_")) toolReturnRoute = null
@@ -1820,7 +1826,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_trace" -> TraceScreen(prefs, backFromTool)
                         "tool_nat" -> NatScreen(prefs, backFromTool) { route = "tool_nat_history" }
                         "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
-                        "tool_ssh" -> SshScreen(prefs, backFromTool)
+                        "tool_ssh" -> SshScreen(prefs, backFromTool) { route = "tool_ssh_history" }
+                        "tool_ssh_history" -> SshHistoryScreen(prefs) { route = "tool_ssh" }
                         "tool_ipv6" -> Ipv6TestScreen(prefs, backFromTool)
                         "tool_roam" -> WifiRoamingScreen(prefs, backFromTool)
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
@@ -1968,6 +1975,7 @@ fun ExpressiveCard(
     headerAction: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier,
     iconKey: String = "",
+    compactTitle: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     LabV2Card(modifier = modifier) {
@@ -1981,7 +1989,7 @@ fun ExpressiveCard(
                 Spacer(Modifier.width(10.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = if (compactTitle) 14.2.sp else 15.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!subtitle.isNullOrBlank()) {
                     Text(
                         subtitle,
@@ -5056,7 +5064,12 @@ fun NatScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) = De
 @Composable
 fun NatHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 记录", "最近 50 条 · 左滑删除", onBack) { NatHistoryTool(prefs) }
 @Composable
-fun SshScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack) { SshTool(prefs) }
+fun SshScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) =
+    DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack, compactHeader = true) { SshTool(prefs, openHistory) }
+
+@Composable
+fun SshHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) =
+    DetailShell("执行记录", "三级页面 · 最多 30 条 · 左滑删除", onBack, compactHeader = true) { SshHistoryTool(prefs) }
 
 @Composable
 fun SpeedTemplateScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("峰值外网测速", "测到峰值即停 · 公网模板", onBack) { SpeedTemplateTool(prefs) }
@@ -8103,7 +8116,7 @@ fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen:
 }
 
 @Composable
-fun SshTool(prefs: AppPrefs) {
+fun SshTool(prefs: AppPrefs, openHistory: () -> Unit) {
     var host by remember { mutableStateOf(prefs.sshHost) }
     var port by remember { mutableStateOf(prefs.sshPort) }
     var user by remember { mutableStateOf(prefs.sshUser) }
@@ -8115,7 +8128,7 @@ fun SshTool(prefs: AppPrefs) {
     var running by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
-    ExpressiveCard("连接与命令", "路由器 / NAS 单条命令执行，返回仍在 APP 内。", Icons.Rounded.Terminal, Color(0xFF2563EB)) {
+    ExpressiveCard("连接与命令", "路由器 / NAS 单条命令执行，返回仍在 APP 内。", Icons.Rounded.Terminal, Color(0xFF2563EB), compactTitle = true) {
         CompactIconHistoryInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.sshPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
@@ -8152,11 +8165,11 @@ fun SshTool(prefs: AppPrefs) {
             }
         }
     }
-    ExpressiveCard("执行结果", "最多保留 6 条；点击查看完整输出，长按复制，左滑删除。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
+    ExpressiveCard("执行结果", "当前页显示最近 6 条；完整记录最多保存 30 条。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
         if (results.isEmpty()) {
             Text("等待连接", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), fontWeight = FontWeight.SemiBold)
         } else {
-            results.forEach { item ->
+            results.take(6).forEach { item ->
                 key(item.id) {
                     SshResultCard(
                         item = item,
@@ -8168,7 +8181,79 @@ fun SshTool(prefs: AppPrefs) {
                     )
                 }
             }
-            TextButton(onClick = { prefs.clearSshResults(); results = emptyList() }) { Text("清空执行记录", fontSize = 12.sp) }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = { prefs.clearSshResults(); results = emptyList() },
+                enabled = results.isNotEmpty()
+            ) { Text("清空执行记录", fontSize = 11.5.sp) }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = openHistory) {
+                Icon(Icons.Rounded.History, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("执行记录", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+}
+
+@Composable
+fun SshHistoryTool(prefs: AppPrefs) {
+    var results by remember { mutableStateOf(prefs.sshResults()) }
+    var openedSwipeId by remember { mutableStateOf<Long?>(null) }
+    val ctx = LocalContext.current
+    val usedBytes = remember(results) { prefs.sshResultsStorageBytes() }
+    val capacityProgress = (results.size / 30f).coerceIn(0f, 1f)
+
+    ExpressiveCard(
+        "记录空间",
+        "最多保存 30 条 SSH 执行结果",
+        Icons.Rounded.History,
+        Color(0xFF2563EB),
+        compactTitle = true
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("${results.size} / 30 条", fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Spacer(Modifier.weight(1f))
+            Text("占用 ${String.format("%.1f KB", usedBytes / 1024.0)}", fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+        }
+        LinearProgressIndicator(
+            progress = { capacityProgress },
+            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(99.dp)),
+            color = Color(0xFF2563EB),
+            trackColor = Color(0xFFDCE6F3)
+        )
+    }
+
+    if (results.isEmpty()) {
+        ExpressiveCard("暂无记录", "执行 SSH 命令后会自动保存到这里。", Icons.Rounded.Notes, Color(0xFF64748B), compactTitle = true) {
+            Text("返回上一页执行命令即可。", fontSize = 12.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+        }
+    } else {
+        results.forEach { item ->
+            key(item.id) {
+                SshResultCard(
+                    item = item,
+                    openedSwipeId = openedSwipeId,
+                    onSwipeOpen = { openedSwipeId = it },
+                    onSwipeClose = { if (openedSwipeId == item.id) openedSwipeId = null },
+                    onCopy = { copy(ctx, item.output.ifBlank { "无输出" }) },
+                    onDelete = {
+                        openedSwipeId = null
+                        prefs.deleteSshResult(item.id)
+                        results = prefs.sshResults()
+                    }
+                )
+            }
+        }
+        OutlinedButton(
+            onClick = { prefs.clearSshResults(); results = emptyList() },
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().height(46.dp)
+        ) {
+            Icon(Icons.Rounded.DeleteSweep, null, Modifier.size(17.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("清空全部记录", fontWeight = FontWeight.Black, fontSize = 12.sp)
         }
     }
 }
@@ -8252,7 +8337,12 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("主机：${item.host}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text("时间：${item.time}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text("命令：${item.command}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.Top) {
+                    Text("命令：", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    SelectionContainer {
+                        Text(item.command, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f))) {
                     SelectionContainer {
                         Text(item.output.ifBlank { "无输出" }, modifier = Modifier.padding(12.dp), fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)

@@ -2,7 +2,7 @@ LabProbe 全量源码更新说明
 ========================
 
 版本：
-- Android APP：v0.10.9 build139
+- Android APP：v0.10.10 build140
 - Hub：v0.9.3
 - LabRelay：v0.2.4
 
@@ -32,7 +32,7 @@ Git Bash：
   git switch codex/app-v0102-polish
   git status
   git add -A
-  git commit -m "feat: router status v0.10.9 build139"
+  git commit -m "feat: router status v0.10.10 build140"
   git push origin codex/app-v0102-polish
 
 GitHub Actions：Android Release APK → Run workflow → 选择 codex/app-v0102-polish。
@@ -60,7 +60,7 @@ Git Bash：
 ------------
 1. 先更新 Hub v0.9.3，并保留原 data/config/backups/logs 挂载目录。
 2. 再升级路由器 LabRelay v0.2.4。
-3. 最后安装 APP v0.10.9 build139。
+3. 最后安装 APP v0.10.10 build140。
 
 不要删除或覆盖：
 - Hub data/
