@@ -1832,7 +1832,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_roam" -> WifiRoamingScreen(prefs, backFromTool)
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
-                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)
+                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
+                        "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
+                        "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
+                        "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
+                        "tool_router_login" -> RouterLoginSettingsScreen(prefs, backFromTool)
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
                     }
@@ -4567,6 +4571,7 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
                 DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFF64748B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true, valueColor = deviceSignalValueColor(d.rssi))
             }
+            DeviceRealtimeStatusBar(d)
             DeviceTodayTrafficBar(d)
             DeviceFooterLine(d = d, showTime = true)
         } else {
@@ -4594,8 +4599,45 @@ fun WiredDeviceInfo(d: DeviceItem, ip4: String, ipv6Pick: Ipv6PickResult) {
             copyValue = v6Full,
             allowScroll = true
         )
+        DeviceRealtimeStatusBar(d)
         DeviceTodayTrafficBar(d)
         DeviceFooterLine(d = d, showTime = false)
+    }
+}
+
+private fun formatRealtimeRate(bytesPerSecond: Long): String {
+    val safe = bytesPerSecond.coerceAtLeast(0L)
+    val bitsPerSecond = safe * 8.0
+    return if (bitsPerSecond < 1_000_000.0) {
+        String.format(Locale.US, "%.0f Kbps", bitsPerSecond / 1_000.0)
+    } else {
+        String.format(Locale.US, "%.2f Mbps", bitsPerSecond / 1_000_000.0)
+    }
+}
+
+@Composable
+fun DeviceRealtimeStatusBar(d: DeviceItem) {
+    if (!d.online) return
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF2563EB).copy(alpha = .045f),
+        border = BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .09f))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.Speed, null, Modifier.size(14.dp), tint = Color(0xFF2563EB))
+            Spacer(Modifier.width(5.dp))
+            Text("实时", fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            Spacer(Modifier.width(7.dp))
+            Text("↑${formatRealtimeRate(d.realtimeUploadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), maxLines = 1)
+            Spacer(Modifier.width(7.dp))
+            Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+        }
     }
 }
 
@@ -4752,6 +4794,36 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 
 @Composable
 fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具箱", "长按功能卡可调整分组顺序", topNav = topNav) {
+    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
+    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
+    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
+    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
+    var routerUpnpEnabled by remember { mutableStateOf(false) }
+    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
+        val api = RouterControlApi(prefs)
+        runCatching { api.firewall() }.onSuccess { state ->
+            routerFirewallEnabled = state.rules.count { it.enabled }
+        }
+        runCatching { api.ddns() }.onSuccess { records ->
+            routerDdnsHealthy = records.count {
+                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
+            }
+        }
+        runCatching { api.nativePortMappings() }.onSuccess {
+            routerNativeMappingCount = it.size
+        }
+        runCatching { api.upnp() }.onSuccess {
+            routerUpnpEnabled = it.enabled
+            routerUpnpMappingCount = it.mappings.size
+        }
+        runCatching { api.diagnostic() }.onSuccess {
+            routerDiagnosticErrors = it.errorCount
+        }
+    }
+
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var profile by remember { mutableStateOf(detectNetworkProfile(ctx, prefs)) }
@@ -4828,6 +4900,19 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
+    RouterFeatureRail(
+        firewallEnabled = routerFirewallEnabled,
+        ddnsHealthy = routerDdnsHealthy,
+        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
+        upnpEnabled = routerUpnpEnabled,
+        diagnosticErrors = routerDiagnosticErrors,
+        onConnection = { open("tool_router_login") },
+        onMapping = { open("tool_portmap") },
+        onDdns = { open("tool_router_ddns") },
+        onFirewall = { open("tool_router_firewall") },
+        onDiagnostic = { open("tool_router_diag") }
+    )
+
     val toolSections = remember {
         mapOf(
             "net" to listOf(

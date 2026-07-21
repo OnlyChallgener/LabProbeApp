@@ -25,9 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -62,6 +59,7 @@ fun RouterFeatureRail(
     mappingCount: Int,
     upnpEnabled: Boolean,
     diagnosticErrors: Int,
+    onConnection: () -> Unit,
     onMapping: () -> Unit,
     onDdns: () -> Unit,
     onFirewall: () -> Unit,
@@ -72,6 +70,17 @@ fun RouterFeatureRail(
             Text("路由器功能", fontSize = 15.sp, fontWeight = FontWeight.Black, color = RouterInk)
             Spacer(Modifier.weight(1f))
             Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+            Spacer(Modifier.width(5.dp))
+            Surface(
+                onClick = onConnection,
+                shape = CircleShape,
+                color = RouterBlue.copy(alpha = .08f),
+                modifier = Modifier.size(30.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Settings, "路由器连接", Modifier.size(16.dp), tint = RouterBlue)
+                }
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -612,7 +621,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,onBack:()->Unit,onSave:(DdnsRecord
     BackHandler(onBack=onBack)
     Surface(Modifier.fillMaxSize(),color=Color(0xFFF6F8FC)){
         Column(Modifier.fillMaxSize().padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
-            Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onBack,modifier=Modifier.size(38.dp)){Icon(Icons.Rounded.ArrowBack,null)};Column{Text(if(initial.serviceId.isBlank())"新增DDNS" else "编辑DDNS",fontSize=18.sp,fontWeight=FontWeight.Black,color=RouterInk);Text("密钥仅保存在Hub，不返回APP",fontSize=10.3.sp,color=RouterMuted)}}
+            Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onBack,modifier=Modifier.size(38.dp)){Icon(Icons.Rounded.ArrowBack,null)};Column{Text(if(initial.serviceId.isBlank())"新增DDNS" else "编辑DDNS",fontSize=18.sp,fontWeight=FontWeight.Black,color=RouterInk);Text("密钥由你输入；保存后不回显",fontSize=10.3.sp,color=RouterMuted)}}
             CompactChoice("服务商",record.provider,listOf("aliyun.com","dnspod.cn","no-ip.com")){record=record.copy(provider=it)}
             CompactField("域名 / 记录",record.domain,"例如 rj.lab86@shinya.icu"){record=record.copy(domain=it.take(128))}
             CompactField("用户名 / AccessKey",record.username,"AccessKey ID"){record=record.copy(username=it.take(160))}
@@ -643,8 +652,8 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
 fun RouterLoginSettingsScreen(prefs:AppPrefs,onBack:()->Unit){
     val api=remember(prefs.hub,prefs.token,prefs.hubDns){RouterControlApi(prefs)};val scope=rememberCoroutineScope();var config by remember{mutableStateOf(RouterLoginConfig())};var address by remember{mutableStateOf("")};var password by remember{mutableStateOf("")};var seconds by remember{mutableStateOf("3600")};var saving by remember{mutableStateOf(false)};var message by remember{mutableStateOf("")}
     LaunchedEffect(Unit){runCatching{api.routerConfig()}.onSuccess{config=it;address=it.address;seconds=it.sessionSeconds.toString()}.onFailure{message=it.message.orEmpty()}}
-    DetailShell("路由器连接","Hub 模拟登录 · 凭据加密保存",onBack){
-        PremiumCard(if(config.sessionActive)RouterGreen else RouterBlue){Row(verticalAlignment=Alignment.CenterVertically){RouterGlyphIcon(RouterGlyph.Firewall,if(config.sessionActive)RouterGreen else RouterBlue,Modifier.size(36.dp));Spacer(Modifier.width(10.dp));Column{Text(if(config.sessionActive)"会话已建立" else "等待连接",fontSize=13.5.sp,fontWeight=FontWeight.Black,color=RouterInk);Text(config.serialNumber.ifBlank{"保存后自动测试登录"},fontSize=10.2.sp,color=RouterMuted)}}}
+    DetailShell("路由器连接","Hub 模拟登录 · 管理密码由你输入",onBack){
+        PremiumCard(if(config.sessionActive)RouterGreen else RouterBlue){Row(verticalAlignment=Alignment.CenterVertically){RouterGlyphIcon(RouterGlyph.Firewall,if(config.sessionActive)RouterGreen else RouterBlue,Modifier.size(36.dp));Spacer(Modifier.width(10.dp));Column{Text(if(config.sessionActive)"会话已建立" else "等待连接",fontSize=13.5.sp,fontWeight=FontWeight.Black,color=RouterInk);Text(config.serialNumber.ifBlank{"输入管理密码后保存并测试"},fontSize=10.2.sp,color=RouterMuted)}}}
         CompactField("管理地址",address,"192.168.5.1",keyboardType=KeyboardType.Uri){address=it.take(160)}
         OutlinedTextField(value=password,onValueChange={password=it.take(128)},modifier=Modifier.fillMaxWidth(),singleLine=true,visualTransformation=PasswordVisualTransformation(),label={Text(if(config.passwordConfigured)"管理密码（留空保持原值）" else "管理密码",fontSize=11.sp)},shape=RoundedCornerShape(14.dp),textStyle=LocalTextStyle.current.copy(fontSize=13.sp))
         CompactField("会话超时（600-7200秒）",seconds,"3600",keyboardType=KeyboardType.Number){seconds=it.filter(Char::isDigit).take(4)}

@@ -119,7 +119,19 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
             groupKeys = listOf("realtimeTraffic", "realTimeTraffic", "totalTraffic", "trafficTotal", "realtimeFlow", "realTimeFlow", "totalFlow", "bootTraffic", "currentTraffic", "实时总流量"),
             directionKeys = listOf("download", "down", "rx", "downstream", "received", "receive", "downloadBytes", "downBytes", "rxBytes", "下行", "下载"),
             directionLabels = listOf("下行", "下载", "download", "down", "rx")
-        )
+        ),
+        realtimeUploadBytes = o.optLong(
+            "realtimeUploadBytes",
+            o.optLong("realtimeUpload", o.optLong("realtimeUpBytes", o.optLong("flowUp", 0L)))
+        ).coerceAtLeast(0L),
+        realtimeDownloadBytes = o.optLong(
+            "realtimeDownloadBytes",
+            o.optLong("realtimeDownload", o.optLong("realtimeDownBytes", o.optLong("flowDown", 0L)))
+        ).coerceAtLeast(0L),
+        connectionCount = o.optInt(
+            "connectionCount",
+            o.optInt("flow_cnt", o.optInt("flowCnt", 0))
+        ).coerceAtLeast(0)
     )
 }
 
@@ -314,6 +326,9 @@ fun DeviceItem.toJson(): JSONObject = JSONObject()
     .put("todayDownload", todayDownload)
     .put("totalUpload", totalUpload)
     .put("totalDownload", totalDownload)
+    .put("realtimeUploadBytes", realtimeUploadBytes)
+    .put("realtimeDownloadBytes", realtimeDownloadBytes)
+    .put("connectionCount", connectionCount)
 
 fun EventItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
