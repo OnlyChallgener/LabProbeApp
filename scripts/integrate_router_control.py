@@ -91,7 +91,6 @@ def patch_main_activity() -> None:
 '''
         text = text[:tool_sections_at] + rail_block + text[tool_sections_at:]
 
-    # Add the compact realtime speed/connection line to both wireless and wired cards.
     if "fun DeviceRealtimeStatusBar(" not in text:
         text = replace_once(
             text,
@@ -152,12 +151,12 @@ def patch_router_ui() -> None:
     text = UI.read_text(encoding="utf-8")
 
     normalized = []
-    seen_corner = False
+    seen_imports = set()
     for line in text.splitlines():
-        if line == "import androidx.compose.ui.geometry.CornerRadius":
-            if seen_corner:
+        if line.startswith("import "):
+            if line in seen_imports:
                 continue
-            seen_corner = True
+            seen_imports.add(line)
         normalized.append(line)
     text = "\n".join(normalized) + "\n"
 
@@ -169,13 +168,8 @@ def patch_router_ui() -> None:
     onConnection: () -> Unit,
     onMapping: () -> Unit,''',
     )
-    text = replace_once(
-        text,
-        '''            Spacer(Modifier.weight(1f))
-            Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)''',
-        '''            Spacer(Modifier.weight(1f))
-            Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-            Spacer(Modifier.width(5.dp))
+
+    connection_block = '''            Spacer(Modifier.width(5.dp))
             Surface(
                 onClick = onConnection,
                 shape = CircleShape,
@@ -185,8 +179,29 @@ def patch_router_ui() -> None:
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Settings, "路由器连接", Modifier.size(16.dp), tint = RouterBlue)
                 }
-            }''',
-    )
+            }'''
+
+    rail_at = text.find("fun RouterFeatureRail(")
+    rail_end = text.find("private enum class RouterGlyph", rail_at)
+    rail_text = text[rail_at:rail_end] if rail_at >= 0 and rail_end >= 0 else ""
+    if "onClick = onConnection" not in rail_text:
+        text = replace_once(
+            text,
+            '''            Spacer(Modifier.weight(1f))
+            Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)''',
+            '''            Spacer(Modifier.weight(1f))
+            Text("左右滑动", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+''' + connection_block,
+        )
+
+    # Collapse accidental duplicate settings buttons from earlier generated patches.
+    first = text.find(connection_block)
+    if first >= 0:
+        while True:
+            second = text.find(connection_block, first + len(connection_block))
+            if second < 0:
+                break
+            text = text[:second] + text[second + len(connection_block):]
 
     replacements = {
         'DetailShell("路由器连接","Hub 模拟登录 · 凭据加密保存",onBack)':
