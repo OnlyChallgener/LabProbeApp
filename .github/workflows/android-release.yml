@@ -30,6 +30,7 @@ jobs:
         with:
           name: router-control-source-snapshot
           path: |
+            app/src/main/kotlin/com/labprobe/app/MainActivity.kt
             app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
             app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
 
