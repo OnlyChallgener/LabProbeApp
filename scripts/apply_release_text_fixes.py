@@ -23,7 +23,14 @@ def apply() -> None:
             "网络自检改为手动触发说明，合并重复网线结果并补充中文显示"
         )
     )'''
-    if new not in main:
+    # Fresh checkout starts at the old block. A workflow may run source
+    # preparation explicitly and Gradle preBuild may run it again, so newer
+    # generated changelogs must be accepted without raising.
+    already_generated = (
+        new in main
+        or "v0.10.13 build143 · 路由诊断与首页联动" in main
+    )
+    if not already_generated:
         if old not in main:
             raise RuntimeError("missing changelog block")
         main = main.replace(old, new, 1)
