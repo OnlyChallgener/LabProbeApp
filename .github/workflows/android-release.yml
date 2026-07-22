@@ -20,6 +20,10 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Apply router integration source fixes
+        shell: bash
+        run: python3 scripts/prepare_android_sources.py
+
       - name: Remove legacy Java sources
         shell: bash
         run: rm -rf app/src/main/java
