@@ -1,5 +1,11 @@
 # LabProbe 更新日志
 
+## v0.10.11 build141（当前分支）
+
+- 路由器控制仍统一通过 Hub API，APP 不保存或管理 eWeb Cookie、token、sid、stok。
+- 配合 Hub 0.9.12 的内置 Chromium 浏览器会话：Hub 自动打开 Reyee eWeb、填写管理密码、登录并复用真实页面会话。
+- APP 与 LabRelay 版本号保持不变；本次只更新 Hub 登录实现。
+
 ## v0.10.10 build140
 
 - SSH 执行结果弹窗中，命令文本支持按需选择并复制部分内容。
