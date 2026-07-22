@@ -12,6 +12,7 @@ on:
       - scripts/apply_release_text_fixes.py
       - scripts/apply_next_release_fixes.py
       - scripts/apply_refresh_stability_fixes.py
+      - scripts/apply_v01015_router_stability.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   workflow_dispatch:
@@ -45,12 +46,15 @@ jobs:
           grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF94A3B8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'cache_router_dashboard_v1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'mergeRouterDashboardSnapshot' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '显示上次结果 · 仅点击按钮时重新检测' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'v0.10.14 build144' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'RouterControlMemoryCache.ddnsRows' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'v0.10.15 build145' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'delay(1_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q '路由器数据正在同步' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
-          grep -q 'fun RouterNatDiagnosticScreen' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'fun RouterBetaUpgradeScreen' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q '路由器已连接，实时数据正常' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
+          grep -q 'NativeCompactPortField' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q '检测协议' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q '出口接口' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'containerColor = Color.White' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'natTypeZh' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
       - uses: actions/setup-java@v4
         with:
@@ -76,5 +80,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.14-build144-router-debug
+          name: LabProbe-v0.10.15-build145-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
