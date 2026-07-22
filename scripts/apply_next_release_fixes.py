@@ -131,6 +131,7 @@ def patch_native_ui() -> None:
         'import androidx.compose.runtime.*\nimport androidx.compose.runtime.saveable.rememberSaveable\n',
         "rememberSaveable import",
     )
+    text = text.replace("stun.fitaauto.ru", "stun.fitauto.ru")
     NATIVE_UI.write_text(text, encoding="utf-8")
 
 
