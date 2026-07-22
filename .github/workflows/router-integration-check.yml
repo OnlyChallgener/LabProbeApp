@@ -9,6 +9,7 @@ on:
       - app/src/main/kotlin/com/labprobe/app/**
       - scripts/apply_router_ui_fixes.py
       - scripts/apply_wol_navigation_fix.py
+      - scripts/apply_release_text_fixes.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   workflow_dispatch:
@@ -38,6 +39,8 @@ jobs:
           grep -q '"router_settings" -> RouterSettingsScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '显示上次结果 · 仅点击按钮时重新检测' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'PremiumCard(RouterCyan)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'v0.10.12 build142' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '等待 Hub WebSocket 更新' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
 
       - uses: actions/setup-java@v4
         with:
@@ -58,3 +61,10 @@ jobs:
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace --console=plain
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-router-integration-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
