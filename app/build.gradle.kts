@@ -88,9 +88,9 @@ android {
 
 val applyRouterUiFixes by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Apply idempotent router settings, DDNS and diagnostic source fixes"
+    description = "Apply idempotent router settings, DDNS, diagnostic and navigation source fixes"
     workingDir(rootProject.projectDir)
-    commandLine("python3", "scripts/apply_router_ui_fixes.py")
+    commandLine("python3", "scripts/prepare_android_sources.py")
 }
 
 tasks.matching { it.name == "preBuild" }.configureEach {
