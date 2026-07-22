@@ -5,6 +5,7 @@ from apply_next_release_fixes import apply as apply_next_release
 from apply_refresh_stability_fixes import apply as apply_refresh_stability
 from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
+from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
 from apply_v01015_router_stability import apply as apply_v01015_stability
 from apply_v01015_runtime_cache_hotfix import apply as apply_v01015_runtime_cache
 from apply_wol_navigation_fix import apply as apply_wol_navigation
@@ -35,4 +36,5 @@ if __name__ == "__main__":
 
     apply_v01015_stability()
     apply_v01015_runtime_cache()
+    apply_v01015_nat_text()
     print("Android source fixes prepared")
