@@ -10,6 +10,7 @@ on:
       - scripts/apply_router_ui_fixes.py
       - scripts/apply_wol_navigation_fix.py
       - scripts/apply_release_text_fixes.py
+      - scripts/apply_next_release_fixes.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   workflow_dispatch:
@@ -37,10 +38,15 @@ jobs:
         run: |
           set -e
           grep -q '"router_settings" -> RouterSettingsScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '"tool_router_nat" -> RouterNatDiagnosticScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '"tool_router_beta" -> RouterBetaUpgradeScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'HomeDdnsMiniCard' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '显示上次结果 · 仅点击按钮时重新检测' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'PremiumCard(RouterCyan)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'v0.10.12 build142' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '等待 Hub WebSocket 更新' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          grep -q 'v0.10.13 build143' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'delay(2_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          grep -q 'fun RouterNatDiagnosticScreen' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'fun RouterBetaUpgradeScreen' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
       - uses: actions/setup-java@v4
         with:
@@ -66,5 +72,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-router-integration-debug
+          name: LabProbe-v0.10.13-build143-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
