@@ -25,6 +25,7 @@ private val SettingsBlue = Color(0xFF2563EB)
 private val SettingsCyan = Color(0xFF0891B2)
 private val SettingsGreen = Color(0xFF16A36A)
 private val SettingsAmber = Color(0xFFF59E0B)
+private val SettingsPurple = Color(0xFF7C3AED)
 private val SettingsInk = Color(0xFF17233A)
 private val SettingsMuted = Color(0xFF687890)
 private val SettingsBorder = Color(0xFFE3EAF4)
@@ -56,7 +57,7 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("路由设置", fontSize = 16.sp, fontWeight = FontWeight.Black, color = SettingsInk)
                 Text(
-                    "防火墙 · 映射与 UPnP · 远程访问 · 网络自检",
+                    "防火墙 · NAT诊断 · DDNS · Beta升级",
                     fontSize = 10.5.sp,
                     lineHeight = 13.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -134,7 +135,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
             ) { onOpen("tool_router_ddns") }
         }
 
-        RouterSettingsSection("维护与诊断") {
+        RouterSettingsSection("诊断与升级") {
             RouterSettingsTile(
                 title = "网络自检",
                 subtitle = "仅在手动点击时检测物理接线与协商速率",
@@ -142,6 +143,20 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 color = SettingsAmber,
                 enabled = capabilities.diagnostic
             ) { onOpen("tool_router_diag") }
+            RouterSettingsTile(
+                title = "路由 NAT 诊断",
+                subtitle = "路由器原生 RFC3489 / RFC5780 检测",
+                icon = Icons.Rounded.Radar,
+                color = SettingsPurple,
+                enabled = true
+            ) { onOpen("tool_router_nat") }
+            RouterSettingsTile(
+                title = "Beta 在线升级",
+                subtitle = "检查 ReyeeOS Beta 版本，不自动安装",
+                icon = Icons.Rounded.SystemUpdateAlt,
+                color = SettingsCyan,
+                enabled = true
+            ) { onOpen("tool_router_beta") }
         }
     }
 }
