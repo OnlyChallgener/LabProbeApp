@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
 ROUTER_STATUS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterStatus.kt"
 WOL_PANEL = ROOT / "app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt"
+NATIVE_UI = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt"
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -59,8 +60,14 @@ def patch_main() -> None:
 
     text = replace_once(
         text,
-        '        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {\n',
-        '        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {\n',
+        '''fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Color, kind: String) {
+    if (items.length() <= 0) return
+    ExpressiveCard(title, "${items.length()} 条", icon, accent) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {''',
+        '''fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Color, kind: String) {
+    if (items.length() <= 0) return
+    ExpressiveCard(title, "${items.length()} 条", icon, accent) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {''',
         "daily terminal spacing",
     )
     text = text.replace(
@@ -116,10 +123,22 @@ def patch_wol_title() -> None:
     WOL_PANEL.write_text(text, encoding="utf-8")
 
 
+def patch_native_ui() -> None:
+    text = NATIVE_UI.read_text(encoding="utf-8")
+    text = replace_once(
+        text,
+        'import androidx.compose.runtime.*\n',
+        'import androidx.compose.runtime.*\nimport androidx.compose.runtime.saveable.rememberSaveable\n',
+        "rememberSaveable import",
+    )
+    NATIVE_UI.write_text(text, encoding="utf-8")
+
+
 def apply() -> None:
     patch_main()
     patch_router_status()
     patch_wol_title()
+    patch_native_ui()
     print("v0.10.13 fixes applied")
 
 
