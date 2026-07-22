@@ -25,7 +25,6 @@ private val SettingsBlue = Color(0xFF2563EB)
 private val SettingsCyan = Color(0xFF0891B2)
 private val SettingsGreen = Color(0xFF16A36A)
 private val SettingsAmber = Color(0xFFF59E0B)
-private val SettingsPurple = Color(0xFF7C3AED)
 private val SettingsInk = Color(0xFF17233A)
 private val SettingsMuted = Color(0xFF687890)
 private val SettingsBorder = Color(0xFFE3EAF4)
@@ -77,7 +76,20 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
 fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -> Unit) {
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
     var status by remember { mutableStateOf(RouterHubStatus()) }
-    var capabilities by remember { mutableStateOf(RouterCapabilities()) }
+    var capabilities by remember {
+        mutableStateOf(
+            RouterCapabilities(
+                configured = true,
+                dashboard = true,
+                devices = true,
+                firewall = true,
+                nativePortMapping = true,
+                upnp = true,
+                ddns = true,
+                diagnostic = true
+            )
+        )
+    }
     var loading by remember { mutableStateOf(true) }
 
     LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
@@ -120,13 +132,6 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 color = SettingsCyan,
                 enabled = capabilities.ddns
             ) { onOpen("tool_router_ddns") }
-            RouterSettingsTile(
-                title = "WOL 管理",
-                subtitle = "管理离线设备并发送唤醒包",
-                icon = Icons.Rounded.PowerSettingsNew,
-                color = SettingsPurple,
-                enabled = true
-            ) { onOpen("wol") }
         }
 
         RouterSettingsSection("维护与诊断") {
