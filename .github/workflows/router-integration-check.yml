@@ -1,0 +1,60 @@
+name: Router Integration Check
+
+on:
+  push:
+    branches:
+      - codex/router-control-v01011-build141
+    paths:
+      - app/build.gradle.kts
+      - app/src/main/kotlin/com/labprobe/app/**
+      - scripts/apply_router_ui_fixes.py
+      - scripts/apply_wol_navigation_fix.py
+      - scripts/prepare_android_sources.py
+      - .github/workflows/router-integration-check.yml
+  workflow_dispatch:
+
+concurrency:
+  group: router-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Prepare generated source fixes
+        run: python3 scripts/prepare_android_sources.py
+
+      - name: Verify expected integration points
+        shell: bash
+        run: |
+          set -e
+          grep -q '"router_settings" -> RouterSettingsScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '显示上次结果 · 仅点击按钮时重新检测' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'PremiumCard(RouterCyan)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace --console=plain
