@@ -31,7 +31,7 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 147
+        versionCode = 148
         versionName = "0.10.15"
     }
 
@@ -91,6 +91,7 @@ val applyRouterUiFixes by tasks.registering(Exec::class) {
     description = "Apply idempotent router settings, DDNS, diagnostic and navigation source fixes"
     workingDir(rootProject.projectDir)
     commandLine(System.getenv("PYTHON") ?: "python3", "scripts/prepare_android_sources.py")
+    onlyIf { System.getenv("LABPROBE_SKIP_SOURCE_PREPARE") != "1" }
 }
 
 tasks.matching { it.name == "preBuild" }.configureEach {
