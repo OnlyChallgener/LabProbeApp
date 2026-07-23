@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Final build150 realtime architecture.
 
-This runs after every legacy generator and deliberately removes the full
-Dashboard MQTT path. MQTT remains for revision/availability only. Two
-independent one-second HTTP loops read the small Hub memory APIs and update only
-numeric fields, so router and device runtime cannot block each other.
+Runs after every legacy generator. Full Dashboard MQTT is removed; MQTT keeps
+revision/availability only. Two independent one-second small-HTTP loops update
+router and device numeric fields without sharing a request or sync mutex.
 """
 from pathlib import Path
 import re
@@ -67,6 +66,28 @@ LITE_METHOD = '''    private fun startLiteRealtimePolling() {
 
 '''
 
+START_REALTIME = '''    suspend fun startRealtime() {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return
+        startLiteRealtimePolling()
+        val stored = prefs.mqttConfig
+        val remote = runCatching { HubApi(prefs).getMqttConfig() }.getOrElse { stored }
+        val effective = remote.copy(
+            publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl },
+            dashboardTopic = ""
+        )
+        prefs.mqttConfig = effective
+        realtimeClient.start(effective)
+    }'''
+
+STOP_REALTIME = '''    fun stopRealtime() {
+        realtimeClient.stop()
+        liteRouterJob?.cancel()
+        liteRouterJob = null
+        liteDevicesJob?.cancel()
+        liteDevicesJob = null
+        mqttConnected = false
+    }'''
+
 ENTRY_EFFECT = '''    LaunchedEffect(Unit) {
         state.refreshRouterDashboard(silent = true)
         launch { runCatching { state.requestRouterCredentialsRefresh() } }
@@ -84,6 +105,76 @@ REFRESH_FUNCTION = '''    fun refresh() {
     }'''
 
 
+def _matching_brace(text: str, opening: int) -> int:
+    if opening < 0 or text[opening] != "{":
+        raise RuntimeError("invalid Kotlin brace start")
+    depth = 0
+    quote = ""
+    escaped = False
+    index = opening
+    while index < len(text):
+        ch = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = ""
+        else:
+            if ch in ('"', "'"):
+                quote = ch
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return index
+        index += 1
+    raise RuntimeError("unterminated Kotlin brace block")
+
+
+def _replace_function(text: str, signature: str, replacement: str) -> str:
+    start = text.find(signature)
+    if start < 0:
+        raise RuntimeError(f"missing Kotlin function: {signature.strip()}")
+    opening = text.find("{", start + len(signature) - 1)
+    closing = _matching_brace(text, opening)
+    return text[:start] + replacement + text[closing + 1:]
+
+
+def _remove_function_if_present(text: str, signature_prefix: str) -> str:
+    start = text.find(signature_prefix)
+    if start < 0:
+        return text
+    opening = text.find("{", start)
+    closing = _matching_brace(text, opening)
+    end = closing + 1
+    while end < len(text) and text[end] in " \t":
+        end += 1
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    return text[:start] + text[end:]
+
+
+def _remove_named_lambda_argument(text: str, name: str) -> str:
+    marker = f"{name} = {{"
+    start = text.find(marker)
+    if start < 0:
+        return text
+    opening = text.find("{", start)
+    closing = _matching_brace(text, opening)
+    remove_start = start
+    while remove_start > 0 and text[remove_start - 1] in " \t\n":
+        remove_start -= 1
+    if remove_start > 0 and text[remove_start - 1] == ",":
+        remove_start -= 1
+    remove_end = closing + 1
+    while remove_end < len(text) and text[remove_end] in " \t":
+        remove_end += 1
+    return text[:remove_start] + text[remove_end:]
+
+
 def patch_main() -> None:
     text = MAIN.read_text(encoding="utf-8")
 
@@ -97,23 +188,12 @@ def patch_main() -> None:
     if count != 1:
         raise RuntimeError(f"expected AppVersion block, replaced {count}")
 
-    # Remove the old full-dashboard callback added by build149.
-    text = re.sub(
-        r',\s*onRouterDashboard\s*=\s*\{\s*raw\s*->.*?\n\s*\}',
-        '',
-        text,
-        count=1,
-        flags=re.DOTALL,
-    )
-    text = re.sub(r'\s*@Volatile private var routerDashboardMqttAt = 0L\n', '\n', text)
-    text = re.sub(r'\s*private val routerDashboardApi = HubApi\(prefs, realtimeTimeouts = true\)\n', '\n', text)
-    text = re.sub(
-        r'\s*fun routerDashboardMqttFresh\(.*?\n\s*\}\n',
-        '\n',
-        text,
-        count=1,
-        flags=re.DOTALL,
-    )
+    # Brace-aware removal is required because the callback contains nested
+    # runCatching/stateScope lambdas; a non-greedy regex corrupted Kotlin.
+    text = _remove_named_lambda_argument(text, "onRouterDashboard")
+    text = re.sub(r'^\s*@Volatile private var routerDashboardMqttAt = 0L\n', '', text, count=1, flags=re.MULTILINE)
+    text = re.sub(r'^\s*private val routerDashboardApi = HubApi\(prefs, realtimeTimeouts = true\)\n', '', text, count=1, flags=re.MULTILINE)
+    text = _remove_function_if_present(text, "    fun routerDashboardMqttFresh(")
 
     if "private val liteRealtimeApi = LiteRealtimeApi(prefs)" not in text:
         anchor = "    @Volatile private var foregroundActive = true\n"
@@ -127,45 +207,10 @@ def patch_main() -> None:
             raise RuntimeError("missing startRealtime marker")
         text = text.replace(marker, LITE_METHOD + marker, 1)
 
-    start_pattern = re.compile(
-        r'    suspend fun startRealtime\(\) \{.*?\n    \}\n\n    suspend fun refreshRouterDashboard',
-        re.DOTALL,
-    )
-    start_body = '''    suspend fun startRealtime() {
-        if (prefs.hub.isBlank() || prefs.token.isBlank()) return
-        startLiteRealtimePolling()
-        val stored = prefs.mqttConfig
-        val remote = runCatching { HubApi(prefs).getMqttConfig() }.getOrElse { stored }
-        val effective = remote.copy(
-            publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl },
-            dashboardTopic = ""
-        )
-        prefs.mqttConfig = effective
-        realtimeClient.start(effective)
-    }
+    text = _replace_function(text, "    suspend fun startRealtime() {", START_REALTIME)
+    text = _replace_function(text, "    fun stopRealtime() {", STOP_REALTIME)
 
-    suspend fun refreshRouterDashboard'''
-    text, count = start_pattern.subn(start_body, text, count=1)
-    if count != 1:
-        raise RuntimeError(f"expected startRealtime function, replaced {count}")
-
-    stop_pattern = re.compile(
-        r'    fun stopRealtime\(\) \{.*?\n    \}',
-        re.DOTALL,
-    )
-    stop_body = '''    fun stopRealtime() {
-        realtimeClient.stop()
-        liteRouterJob?.cancel()
-        liteRouterJob = null
-        liteDevicesJob?.cancel()
-        liteDevicesJob = null
-        mqttConnected = false
-    }'''
-    text, count = stop_pattern.subn(stop_body, text, count=1)
-    if count != 1:
-        raise RuntimeError(f"expected stopRealtime function, replaced {count}")
-
-    # The short-timeout full-dashboard client from build149 is no longer used.
+    # Build149's short full-dashboard client is no longer authoritative.
     text = text.replace('runCatching { routerDashboardApi.getRouterDashboard() }', 'runCatching { HubApi(prefs).getRouterDashboard() }')
     text = text.replace('val latest = runCatching { routerDashboardApi.getRouterDashboard() }.getOrNull()', 'val latest = runCatching { HubApi(prefs).getRouterDashboard() }.getOrNull()')
 
@@ -181,6 +226,7 @@ def patch_main() -> None:
         'private val liteRealtimeApi = LiteRealtimeApi(prefs)',
         'mergeLiteRouterRealtime(routerDashboard, latest)',
         'mergeLiteDeviceRealtime(onlineDevices, latest)',
+        'mergeLiteDeviceRealtime(devices, latest)',
         'dashboardTopic = ""',
         '轻量实时接口与终端刷新修复',
     )
@@ -192,17 +238,13 @@ def patch_main() -> None:
 
 def patch_router_status() -> None:
     text = ROUTER_STATUS.read_text(encoding="utf-8")
-    start = text.find("    LaunchedEffect(Unit) {", text.find("fun RouterStatusScreen"))
+    start = text.find("    LaunchedEffect(", text.find("fun RouterStatusScreen"))
     end = text.find("\n\n    fun normalizedRouterUrl", start)
     if start < 0 or end < 0:
         raise RuntimeError("missing RouterStatus launch block boundaries")
     text = text[:start] + ENTRY_EFFECT + text[end:]
 
-    refresh_start = text.find("    fun refresh() {", start)
-    refresh_end = text.find("\n\n    if (showRouterEditor)", refresh_start)
-    if refresh_start < 0 or refresh_end < 0:
-        raise RuntimeError("missing RouterStatus refresh boundaries")
-    text = text[:refresh_start] + REFRESH_FUNCTION + text[refresh_end:]
+    text = _replace_function(text, "    fun refresh() {", REFRESH_FUNCTION)
 
     forbidden = (
         'delay(if (state.mqttConnected) 15_000L else 20_000L)',
@@ -220,12 +262,7 @@ def patch_mqtt() -> None:
         '/** Foreground MQTT supervisor for revision, availability and router dashboard snapshots. */',
         '/** Foreground MQTT supervisor for revision and availability only. */',
     )
-    text = re.sub(
-        r'\n\s*activeConfig\.dashboardTopic to 1',
-        '',
-        text,
-        count=1,
-    )
+    text = re.sub(r'\n\s*activeConfig\.dashboardTopic to 1', '', text, count=1)
     if 'activeConfig.dashboardTopic to 1' in text:
         raise RuntimeError("HubMqttClient still subscribes to full dashboard topic")
     MQTT.write_text(text, encoding="utf-8")
