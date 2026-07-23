@@ -12,6 +12,7 @@ from apply_v01015_router_stability import patch_main as patch_v01015_main
 from apply_v01015_router_stability import patch_router_api as patch_v01015_router_api
 from apply_v01015_router_stability import patch_router_native as patch_v01015_router_native
 from apply_v01015_runtime_cache_hotfix import apply as apply_v01015_runtime_cache
+from apply_v01015_scoped_fixes import apply as apply_v01015_scoped
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,4 +49,7 @@ if __name__ == "__main__":
     apply_v01015_runtime_cache()
     apply_v01015_nat_text()
     apply_v01015_requested()
+    # Keep the final user-requested scope last because it adjusts the generated
+    # popup surfaces, disabled buttons, two-port NAT history and self-check cache.
+    apply_v01015_scoped()
     print("Android source fixes prepared")
