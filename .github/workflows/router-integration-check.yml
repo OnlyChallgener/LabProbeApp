@@ -53,7 +53,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build150 source invariants before compile
+      - name: Verify build151 source invariants before compile
         shell: bash
         run: |
           set -e
@@ -62,29 +62,41 @@ jobs:
           NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
+          SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
 
-          grep -q 'versionCode = 150' app/build.gradle.kts
+          grep -q 'versionCode = 151' app/build.gradle.kts
           grep -q 'versionName = "0.10.15"' app/build.gradle.kts
 
           grep -Fq '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' "$MAIN"
           grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 轻量实时接口与终端刷新修复"' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 本地实时采样与缓存平滑显示"' "$MAIN"
           ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
           ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
 
-          # MQTT is structural only; full dashboard snapshots must not be subscribed.
+          # MQTT remains structural only; realtime numeric values use small HTTP samples.
           grep -Fq 'dashboardTopic = ""' "$MAIN"
           ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
           ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
 
-          # Two independent small-payload loops update router and device numbers.
-          grep -Fq 'private val liteRealtimeApi = LiteRealtimeApi(prefs)' "$MAIN"
-          grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
-          grep -Fq 'mergeLiteDeviceRealtime(onlineDevices, latest)' "$MAIN"
-          grep -Fq 'mergeLiteDeviceRealtime(devices, latest)' "$MAIN"
+          # Two sample loops feed one presentation smoother; direct jumps are forbidden.
+          grep -Fq 'private val realtimeSmoother = RealtimeDisplaySmoother()' "$MAIN"
+          grep -Fq 'realtimeSmoother.acceptRouter(latest)' "$MAIN"
+          grep -Fq 'realtimeSmoother.acceptDevices(latest)' "$MAIN"
+          grep -Fq 'realtimeSmoother.renderRouter(routerDashboard)' "$MAIN"
+          grep -Fq 'RealtimeDisplaySmoother.FRAME_INTERVAL_MS' "$MAIN"
+          ! grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
+          ! grep -Fq 'mergeLiteDeviceRealtime(onlineDevices, latest)' "$MAIN"
           grep -Fq '/api/router/realtime' "$LITE"
           grep -Fq '/api/devices/realtime' "$LITE"
           grep -Fq '.callTimeout(2_500, TimeUnit.MILLISECONDS)' "$LITE"
+
+          # Smoothing is bounded by real sample age and never extrapolates.
+          grep -Fq 'const val FRAME_INTERVAL_MS = 200L' "$SMOOTH"
+          grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
+          grep -Fq 'const val MAX_ANIMATION_SAMPLE_AGE_MS = 6_000L' "$SMOOTH"
+          grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
+          grep -Fq 'if (ageMs > MAX_ANIMATION_SAMPLE_AGE_MS) routerTarget' "$SMOOTH"
+          ! grep -Eiq 'random|extrapolat|predict' "$SMOOTH"
 
           # Router page no longer owns a periodic full-dashboard request loop.
           ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
@@ -107,9 +119,9 @@ jobs:
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
             echo "===== Kotlin/compiler errors ====="
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 240 || true
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 260 || true
             echo "===== Gradle tail ====="
-            tail -n 160 /tmp/gradle-variants.log
+            tail -n 180 /tmp/gradle-variants.log
           else
             tail -n 100 /tmp/gradle-variants.log
           fi
@@ -129,7 +141,7 @@ jobs:
               "v0.10.6 build134 · 首页关注与概览显示修复",
           ]
           required = [
-              "轻量实时接口与终端刷新修复",
+              "本地实时采样与缓存平滑显示",
               "/api/router/realtime",
               "/api/devices/realtime",
           ]
@@ -172,19 +184,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build150-gradle-log
+          name: LabProbe-v0.10.15-build151-gradle-log
           path: /tmp/gradle-variants.log
 
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build150-router-debug
+          name: LabProbe-v0.10.15-build151-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build150-router-release-unsigned
+          name: LabProbe-v0.10.15-build151-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
