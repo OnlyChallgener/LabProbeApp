@@ -166,17 +166,9 @@ def patch_router_status() -> None:
 
 
 def patch_router_api() -> None:
-    text = ROUTER_API.read_text(encoding="utf-8")
-    translations = {
-        "Waiting for Hub status": "等待 Hub 状态",
-        "Hub is online, but router data is unavailable": "Hub 在线，路由器数据正在同步",
-        "Hub router data is available": "Hub 已连接，路由器数据可用",
-        "Hub could not log in to the router": "Hub 登录路由器失败",
-        "Hub router request failed": "Hub 路由请求失败",
-    }
-    for old, new in translations.items():
-        text = text.replace(old, new)
-    ROUTER_API.write_text(text, encoding="utf-8")
+    # Keep transport/error strings untouched. The requested Chinese wording is
+    # applied only where router status is displayed, not globally.
+    return
 
 
 def apply() -> None:
