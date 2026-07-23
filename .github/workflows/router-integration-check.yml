@@ -19,10 +19,13 @@ on:
       - scripts/apply_v01015_requested_hotfix.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
+  pull_request:
+    branches:
+      - codex/router-status-v0107-build137
   workflow_dispatch:
 
 concurrency:
-  group: router-integration-${{ github.ref }}
+  group: router-integration-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -36,10 +39,42 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Prepare generated source fixes
-        run: python3 scripts/prepare_android_sources.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set +e
+          # app:preBuild already applies scripts/prepare_android_sources.py exactly once.
+          gradle :app:assembleDebug --stacktrace --console=plain > /tmp/gradle-debug.log 2>&1
+          STATUS=$?
+          if [ "$STATUS" -ne 0 ]; then
+            echo "===== Kotlin/compiler errors ====="
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-debug.log | tail -n 160 || true
+            echo "===== Gradle tail ====="
+            tail -n 100 /tmp/gradle-debug.log
+          else
+            tail -n 60 /tmp/gradle-debug.log
+          fi
+          exit $STATUS
 
       - name: Verify expected integration points
+        if: success()
         shell: bash
         run: |
           set -e
@@ -64,25 +99,12 @@ jobs:
           grep -q 'routerSettingsStatusMessage(status)' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
           grep -q '"no new version available" -> "当前没有可用 Beta 版本"' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
-      - uses: actions/setup-java@v4
+      - name: Upload debug log
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install Android SDK packages
-        shell: bash
-        run: |
-          set -e
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
-
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 9.5.1
-
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --console=plain
+          name: LabProbe-v0.10.15-build145-gradle-log
+          path: /tmp/gradle-debug.log
 
       - name: Upload debug APK
         if: success()
