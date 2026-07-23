@@ -8,6 +8,7 @@ from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_build149_about_compile_fix import apply as apply_build149_about_compile_fix
 from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
+from apply_v01015_build151_smooth_realtime import apply as apply_build151_smooth_realtime
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_final_scoped_fixes import apply as apply_v01015_scoped
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
@@ -39,6 +40,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 实时刷新、NAT 历史与界面修复"' in current
         or '"v$NAME build$CODE · 实时刷新链路与版本信息修复"' in current
         or '"v$NAME build$CODE · 轻量实时接口与终端刷新修复"' in current
+        or '"v$NAME build$CODE · 本地实时采样与缓存平滑显示"' in current
     )
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -62,9 +64,10 @@ if __name__ == "__main__":
     apply_v01015_realtime_delivery()
     apply_v01015_version_log()
 
-    # Legacy compatibility fixes still run first so NAT, DDNS and Settings are
-    # retained. The authoritative build150 architecture runs absolutely last.
+    # Legacy compatibility fixes run first. Build150 establishes the lightweight
+    # transport; build151 is the final presentation layer and must run last.
     apply_build148_release_fix()
     apply_build149_about_compile_fix()
     apply_build150_lite_realtime()
+    apply_build151_smooth_realtime()
     print("Android source fixes prepared")
