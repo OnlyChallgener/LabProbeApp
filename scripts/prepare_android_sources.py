@@ -7,6 +7,7 @@ from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
+from apply_v01015_requested_hotfix import apply as apply_v01015_requested
 from apply_v01015_router_stability import patch_main as patch_v01015_main
 from apply_v01015_router_stability import patch_router_api as patch_v01015_router_api
 from apply_v01015_router_stability import patch_router_native as patch_v01015_router_native
@@ -46,4 +47,5 @@ if __name__ == "__main__":
     patch_v01015_main()
     apply_v01015_runtime_cache()
     apply_v01015_nat_text()
+    apply_v01015_requested()
     print("Android source fixes prepared")
