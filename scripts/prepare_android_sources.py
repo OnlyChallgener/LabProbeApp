@@ -7,6 +7,7 @@ from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_build149_about_compile_fix import apply as apply_build149_about_compile_fix
+from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_final_scoped_fixes import apply as apply_v01015_scoped
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
@@ -37,6 +38,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 路由实时推送与刷新修复"' in current
         or '"v$NAME build$CODE · 实时刷新、NAT 历史与界面修复"' in current
         or '"v$NAME build$CODE · 实时刷新链路与版本信息修复"' in current
+        or '"v$NAME build$CODE · 轻量实时接口与终端刷新修复"' in current
     )
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -60,9 +62,9 @@ if __name__ == "__main__":
     apply_v01015_realtime_delivery()
     apply_v01015_version_log()
 
-    # Repair all four requested areas after every legacy source generator.
+    # Legacy compatibility fixes still run first so NAT, DDNS and Settings are
+    # retained. The authoritative build150 architecture runs absolutely last.
     apply_build148_release_fix()
-    # Absolute last: emit the Settings/About text with a Kotlin triple-quoted
-    # string so regex replacement cannot create an invalid quoted string.
     apply_build149_about_compile_fix()
+    apply_build150_lite_realtime()
     print("Android source fixes prepared")
