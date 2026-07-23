@@ -20,6 +20,7 @@ on:
       - scripts/apply_v01015_scoped_fixes.py
       - scripts/apply_v01015_final_scoped_fixes.py
       - scripts/apply_v01015_realtime_delivery_fix.py
+      - scripts/apply_v01015_version_log_fix.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   pull_request:
@@ -90,8 +91,13 @@ jobs:
           grep -q 'mergeRouterDashboardSnapshot' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'object RouterUiRuntimeCache' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'RouterUiRuntimeCache.ddnsRows' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'v0.10.15 build146' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'versionCode = 146' app/build.gradle.kts
+          grep -q 'versionName = "0.10.15"' app/build.gradle.kts
+          # About-page version and release note must come from the same BuildConfig.
+          grep -Fq 'val NAME: String get() = BuildConfig.VERSION_NAME' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'val CODE: Int get() = BuildConfig.VERSION_CODE' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq '"v$NAME build$CODE · 路由实时推送与刷新修复"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           # Realtime delivery guards: MQTT dashboard is primary, HTTP polls only
           # once per second when no MQTT dashboard arrived within 2.5 seconds.
           grep -q 'onRouterDashboard = { raw ->' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
