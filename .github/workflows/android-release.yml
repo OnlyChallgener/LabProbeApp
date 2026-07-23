@@ -65,7 +65,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify final build151 sources before compile
+      - name: Verify final build152 sources before compile
         shell: bash
         run: |
           set -e
@@ -75,9 +75,9 @@ jobs:
           LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
           SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
 
-          grep -q 'versionCode = 151' app/build.gradle.kts
+          grep -q 'versionCode = 152' app/build.gradle.kts
           grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 本地实时采样与缓存平滑显示"' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 实时连接租约与离线节流"' "$MAIN"
           ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
           ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
 
@@ -86,13 +86,22 @@ jobs:
           ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
           grep -Fq 'realtimeSmoother.acceptRouter(latest)' "$MAIN"
           grep -Fq 'realtimeSmoother.acceptDevices(latest)' "$MAIN"
-          grep -Fq 'realtimeSmoother.renderRouter(routerDashboard)' "$MAIN"
-          grep -Fq 'RealtimeDisplaySmoother.FRAME_INTERVAL_MS' "$MAIN"
+          grep -Fq 'realtimeSmoother.renderRouter(routerDashboard, now)' "$MAIN"
           ! grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
           grep -Fq '/api/router/realtime' "$LITE"
           grep -Fq '/api/devices/realtime' "$LITE"
           grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
           grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
+
+          grep -Fq 'now - liteRouterLastSuccessAt <= 5_000L' "$MAIN"
+          grep -Fq 'if (!liteRouterSessionActive())' "$MAIN"
+          grep -Fq 'liteDisconnectedRetryDelay(liteRouterFailureCount)' "$MAIN"
+          grep -Fq 'failures <= 1 -> 3_000L' "$MAIN"
+          grep -Fq 'failures == 2 -> 5_000L' "$MAIN"
+          grep -Fq 'failures == 3 -> 10_000L' "$MAIN"
+          grep -Fq 'else -> 15_000L' "$MAIN"
+          grep -Fq 'delay(if (routerActive || devicesActive) RealtimeDisplaySmoother.FRAME_INTERVAL_MS else 1_000L)' "$MAIN"
+
           ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
           ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
 
@@ -110,9 +119,9 @@ jobs:
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
             echo "===== Kotlin/compiler errors ====="
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 240 || true
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 260 || true
             echo "===== Gradle tail ====="
-            tail -n 160 /tmp/gradle-build.log
+            tail -n 180 /tmp/gradle-build.log
           else
             tail -n 100 /tmp/gradle-build.log
           fi
@@ -142,7 +151,7 @@ jobs:
               if old.encode("utf-8") in dex:
                   raise SystemExit(f"obsolete signed APK string remains: {old}")
           for required in (
-              "本地实时采样与缓存平滑显示",
+              "实时连接租约与离线节流",
               "/api/router/realtime",
               "/api/devices/realtime",
           ):
