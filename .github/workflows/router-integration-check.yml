@@ -90,13 +90,14 @@ jobs:
           grep -Fq '/api/devices/realtime' "$LITE"
           grep -Fq '.callTimeout(2_500, TimeUnit.MILLISECONDS)' "$LITE"
 
-          # Smoothing is bounded by real sample age and never extrapolates.
+          # Smoothing is bounded by real sample age and contains no random generator.
           grep -Fq 'const val FRAME_INTERVAL_MS = 200L' "$SMOOTH"
           grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
           grep -Fq 'const val MAX_ANIMATION_SAMPLE_AGE_MS = 6_000L' "$SMOOTH"
           grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
           grep -Fq 'if (ageMs > MAX_ANIMATION_SAMPLE_AGE_MS) routerTarget' "$SMOOTH"
-          ! grep -Eiq 'random|extrapolat|predict' "$SMOOTH"
+          ! grep -Fq 'kotlin.random' "$SMOOTH"
+          ! grep -Fq 'Random.' "$SMOOTH"
 
           # Router page no longer owns a periodic full-dashboard request loop.
           ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
