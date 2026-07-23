@@ -105,6 +105,7 @@ jobs:
           grep -q 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'distinctBy { it.natHistoryProtocol() }' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'mode = latest.mode.takeIf { it.isNotBlank() } ?: mode' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'data.optString("requested_mode", "classic")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           ! grep -q 'ROUTER_NAT_HISTORY_PORTS' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'disabledContainerColor = NativeBlue.copy(alpha = .62f)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
