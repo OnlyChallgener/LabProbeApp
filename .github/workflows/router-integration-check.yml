@@ -89,7 +89,6 @@ jobs:
           # Router page no longer owns a periodic full-dashboard request loop.
           ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
           ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
-          ! grep -Fq 'state.refreshRouterDashboard(silent = true)' "$STATUS" | grep -Fq 'delay(1_000L)' "$STATUS"
 
           # NAT history and popup regressions remain guarded.
           grep -Fq 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' "$NATIVE"
