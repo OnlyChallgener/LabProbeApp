@@ -86,6 +86,22 @@ android {
     }
 }
 
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2026.04.01"))
+    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.github.mwiede:jsch:0.2.21")
+}
+
 val applyRouterUiFixes by tasks.registering(Exec::class) {
     group = "build setup"
     description = "Apply idempotent router settings, DDNS, diagnostic and navigation source fixes"
