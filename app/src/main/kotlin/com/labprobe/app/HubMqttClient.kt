@@ -68,7 +68,7 @@ sealed interface HubRealtimeState {
     data class HttpFallback(val reason: String) : HubRealtimeState
 }
 
-/** Foreground MQTT supervisor. MQTT only carries retained revision signals; HTTP remains the data source. */
+/** Foreground MQTT supervisor for revision, availability and router dashboard snapshots. */
 class HubMqttClient(
     private val clientId: String,
     private val onState: (HubRealtimeState) -> Unit,
@@ -195,7 +195,7 @@ class HubMqttClient(
                     val topicQos = listOf(
                         activeConfig.revisionTopic to 1,
                         activeConfig.availabilityTopic to 1,
-                        activeConfig.dashboardTopic to 0
+                        activeConfig.dashboardTopic to 1
                     ).filter { it.first.isNotBlank() }.distinctBy { it.first }
                     val topics = topicQos.map { it.first }
                     val qoses = topicQos.map { it.second }.toIntArray()
