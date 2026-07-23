@@ -5,6 +5,7 @@ from apply_next_release_fixes import apply as apply_next_release
 from apply_refresh_stability_fixes import apply as apply_refresh_stability
 from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
+from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_final_scoped_fixes import apply as apply_v01015_scoped
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
@@ -33,6 +34,7 @@ if __name__ == "__main__":
         "v0.10.15 build145 · 路由页面稳定与诊断交互修复" in current
         or "v0.10.15 build146 · 路由实时推送与刷新修复" in current
         or '"v$NAME build$CODE · 路由实时推送与刷新修复"' in current
+        or '"v$NAME build$CODE · 实时刷新、NAT 历史与界面修复"' in current
     )
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -45,9 +47,6 @@ if __name__ == "__main__":
     if not refresh_generated and not final_generated:
         apply_refresh_stability()
 
-    # The base router UI generator rewrites DdnsRecordsSection, so apply the
-    # cache-preserving DDNS patch against that generated form first. The
-    # remaining v0.10.15 patches can then run independently and idempotently.
     apply_v01015_ddns_cache()
     patch_v01015_router_native()
     patch_v01015_router_api()
@@ -55,11 +54,11 @@ if __name__ == "__main__":
     apply_v01015_runtime_cache()
     apply_v01015_nat_text()
     apply_v01015_requested()
-    # Keep user-requested UI/history fixes after the generated router pages.
     apply_v01015_scoped()
-    # MQTT delivery must run after all older router refresh generators.
     apply_v01015_realtime_delivery()
-    # Keep this absolutely last so no old source generator can restore the
-    # v0.10.6 About-page release note after BuildConfig has advanced.
     apply_v01015_version_log()
+
+    # Absolute last step: repair the exact source that will be compiled and
+    # assert the four user-visible build148 fixes after every legacy generator.
+    apply_build148_release_fix()
     print("Android source fixes prepared")
