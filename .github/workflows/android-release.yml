@@ -65,28 +65,29 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify final build149 sources before compile
+      - name: Verify final build150 sources before compile
         shell: bash
         run: |
           set -e
           MAIN=app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
           MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
 
-          grep -q 'versionCode = 149' app/build.gradle.kts
+          grep -q 'versionCode = 150' app/build.gradle.kts
           grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 实时刷新链路与版本信息修复"' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 轻量实时接口与终端刷新修复"' "$MAIN"
           ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
           ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
 
-          grep -Fq 'root.optString("dashboardTopic")' "$MAIN"
-          grep -Fq 'dashboardTopic = dashboardTopic' "$MAIN"
-          grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
-          grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
-          grep -Fq 'private val routerDashboardApi = HubApi(prefs, realtimeTimeouts = true)' "$MAIN"
-          grep -Fq '.callTimeout(if (realtimeTimeouts) 2_500L else 0L, TimeUnit.MILLISECONDS)' "$MAIN"
-          grep -Fq 'if (!state.routerDashboardMqttFresh())' "$STATUS"
-          grep -Fq 'delay(1_000L)' "$STATUS"
+          grep -Fq 'dashboardTopic = ""' "$MAIN"
+          ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
+          ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
+          grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
+          grep -Fq 'mergeLiteDeviceRealtime(onlineDevices, latest)' "$MAIN"
+          grep -Fq '/api/router/realtime' "$LITE"
+          grep -Fq '/api/devices/realtime' "$LITE"
+          ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
           ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
 
       - name: Build signed release APK
@@ -103,9 +104,9 @@ jobs:
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
             echo "===== Kotlin/compiler errors ====="
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 200 || true
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 220 || true
             echo "===== Gradle tail ====="
-            tail -n 120 /tmp/gradle-build.log
+            tail -n 140 /tmp/gradle-build.log
           else
             tail -n 80 /tmp/gradle-build.log
           fi
@@ -135,9 +136,9 @@ jobs:
               if old.encode("utf-8") in dex:
                   raise SystemExit(f"obsolete signed APK string remains: {old}")
           for required in (
-              "实时刷新链路与版本信息修复",
-              "dashboardTopic",
-              "router/dashboard",
+              "轻量实时接口与终端刷新修复",
+              "/api/router/realtime",
+              "/api/devices/realtime",
           ):
               if required.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {required}")
