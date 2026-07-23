@@ -65,6 +65,7 @@ def patch_nat_history_and_controls() -> None:
                 val normalized = if (latest.completed) {
                     latest.copy(
                         timestamp = latest.timestamp.takeIf { it > 0L } ?: System.currentTimeMillis() / 1000L,
+                        mode = latest.mode.takeIf { it.isNotBlank() } ?: mode,
                         stunPort = latest.stunPort.takeIf { it > 0 } ?: portText.toIntOrNull() ?: 0
                     )
                 } else latest
@@ -128,16 +129,6 @@ def patch_nat_history_and_controls() -> None:
 
     text = text.replace('history.take(10).forEachIndexed', 'history.forEachIndexed')
     text = text.replace('history.take(10).lastIndex', 'history.lastIndex')
-    text = replace_once(
-        text,
-        '''listOf(item.externalAddress, if (item.mode == "5780") "RFC5780" else "RFC3489").filter(String::isNotBlank).joinToString(" · ")''',
-        '''listOf(
-                                item.externalAddress,
-                                item.stunPort.takeIf { it > 0 }?.let { "STUN $it" }.orEmpty(),
-                                if (item.mode == "5780") "RFC5780" else "RFC3489"
-                            ).filter(String::isNotBlank).joinToString(" · ")''',
-        "NAT history port label",
-    )
 
     old_history = '''private fun loadNatHistory(context: Context): List<RouterNatResult> {
     val raw = context.getSharedPreferences("router_native_tools", Context.MODE_PRIVATE).getString("nat_history", "[]") ?: "[]"
@@ -169,14 +160,16 @@ private fun saveNatHistory(context: Context, result: RouterNatResult): List<Rout
     context.getSharedPreferences("router_native_tools", Context.MODE_PRIVATE).edit().putString("nat_history", array.toString()).apply()
     return next
 }'''
-    new_history = '''private val ROUTER_NAT_HISTORY_PORTS = setOf(3478, 5478)
+    new_history = '''private val ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")
+
+private fun RouterNatResult.natHistoryProtocol(): String =
+    if (mode.equals("5780", ignoreCase = true)) "5780" else "3489"
 
 private fun normalizeNatHistory(rows: List<RouterNatResult>): List<RouterNatResult> = rows
-    .map { item -> if (item.stunPort > 0) item else item.copy(stunPort = 3478) }
-    .filter { it.stunPort in ROUTER_NAT_HISTORY_PORTS && it.completed && it.natType.isNotBlank() }
+    .filter { it.completed && it.natType.isNotBlank() }
     .sortedByDescending { it.timestamp }
-    .distinctBy { it.stunPort }
-    .take(2)
+    .distinctBy { it.natHistoryProtocol() }
+    .take(ROUTER_NAT_HISTORY_PROTOCOLS.size)
 
 private fun persistNatHistory(context: Context, rows: List<RouterNatResult>) {
     val array = JSONArray()
@@ -204,7 +197,7 @@ private fun loadNatHistory(context: Context): List<RouterNatResult> {
             )
         }
     })
-    // Migrate the old ten-row list immediately so it cannot reappear later.
+    // Migrate the old ten-row list, including the previous port-grouped form.
     if (normalized.size != array.length()) persistNatHistory(context, normalized)
     return normalized
 }
@@ -212,16 +205,16 @@ private fun loadNatHistory(context: Context): List<RouterNatResult> {
 private fun saveNatHistory(context: Context, result: RouterNatResult): List<RouterNatResult> {
     val normalizedResult = result.copy(
         timestamp = result.timestamp.takeIf { it > 0L } ?: System.currentTimeMillis() / 1000L,
-        stunPort = result.stunPort.takeIf { it > 0 } ?: 3478
+        mode = if (result.mode.equals("5780", ignoreCase = true)) "5780" else "classic"
     )
-    if (!normalizedResult.completed || normalizedResult.natType.isBlank() || normalizedResult.stunPort !in ROUTER_NAT_HISTORY_PORTS) {
+    if (!normalizedResult.completed || normalizedResult.natType.isBlank()) {
         return loadNatHistory(context)
     }
     val next = normalizeNatHistory(listOf(normalizedResult) + loadNatHistory(context))
     persistNatHistory(context, next)
     return next
 }'''
-    text = replace_once(text, old_history, new_history, "two-port NAT history storage")
+    text = replace_once(text, old_history, new_history, "two-protocol NAT history storage")
 
     ROUTER_NATIVE.write_text(text, encoding="utf-8")
 
