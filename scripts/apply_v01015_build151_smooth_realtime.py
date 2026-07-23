@@ -4,9 +4,6 @@
 Real samples still come from the two small Hub APIs. This patch adds one
 presentation loop that interpolates continuous values only; connection counts
 and events remain exact. No prediction is performed after a real sample ages.
-The lightweight router API is the APP-to-Hub lease owner: after consecutive
-failures the APP pauses smoothing, stops device requests, and switches to a
-low-frequency router recovery probe so Hub/Relay demand expires automatically.
 """
 from pathlib import Path
 import re
@@ -20,11 +17,11 @@ VERSION_BLOCK = '''object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 按需采样与缓存平滑显示" to listOf(
-                "APP 与 Hub 连接正常时才维持路由器本地高频采样",
-                "连续失联后立即暂停平滑缓存和终端实时请求，并切换低频恢复探测",
-                "网速、CPU、内存和温度只在真实样本之间做 900ms 平滑过渡",
-                "终端连接数和上下线仍使用真实整数与真实事件，不预测、不随机造数"
+            "v$NAME build$CODE · 本地实时采样与缓存平滑显示" to listOf(
+                "路由器由 LabRelay 本地采集真实样本，Hub 只保存小型内存快照",
+                "网速、CPU、内存和温度在相邻真实样本之间做 900ms 平滑过渡",
+                "终端上下行按 MAC 平滑显示，连接数仍立即使用真实整数",
+                "样本超过安全年龄后停止动画并显示过期状态，不预测、不随机造数"
             )
         )
 }'''
@@ -39,24 +36,6 @@ FIELDS_151 = '''    private val liteRealtimeApi = LiteRealtimeApi(prefs)
     private var liteRouterJob: Job? = null
     private var liteDevicesJob: Job? = null
     private var liteRenderJob: Job? = null
-    @Volatile private var liteRealtimeLeaseActive = false
-    @Volatile private var liteRealtimeLastSuccessAt = 0L
-    private var liteRouterFailureCount = 0
-'''
-
-LEASE_HELPERS = '''    private fun markLiteRealtimeLeaseSuccess(now: Long) {
-        liteRealtimeLastSuccessAt = now
-        liteRouterFailureCount = 0
-        liteRealtimeLeaseActive = true
-    }
-
-    private fun pauseLiteRealtimeLease() {
-        liteRealtimeLeaseActive = false
-        liteRealtimeLastSuccessAt = 0L
-        liteRouterFailureCount = 0
-        realtimeSmoother.pause()
-    }
-
 '''
 
 START_METHOD = '''    private fun startLiteRealtimePolling() {
@@ -66,42 +45,20 @@ START_METHOD = '''    private fun startLiteRealtimePolling() {
                     val started = SystemClock.elapsedRealtime()
                     val latest = runCatching { liteRealtimeApi.router() }.getOrNull()
                     if (latest != null) {
-                        markLiteRealtimeLeaseSuccess(SystemClock.elapsedRealtime())
                         realtimeSmoother.acceptRouter(latest)
                         routerDashboardError = ""
-                    } else {
-                        liteRouterFailureCount += 1
-                        val lastSuccessAge = if (liteRealtimeLastSuccessAt > 0L) {
-                            SystemClock.elapsedRealtime() - liteRealtimeLastSuccessAt
-                        } else {
-                            Long.MAX_VALUE
-                        }
-                        if (liteRouterFailureCount >= 2 || lastSuccessAge >= 5_000L) {
-                            pauseLiteRealtimeLease()
-                        }
                     }
                     val elapsed = SystemClock.elapsedRealtime() - started
-                    val nextDelay = when {
-                        latest != null -> (1_000L - elapsed).coerceAtLeast(100L)
-                        liteRealtimeLeaseActive -> 2_000L
-                        else -> 10_000L
-                    }
-                    delay(nextDelay)
+                    delay(if (latest == null) 3_000L else (1_000L - elapsed).coerceAtLeast(100L))
                 }
             }
         }
         if (liteDevicesJob?.isActive != true) {
             liteDevicesJob = stateScope.launch {
                 while (isActive) {
-                    if (!liteRealtimeLeaseActive) {
-                        delay(750L)
-                        continue
-                    }
                     val started = SystemClock.elapsedRealtime()
                     val latest = runCatching { liteRealtimeApi.devices() }.getOrNull()
-                    if (latest != null && liteRealtimeLeaseActive) {
-                        realtimeSmoother.acceptDevices(latest)
-                    }
+                    if (latest != null) realtimeSmoother.acceptDevices(latest)
                     val elapsed = SystemClock.elapsedRealtime() - started
                     delay(if (latest == null) 3_000L else (1_000L - elapsed).coerceAtLeast(100L))
                 }
@@ -110,16 +67,12 @@ START_METHOD = '''    private fun startLiteRealtimePolling() {
         if (liteRenderJob?.isActive != true) {
             liteRenderJob = stateScope.launch {
                 while (isActive) {
-                    if (liteRealtimeLeaseActive) {
-                        realtimeSmoother.renderRouter(routerDashboard)?.let { routerDashboard = it }
-                        val nextOnline = realtimeSmoother.renderDevices(onlineDevices)
-                        if (nextOnline !== onlineDevices) onlineDevices = nextOnline
-                        val nextDevices = realtimeSmoother.renderDevices(devices)
-                        if (nextDevices !== devices) devices = nextDevices
-                        delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)
-                    } else {
-                        delay(750L)
-                    }
+                    realtimeSmoother.renderRouter(routerDashboard)?.let { routerDashboard = it }
+                    val nextOnline = realtimeSmoother.renderDevices(onlineDevices)
+                    if (nextOnline !== onlineDevices) onlineDevices = nextOnline
+                    val nextDevices = realtimeSmoother.renderDevices(devices)
+                    if (nextDevices !== devices) devices = nextDevices
+                    delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)
                 }
             }
         }
@@ -133,7 +86,7 @@ STOP_METHOD = '''    fun stopRealtime() {
         liteDevicesJob = null
         liteRenderJob?.cancel()
         liteRenderJob = null
-        pauseLiteRealtimeLease()
+        realtimeSmoother.reset()
         mqttConnected = false
     }'''
 
@@ -176,20 +129,6 @@ def replace_function(text: str, signature: str, replacement: str) -> str:
     return text[:start] + replacement + text[closing + 1:]
 
 
-def remove_function_if_present(text: str, signature: str) -> str:
-    start = text.find(signature)
-    if start < 0:
-        return text
-    opening = text.find("{", start + len(signature) - 1)
-    closing = matching_brace(text, opening)
-    end = closing + 1
-    while end < len(text) and text[end] in " \t":
-        end += 1
-    if end < len(text) and text[end] == "\n":
-        end += 1
-    return text[:start] + text[end:]
-
-
 def apply() -> None:
     text = MAIN.read_text(encoding="utf-8")
 
@@ -208,44 +147,32 @@ def apply() -> None:
             raise RuntimeError("missing build150 realtime fields")
         text = text.replace(FIELDS_150, FIELDS_151, 1)
 
-    text = remove_function_if_present(text, "    private fun markLiteRealtimeLeaseSuccess(")
-    text = remove_function_if_present(text, "    private fun pauseLiteRealtimeLease(")
-    start_marker = "    private fun startLiteRealtimePolling() {"
-    if start_marker not in text:
-        raise RuntimeError("missing realtime polling function")
-    text = text.replace(start_marker, LEASE_HELPERS + start_marker, 1)
-
-    text = replace_function(text, start_marker, START_METHOD)
+    text = replace_function(text, "    private fun startLiteRealtimePolling() {", START_METHOD)
     text = replace_function(text, "    fun stopRealtime() {", STOP_METHOD)
 
     required = (
         'private val realtimeSmoother = RealtimeDisplaySmoother()',
-        'liteRealtimeLeaseActive = true',
-        'liteRouterFailureCount >= 2',
-        'else -> 10_000L',
-        'if (!liteRealtimeLeaseActive)',
         'realtimeSmoother.acceptRouter(latest)',
         'realtimeSmoother.acceptDevices(latest)',
         'realtimeSmoother.renderRouter(routerDashboard)',
         'RealtimeDisplaySmoother.FRAME_INTERVAL_MS',
-        'realtimeSmoother.pause()',
-        '按需采样与缓存平滑显示',
+        'realtimeSmoother.reset()',
+        '本地实时采样与缓存平滑显示',
     )
     missing = [value for value in required if value not in text]
     if missing:
-        raise RuntimeError(f"build151 lease-aware smoothing verification failed: {missing}")
+        raise RuntimeError(f"build151 smoothing verification failed: {missing}")
 
     forbidden = (
         'mergeLiteRouterRealtime(routerDashboard, latest)',
         'mergeLiteDeviceRealtime(onlineDevices, latest)',
         'mergeLiteDeviceRealtime(devices, latest)',
-        'delay(if (latest == null) 3_000L else (1_000L - elapsed)',
     )
     if any(value in text for value in forbidden):
-        raise RuntimeError("unbounded build150 realtime loop remains")
+        raise RuntimeError("build150 direct-jump realtime merge remains")
 
     MAIN.write_text(text, encoding="utf-8")
-    print("build151 lease-aware realtime smoothing applied")
+    print("build151 truthful realtime smoothing applied")
 
 
 if __name__ == "__main__":
