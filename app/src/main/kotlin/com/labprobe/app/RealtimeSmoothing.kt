@@ -11,7 +11,9 @@ import kotlin.math.roundToLong
  * Real values and sample timestamps remain authoritative. Continuous values move
  * toward the newest real target over a short window; integer/event values change
  * immediately. No extrapolation or random movement is generated. When the real
- * sample becomes old the animation stops at the last real target.
+ * sample becomes old the animation stops at the last real target. When the APP
+ * loses the Hub lease, pause() discards presentation tracks immediately while the
+ * already-rendered UI keeps its last valid values.
  */
 class RealtimeDisplaySmoother {
     companion object {
@@ -227,6 +229,9 @@ class RealtimeDisplaySmoother {
         }
         return if (changed) next else items
     }
+
+    /** Pause presentation work without erasing the already-rendered UI values. */
+    fun pause() = reset()
 
     fun reset() {
         routerHasSample = false
