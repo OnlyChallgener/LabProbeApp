@@ -17,6 +17,8 @@ on:
       - scripts/apply_v01015_nat_text_hotfix.py
       - scripts/apply_v01015_ddns_cache_hotfix.py
       - scripts/apply_v01015_requested_hotfix.py
+      - scripts/apply_v01015_scoped_fixes.py
+      - scripts/apply_v01015_final_scoped_fixes.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   pull_request:
@@ -98,6 +100,14 @@ jobs:
           grep -q 'Spacer(Modifier.width(12.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'routerSettingsStatusMessage(status)' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
           grep -q '"no new version available" -> "当前没有可用 Beta 版本"' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          # Scoped regression guards: two STUN-port slots, rounded popup surfaces,
+          # stable disabled buttons and persisted network self-check results.
+          grep -q 'val stunPort: Int = 0' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'ROUTER_NAT_HISTORY_PORTS = setOf(3478, 5478)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'disabledContainerColor = NativeBlue.copy(alpha = .62f)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'ROUTER_DIAGNOSTIC_CACHE_PREF' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'saveRouterDiagnosticCache(context, value)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
 
       - name: Upload Gradle log
         if: always()
