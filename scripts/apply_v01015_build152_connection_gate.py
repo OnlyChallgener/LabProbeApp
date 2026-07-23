@@ -72,7 +72,7 @@ METHODS = '''    private fun liteRouterSessionActive(now: Long = SystemClock.ela
                         liteRouterFailureCount = (liteRouterFailureCount + 1).coerceAtMost(10)
                         if (!liteRouterSessionActive()) {
                             liteDevicesLastSuccessAt = 0L
-                            realtimeSmoother.reset()
+                            realtimeSmoother.pause()
                         }
                     }
                     val elapsed = SystemClock.elapsedRealtime() - started
@@ -94,7 +94,7 @@ METHODS = '''    private fun liteRouterSessionActive(now: Long = SystemClock.ela
                     }
                     val started = SystemClock.elapsedRealtime()
                     val latest = runCatching { liteRealtimeApi.devices() }.getOrNull()
-                    if (latest != null) {
+                    if (latest != null && liteRouterSessionActive()) {
                         realtimeSmoother.acceptDevices(latest)
                         liteDevicesLastSuccessAt = SystemClock.elapsedRealtime()
                     }
@@ -135,7 +135,7 @@ STOP_METHOD = '''    fun stopRealtime() {
         liteRouterLastSuccessAt = 0L
         liteDevicesLastSuccessAt = 0L
         liteRouterFailureCount = 0
-        realtimeSmoother.reset()
+        realtimeSmoother.pause()
         mqttConnected = false
     }'''
 
@@ -205,6 +205,8 @@ def apply() -> None:
         'liteDisconnectedRetryDelay(liteRouterFailureCount)',
         'failures == 3 -> 10_000L',
         'else -> 15_000L',
+        'realtimeSmoother.pause()',
+        'latest != null && liteRouterSessionActive()',
         'delay(if (routerActive || devicesActive) RealtimeDisplaySmoother.FRAME_INTERVAL_MS else 1_000L)',
         '实时连接租约与离线节流',
     )
