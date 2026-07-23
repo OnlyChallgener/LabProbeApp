@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Apply the v0.10.15 DDNS cache fix after the generated router UI rewrite.
 
-The base router UI generator expands ``DdnsRecordsSection`` before the v0.10.15
-patches run, so the older compact-text matcher is no longer valid.  This patch
-works only inside the DDNS section and is safe to run repeatedly.
+The router UI is generated during Gradle preparation, so this patch deliberately
+uses function boundaries instead of matching one exact formatting variant.
+Only ``DdnsRecordsSection`` and its small in-memory cache are touched.
 """
 from pathlib import Path
 import re
@@ -17,7 +17,7 @@ private object RouterControlMemoryCache {
 }
 '''
 
-REFRESH_BLOCK = '''    var rows by remember { mutableStateOf(RouterControlMemoryCache.ddnsRows) }
+STATE_AND_REFRESH_BLOCK = '''    var rows by remember { mutableStateOf(RouterControlMemoryCache.ddnsRows) }
     var loading by remember { mutableStateOf(rows.isEmpty()) }
     var error by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<DdnsRecord?>(null) }
@@ -56,37 +56,16 @@ def apply() -> None:
 
     section = text[start:end]
     if "RouterControlMemoryCache.ddnsRows" not in section:
-        expanded_pattern = re.compile(
-            r'''    var rows by remember \{ mutableStateOf<List<DdnsRecord>>\(emptyList\(\)\) \}\n'''
-            r'''    var loading by remember \{ mutableStateOf\(true\) \}\n'''
-            r'''    var error by remember \{ mutableStateOf\(""\) \}\n'''
-            r'''    var editing by remember \{ mutableStateOf<DdnsRecord\?>\(null\) \}\n'''
-            r'''    var adding by remember \{ mutableStateOf\(false\) \}\n'''
-            r'''    var deleteTarget by remember \{ mutableStateOf<DdnsRecord\?>\(null\) \}\n'''
-            r'''    suspend fun refresh\(force: Boolean = false\) \{\n'''
-            r'''        if \(!force\) loading = true\n'''
-            r'''        runCatching \{ api\.ddns\(force\) \}\.onSuccess \{ rows = it; error = "" \}\.onFailure \{ error = it\.message\.orEmpty\(\) \}\n'''
-            r'''        loading = false\n'''
-            r'''    \}\n'''
-        )
-        compact_pattern = re.compile(
-            r'''    var rows by remember \{ mutableStateOf<List<DdnsRecord>>\(emptyList\(\)\) \}\n'''
-            r'''    var loading by remember \{ mutableStateOf\(true\) \}\n'''
-            r'''    var error by remember \{ mutableStateOf\(""\) \}\n'''
-            r'''    var editing by remember \{ mutableStateOf<DdnsRecord\?>\(null\) \}\n'''
-            r'''    var adding by remember \{ mutableStateOf\(false\) \}\n'''
-            r'''    var deleteTarget by remember \{ mutableStateOf<DdnsRecord\?>\(null\) \}\n'''
-            r'''    suspend fun refresh\(force:Boolean=false\)\{ if\(!force\)loading=true;runCatching\{api\.ddns\(force\)\}\.onSuccess\{rows=it;error=""\}\.onFailure\{error=it\.message\.orEmpty\(\)\};loading=false \}\n'''
-        )
-        section, count = expanded_pattern.subn(REFRESH_BLOCK, section, count=1)
-        if count == 0:
-            section, count = compact_pattern.subn(REFRESH_BLOCK, section, count=1)
-        if count == 0:
-            raise RuntimeError("missing generated DDNS refresh block")
+        state_start = section.find("    var rows by remember")
+        launch_start = section.find("    LaunchedEffect(Unit) { refresh() }", state_start)
+        if state_start < 0 or launch_start < 0:
+            raise RuntimeError("missing generated DDNS state or refresh boundary")
+        section = section[:state_start] + STATE_AND_REFRESH_BLOCK + section[launch_start:]
 
-    # Every successful DDNS write must update the shared runtime cache as well.
+    # Keep the shared cache synchronized after add/edit/toggle/delete operations.
+    # The negative lookbehind avoids matching the suffix of ``ddnsRows`` itself.
     section = re.sub(
-        r'''rows\s*=\s*it(?!\s*;\s*RouterControlMemoryCache\.ddnsRows\s*=\s*it)''',
+        r'''(?<![\w.])rows\s*=\s*it(?!\s*;\s*RouterControlMemoryCache\.ddnsRows\s*=\s*it)''',
         'rows = it; RouterControlMemoryCache.ddnsRows = it',
         section,
     )
