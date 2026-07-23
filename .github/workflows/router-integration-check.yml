@@ -53,7 +53,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build149 source invariants before compile
+      - name: Verify build150 source invariants before compile
         shell: bash
         run: |
           set -e
@@ -61,29 +61,35 @@ jobs:
           STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
           NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
 
-          grep -q 'versionCode = 149' app/build.gradle.kts
+          grep -q 'versionCode = 150' app/build.gradle.kts
           grep -q 'versionName = "0.10.15"' app/build.gradle.kts
 
-          # The exact Settings/About text shown to the user must be dynamic.
           grep -Fq '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' "$MAIN"
           grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 实时刷新链路与版本信息修复"' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 轻量实时接口与终端刷新修复"' "$MAIN"
           ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
           ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
 
-          # Router dashboard MQTT must be parsed, subscribed and consumed.
-          grep -Fq 'root.optString("dashboardTopic")' "$MAIN"
-          grep -Fq 'dashboardTopic = dashboardTopic' "$MAIN"
-          grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
-          grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
-          grep -Fq 'private val routerDashboardApi = HubApi(prefs, realtimeTimeouts = true)' "$MAIN"
-          grep -Fq '.callTimeout(if (realtimeTimeouts) 2_500L else 0L, TimeUnit.MILLISECONDS)' "$MAIN"
-          grep -Fq 'runCatching { routerDashboardApi.getRouterDashboard() }' "$MAIN"
-          grep -Fq 'fun routerDashboardMqttFresh(maxAgeMs: Long = 1_500L)' "$MAIN"
-          grep -Fq 'if (!state.routerDashboardMqttFresh())' "$STATUS"
-          grep -Fq 'delay(1_000L)' "$STATUS"
+          # MQTT is structural only; full dashboard snapshots must not be subscribed.
+          grep -Fq 'dashboardTopic = ""' "$MAIN"
+          ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
+          ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
+
+          # Two independent small-payload loops update router and device numbers.
+          grep -Fq 'private val liteRealtimeApi = LiteRealtimeApi(prefs)' "$MAIN"
+          grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
+          grep -Fq 'mergeLiteDeviceRealtime(onlineDevices, latest)' "$MAIN"
+          grep -Fq 'mergeLiteDeviceRealtime(devices, latest)' "$MAIN"
+          grep -Fq '/api/router/realtime' "$LITE"
+          grep -Fq '/api/devices/realtime' "$LITE"
+          grep -Fq '.callTimeout(2_500, TimeUnit.MILLISECONDS)' "$LITE"
+
+          # Router page no longer owns a periodic full-dashboard request loop.
+          ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
           ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
+          ! grep -Fq 'state.refreshRouterDashboard(silent = true)' "$STATUS" | grep -Fq 'delay(1_000L)' "$STATUS"
 
           # NAT history and popup regressions remain guarded.
           grep -Fq 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' "$NATIVE"
@@ -102,9 +108,9 @@ jobs:
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
             echo "===== Kotlin/compiler errors ====="
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 220 || true
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 240 || true
             echo "===== Gradle tail ====="
-            tail -n 140 /tmp/gradle-variants.log
+            tail -n 160 /tmp/gradle-variants.log
           else
             tail -n 100 /tmp/gradle-variants.log
           fi
@@ -124,9 +130,9 @@ jobs:
               "v0.10.6 build134 · 首页关注与概览显示修复",
           ]
           required = [
-              "实时刷新链路与版本信息修复",
-              "dashboardTopic",
-              "router/dashboard",
+              "轻量实时接口与终端刷新修复",
+              "/api/router/realtime",
+              "/api/devices/realtime",
           ]
           for apk in (
               Path("app/build/outputs/apk/debug/app-debug.apk"),
@@ -159,7 +165,6 @@ jobs:
           grep -q '"tool_router_beta" -> RouterBetaUpgradeScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'HomeDdnsMiniCard' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'cache_router_dashboard_v1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'mergeRouterDashboardSnapshot' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'object RouterUiRuntimeCache' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'ROUTER_DIAGNOSTIC_CACHE_PREF' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'disabledContainerColor = NativeBlue.copy(alpha = .62f)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
@@ -168,19 +173,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build149-gradle-log
+          name: LabProbe-v0.10.15-build150-gradle-log
           path: /tmp/gradle-variants.log
 
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build149-router-debug
+          name: LabProbe-v0.10.15-build150-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build149-router-release-unsigned
+          name: LabProbe-v0.10.15-build150-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
