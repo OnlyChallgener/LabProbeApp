@@ -81,14 +81,27 @@ jobs:
           fi
           exit $STATUS
 
-      - name: Verify realtime fix in generated sources
+      - name: Verify generated release sources
         shell: bash
         run: |
           set -e
-          grep -q 'versionCode = 146' app/build.gradle.kts
+          VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$VERSION_NAME"
+          test -n "$VERSION_CODE"
+          echo "Verifying LabProbe v${VERSION_NAME} build${VERSION_CODE}"
+
+          # Realtime dashboard delivery must be present in the generated APK sources.
           grep -q 'onRouterDashboard = { raw ->' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'if (!state.routerDashboardMqttFresh())' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          grep -q 'delay(1_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
           ! grep -q 'delay(if (state.mqttConnected) 15_000L else 20_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+
+          # About-page release title must follow BuildConfig instead of a hard-coded old build.
+          grep -Fq 'val NAME: String get() = BuildConfig.VERSION_NAME' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'val CODE: Int get() = BuildConfig.VERSION_CODE' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq '"v$NAME build$CODE · 路由实时推送与刷新修复"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
       - name: Upload Gradle log
         if: always()
@@ -105,8 +118,11 @@ jobs:
         id: app_version
         shell: bash
         run: |
+          set -e
           VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
           VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$VERSION_NAME"
+          test -n "$VERSION_CODE"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
