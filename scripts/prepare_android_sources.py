@@ -14,6 +14,7 @@ from apply_v01015_router_stability import patch_main as patch_v01015_main
 from apply_v01015_router_stability import patch_router_api as patch_v01015_router_api
 from apply_v01015_router_stability import patch_router_native as patch_v01015_router_native
 from apply_v01015_runtime_cache_hotfix import apply as apply_v01015_runtime_cache
+from apply_v01015_version_log_fix import apply as apply_v01015_version_log
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,7 @@ if __name__ == "__main__":
     final_generated = (
         "v0.10.15 build145 · 路由页面稳定与诊断交互修复" in current
         or "v0.10.15 build146 · 路由实时推送与刷新修复" in current
+        or '"v$NAME build$CODE · 路由实时推送与刷新修复"' in current
     )
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -55,8 +57,9 @@ if __name__ == "__main__":
     apply_v01015_requested()
     # Keep user-requested UI/history fixes after the generated router pages.
     apply_v01015_scoped()
-    # This must remain last: it wires the already-subscribed MQTT dashboard
-    # topic into AppState and replaces the generated 15/20s timer with a 1s
-    # HTTP fallback without allowing older scripts to overwrite it.
+    # MQTT delivery must run after all older router refresh generators.
     apply_v01015_realtime_delivery()
+    # Keep this absolutely last so no old source generator can restore the
+    # v0.10.6 About-page release note after BuildConfig has advanced.
+    apply_v01015_version_log()
     print("Android source fixes prepared")
