@@ -20,10 +20,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Apply router integration source fixes
-        shell: bash
-        run: python3 scripts/prepare_android_sources.py
-
       - name: Remove legacy Java sources
         shell: bash
         run: rm -rf app/src/main/java
@@ -72,9 +68,17 @@ jobs:
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
         run: |
           set +e
+          # app:preBuild already runs scripts/prepare_android_sources.py. Do not run it a second time.
           gradle :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-build.log 2>&1
           STATUS=$?
-          tail -n 200 /tmp/gradle-build.log
+          if [ "$STATUS" -ne 0 ]; then
+            echo "===== Kotlin/compiler errors ====="
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 160 || true
+            echo "===== Gradle tail ====="
+            tail -n 100 /tmp/gradle-build.log
+          else
+            tail -n 60 /tmp/gradle-build.log
+          fi
           exit $STATUS
 
       - name: Upload Gradle log
