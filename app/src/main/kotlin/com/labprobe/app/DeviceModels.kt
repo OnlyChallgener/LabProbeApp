@@ -32,6 +32,9 @@ data class DeviceItem(
     val todayDownload: String = "",
     val totalUpload: String = "",
     val totalDownload: String = "",
+    val realtimeUploadBytes: Long = 0L,
+    val realtimeDownloadBytes: Long = 0L,
+    val connectionCount: Int = 0,
     val todayOnlineDurationSec: Long = 0L,
     val todayOnlineDurationText: String = "",
     val todayOnlineDate: String = ""

@@ -129,6 +129,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Dns
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
@@ -933,6 +934,10 @@ private fun agentCleanupSummary(root: JSONObject): String {
 class HubSyncUnsupported(message: String) : RuntimeException(message)
 class HubRevisionGap(message: String) : RuntimeException(message)
 class HubHttpException(val statusCode: Int, message: String) : RuntimeException(message)
+class HubAuthenticationException(val statusCode: Int, message: String) : RuntimeException(message)
+open class HubRouterNoDataException(message: String = "Hub 在线，但没有路由器数据") : RuntimeException(message)
+class HubRouterLoginException(message: String = "Hub 登录路由器失败") : RuntimeException(message)
+class RouterStatusUnavailableException(message: String = "Hub 在线，但没有路由器数据") : HubRouterNoDataException(message)
 
 class AppState(private val prefs: AppPrefs, context: Context) {
     private val appContext = context.applicationContext
@@ -1000,6 +1005,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var mqttState by mutableStateOf<HubRealtimeState>(HubRealtimeState.Disabled)
     var routerDashboard by mutableStateOf<JSONObject?>(null)
     var routerCredentials by mutableStateOf<JSONObject?>(null)
+    var routerDashboardError by mutableStateOf("")
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
@@ -1091,8 +1097,11 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     suspend fun refreshRouterDashboard(silent: Boolean = true) {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
         runCatching { HubApi(prefs).getRouterDashboard() }
-            .onSuccess { routerDashboard = it }
-            .onFailure { if (!silent) message = "路由器状态刷新失败：${it.message}" }
+            .onSuccess { routerDashboard = it; routerDashboardError = "" }
+            .onFailure {
+                routerDashboardError = it.message ?: "Hub无法获取路由器状态"
+                if (!silent) message = routerDashboardError
+            }
     }
 
     suspend fun requestRouterDashboardRefresh(): Long {
@@ -1102,6 +1111,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             val latest = runCatching { HubApi(prefs).getRouterDashboard() }.getOrNull()
             if (latest != null) {
                 routerDashboard = latest
+                routerDashboardError = ""
                 if (latest.optLong("refreshCompletedNonce", 0L) >= nonce) return nonce
             }
         }
@@ -1832,7 +1842,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_roam" -> WifiRoamingScreen(prefs, backFromTool)
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
-                        "tool_portmap" -> PortMappingScreen(prefs, backFromTool)
+                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
+                        "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
+                        "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
+                        "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
+                        "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool)
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
                     }
@@ -4567,6 +4581,7 @@ fun DeviceSmartInfo(d: DeviceItem, profile: DeviceVisualProfile) {
                 val signal = cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { if (it.endsWith("dBm")) it else "${it}dBm" } ?: "--"
                 DeviceMiniMetric("信号", signal, Icons.Rounded.WifiTethering, Color(0xFF64748B), Modifier.weight(1f), copyValue = signal.takeIf { it != "--" }.orEmpty(), allowScroll = true, valueColor = deviceSignalValueColor(d.rssi))
             }
+            DeviceRealtimeStatusBar(d)
             DeviceTodayTrafficBar(d)
             DeviceFooterLine(d = d, showTime = true)
         } else {
@@ -4594,8 +4609,45 @@ fun WiredDeviceInfo(d: DeviceItem, ip4: String, ipv6Pick: Ipv6PickResult) {
             copyValue = v6Full,
             allowScroll = true
         )
+        DeviceRealtimeStatusBar(d)
         DeviceTodayTrafficBar(d)
         DeviceFooterLine(d = d, showTime = false)
+    }
+}
+
+private fun formatRealtimeRate(bytesPerSecond: Long): String {
+    val safe = bytesPerSecond.coerceAtLeast(0L)
+    val bitsPerSecond = safe * 8.0
+    return if (bitsPerSecond < 1_000_000.0) {
+        String.format(Locale.US, "%.0f Kbps", bitsPerSecond / 1_000.0)
+    } else {
+        String.format(Locale.US, "%.2f Mbps", bitsPerSecond / 1_000_000.0)
+    }
+}
+
+@Composable
+fun DeviceRealtimeStatusBar(d: DeviceItem) {
+    if (!d.online) return
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF2563EB).copy(alpha = .045f),
+        border = BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .09f))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.Speed, null, Modifier.size(14.dp), tint = Color(0xFF2563EB))
+            Spacer(Modifier.width(5.dp))
+            Text("实时", fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+            Spacer(Modifier.width(7.dp))
+            Text("↑${formatRealtimeRate(d.realtimeUploadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), maxLines = 1)
+            Spacer(Modifier.width(7.dp))
+            Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+        }
     }
 }
 
@@ -4752,6 +4804,36 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 
 @Composable
 fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具箱", "长按功能卡可调整分组顺序", topNav = topNav) {
+    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
+    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
+    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
+    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
+    var routerUpnpEnabled by remember { mutableStateOf(false) }
+    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
+        val api = RouterControlApi(prefs)
+        runCatching { api.firewall() }.onSuccess { state ->
+            routerFirewallEnabled = state.rules.count { it.enabled }
+        }
+        runCatching { api.ddns() }.onSuccess { records ->
+            routerDdnsHealthy = records.count {
+                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
+            }
+        }
+        runCatching { api.nativePortMappings() }.onSuccess {
+            routerNativeMappingCount = it.size
+        }
+        runCatching { api.upnp() }.onSuccess {
+            routerUpnpEnabled = it.enabled
+            routerUpnpMappingCount = it.mappings.size
+        }
+        runCatching { api.diagnostic() }.onSuccess {
+            routerDiagnosticErrors = it.errorCount
+        }
+    }
+
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var profile by remember { mutableStateOf(detectNetworkProfile(ctx, prefs)) }
@@ -4828,6 +4910,19 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
+    RouterFeatureRail(
+        firewallEnabled = routerFirewallEnabled,
+        ddnsHealthy = routerDdnsHealthy,
+        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
+        upnpEnabled = routerUpnpEnabled,
+        diagnosticErrors = routerDiagnosticErrors,
+        onConnection = { open("tool_router_login") },
+        onMapping = { open("tool_portmap") },
+        onDdns = { open("tool_router_ddns") },
+        onFirewall = { open("tool_router_firewall") },
+        onDiagnostic = { open("tool_router_diag") }
+    )
+
     val toolSections = remember {
         mapOf(
             "net" to listOf(
@@ -9179,31 +9274,53 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     }
 }
 
+private class HubAuthInterceptor(private val tokenProvider: () -> String) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+        val request = chain.request()
+        val path = request.url.encodedPath
+        // Hub may be deployed under a reverse-proxy path prefix. Match any /api/
+        // segment so every Hub API request, including /api/router/*, is authorized.
+        if (!path.contains("/api/")) return chain.proceed(request)
+
+        val appToken = tokenProvider().trim()
+        if (appToken.isBlank()) {
+            throw HubAuthenticationException(0, "Hub API认证失败：APP_TOKEN 为空")
+        }
+        return chain.proceed(
+            request.newBuilder()
+                .header("Authorization", "Bearer $appToken")
+                .build()
+        )
+    }
+}
+
 class HubApi(private val prefs: AppPrefs) {
     private val client = OkHttpClient.Builder()
         .dns(CustomDns(prefs.hubDns))
         .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .addInterceptor(HubAuthInterceptor { prefs.token })
         .build()
 
     suspend fun health(): String = withContext(Dispatchers.IO) {
         if (prefs.hub.isBlank()) return@withContext "失败：Hub 地址为空"
-        "连接成功：${retryText("/health", false, 3)}"
+        "连接成功：${retryText("/health", 3)}"
     }
 
     suspend fun healthWithRetry(attempts: Int = 3): String = withContext(Dispatchers.IO) {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        retryText("/health", false, attempts)
+        retryText("/health", attempts)
     }
 
     suspend fun keepaliveWithRetry(attempts: Int = 3): String = withContext(Dispatchers.IO) {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        retryText("/api/sync/revision", true, attempts)
+        retryText("/api/sync/revision", attempts)
     }
 
     suspend fun getMqttConfig(): HubMqttConfig = withContext(Dispatchers.IO) {
         val root = try {
-            JSONObject(getText("/api/mqtt/config", true))
+            requestJson("/api/mqtt/config")
         } catch (error: HubHttpException) {
             if (error.statusCode == 404 || error.statusCode == 405) return@withContext HubMqttConfig()
             throw error
@@ -9222,7 +9339,7 @@ class HubApi(private val prefs: AppPrefs) {
 
     suspend fun getSyncSnapshot(): HubSyncSnapshot = withContext(Dispatchers.IO) {
         val root = try {
-            JSONObject(getText("/api/sync/snapshot", true))
+            requestJson("/api/sync/snapshot")
         } catch (error: HubHttpException) {
             if (error.statusCode == 404 || error.statusCode == 405) throw HubSyncUnsupported("Hub 不支持增量同步")
             throw error
@@ -9241,7 +9358,7 @@ class HubApi(private val prefs: AppPrefs) {
 
     suspend fun getSyncChanges(since: Long): HubSyncChanges = withContext(Dispatchers.IO) {
         val root = try {
-            JSONObject(getText("/api/sync/changes?since=$since&limit=500", true))
+            requestJson("/api/sync/changes?since=$since&limit=500")
         } catch (error: HubHttpException) {
             if (error.statusCode == 404 || error.statusCode == 405) throw HubSyncUnsupported("Hub 不支持增量同步")
             throw error
@@ -9255,21 +9372,32 @@ class HubApi(private val prefs: AppPrefs) {
         )
     }
 
-    suspend fun getStatus(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/status", true)) }
-    suspend fun getRouterDashboard(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/router/dashboard", true)) }
+    suspend fun getStatus(): JSONObject = withContext(Dispatchers.IO) { requestJson("/api/status") }
+    suspend fun getRouterDashboard(): JSONObject = withContext(Dispatchers.IO) {
+        requireRouterStatus(requestJson("/api/router/dashboard"))
+    }
     suspend fun requestRouterDashboardRefresh(): Long = withContext(Dispatchers.IO) {
-        JSONObject(postJson("/api/router/dashboard/refresh", "{}"))
+        requireRouterStatus(requestJson("/api/router/dashboard/refresh", "POST", JSONObject()))
             .optLong("refreshNonce", 0L)
     }
-    suspend fun getRouterCredentials(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/router/dashboard/credentials", true)) }
+    suspend fun getRouterCredentials(): JSONObject = withContext(Dispatchers.IO) {
+        requireRouterStatus(requestJson("/api/router/dashboard/credentials"))
+    }
     suspend fun requestRouterCredentialsRefresh(): Long = withContext(Dispatchers.IO) {
-        JSONObject(postJson("/api/router/dashboard/credentials/refresh", "{}"))
+        requireRouterStatus(requestJson("/api/router/dashboard/credentials/refresh", "POST", JSONObject()))
             .optLong("refreshNonce", 0L)
     }
-    suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) { val path = if (online) "/api/devices?view=online" else "/api/devices"; val root = JSONObject(getText(path, true)); parseDeviceArray((root.optJSONArray("devices") ?: JSONArray()).toString()) }
-    suspend fun getEvents(): List<EventItem> = withContext(Dispatchers.IO) { val root = JSONObject(getText("/api/events", true)); parseEvents((root.optJSONArray("events") ?: JSONArray()).toString()).reversed() }
+    suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) {
+        val path = if (online) "/api/devices?view=online" else "/api/devices"
+        val root = requestJson(path)
+        parseDeviceArray((root.optJSONArray("devices") ?: JSONArray()).toString())
+    }
+    suspend fun getEvents(): List<EventItem> = withContext(Dispatchers.IO) {
+        val root = requestJson("/api/events")
+        parseEvents((root.optJSONArray("events") ?: JSONArray()).toString()).reversed()
+    }
     suspend fun getAgentUpdateStatus(): AgentUpdateInfo = withContext(Dispatchers.IO) {
-        val root = JSONObject(getText("/api/agent/update/status?refresh=1", true))
+        val root = requestJson("/api/agent/update/status?refresh=1")
         AgentUpdateInfo(
             currentVersion = root.optString("currentVersion", "未知"),
             latestVersion = root.optString("latestVersion", "未知"),
@@ -9280,25 +9408,39 @@ class HubApi(private val prefs: AppPrefs) {
         )
     }
     suspend fun requestAgentUpdate(): JSONObject = withContext(Dispatchers.IO) {
-        JSONObject(postJson("/api/agent/update", JSONObject().put("manifestUrl", UpdateRepository.AGENT_MANIFEST).put("installerUrl", UpdateRepository.AGENT_INSTALLER).toString()))
+        requestJson(
+            "/api/agent/update",
+            "POST",
+            JSONObject().put("manifestUrl", UpdateRepository.AGENT_MANIFEST).put("installerUrl", UpdateRepository.AGENT_INSTALLER)
+        )
     }
     suspend fun requestAgentCleanup(): JSONObject = withContext(Dispatchers.IO) {
-        JSONObject(postJson("/api/agent/cleanup", "{}"))
+        requestJson("/api/agent/cleanup", "POST", JSONObject())
     }
     suspend fun getAgentCleanupStatus(commandId: String): JSONObject = withContext(Dispatchers.IO) {
-        JSONObject(getText("/api/agent/cleanup/status?commandId=${URLEncoder.encode(commandId, "UTF-8")}", true))
+        requestJson("/api/agent/cleanup/status?commandId=${URLEncoder.encode(commandId, "UTF-8")}")
     }
-    suspend fun deleteEvent(id: Int): String = withContext(Dispatchers.IO) { deleteText("/api/events/$id") }
-    suspend fun sendWol(mac: String): JSONObject = withContext(Dispatchers.IO) { JSONObject(postJson("/api/wol", JSONObject().put("mac", mac).toString())) }
-    suspend fun getDaily(date: String? = null): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText(if (date.isNullOrBlank()) "/api/daily/latest" else "/api/daily?date=$date", true)) }
-    suspend fun getDailyList(): JSONObject = withContext(Dispatchers.IO) { JSONObject(getText("/api/daily/list", true)) }
-    suspend fun putDailyNote(date: String, note: String): JSONObject = withContext(Dispatchers.IO) { JSONObject(putJson("/api/daily/note?date=$date", JSONObject().put("note", note).toString())) }
+    suspend fun deleteEvent(id: Int): String = withContext(Dispatchers.IO) {
+        requestText("/api/events/$id", "DELETE")
+    }
+    suspend fun sendWol(mac: String): JSONObject = withContext(Dispatchers.IO) {
+        requestJson("/api/wol", "POST", JSONObject().put("mac", mac))
+    }
+    suspend fun getDaily(date: String? = null): JSONObject = withContext(Dispatchers.IO) {
+        requestJson(if (date.isNullOrBlank()) "/api/daily/latest" else "/api/daily?date=$date")
+    }
+    suspend fun getDailyList(): JSONObject = withContext(Dispatchers.IO) { requestJson("/api/daily/list") }
+    suspend fun putDailyNote(date: String, note: String): JSONObject = withContext(Dispatchers.IO) {
+        requestJson("/api/daily/note?date=$date", "PUT", JSONObject().put("note", note))
+    }
 
-    private fun retryText(path: String, auth: Boolean, attempts: Int): String {
+    private fun retryText(path: String, attempts: Int): String {
         var last: Exception? = null
         repeat(attempts.coerceAtLeast(1)) { idx ->
-            try { return getText(path, auth) } catch (e: Exception) {
-                last = e
+            try {
+                return requestText(path)
+            } catch (error: Exception) {
+                last = error
                 if (idx < attempts - 1) Thread.sleep(650)
             }
         }
@@ -9306,42 +9448,61 @@ class HubApi(private val prefs: AppPrefs) {
         throw RuntimeException("已尝试 ${attempts.coerceAtLeast(1)} 次仍失败：$reason")
     }
 
-    private fun getText(path: String, auth: Boolean): String {
+    internal fun requestJson(path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
+        JSONObject(requestText(path, method, body?.toString()))
+
+    internal fun requestText(path: String, method: String = "GET", json: String? = null): String {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        val req = Request.Builder().url(joinUrl(prefs.hub, path)).apply { if (auth && prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
-        val res = client.newCall(req).execute()
-        val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
-        return text
+        val requestBuilder = Request.Builder()
+            .url(joinUrl(prefs.hub, path))
+            .header("Accept", "application/json")
+        val body = json?.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = when (method.uppercase(Locale.ROOT)) {
+            "GET" -> requestBuilder.get().build()
+            "POST" -> requestBuilder.post(body ?: "{}".toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+            "PUT" -> requestBuilder.put(body ?: "{}".toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+            "PATCH" -> requestBuilder.patch(body ?: "{}".toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+            "DELETE" -> if (body == null) requestBuilder.delete().build() else requestBuilder.delete(body).build()
+            else -> error("Unsupported method $method")
+        }
+
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            routerApiException(request.url.encodedPath, text)?.let { throw it }
+            if (response.code == 401 || response.code == 403) {
+                throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
+            }
+            if (!response.isSuccessful) {
+                if (request.url.encodedPath.contains("/api/router/")) {
+                    throw RouterStatusUnavailableException()
+                }
+                throw HubHttpException(response.code, "HTTP ${response.code}: $text")
+            }
+            return text
+        }
     }
 
-    private fun putJson(path: String, json: String): String {
-        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val req = Request.Builder().url(joinUrl(prefs.hub, path)).put(body).apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
-        val res = client.newCall(req).execute()
-        val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
-        return text
+    private fun requireRouterStatus(root: JSONObject): JSONObject {
+        if (root.has("ok") && !root.optBoolean("ok")) {
+            routerApiException("/api/router", root.toString())?.let { throw it }
+            throw RouterStatusUnavailableException()
+        }
+        return root
     }
 
-    private fun postJson(path: String, json: String, auth: Boolean = true): String {
-        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val req = Request.Builder().url(joinUrl(prefs.hub, path)).post(body).apply { if (auth && prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
-        val res = client.newCall(req).execute()
-        val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
-        return text
-    }
-
-    private fun deleteText(path: String): String {
-        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        val req = Request.Builder().url(joinUrl(prefs.hub, path)).delete().apply { if (prefs.token.isNotBlank()) header("Authorization", "Bearer ${prefs.token}") }.build()
-        val res = client.newCall(req).execute()
-        val text = res.body?.string().orEmpty()
-        if (!res.isSuccessful) throw HubHttpException(res.code, "HTTP ${res.code}: $text")
-        return text
+    private fun routerApiException(path: String, text: String): RuntimeException? {
+        if (!path.contains("/api/router")) return null
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        if (root.optBoolean("ok", false)) return null
+        val code = root.optString("error").ifBlank { root.optString("errorCode") }.uppercase(Locale.ROOT)
+        val message = root.optString("message").trim()
+        return when (code) {
+            "HUB_NO_ROUTER_DATA", "ROUTER_NOT_CONFIGURED" ->
+                HubRouterNoDataException(message.ifBlank { "Hub 在线，但没有路由器数据" })
+            "LOGIN_FAILED", "AUTH_EXPIRED", "ROUTER_UNREACHABLE", "RPC_TIMEOUT", "RPC_HTTP_ERROR", "RPC_INVALID_RESPONSE", "RPC_PATH_NOT_FOUND" ->
+                HubRouterLoginException(message.ifBlank { "Hub 登录路由器失败" })
+            else -> null
+        }
     }
 }
 
@@ -9426,19 +9587,9 @@ fun operatorLookup(ip: String, prefs: AppPrefs): String {
     // DNS 解析页也走联网 ASN / Geo 查询；失败时再回退到 IPv6 前缀快速判断。
     runCatching { return lookupIpOwnerOnline(clean) }
 
-    val hub = prefs.hub.trim().trimEnd('/')
-    val token = prefs.token.trim()
-    if (hub.isNotBlank() && token.isNotBlank()) {
+    if (prefs.hub.isNotBlank()) {
         runCatching {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(4, TimeUnit.SECONDS)
-                .readTimeout(4, TimeUnit.SECONDS)
-                .dns(CustomDns(prefs.hubDns))
-                .build()
-            val url = joinUrl(hub, "/api/geo?ip=${URLEncoder.encode(clean, "UTF-8")}")
-            val req = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
-            val text = client.newCall(req).execute().body?.string().orEmpty()
-            val o = JSONObject(text)
+            val o = HubApi(prefs).requestJson("/api/geo?ip=${URLEncoder.encode(clean, "UTF-8")}")
             if (o.optBoolean("ok")) {
                 val g = o.optJSONObject("geo") ?: JSONObject()
                 val local = g.optString("localLabel")

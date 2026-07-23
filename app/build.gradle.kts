@@ -1,5 +1,6 @@
 import java.io.FileInputStream
 import java.util.Properties
+import org.gradle.api.tasks.Exec
 
 plugins {
     id("com.android.application")
@@ -30,8 +31,8 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 140
-        versionName = "0.10.10"
+        versionCode = 152
+        versionName = "0.10.15"
     }
 
     signingConfigs {
@@ -100,4 +101,16 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
     implementation("com.github.mwiede:jsch:0.2.21")
+}
+
+val applyRouterUiFixes by tasks.registering(Exec::class) {
+    group = "build setup"
+    description = "Apply idempotent router settings, DDNS, diagnostic and navigation source fixes"
+    workingDir(rootProject.projectDir)
+    commandLine(System.getenv("PYTHON") ?: "python3", "scripts/prepare_android_sources.py")
+    onlyIf { System.getenv("LABPROBE_SKIP_SOURCE_PREPARE") != "1" }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(applyRouterUiFixes)
 }

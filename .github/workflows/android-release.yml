@@ -1,24 +1,28 @@
 name: Android Release APK
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout selected branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Remove legacy Java sources
         shell: bash
-        run: |
-          rm -rf app/src/main/java
-          echo "Legacy Java sources removed before build."
+        run: rm -rf app/src/main/java
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -49,26 +53,128 @@ jobs:
         run: |
           set -e
           if [ -z "$LABPROBE_KEYSTORE_BASE64" ]; then
-            echo "::error::LABPROBE_KEYSTORE_BASE64 is not configured. Release APK cannot be signed with the fixed key."
+            echo "::error::LABPROBE_KEYSTORE_BASE64 is not configured."
             exit 1
           fi
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-          echo "Fixed signing key prepared. Release APK will use the configured Labprobe signing key."
 
-      - name: Build release APK
+      - name: Prepare final Android sources once
+        shell: bash
+        run: |
+          set -e
+          python3 scripts/prepare_android_sources.py
+
+      - name: Verify final build152 sources before compile
+        shell: bash
+        run: |
+          set -e
+          MAIN=app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
+          SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
+
+          grep -q 'versionCode = 152' app/build.gradle.kts
+          grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 实时连接租约与离线节流"' "$MAIN"
+          ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
+          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
+
+          grep -Fq 'dashboardTopic = ""' "$MAIN"
+          ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
+          ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
+          grep -Fq 'realtimeSmoother.acceptRouter(latest)' "$MAIN"
+          grep -Fq 'realtimeSmoother.acceptDevices(latest)' "$MAIN"
+          grep -Fq 'realtimeSmoother.renderRouter(routerDashboard, now)' "$MAIN"
+          ! grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
+          grep -Fq '/api/router/realtime' "$LITE"
+          grep -Fq '/api/devices/realtime' "$LITE"
+          grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
+          grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
+          grep -Fq 'fun pause() = reset()' "$SMOOTH"
+
+          grep -Fq 'now - liteRouterLastSuccessAt <= 5_000L' "$MAIN"
+          grep -Fq 'if (!liteRouterSessionActive())' "$MAIN"
+          grep -Fq 'liteDevicesLastSuccessAt = 0L' "$MAIN"
+          grep -Fq 'realtimeSmoother.pause()' "$MAIN"
+          ! grep -Fq 'realtimeSmoother.reset()' "$MAIN"
+          grep -Fq 'latest != null && liteRouterSessionActive()' "$MAIN"
+          grep -Fq 'liteDisconnectedRetryDelay(liteRouterFailureCount)' "$MAIN"
+          grep -Fq 'failures <= 1 -> 3_000L' "$MAIN"
+          grep -Fq 'failures == 2 -> 5_000L' "$MAIN"
+          grep -Fq 'failures == 3 -> 10_000L' "$MAIN"
+          grep -Fq 'else -> 15_000L' "$MAIN"
+          grep -Fq 'delay(if (routerActive || devicesActive) RealtimeDisplaySmoother.FRAME_INTERVAL_MS else 1_000L)' "$MAIN"
+
+          ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
+          ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
+
+      - name: Build signed release APK
+        shell: bash
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
           LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
           LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --stacktrace
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: |
+          set +e
+          gradle :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-build.log 2>&1
+          STATUS=$?
+          if [ "$STATUS" -ne 0 ]; then
+            echo "===== Kotlin/compiler errors ====="
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 260 || true
+            echo "===== Gradle tail ====="
+            tail -n 180 /tmp/gradle-build.log
+          else
+            tail -n 100 /tmp/gradle-build.log
+          fi
+          exit $STATUS
 
-      - name: Verify release APK exists
+      - name: Inspect actual signed APK strings
         shell: bash
         run: |
           set -e
-          ls -lh app/build/outputs/apk/release/app-release.apk
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          apk = Path("app/build/outputs/apk/release/app-release.apk")
+          if not apk.exists():
+              raise SystemExit(f"missing signed APK: {apk}")
+          with zipfile.ZipFile(apk) as archive:
+              dex = b"".join(
+                  archive.read(name)
+                  for name in archive.namelist()
+                  if name.startswith("classes") and name.endswith(".dex")
+              )
+          for old in (
+              "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
+              "v0.10.6 build134 · 首页关注与概览显示修复",
+          ):
+              if old.encode("utf-8") in dex:
+                  raise SystemExit(f"obsolete signed APK string remains: {old}")
+          for required in (
+              "实时连接租约与离线节流",
+              "/api/router/realtime",
+              "/api/devices/realtime",
+          ):
+              if required.encode("utf-8") not in dex:
+                  raise SystemExit(f"required signed APK string missing: {required}")
+          print("signed APK DEX strings verified")
+          PY
+
+      - name: Upload Gradle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-control-gradle-log
+          path: /tmp/gradle-build.log
+
+      - name: Verify release APK exists
+        shell: bash
+        run: ls -lh app/build/outputs/apk/release/app-release.apk
 
       - name: Read app version
         id: app_version
@@ -81,7 +187,6 @@ jobs:
           test -n "$VERSION_CODE"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "Artifact version: $VERSION_NAME build $VERSION_CODE"
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
