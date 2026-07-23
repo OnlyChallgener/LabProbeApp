@@ -6,13 +6,13 @@ from apply_refresh_stability_fixes import apply as apply_refresh_stability
 from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
+from apply_v01015_final_scoped_fixes import apply as apply_v01015_scoped
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
 from apply_v01015_requested_hotfix import apply as apply_v01015_requested
 from apply_v01015_router_stability import patch_main as patch_v01015_main
 from apply_v01015_router_stability import patch_router_api as patch_v01015_router_api
 from apply_v01015_router_stability import patch_router_native as patch_v01015_router_native
 from apply_v01015_runtime_cache_hotfix import apply as apply_v01015_runtime_cache
-from apply_v01015_scoped_fixes import apply as apply_v01015_scoped
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
