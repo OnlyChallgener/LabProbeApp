@@ -91,6 +91,7 @@ jobs:
           grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
           grep -Fq 'const val MAX_ANIMATION_SAMPLE_AGE_MS = 6_000L' "$SMOOTH"
           grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
+          grep -Fq 'fun pause() = reset()' "$SMOOTH"
           ! grep -Fq 'kotlin.random' "$SMOOTH"
           ! grep -Fq 'Random.' "$SMOOTH"
 
@@ -98,6 +99,9 @@ jobs:
           grep -Fq 'now - liteRouterLastSuccessAt <= 5_000L' "$MAIN"
           grep -Fq 'if (!liteRouterSessionActive())' "$MAIN"
           grep -Fq 'liteDevicesLastSuccessAt = 0L' "$MAIN"
+          grep -Fq 'realtimeSmoother.pause()' "$MAIN"
+          ! grep -Fq 'realtimeSmoother.reset()' "$MAIN"
+          grep -Fq 'latest != null && liteRouterSessionActive()' "$MAIN"
           grep -Fq 'liteDisconnectedRetryDelay(liteRouterFailureCount)' "$MAIN"
           grep -Fq 'failures <= 1 -> 3_000L' "$MAIN"
           grep -Fq 'failures == 2 -> 5_000L' "$MAIN"
