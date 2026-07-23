@@ -15,6 +15,8 @@ on:
       - scripts/apply_v01015_router_stability.py
       - scripts/apply_v01015_runtime_cache_hotfix.py
       - scripts/apply_v01015_nat_text_hotfix.py
+      - scripts/apply_v01015_ddns_cache_hotfix.py
+      - scripts/apply_v01015_requested_hotfix.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   workflow_dispatch:
@@ -52,13 +54,15 @@ jobs:
           grep -q 'RouterUiRuntimeCache.ddnsRows' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'v0.10.15 build145' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'delay(1_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q '路由器已连接，实时数据正常' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
           grep -q 'NativeCompactPortField' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q '检测协议' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q '出口接口' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'containerColor = Color.White' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'natTypeZh' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q '正在发送绑定请求' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'Spacer(Modifier.width(12.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'routerSettingsStatusMessage(status)' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
+          grep -q '"no new version available" -> "当前没有可用 Beta 版本"' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
       - uses: actions/setup-java@v4
         with:
