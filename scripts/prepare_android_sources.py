@@ -8,6 +8,7 @@ from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_final_scoped_fixes import apply as apply_v01015_scoped
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
+from apply_v01015_realtime_delivery_fix import apply as apply_v01015_realtime_delivery
 from apply_v01015_requested_hotfix import apply as apply_v01015_requested
 from apply_v01015_router_stability import patch_main as patch_v01015_main
 from apply_v01015_router_stability import patch_router_api as patch_v01015_router_api
@@ -27,7 +28,10 @@ if __name__ == "__main__":
         and "v0.10.13 build143 · 路由诊断与首页联动" in current
     )
     refresh_generated = "v0.10.14 build144 · 实时刷新与页面稳定性修复" in current
-    final_generated = "v0.10.15 build145 · 路由页面稳定与诊断交互修复" in current
+    final_generated = (
+        "v0.10.15 build145 · 路由页面稳定与诊断交互修复" in current
+        or "v0.10.15 build146 · 路由实时推送与刷新修复" in current
+    )
 
     if not base_generated and not refresh_generated and not final_generated:
         patch_main()
@@ -49,7 +53,10 @@ if __name__ == "__main__":
     apply_v01015_runtime_cache()
     apply_v01015_nat_text()
     apply_v01015_requested()
-    # Keep the final user-requested scope last because it adjusts the generated
-    # popup surfaces, disabled buttons, two-port NAT history and self-check cache.
+    # Keep user-requested UI/history fixes after the generated router pages.
     apply_v01015_scoped()
+    # This must remain last: it wires the already-subscribed MQTT dashboard
+    # topic into AppState and replaces the generated 15/20s timer with a 1s
+    # HTTP fallback without allowing older scripts to overwrite it.
+    apply_v01015_realtime_delivery()
     print("Android source fixes prepared")
