@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Repair the final Settings/About Text call after legacy regex generators.
+"""Repair only the Settings/About Text call after legacy regex generators.
 
-Use a Kotlin triple-quoted string so Python regular-expression replacement can
-never turn escaped newlines into an invalid quoted Kotlin string.
+The anchor deliberately requires `极客网探` followed immediately by a newline
+and `版本 ... build ...`. It cannot match the separate version dialog title
+`极客网探 v...` or consume unrelated page code.
 """
 from pathlib import Path
 import re
@@ -27,13 +28,17 @@ ABOUT_BLOCK = '''
 def apply() -> None:
     text = MAIN.read_text(encoding="utf-8")
     pattern = re.compile(
-        r'\s*Text\(\s*"极客网探.*?lineHeight\s*=\s*19\.sp\s*\)',
+        r'\s*Text\(\s*"极客网探(?:\\n|\n)版本\s+\$\{AppVersion\.NAME\}\s+build\s+\$\{AppVersion\.CODE\}(?:\\n|\n).*?lineHeight\s*=\s*19\.sp\s*\)',
         re.DOTALL,
     )
     text, count = pattern.subn(lambda _match: ABOUT_BLOCK, text, count=1)
     if count != 1:
-        # Idempotent path: a previous run already emitted the valid block.
-        if '""".trimIndent()' not in text or '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' not in text:
+        valid = (
+            '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' in text
+            and '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' in text
+            and '""".trimIndent()' in text
+        )
+        if not valid:
             raise RuntimeError(f"expected one Settings/About Text call, replaced {count}")
 
     forbidden = (
@@ -42,11 +47,13 @@ def apply() -> None:
     )
     if any(item in text for item in forbidden):
         raise RuntimeError("obsolete v0.10.6 Settings/About text remains")
-    if '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' not in text:
-        raise RuntimeError("dynamic Settings/About version line missing")
+    if 'Text("极客网探 v${AppVersion.NAME}"' not in text:
+        raise RuntimeError("version dialog title was unexpectedly modified")
+    if 'fun SettingsScreen(' not in text or 'fun HomeScreen(' not in text:
+        raise RuntimeError("unrelated page code was unexpectedly modified")
 
     MAIN.write_text(text, encoding="utf-8")
-    print("build149 Settings/About Kotlin string repaired")
+    print("build149 Settings/About Kotlin string repaired without touching other pages")
 
 
 if __name__ == "__main__":
