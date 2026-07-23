@@ -7,23 +7,9 @@ on:
     paths:
       - app/build.gradle.kts
       - app/src/main/kotlin/com/labprobe/app/**
-      - scripts/apply_router_ui_fixes.py
-      - scripts/apply_wol_navigation_fix.py
-      - scripts/apply_release_text_fixes.py
-      - scripts/apply_next_release_fixes.py
-      - scripts/apply_refresh_stability_fixes.py
-      - scripts/apply_v01015_router_stability.py
-      - scripts/apply_v01015_runtime_cache_hotfix.py
-      - scripts/apply_v01015_nat_text_hotfix.py
-      - scripts/apply_v01015_ddns_cache_hotfix.py
-      - scripts/apply_v01015_requested_hotfix.py
-      - scripts/apply_v01015_scoped_fixes.py
-      - scripts/apply_v01015_final_scoped_fixes.py
-      - scripts/apply_v01015_realtime_delivery_fix.py
-      - scripts/apply_v01015_version_log_fix.py
-      - scripts/apply_v01015_build148_release_fix.py
-      - scripts/prepare_android_sources.py
+      - scripts/**
       - .github/workflows/router-integration-check.yml
+      - .github/workflows/android-release.yml
   pull_request:
     branches:
       - codex/router-status-v0107-build137
@@ -67,26 +53,44 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build148 source invariants before compile
+      - name: Verify build149 source invariants before compile
         shell: bash
         run: |
           set -e
-          grep -q 'versionCode = 148' app/build.gradle.kts
+          MAIN=app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+
+          grep -q 'versionCode = 149' app/build.gradle.kts
           grep -q 'versionName = "0.10.15"' app/build.gradle.kts
-          grep -Fq '"v$NAME build$CODE · 实时刷新、NAT 历史与界面修复"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'onRouterDashboard = { raw ->' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'fun routerDashboardMqttFresh(maxAgeMs: Long = 1_500L)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'if (!state.routerDashboardMqttFresh())' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q 'delay(1_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          ! grep -q 'delay(if (state.mqttConnected) 15_000L else 20_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q 'launch { runCatching { state.requestRouterCredentialsRefresh() } }' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'distinctBy { it.natHistoryProtocol() }' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'natType = result.natType.ifBlank { deriveRouterNatType(result) }' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'private val NativePopupShape = RoundedCornerShape(22.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'shape = NativePopupShape' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          ! grep -q 'Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+
+          # The exact Settings/About text shown to the user must be dynamic.
+          grep -Fq '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' "$MAIN"
+          grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 实时刷新链路与版本信息修复"' "$MAIN"
+          ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
+          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
+
+          # Router dashboard MQTT must be parsed, subscribed and consumed.
+          grep -Fq 'root.optString("dashboardTopic")' "$MAIN"
+          grep -Fq 'dashboardTopic = dashboardTopic' "$MAIN"
+          grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
+          grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
+          grep -Fq 'private val routerDashboardApi = HubApi(prefs, realtimeTimeouts = true)' "$MAIN"
+          grep -Fq '.callTimeout(if (realtimeTimeouts) 2_500L else 0L, TimeUnit.MILLISECONDS)' "$MAIN"
+          grep -Fq 'runCatching { routerDashboardApi.getRouterDashboard() }' "$MAIN"
+          grep -Fq 'fun routerDashboardMqttFresh(maxAgeMs: Long = 1_500L)' "$MAIN"
+          grep -Fq 'if (!state.routerDashboardMqttFresh())' "$STATUS"
+          grep -Fq 'delay(1_000L)' "$STATUS"
+          ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
+
+          # NAT history and popup regressions remain guarded.
+          grep -Fq 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' "$NATIVE"
+          grep -Fq 'distinctBy { it.natHistoryProtocol() }' "$NATIVE"
+          grep -Fq 'natType = result.natType.ifBlank { deriveRouterNatType(result) }' "$NATIVE"
+          grep -Fq 'private val NativePopupShape = RoundedCornerShape(22.dp)' "$NATIVE"
+          grep -Fq 'shape = NativePopupShape' "$NATIVE"
 
       - name: Compile debug and release variants
         shell: bash
@@ -105,6 +109,45 @@ jobs:
             tail -n 100 /tmp/gradle-variants.log
           fi
           exit $STATUS
+
+      - name: Inspect actual APK strings
+        if: success()
+        shell: bash
+        run: |
+          set -e
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          old = [
+              "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
+              "v0.10.6 build134 · 首页关注与概览显示修复",
+          ]
+          required = [
+              "实时刷新链路与版本信息修复",
+              "dashboardTopic",
+              "router/dashboard",
+          ]
+          for apk in (
+              Path("app/build/outputs/apk/debug/app-debug.apk"),
+              Path("app/build/outputs/apk/release/app-release-unsigned.apk"),
+          ):
+              if not apk.exists():
+                  raise SystemExit(f"missing APK: {apk}")
+              with zipfile.ZipFile(apk) as archive:
+                  dex = b"".join(
+                      archive.read(name)
+                      for name in archive.namelist()
+                      if name.startswith("classes") and name.endswith(".dex")
+                  )
+              for value in old:
+                  if value.encode("utf-8") in dex:
+                      raise SystemExit(f"obsolete APK string remains in {apk.name}: {value}")
+              for value in required:
+                  if value.encode("utf-8") not in dex:
+                      raise SystemExit(f"required APK string missing in {apk.name}: {value}")
+              print(f"verified actual DEX strings: {apk}")
+          PY
 
       - name: Verify preserved integration points
         if: success()
@@ -125,19 +168,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build148-gradle-log
+          name: LabProbe-v0.10.15-build149-gradle-log
           path: /tmp/gradle-variants.log
 
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build148-router-debug
+          name: LabProbe-v0.10.15-build149-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build148-router-release-unsigned
+          name: LabProbe-v0.10.15-build149-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
