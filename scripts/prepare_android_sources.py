@@ -5,8 +5,11 @@ from apply_next_release_fixes import apply as apply_next_release
 from apply_refresh_stability_fixes import apply as apply_refresh_stability
 from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
+from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
-from apply_v01015_router_stability import apply as apply_v01015_stability
+from apply_v01015_router_stability import patch_main as patch_v01015_main
+from apply_v01015_router_stability import patch_router_api as patch_v01015_router_api
+from apply_v01015_router_stability import patch_router_native as patch_v01015_router_native
 from apply_v01015_runtime_cache_hotfix import apply as apply_v01015_runtime_cache
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
@@ -34,7 +37,13 @@ if __name__ == "__main__":
     if not refresh_generated and not final_generated:
         apply_refresh_stability()
 
-    apply_v01015_stability()
+    # The base router UI generator rewrites DdnsRecordsSection, so apply the
+    # cache-preserving DDNS patch against that generated form first. The
+    # remaining v0.10.15 patches can then run independently and idempotently.
+    apply_v01015_ddns_cache()
+    patch_v01015_router_native()
+    patch_v01015_router_api()
+    patch_v01015_main()
     apply_v01015_runtime_cache()
     apply_v01015_nat_text()
     print("Android source fixes prepared")
