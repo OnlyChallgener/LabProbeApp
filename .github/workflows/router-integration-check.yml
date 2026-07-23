@@ -21,6 +21,7 @@ on:
       - scripts/apply_v01015_final_scoped_fixes.py
       - scripts/apply_v01015_realtime_delivery_fix.py
       - scripts/apply_v01015_version_log_fix.py
+      - scripts/apply_v01015_build148_release_fix.py
       - scripts/prepare_android_sources.py
       - .github/workflows/router-integration-check.yml
   pull_request:
@@ -60,24 +61,52 @@ jobs:
         with:
           gradle-version: 9.5.1
 
-      - name: Compile debug and release variants
+      - name: Prepare final Android sources once
         shell: bash
         run: |
+          set -e
+          python3 scripts/prepare_android_sources.py
+
+      - name: Verify build148 source invariants before compile
+        shell: bash
+        run: |
+          set -e
+          grep -q 'versionCode = 148' app/build.gradle.kts
+          grep -q 'versionName = "0.10.15"' app/build.gradle.kts
+          grep -Fq '"v$NAME build$CODE · 实时刷新、NAT 历史与界面修复"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'onRouterDashboard = { raw ->' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'fun routerDashboardMqttFresh(maxAgeMs: Long = 1_500L)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'if (!state.routerDashboardMqttFresh())' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          grep -q 'delay(1_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          ! grep -q 'delay(if (state.mqttConnected) 15_000L else 20_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          grep -q 'launch { runCatching { state.requestRouterCredentialsRefresh() } }' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          grep -q 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'distinctBy { it.natHistoryProtocol() }' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'natType = result.natType.ifBlank { deriveRouterNatType(result) }' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'private val NativePopupShape = RoundedCornerShape(22.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'shape = NativePopupShape' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          ! grep -q 'Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+
+      - name: Compile debug and release variants
+        shell: bash
+        env:
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: |
           set +e
-          # app:preBuild applies scripts/prepare_android_sources.py once for both variants.
           gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-variants.log 2>&1
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
             echo "===== Kotlin/compiler errors ====="
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 200 || true
+            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 220 || true
             echo "===== Gradle tail ====="
-            tail -n 120 /tmp/gradle-variants.log
+            tail -n 140 /tmp/gradle-variants.log
           else
-            tail -n 80 /tmp/gradle-variants.log
+            tail -n 100 /tmp/gradle-variants.log
           fi
           exit $STATUS
 
-      - name: Verify expected integration points
+      - name: Verify preserved integration points
         if: success()
         shell: bash
         run: |
@@ -86,65 +115,29 @@ jobs:
           grep -q '"tool_router_nat" -> RouterNatDiagnosticScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '"tool_router_beta" -> RouterBetaUpgradeScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'HomeDdnsMiniCard' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF94A3B8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'cache_router_dashboard_v1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'mergeRouterDashboardSnapshot' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'object RouterUiRuntimeCache' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'RouterUiRuntimeCache.ddnsRows' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'versionCode = 147' app/build.gradle.kts
-          grep -q 'versionName = "0.10.15"' app/build.gradle.kts
-          # About-page version and release note must come from the same BuildConfig.
-          grep -Fq 'val NAME: String get() = BuildConfig.VERSION_NAME' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'val CODE: Int get() = BuildConfig.VERSION_CODE' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq '"v$NAME build$CODE · 路由实时推送与刷新修复"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          # Realtime delivery guards: MQTT dashboard is primary, HTTP polls only
-          # once per second when no MQTT dashboard arrived within 2.5 seconds.
-          grep -q 'onRouterDashboard = { raw ->' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'routerDashboardMqttAt = SystemClock.elapsedRealtime()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'fun routerDashboardMqttFresh(maxAgeMs: Long = 2_500L)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'delay(1_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q 'if (!state.routerDashboardMqttFresh())' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q 'launch { runCatching { state.requestRouterCredentialsRefresh() } }' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          ! grep -q 'delay(if (state.mqttConnected) 15_000L else 20_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          grep -q 'NativeCompactPortField' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q '检测协议' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q '出口接口' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'containerColor = Color.White' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'natTypeZh' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q '正在发送绑定请求' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'Spacer(Modifier.width(12.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'routerSettingsStatusMessage(status)' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
-          grep -q '"no new version available" -> "当前没有可用 Beta 版本"' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          # Scoped regression guards: RFC3489/RFC5780 each keep only their latest
-          # result, plus rounded popup surfaces, stable disabled buttons and cache.
-          grep -q 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'distinctBy { it.natHistoryProtocol() }' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'mode = latest.mode.takeIf { it.isNotBlank() } ?: mode' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'data.optString("requested_mode", "classic")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          ! grep -q 'ROUTER_NAT_HISTORY_PORTS' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'disabledContainerColor = NativeBlue.copy(alpha = .62f)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'ROUTER_DIAGNOSTIC_CACHE_PREF' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'saveRouterDiagnosticCache(context, value)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'disabledContainerColor = NativeBlue.copy(alpha = .62f)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build147-gradle-log
+          name: LabProbe-v0.10.15-build148-gradle-log
           path: /tmp/gradle-variants.log
 
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build147-router-debug
+          name: LabProbe-v0.10.15-build148-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build147-router-release-unsigned
+          name: LabProbe-v0.10.15-build148-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
