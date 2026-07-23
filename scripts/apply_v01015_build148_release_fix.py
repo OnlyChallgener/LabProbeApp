@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Final build148 fixes applied after all legacy source generators.
+"""Final build149 fixes applied after every legacy source generator.
 
-This script is intentionally the last source-preparation step. It fixes only:
-- realtime router dashboard delivery and 1 second HTTP fallback;
-- About-page release text following BuildConfig;
-- RFC3489/RFC5780 one-result-per-protocol history, including blank RFC5780 nat_type;
-- consistent large rounded NAT dropdown surfaces.
+This is the authoritative last build step for the user-visible regressions:
+- actual Settings/About text follows BuildConfig and never embeds v0.10.6;
+- Hub MQTT dashboardTopic is parsed and delivered to the router page;
+- HTTP dashboard fallback uses one short-timeout client instead of a new
+  20-second client on every poll;
+- RFC3489/RFC5780 keep one result per protocol, including blank 5780 nat_type;
+- NAT dropdown surfaces use the same large rounded shape.
 """
 from pathlib import Path
 import re
@@ -21,14 +23,22 @@ APP_VERSION_BLOCK = '''object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 实时刷新、NAT 历史与界面修复" to listOf(
-                "路由仪表盘接收 Hub MQTT 实时快照，断流时每 1 秒通过 HTTP 读取内存快照",
-                "关于页版本日志直接跟随 APK 的版本号和构建号",
-                "RFC3489 与 RFC5780 各保留最近一次检测，RFC5780 无 nat_type 时也会保存",
-                "NAT 服务器、协议与出口接口下拉弹层统一使用大圆角"
+            "v$NAME build$CODE · 实时刷新链路与版本信息修复" to listOf(
+                "补全 Hub MQTT dashboardTopic，路由网速和连接数接收实时快照",
+                "MQTT 无数据时使用短超时 HTTP 读取 Hub 内存，不再卡几十秒",
+                "我的 / 设置底部版本内容直接跟随 APK 版本和构建号",
+                "RFC3489 与 RFC5780 各保留最近一次检测结果"
             )
         )
 }'''
+
+ABOUT_TEXT = '''        Text(
+            "极客网探\\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\\n${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.5.sp,
+            lineHeight = 19.sp
+        )'''
 
 MQTT_CALLBACK = '''        onRevision = { revision -> mqttRevisionSignals.trySend(revision) },
         onRouterDashboard = { raw ->
@@ -44,6 +54,27 @@ MQTT_CALLBACK = '''        onRevision = { revision -> mqttRevisionSignals.trySen
                 routerDashboardError = ""
             }
         }'''
+
+MQTT_CONFIG_PARSER = '''    private fun mqttConfigFromApi(root: JSONObject): HubMqttConfig {
+        val revisionTopic = root.optString("revisionTopic").trim()
+        val dashboardTopic = root.optString("dashboardTopic").trim().ifBlank {
+            val revisionSuffix = "/sync/revision"
+            if (revisionTopic.endsWith(revisionSuffix)) {
+                revisionTopic.removeSuffix(revisionSuffix) + "/router/dashboard"
+            } else {
+                ""
+            }
+        }
+        return HubMqttConfig(
+            enabled = root.optBoolean("enabled", false),
+            publicUrl = root.optString("publicUrl"),
+            username = root.optString("username"),
+            password = root.optString("password"),
+            revisionTopic = revisionTopic,
+            availabilityTopic = root.optString("availabilityTopic"),
+            dashboardTopic = dashboardTopic
+        )
+    }'''
 
 FRESHNESS_FUNCTION = '''    fun routerDashboardMqttFresh(maxAgeMs: Long = 1_500L): Boolean {
         val receivedAt = routerDashboardMqttAt
@@ -145,11 +176,31 @@ def patch_main() -> None:
     if count != 1:
         raise RuntimeError(f"expected one AppVersion block, replaced {count}")
 
+    # SettingsScreen had its own direct v0.10.6 string and did not use CHANGELOG.
+    about_pattern = re.compile(
+        r'\s*Text\("极客网探\\n版本 \$\{AppVersion\.NAME\} build \$\{AppVersion\.CODE\}\\n.*?lineHeight\s*=\s*19\.sp\s*\)',
+        re.DOTALL,
+    )
+    text, count = about_pattern.subn("\n" + ABOUT_TEXT, text, count=1)
+    if count != 1:
+        raise RuntimeError(f"expected one Settings/About text, replaced {count}")
+
     if "routerDashboardMqttAt" not in text:
         anchor = "    @Volatile private var foregroundActive = true\n"
         if anchor not in text:
             raise RuntimeError("missing foregroundActive anchor")
-        text = text.replace(anchor, anchor + "    @Volatile private var routerDashboardMqttAt = 0L\n", 1)
+        text = text.replace(
+            anchor,
+            anchor +
+            "    @Volatile private var routerDashboardMqttAt = 0L\n" +
+            "    private val routerDashboardApi = HubApi(prefs, realtimeTimeouts = true)\n",
+            1,
+        )
+    elif "private val routerDashboardApi" not in text:
+        anchor = re.search(r'    @Volatile private var routerDashboardMqttAt = 0L\n', text)
+        if not anchor:
+            raise RuntimeError("missing routerDashboardMqttAt anchor")
+        text = text[:anchor.end()] + "    private val routerDashboardApi = HubApi(prefs, realtimeTimeouts = true)\n" + text[anchor.end():]
 
     client_start = text.find("    private val realtimeClient = HubMqttClient(")
     client_end = text.find("\n    var status by", client_start)
@@ -167,6 +218,15 @@ def patch_main() -> None:
             raise RuntimeError("missing onRevision callback")
         text = text[:client_start] + client + text[client_end:]
 
+    parser_pattern = re.compile(
+        r'    private fun mqttConfigFromApi\(root: JSONObject\): HubMqttConfig\s*=\s*HubMqttConfig\(.*?\n    \)',
+        re.DOTALL,
+    )
+    if parser_pattern.search(text):
+        text = parser_pattern.sub(MQTT_CONFIG_PARSER, text, count=1)
+    elif 'dashboardTopic = dashboardTopic' not in text:
+        raise RuntimeError("missing mqttConfigFromApi parser")
+
     if "fun routerDashboardMqttFresh(" not in text:
         marker = "    suspend fun refreshRouterDashboard(silent: Boolean = true) {\n"
         if marker not in text:
@@ -181,8 +241,56 @@ def patch_main() -> None:
             flags=re.DOTALL,
         )
 
-    if "v0.10.6 build134 · 首页关注与概览显示修复" in text:
-        raise RuntimeError("obsolete v0.10.6 About-page text remains")
+    # Reuse a dedicated short-timeout API. The old code created a new 20-second
+    # OkHttp client for every one-second fallback poll.
+    text = text.replace(
+        'runCatching { HubApi(prefs).getRouterDashboard() }',
+        'runCatching { routerDashboardApi.getRouterDashboard() }',
+    )
+    text = text.replace(
+        'val latest = runCatching { HubApi(prefs).getRouterDashboard() }.getOrNull()',
+        'val latest = runCatching { routerDashboardApi.getRouterDashboard() }.getOrNull()',
+    )
+
+    text = text.replace(
+        'class HubApi(private val prefs: AppPrefs) {',
+        'class HubApi(private val prefs: AppPrefs, private val realtimeTimeouts: Boolean = false) {',
+        1,
+    )
+    text = text.replace(
+        '''    private val client = OkHttpClient.Builder()
+        .dns(CustomDns(prefs.hubDns))
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)''',
+        '''    private val client = OkHttpClient.Builder()
+        .dns(CustomDns(prefs.hubDns))
+        .connectTimeout(if (realtimeTimeouts) 2L else 6L, TimeUnit.SECONDS)
+        .readTimeout(if (realtimeTimeouts) 2L else 20L, TimeUnit.SECONDS)
+        .writeTimeout(if (realtimeTimeouts) 2L else 20L, TimeUnit.SECONDS)
+        .callTimeout(if (realtimeTimeouts) 2_500L else 0L, TimeUnit.MILLISECONDS)''',
+        1,
+    )
+
+    forbidden = (
+        "v0.10.6 build134 · 首页关注与概览显示修复",
+        "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
+    )
+    if any(item in text for item in forbidden):
+        raise RuntimeError("obsolete v0.10.6 Settings/About text remains")
+
+    required = (
+        '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}',
+        'dashboardTopic = dashboardTopic',
+        'root.optString("dashboardTopic")',
+        'private val routerDashboardApi = HubApi(prefs, realtimeTimeouts = true)',
+        '.callTimeout(if (realtimeTimeouts) 2_500L else 0L, TimeUnit.MILLISECONDS)',
+        'onRouterDashboard = { raw ->',
+    )
+    missing = [item for item in required if item not in text]
+    if missing:
+        raise RuntimeError(f"build149 MainActivity verification failed: {missing}")
+
     MAIN.write_text(text, encoding="utf-8")
 
 
@@ -293,7 +401,7 @@ def patch_nat() -> None:
     )
     missing = [item for item in required if item not in text]
     if missing:
-        raise RuntimeError(f"build148 NAT verification failed: {missing}")
+        raise RuntimeError(f"build149 NAT verification failed: {missing}")
     ROUTER_NATIVE.write_text(text, encoding="utf-8")
 
 
@@ -301,7 +409,7 @@ def apply() -> None:
     patch_main()
     patch_router_status()
     patch_nat()
-    print("build148 realtime, version, NAT history and popup fixes applied")
+    print("build149 MQTT dashboard, Settings/About, HTTP fallback, NAT and popup fixes applied")
 
 
 if __name__ == "__main__":
