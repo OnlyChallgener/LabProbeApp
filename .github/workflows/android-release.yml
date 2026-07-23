@@ -81,6 +81,15 @@ jobs:
           fi
           exit $STATUS
 
+      - name: Verify realtime fix in generated sources
+        shell: bash
+        run: |
+          set -e
+          grep -q 'versionCode = 146' app/build.gradle.kts
+          grep -q 'onRouterDashboard = { raw ->' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'if (!state.routerDashboardMqttFresh())' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+          ! grep -q 'delay(if (state.mqttConnected) 15_000L else 20_000L)' app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
+
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
