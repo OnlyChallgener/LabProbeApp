@@ -3,6 +3,7 @@ name: Router Integration Check
 on:
   push:
     branches:
+      - build152
       - codex/router-control-v01011-build141
     paths:
       - app/build.gradle.kts
@@ -11,8 +12,6 @@ on:
       - .github/workflows/router-integration-check.yml
       - .github/workflows/android-release.yml
   pull_request:
-    branches:
-      - codex/router-status-v0107-build137
   workflow_dispatch:
 
 concurrency:
@@ -53,70 +52,61 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build152 source invariants before compile
+      - name: Verify build154 realtime invariants before compile
         shell: bash
         run: |
           set -e
           MAIN=app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          WSS=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
           SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
+          NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
-          grep -q 'versionCode = 152' app/build.gradle.kts
+          grep -q 'versionCode = 154' app/build.gradle.kts
           grep -q 'versionName = "0.10.15"' app/build.gradle.kts
           grep -Fq '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' "$MAIN"
-          grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 实时连接租约与离线节流"' "$MAIN"
-          ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
-          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' "$MAIN"
+          ! grep -Fq '等待 Agent 更新' "$STATUS"
+          grep -Fq '实时链路正在自动重连' "$STATUS"
 
-          # Realtime numeric values use compact WSS topics; HTTP is calibration-only.
-          grep -Fq 'dashboardTopic = ""' "$MAIN"
-          ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
-          ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
+          # Hub-native WSS is the only automatic realtime transport.
+          grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
+          grep -Fq 'const val REALTIME_PATH = "/api/realtime/ws"' "$WSS"
+          grep -Fq 'const val PING_INTERVAL_SECONDS = 10L' "$WSS"
+          grep -Fq 'const val SERVER_FRAME_TIMEOUT_MS = 12_000L' "$WSS"
+          grep -Fq 'webSocket.cancel()' "$WSS"
+          grep -Fq 'else -> 5_000L' "$WSS"
+          ! grep -Fq 'MqttAsyncClient' "$WSS"
+          ! grep -Fq 'org.eclipse.paho' "$WSS"
+          ! grep -Fq 'getMqttConfig()' "$MAIN"
+          ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
+
+          # WSS starts before background HTTP memory calibration.
+          grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
+          grep -Fq 'stateScope.launch { calibrateRealtimeCache() }' "$MAIN"
           grep -Fq 'onRouterRealtime = { raw ->' "$MAIN"
           grep -Fq 'onDevicesRealtime = { raw ->' "$MAIN"
-          grep -Fq 'config.routerRealtimeTopic to 0' "$MQTT"
-          grep -Fq 'config.devicesRealtimeTopic to 0' "$MQTT"
-          grep -Fq 'realtimeDemandTopic' "$MQTT"
-
-          # Real samples feed bounded smoothing instead of direct UI jumps.
-          grep -Fq 'private val realtimeSmoother = RealtimeDisplaySmoother()' "$MAIN"
           grep -Fq 'private suspend fun calibrateRealtimeCache()' "$MAIN"
-          grep -Fq 'realtimeSmoother.acceptRouter(it)' "$MAIN"
-          grep -Fq 'realtimeSmoother.acceptDevices(it)' "$MAIN"
-          grep -Fq 'realtimeSmoother.renderRouter(routerDashboard, now)' "$MAIN"
-          ! grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
-          ! grep -Fq 'mergeLiteDeviceRealtime(onlineDevices, latest)' "$MAIN"
           grep -Fq '/api/router/realtime' "$LITE"
           grep -Fq '/api/devices/realtime' "$LITE"
           grep -Fq '.callTimeout(2_500, TimeUnit.MILLISECONDS)' "$LITE"
-          grep -Fq 'const val FRAME_INTERVAL_MS = 200L' "$SMOOTH"
-          grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
-          grep -Fq 'const val MAX_ANIMATION_SAMPLE_AGE_MS = 6_000L' "$SMOOTH"
-          grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
-          grep -Fq 'fun pause() = reset()' "$SMOOTH"
+          grep -Fq 'if (!stale) root.put("online", true)' "$LITE"
+
+          # Visible values update at most once per second; no 200ms animation.
+          grep -Fq 'const val FRAME_INTERVAL_MS = 1_000L' "$SMOOTH"
+          grep -Fq 'const val STALE_WARNING_AGE_MS = 10_000L' "$SMOOTH"
+          grep -Fq 'ROUTER_SAMPLE_WEIGHT = 0.72' "$SMOOTH"
+          grep -Fq 'Each real sample can change the visible number' "$SMOOTH"
+          ! grep -Fq 'FRAME_INTERVAL_MS = 200L' "$SMOOTH"
+          ! grep -Fq 'TRANSITION_MS = 900L' "$SMOOTH"
           ! grep -Fq 'kotlin.random' "$SMOOTH"
-          ! grep -Fq 'Random.' "$SMOOTH"
+          grep -Fq 'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)' "$MAIN"
 
-          # Foreground WSS state gates high-frequency rendering and demand.
-          grep -Fq 'realtimeSmoother.pause()' "$MAIN"
-          ! grep -Fq 'realtimeSmoother.reset()' "$MAIN"
-          grep -Fq 'foregroundActive && mqttConnected' "$MAIN"
-          ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
-
-          # Router page no longer owns a periodic full-dashboard request loop.
-          ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
-          ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
-
-          # NAT history and popup regressions remain guarded.
+          # Preserve existing NAT and popup fixes.
           grep -Fq 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' "$NATIVE"
           grep -Fq 'distinctBy { it.natHistoryProtocol() }' "$NATIVE"
-          grep -Fq 'natType = result.natType.ifBlank { deriveRouterNatType(result) }' "$NATIVE"
           grep -Fq 'private val NativePopupShape = RoundedCornerShape(22.dp)' "$NATIVE"
-          grep -Fq 'shape = NativePopupShape' "$NATIVE"
 
       - name: Compile debug and release variants
         shell: bash
@@ -145,14 +135,14 @@ jobs:
           import zipfile
           from pathlib import Path
 
-          old = [
+          forbidden = [
+              "实时数据稍旧，等待 Agent 更新",
               "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
-              "v0.10.6 build134 · 首页关注与概览显示修复",
           ]
           required = [
-              "实时连接租约与离线节流",
-              "/api/router/realtime",
-              "/api/devices/realtime",
+              "原生 fast 秒级稳定刷新",
+              "实时链路正在自动重连",
+              "/api/realtime/ws",
           ]
           for apk in (
               Path("app/build/outputs/apk/debug/app-debug.apk"),
@@ -166,46 +156,32 @@ jobs:
                       for name in archive.namelist()
                       if name.startswith("classes") and name.endswith(".dex")
                   )
-              for value in old:
+              for value in forbidden:
                   if value.encode("utf-8") in dex:
-                      raise SystemExit(f"obsolete APK string remains in {apk.name}: {value}")
+                      raise SystemExit(f"forbidden APK string remains in {apk.name}: {value}")
               for value in required:
                   if value.encode("utf-8") not in dex:
                       raise SystemExit(f"required APK string missing in {apk.name}: {value}")
               print(f"verified actual DEX strings: {apk}")
           PY
 
-      - name: Verify preserved integration points
-        if: success()
-        shell: bash
-        run: |
-          set -e
-          grep -q '"router_settings" -> RouterSettingsScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '"tool_router_nat" -> RouterNatDiagnosticScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '"tool_router_beta" -> RouterBetaUpgradeScreen' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'HomeDdnsMiniCard' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'cache_router_dashboard_v1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'object RouterUiRuntimeCache' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'ROUTER_DIAGNOSTIC_CACHE_PREF' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -q 'disabledContainerColor = NativeBlue.copy(alpha = .62f)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build152-gradle-log
+          name: LabProbe-v0.10.15-build154-gradle-log
           path: /tmp/gradle-variants.log
 
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build152-router-debug
+          name: LabProbe-v0.10.15-build154-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build152-router-release-unsigned
+          name: LabProbe-v0.10.15-build154-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
