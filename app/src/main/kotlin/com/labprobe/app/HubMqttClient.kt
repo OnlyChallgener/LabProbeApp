@@ -29,9 +29,9 @@ sealed interface HubRealtimeState {
  * Foreground Hub-native WebSocket client.
  *
  * One authenticated WSS connection carries router fast and terminal deltas.
- * OkHttp protocol pings, Hub application keepalives and a local frame watchdog
- * jointly prevent half-open connections from sitting idle for tens of seconds.
- * HTTP remains calibration-only and is never an automatic realtime fallback.
+ * Protocol pings, Hub application keepalives and a local frame watchdog prevent
+ * half-open connections from sitting idle. HTTP is calibration-only and is
+ * never an automatic realtime fallback.
  */
 class HubRealtimeWebSocketClient(
     private val dnsProvider: () -> Dns,
@@ -44,6 +44,7 @@ class HubRealtimeWebSocketClient(
     @Volatile private var socket: WebSocket? = null
     @Volatile private var httpClient: OkHttpClient? = null
     @Volatile private var desired = false
+    @Volatile private var connecting = false
     @Volatile private var generation = 0L
     @Volatile private var activeUrl = ""
     @Volatile private var activeToken = ""
@@ -60,7 +61,7 @@ class HubRealtimeWebSocketClient(
             onState(HubRealtimeState.Disabled)
             return
         }
-        if (desired && activeUrl == url && activeToken == token && socket != null) return
+        if (desired && activeUrl == url && activeToken == token && (socket != null || connecting)) return
 
         generation += 1L
         val run = generation
@@ -74,6 +75,7 @@ class HubRealtimeWebSocketClient(
 
     fun stop() {
         desired = false
+        connecting = false
         generation += 1L
         reconnectJob?.cancel()
         reconnectJob = null
@@ -90,6 +92,7 @@ class HubRealtimeWebSocketClient(
     }
 
     private fun stopActiveSocket() {
+        connecting = false
         watchdogJob?.cancel()
         watchdogJob = null
         val currentSocket = socket
@@ -107,7 +110,8 @@ class HubRealtimeWebSocketClient(
     }
 
     private fun connect(run: Long, attempt: Int) {
-        if (!desired || run != generation) return
+        if (!desired || run != generation || connecting) return
+        connecting = true
         scope.launch {
             val targetUrl = activeUrl
             val token = activeToken
@@ -121,10 +125,12 @@ class HubRealtimeWebSocketClient(
                     .retryOnConnectionFailure(true)
                     .build()
             }.getOrElse {
+                connecting = false
                 scheduleReconnect(run, attempt, failureReason(it, "WSS 客户端初始化失败"))
                 return@launch
             }
             if (!desired || run != generation) {
+                connecting = false
                 shutdown(transport)
                 return@launch
             }
@@ -139,10 +145,12 @@ class HubRealtimeWebSocketClient(
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     if (!desired || run != generation) {
+                        connecting = false
                         webSocket.close(1000, "superseded")
                         return
                     }
                     opened = true
+                    connecting = false
                     socket = webSocket
                     lastFrameAt = SystemClock.elapsedRealtime()
                     startFrameWatchdog(run, webSocket)
@@ -170,22 +178,18 @@ class HubRealtimeWebSocketClient(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    connecting = false
                     release(webSocket, transport)
                     scheduleReconnect(run, if (opened) 0 else attempt, closeReason(code, reason))
                 }
 
                 override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
+                    connecting = false
                     release(webSocket, transport)
                     scheduleReconnect(run, if (opened) 0 else attempt, failureReason(throwable, "WSS 连接中断"))
                 }
             }
-            val created = transport.newWebSocket(request, listener)
-            if (!desired || run != generation) {
-                created.close(1000, "superseded")
-                shutdown(transport)
-                return@launch
-            }
-            if (socket == null) socket = created
+            transport.newWebSocket(request, listener)
         }
     }
 
