@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize harmless trailing whitespace before exact generated-source patches."""
+"""Normalize harmless formatting and canonical user-facing status wording."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,10 +18,14 @@ def apply() -> None:
         text = path.read_text(encoding="utf-8")
         had_final_newline = text.endswith("\n")
         normalized = "\n".join(line.rstrip() for line in text.splitlines())
+        normalized = normalized.replace(
+            "实时数据暂时未变化，保留上次结果",
+            "实时数据暂时未变化，已保留上次结果",
+        )
         if had_final_newline:
             normalized += "\n"
         path.write_text(normalized, encoding="utf-8")
-    print("build157 generated Kotlin source whitespace normalized")
+    print("build157 generated source formatting and status wording normalized")
 
 
 if __name__ == "__main__":
