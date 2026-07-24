@@ -5,6 +5,7 @@ from apply_next_release_fixes import apply as apply_next_release
 from apply_refresh_stability_fixes import apply as apply_refresh_stability
 from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
+from apply_build155_home_navigation_restore import apply as apply_build155_home_navigation
 from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_build149_about_compile_fix import apply as apply_build149_about_compile_fix
 from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
@@ -49,15 +50,16 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' in current
     )
 
-    # Final generated sources are authoritative. Always apply the newest patch
-    # last so older idempotent compatibility scripts cannot restore fast loops.
+    # Realtime migrations must never bypass the established home navigation.
+    # This runs before every fast-path build and is independently idempotent.
     if "private suspend fun calibrateRealtimeCache()" in current:
+        apply_build155_home_navigation()
         apply_build150_lite_realtime()
         apply_build151_smooth_realtime()
         apply_build152_connection_gate()
         apply_build153_single_wss()
         apply_build154_realtime_stability()
-        print("Android build154 WSS sources already prepared")
+        print("Android build154 WSS and build141 home navigation sources prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -88,4 +90,5 @@ if __name__ == "__main__":
     apply_build152_connection_gate()
     apply_build153_single_wss()
     apply_build154_realtime_stability()
-    print("Android source fixes prepared")
+    apply_build155_home_navigation()
+    print("Android source fixes and build141 home navigation prepared")
