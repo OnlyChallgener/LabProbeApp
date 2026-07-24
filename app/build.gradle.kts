@@ -31,7 +31,7 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 155
+        versionCode = 156
         versionName = "0.10.15"
     }
 
@@ -100,14 +100,14 @@ dependencies {
     implementation("com.github.mwiede:jsch:0.2.21")
 }
 
-val applyRouterUiFixes by tasks.registering(Exec::class) {
-    group = "build setup"
-    description = "Apply idempotent router settings, DDNS, diagnostic and navigation source fixes"
+val prepareAndroidSources by tasks.registering(Exec::class) {
     workingDir(rootProject.projectDir)
-    commandLine(System.getenv("PYTHON") ?: "python3", "scripts/prepare_android_sources.py")
+    commandLine("python3", "scripts/prepare_android_sources.py")
     onlyIf { System.getenv("LABPROBE_SKIP_SOURCE_PREPARE") != "1" }
 }
 
-tasks.matching { it.name == "preBuild" }.configureEach {
-    dependsOn(applyRouterUiFixes)
+tasks.configureEach {
+    if (name.startsWith("compile") || name.startsWith("assemble") || name.startsWith("bundle")) {
+        dependsOn(prepareAndroidSources)
+    }
 }
