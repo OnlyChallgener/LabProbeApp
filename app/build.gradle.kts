@@ -1,6 +1,5 @@
 import java.io.FileInputStream
 import java.util.Properties
-import org.gradle.api.tasks.Exec
 
 plugins {
     id("com.android.application")
@@ -98,16 +97,4 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.mwiede:jsch:0.2.21")
-}
-
-val prepareAndroidSources by tasks.registering(Exec::class) {
-    workingDir(rootProject.projectDir)
-    commandLine("python3", "scripts/prepare_android_sources.py")
-    onlyIf { System.getenv("LABPROBE_SKIP_SOURCE_PREPARE") != "1" }
-}
-
-tasks.configureEach {
-    if (name.startsWith("compile") || name.startsWith("assemble") || name.startsWith("bundle")) {
-        dependsOn(prepareAndroidSources)
-    }
 }
