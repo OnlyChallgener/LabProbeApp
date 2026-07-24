@@ -187,8 +187,8 @@ class HubRealtimeWebSocketClient(
         val base = normalizeHubBaseUrl(rawHub)
         if (base.isBlank()) return ""
         return when {
-            base.startsWith("https://", true) -> "wss://${base.substring(8)}/api/realtime/ws"
-            base.startsWith("http://", true) -> "ws://${base.substring(7)}/api/realtime/ws"
+            base.startsWith("https://", true) -> "wss://${base.substring(8)}$REALTIME_PATH"
+            base.startsWith("http://", true) -> "ws://${base.substring(7)}$REALTIME_PATH"
             else -> ""
         }
     }
@@ -213,5 +213,6 @@ class HubRealtimeWebSocketClient(
         const val CONNECT_TIMEOUT_SECONDS = 8L
         const val PING_INTERVAL_SECONDS = 15L
         const val MAX_RETRY_ATTEMPT = 5
+        const val REALTIME_PATH = "/api/realtime/ws"
     }
 }
