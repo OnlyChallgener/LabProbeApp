@@ -9,8 +9,8 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Dedicated small-payload client for foreground numeric telemetry.
- * It is intentionally independent from full sync, revisions and dashboard JSON.
+ * Dedicated small-payload client for initial/reconnect calibration only.
+ * Automatic realtime delivery uses the authenticated Hub-native WSS.
  */
 class LiteRealtimeApi(private val prefs: AppPrefs) {
     private val client = OkHttpClient.Builder()
@@ -78,8 +78,11 @@ fun mergeLiteRouterRealtime(base: JSONObject?, sample: JSONObject): JSONObject {
         root.put("telemetryEpoch", epochMs / 1000.0)
         root.put("telemetryAt", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(epochMs)))
     }
-    root.put("telemetryStale", sample.optBoolean("stale", false))
-    root.put("online", !sample.optBoolean("stale", false))
+    val stale = sample.optBoolean("stale", false)
+    root.put("telemetryStale", stale)
+    // A temporarily stale realtime stream is not proof that the router is
+    // offline. Keep the previous online state while WSS reconnects.
+    if (!stale) root.put("online", true)
     return root
 }
 
