@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify final generated Android sources used by APP build155."""
+"""Verify final generated Android sources used by APP build156."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,12 +40,12 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    for needle in ('versionCode = 155', 'versionName = "0.10.15"'):
+    for needle in ('versionCode = 156', 'versionName = "0.10.15"'):
         require(GRADLE, needle)
 
     for needle in (
         '版本 ${AppVersion.NAME} build ${AppVersion.CODE}',
-        '"v$NAME build$CODE · 长连接启动与路由功能恢复"',
+        '"v$NAME build$CODE · 路由字段与长连接完整修复"',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'stateScope.launch { calibrateRealtimeCache() }',
         'onRouterRealtime = { raw ->',
@@ -87,6 +87,12 @@ def main() -> None:
         '/api/devices/realtime',
         '.callTimeout(2_500, TimeUnit.MILLISECONDS)',
         'if (!stale) root.put("online", true)',
+        'sample.has("temperature2gC")',
+        'telemetry.put("temperature2gC"',
+        'sample.has("temperature5gC")',
+        'telemetry.put("temperature5gC"',
+        'sample.has("storagePercent")',
+        'telemetry.put("storagePercent"',
     ):
         require(LITE, needle)
 
@@ -103,6 +109,12 @@ def main() -> None:
     forbid(STATUS, '等待 Agent 更新')
     forbid(STATUS, '实时链路正在自动重连')
     require(STATUS, '实时数据暂时未变化，保留上次结果')
+    for needle in (
+        'temperature2g = jsonNumber(telemetry, "temperature2gC")',
+        'temperature5g = jsonNumber(telemetry, "temperature5gC")',
+        'telemetry.has("storagePercent")',
+    ):
+        require(STATUS, needle)
 
     # Exact home navigation and real router settings contract restored from build141.
     for needle in (
@@ -137,7 +149,7 @@ def main() -> None:
         require(NATIVE, needle)
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print("build155 startup, WSS keepalive, terminal state and real router routes verified")
+    print("build156 startup, WSS keepalive, terminal state, router fields and real routes verified")
 
 
 if __name__ == "__main__":
