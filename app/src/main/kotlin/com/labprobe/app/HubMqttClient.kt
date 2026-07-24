@@ -135,12 +135,14 @@ class HubRealtimeWebSocketClient(
                 .header("X-LabProbe-Token", token)
                 .header("Accept", "application/json")
                 .build()
+            var opened = false
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     if (!desired || run != generation) {
                         webSocket.close(1000, "superseded")
                         return
                     }
+                    opened = true
                     socket = webSocket
                     lastFrameAt = SystemClock.elapsedRealtime()
                     startFrameWatchdog(run, webSocket)
@@ -169,12 +171,12 @@ class HubRealtimeWebSocketClient(
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     release(webSocket, transport)
-                    scheduleReconnect(run, attempt, closeReason(code, reason))
+                    scheduleReconnect(run, if (opened) 0 else attempt, closeReason(code, reason))
                 }
 
                 override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
                     release(webSocket, transport)
-                    scheduleReconnect(run, attempt, failureReason(throwable, "WSS 连接中断"))
+                    scheduleReconnect(run, if (opened) 0 else attempt, failureReason(throwable, "WSS 连接中断"))
                 }
             }
             val created = transport.newWebSocket(request, listener)
@@ -183,7 +185,7 @@ class HubRealtimeWebSocketClient(
                 shutdown(transport)
                 return@launch
             }
-            socket = created
+            if (socket == null) socket = created
         }
     }
 
@@ -235,8 +237,7 @@ class HubRealtimeWebSocketClient(
     private fun retryDelayMs(attempt: Int): Long = when (attempt) {
         1 -> 1_000L
         2 -> 2_000L
-        3 -> 3_000L
-        else -> 5_000L
+        else -> 3_000L
     }
 
     private fun failureReason(error: Throwable?, fallback: String): String =
@@ -248,11 +249,11 @@ class HubRealtimeWebSocketClient(
     }
 
     private companion object {
-        const val CONNECT_TIMEOUT_SECONDS = 8L
-        const val PING_INTERVAL_SECONDS = 10L
-        const val WATCHDOG_INTERVAL_MS = 4_000L
-        const val SERVER_FRAME_TIMEOUT_MS = 12_000L
-        const val MAX_RETRY_ATTEMPT = 5
+        const val CONNECT_TIMEOUT_SECONDS = 6L
+        const val PING_INTERVAL_SECONDS = 8L
+        const val WATCHDOG_INTERVAL_MS = 1_000L
+        const val SERVER_FRAME_TIMEOUT_MS = 8_000L
+        const val MAX_RETRY_ATTEMPT = 3
         const val REALTIME_PATH = "/api/realtime/ws"
     }
 }
