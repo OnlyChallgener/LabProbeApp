@@ -20,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   build-variants:
@@ -42,17 +43,20 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Gradle 9.5.1
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.5.1
 
       - name: Prepare final Android sources once
+        id: prepare
         shell: bash
         run: |
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build154 realtime invariants before compile
+      - name: Verify build154 and home navigation invariants
+        id: verify
         shell: bash
         run: |
           set -e
@@ -63,50 +67,63 @@ jobs:
           SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
           NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
-          grep -q 'versionCode = 154' app/build.gradle.kts
-          grep -q 'versionName = "0.10.15"' app/build.gradle.kts
-          grep -Fq '版本 ${AppVersion.NAME} build ${AppVersion.CODE}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' "$MAIN"
-          ! grep -Fq '等待 Agent 更新' "$STATUS"
-          grep -Fq '实时链路正在自动重连' "$STATUS"
+          check() { grep -Fq "$2" "$1" || { echo "::error file=$1::missing invariant: $2"; exit 1; }; }
+          reject() { ! grep -Fq "$2" "$1" || { echo "::error file=$1::forbidden invariant remains: $2"; exit 1; }; }
 
-          grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
-          grep -Fq 'const val REALTIME_PATH = "/api/realtime/ws"' "$WSS"
-          grep -Fq 'const val PING_INTERVAL_SECONDS = 8L' "$WSS"
-          grep -Fq 'const val WATCHDOG_INTERVAL_MS = 1_000L' "$WSS"
-          grep -Fq 'const val SERVER_FRAME_TIMEOUT_MS = 8_000L' "$WSS"
-          grep -Fq 'const val MAX_RETRY_ATTEMPT = 3' "$WSS"
-          grep -Fq 'webSocket.cancel()' "$WSS"
-          grep -Fq 'else -> 3_000L' "$WSS"
-          ! grep -Fq 'MqttAsyncClient' "$WSS"
-          ! grep -Fq 'org.eclipse.paho' "$WSS"
-          ! grep -Fq 'getMqttConfig()' "$MAIN"
-          ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
+          check app/build.gradle.kts 'versionCode = 154'
+          check app/build.gradle.kts 'versionName = "0.10.15"'
+          check "$MAIN" '版本 ${AppVersion.NAME} build ${AppVersion.CODE}'
+          check "$MAIN" '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"'
+          reject "$STATUS" '等待 Agent 更新'
+          check "$STATUS" '实时链路正在自动重连'
 
-          grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
-          grep -Fq 'stateScope.launch { calibrateRealtimeCache() }' "$MAIN"
-          grep -Fq 'onRouterRealtime = { raw ->' "$MAIN"
-          grep -Fq 'onDevicesRealtime = { raw ->' "$MAIN"
-          grep -Fq 'private suspend fun calibrateRealtimeCache()' "$MAIN"
-          grep -Fq '/api/router/realtime' "$LITE"
-          grep -Fq '/api/devices/realtime' "$LITE"
-          grep -Fq '.callTimeout(2_500, TimeUnit.MILLISECONDS)' "$LITE"
-          grep -Fq 'if (!stale) root.put("online", true)' "$LITE"
+          check "$WSS" 'class HubRealtimeWebSocketClient'
+          check "$WSS" 'const val REALTIME_PATH = "/api/realtime/ws"'
+          check "$WSS" 'const val PING_INTERVAL_SECONDS = 8L'
+          check "$WSS" 'const val WATCHDOG_INTERVAL_MS = 1_000L'
+          check "$WSS" 'const val SERVER_FRAME_TIMEOUT_MS = 8_000L'
+          check "$WSS" 'const val MAX_RETRY_ATTEMPT = 3'
+          check "$WSS" 'webSocket.cancel()'
+          check "$WSS" 'else -> 3_000L'
+          reject "$WSS" 'MqttAsyncClient'
+          reject "$WSS" 'org.eclipse.paho'
+          reject "$MAIN" 'getMqttConfig()'
+          reject "$MAIN" 'LaunchedEffect(appForeground, state.mqttConnected)'
 
-          grep -Fq 'const val FRAME_INTERVAL_MS = 1_000L' "$SMOOTH"
-          grep -Fq 'const val STALE_WARNING_AGE_MS = 10_000L' "$SMOOTH"
-          grep -Fq 'ROUTER_SAMPLE_WEIGHT = 0.72' "$SMOOTH"
-          grep -Fq 'Each real sample can change the visible number' "$SMOOTH"
-          ! grep -Fq 'FRAME_INTERVAL_MS = 200L' "$SMOOTH"
-          ! grep -Fq 'TRANSITION_MS = 900L' "$SMOOTH"
-          ! grep -Fq 'kotlin.random' "$SMOOTH"
-          grep -Fq 'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)' "$MAIN"
+          check "$MAIN" 'realtimeClient.start(prefs.hub, prefs.token)'
+          check "$MAIN" 'stateScope.launch { calibrateRealtimeCache() }'
+          check "$MAIN" 'onRouterRealtime = { raw ->'
+          check "$MAIN" 'onDevicesRealtime = { raw ->'
+          check "$MAIN" 'private suspend fun calibrateRealtimeCache()'
+          check "$LITE" '/api/router/realtime'
+          check "$LITE" '/api/devices/realtime'
+          check "$LITE" '.callTimeout(2_500, TimeUnit.MILLISECONDS)'
+          check "$LITE" 'if (!stale) root.put("online", true)'
 
-          grep -Fq 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' "$NATIVE"
-          grep -Fq 'distinctBy { it.natHistoryProtocol() }' "$NATIVE"
-          grep -Fq 'private val NativePopupShape = RoundedCornerShape(22.dp)' "$NATIVE"
+          check "$SMOOTH" 'const val FRAME_INTERVAL_MS = 1_000L'
+          check "$SMOOTH" 'const val STALE_WARNING_AGE_MS = 10_000L'
+          check "$SMOOTH" 'ROUTER_SAMPLE_WEIGHT = 0.72'
+          check "$SMOOTH" 'Each real sample can change the visible number'
+          reject "$SMOOTH" 'FRAME_INTERVAL_MS = 200L'
+          reject "$SMOOTH" 'TRANSITION_MS = 900L'
+          reject "$SMOOTH" 'kotlin.random'
+          check "$MAIN" 'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)'
+
+          # Restore the exact home contract from router-control-v01011-build141.
+          check "$MAIN" 'RouterSettingsHomeCard { onNavigate("router_settings") }'
+          check "$MAIN" 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", LabV2.Purple, Modifier.weight(1f)) { onNavigate("tool_ssh") }'
+          check "$MAIN" 'HomeDdnsMiniCard('
+          check "$MAIN" 'onClick = { onNavigate("tool_router_ddns") }'
+          TOOLS="$(sed -n '/fun ToolsHomeScreen/,/fun ReorderableToolSection/p' "$MAIN")"
+          ! grep -Fq 'RouterFeatureRail(' <<<"$TOOLS" || { echo '::error::router feature rail must not remain in toolbox'; exit 1; }
+          ! grep -Fq 'var routerFirewallEnabled' <<<"$TOOLS" || { echo '::error::toolbox must not preload router settings data'; exit 1; }
+
+          check "$NATIVE" 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")'
+          check "$NATIVE" 'distinctBy { it.natHistoryProtocol() }'
+          check "$NATIVE" 'private val NativePopupShape = RoundedCornerShape(22.dp)'
 
       - name: Compile debug and release variants
+        id: compile
         shell: bash
         env:
           LABPROBE_SKIP_SOURCE_PREPARE: '1'
@@ -125,6 +142,7 @@ jobs:
           exit $STATUS
 
       - name: Inspect actual APK strings
+        id: inspect_apk
         if: success()
         shell: bash
         run: |
@@ -141,6 +159,9 @@ jobs:
               "原生 fast 秒级稳定刷新",
               "实时链路正在自动重连",
               "/api/realtime/ws",
+              "SSH",
+              "DDNS",
+              "路由器设置",
           ]
           for apk in (
               Path("app/build/outputs/apk/debug/app-debug.apk"),
@@ -163,12 +184,36 @@ jobs:
               print(f"verified actual DEX strings: {apk}")
           PY
 
+      - name: Publish connector-readable CI stage
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          APK_OUTCOME: ${{ steps.inspect_apk.outcome }}
+        with:
+          script: |
+            const stages = `prepare=${process.env.PREPARE_OUTCOME} verify=${process.env.VERIFY_OUTCOME} compile=${process.env.COMPILE_OUTCOME} apk=${process.env.APK_OUTCOME}`;
+            const ok = [process.env.PREPARE_OUTCOME, process.env.VERIFY_OUTCOME, process.env.COMPILE_OUTCOME, process.env.APK_OUTCOME]
+              .every(value => value === 'success');
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: ok ? 'success' : 'failure',
+              context: 'labprobe/router-integration-stage',
+              description: stages.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: LabProbe-v0.10.15-build154-gradle-log
           path: /tmp/gradle-variants.log
+          if-no-files-found: ignore
 
       - name: Upload debug APK
         if: success()
