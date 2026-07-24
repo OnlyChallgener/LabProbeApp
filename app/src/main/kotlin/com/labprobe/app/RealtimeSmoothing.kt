@@ -3,24 +3,27 @@ package com.labprobe.app
 import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToLong
 
 /**
- * Presentation-only smoothing for small realtime samples.
+ * One-second presentation filter for compact realtime samples.
  *
- * Real values and sample timestamps remain authoritative. Continuous values move
- * toward the newest real target over a short window; integer/event values change
- * immediately. No extrapolation or random movement is generated. When the real
- * sample becomes old the animation stops at the last real target. When the APP
- * loses the Hub lease, pause() discards presentation tracks immediately while the
- * already-rendered UI keeps its last valid values.
+ * A router ``fast`` frame may arrive about once per second and terminal samples
+ * about once every two seconds. Each real sample can change the visible number
+ * at most once; there is no 200 ms animation loop and no generated intermediate
+ * sequence. Continuous values use a single EMA step, while connection counts and
+ * online/offline events always use the latest real integers.
  */
 class RealtimeDisplaySmoother {
     companion object {
-        const val FRAME_INTERVAL_MS = 200L
-        const val TRANSITION_MS = 900L
-        const val MAX_ANIMATION_SAMPLE_AGE_MS = 6_000L
-        const val STALE_WARNING_AGE_MS = 8_000L
+        const val FRAME_INTERVAL_MS = 1_000L
+        const val STALE_WARNING_AGE_MS = 10_000L
+        private const val ROUTER_SAMPLE_WEIGHT = 0.72
+        private const val DEVICE_SAMPLE_WEIGHT = 0.72
+        private const val SLOW_METRIC_WEIGHT = 0.58
     }
 
     private data class RouterVector(
@@ -51,31 +54,38 @@ class RealtimeDisplaySmoother {
     )
 
     private data class DeviceTrack(
-        val fromUpload: Double,
-        val fromDownload: Double,
-        val targetUpload: Double,
-        val targetDownload: Double,
-        val connectionCount: Int,
-        val startedAt: Long,
-        val animate: Boolean,
+        var displayedUpload: Double,
+        var displayedDownload: Double,
+        var targetUpload: Double,
+        var targetDownload: Double,
+        var connectionCount: Int,
+        var dirty: Boolean,
     )
 
-    private var routerHasSample = false
-    private var routerFrom = RouterVector()
+    private data class DeviceDisplay(
+        val uploadBps: Long,
+        val downloadBps: Long,
+        val connectionCount: Int,
+    )
+
+    private var routerInitialized = false
+    private var routerDisplayed = RouterVector()
     private var routerTarget = RouterVector()
     private var routerDiscrete = RouterDiscrete()
-    private var routerStartedAt = 0L
-    private var routerAnimate = false
+    private var routerDirty = false
     private var routerSampleEpochMs = 0L
     private var routerInitialAgeMs = Long.MAX_VALUE
     private var routerReceivedAt = 0L
     private var lastRouterRender: RouterRenderKey? = null
 
     private val deviceTracks = LinkedHashMap<String, DeviceTrack>()
+    private val deviceDisplaySnapshot = LinkedHashMap<String, DeviceDisplay>()
+    private var devicesDirty = false
     private var devicesSampleEpochMs = 0L
     private var devicesInitialAgeMs = Long.MAX_VALUE
     private var devicesReceivedAt = 0L
     private var devicesOnlineCount: Int? = null
+    private var lastDevicePreparedAt = Long.MIN_VALUE
 
     fun acceptRouter(payload: JSONObject, now: Long = SystemClock.elapsedRealtime()) {
         val epochMs = payload.optLong("sampleEpochMs", 0L)
@@ -96,14 +106,12 @@ class RealtimeDisplaySmoother {
             memoryPercent = payload.optDouble("memoryPercent", 0.0).coerceAtLeast(0.0),
             temperatureC = payload.optDouble("temperatureC", 0.0),
         )
-        val current = if (routerHasSample) routerVectorAt(now) else target
-        val freshEnoughToAnimate = routerHasSample && ageMs <= MAX_ANIMATION_SAMPLE_AGE_MS
-
-        routerFrom = current
+        if (!routerInitialized) {
+            routerDisplayed = target
+            routerInitialized = true
+        }
         routerTarget = target
-        routerStartedAt = now
-        routerAnimate = freshEnoughToAnimate && current != target
-        routerHasSample = true
+        routerDirty = true
         routerSampleEpochMs = epochMs
         routerInitialAgeMs = ageMs
         routerReceivedAt = now
@@ -137,47 +145,59 @@ class RealtimeDisplaySmoother {
         if (payload.has("onlineDeviceCount")) {
             devicesOnlineCount = payload.optInt("onlineDeviceCount", 0).coerceAtLeast(0)
         }
-        val freshEnoughToAnimate = devicesSampleEpochMs > 0L && ageMs <= MAX_ANIMATION_SAMPLE_AGE_MS
         val seen = HashSet<String>(rows.length())
         for (index in 0 until rows.length()) {
             val row = rows.optJSONObject(index) ?: continue
             val mac = cleanMac(row.optString("mac"))
             if (mac.isBlank()) continue
             seen += mac
-            val previous = deviceTracks[mac]
-            val current = previous?.let { deviceValuesAt(it, now) }
-                ?: (row.optLong("uploadBps", 0L).coerceAtLeast(0L).toDouble() to
-                    row.optLong("downloadBps", 0L).coerceAtLeast(0L).toDouble())
             val targetUpload = row.optLong("uploadBps", 0L).coerceAtLeast(0L).toDouble()
             val targetDownload = row.optLong("downloadBps", 0L).coerceAtLeast(0L).toDouble()
-            deviceTracks[mac] = DeviceTrack(
-                fromUpload = current.first,
-                fromDownload = current.second,
-                targetUpload = targetUpload,
-                targetDownload = targetDownload,
-                connectionCount = row.optInt("connectionCount", 0).coerceAtLeast(0),
-                startedAt = now,
-                animate = freshEnoughToAnimate &&
-                    (current.first != targetUpload || current.second != targetDownload),
-            )
+            val previous = deviceTracks[mac]
+            if (previous == null) {
+                deviceTracks[mac] = DeviceTrack(
+                    displayedUpload = targetUpload,
+                    displayedDownload = targetDownload,
+                    targetUpload = targetUpload,
+                    targetDownload = targetDownload,
+                    connectionCount = row.optInt("connectionCount", 0).coerceAtLeast(0),
+                    dirty = true,
+                )
+            } else {
+                previous.targetUpload = targetUpload
+                previous.targetDownload = targetDownload
+                previous.connectionCount = row.optInt("connectionCount", 0).coerceAtLeast(0)
+                previous.dirty = true
+            }
         }
         if (!delta) deviceTracks.keys.retainAll(seen)
+        devicesDirty = true
         devicesSampleEpochMs = epochMs
         devicesInitialAgeMs = ageMs
         devicesReceivedAt = now
+        lastDevicePreparedAt = Long.MIN_VALUE
     }
 
     fun renderRouter(base: JSONObject?, now: Long = SystemClock.elapsedRealtime()): JSONObject? {
-        if (!routerHasSample) return null
+        if (!routerInitialized) return null
         val ageMs = effectiveAge(routerInitialAgeMs, routerReceivedAt, now)
         val stale = ageMs > STALE_WARNING_AGE_MS
-        val vector = if (ageMs > MAX_ANIMATION_SAMPLE_AGE_MS) routerTarget else routerVectorAt(now)
+        if (routerDirty) {
+            routerDisplayed = RouterVector(
+                uploadBps = blendRate(routerDisplayed.uploadBps, routerTarget.uploadBps, ROUTER_SAMPLE_WEIGHT),
+                downloadBps = blendRate(routerDisplayed.downloadBps, routerTarget.downloadBps, ROUTER_SAMPLE_WEIGHT),
+                cpuPercent = blend(routerDisplayed.cpuPercent, routerTarget.cpuPercent, SLOW_METRIC_WEIGHT),
+                memoryPercent = blend(routerDisplayed.memoryPercent, routerTarget.memoryPercent, SLOW_METRIC_WEIGHT),
+                temperatureC = blend(routerDisplayed.temperatureC, routerTarget.temperatureC, SLOW_METRIC_WEIGHT),
+            )
+            routerDirty = false
+        }
         val rounded = RouterVector(
-            uploadBps = vector.uploadBps.roundToLong().toDouble(),
-            downloadBps = vector.downloadBps.roundToLong().toDouble(),
-            cpuPercent = roundedTenth(vector.cpuPercent),
-            memoryPercent = roundedTenth(vector.memoryPercent),
-            temperatureC = roundedTenth(vector.temperatureC),
+            uploadBps = routerDisplayed.uploadBps.roundToLong().toDouble(),
+            downloadBps = routerDisplayed.downloadBps.roundToLong().toDouble(),
+            cpuPercent = roundedTenth(routerDisplayed.cpuPercent),
+            memoryPercent = roundedTenth(routerDisplayed.memoryPercent),
+            temperatureC = roundedTenth(routerDisplayed.temperatureC),
         )
         val discrete = devicesOnlineCount?.let { routerDiscrete.copy(onlineDeviceCount = it) } ?: routerDiscrete
         val key = RouterRenderKey(rounded, discrete, routerSampleEpochMs, stale)
@@ -210,80 +230,95 @@ class RealtimeDisplaySmoother {
 
     fun renderDevices(items: List<DeviceItem>, now: Long = SystemClock.elapsedRealtime()): List<DeviceItem> {
         if (items.isEmpty() || deviceTracks.isEmpty()) return items
-        val ageMs = effectiveAge(devicesInitialAgeMs, devicesReceivedAt, now)
-        val allowAnimation = ageMs <= MAX_ANIMATION_SAMPLE_AGE_MS
+        prepareDeviceDisplay(now)
+        if (deviceDisplaySnapshot.isEmpty()) return items
         var changed = false
         val next = items.map { item ->
-            val track = deviceTracks[cleanMac(item.mac)] ?: return@map item
-            val values = if (allowAnimation) deviceValuesAt(track, now) else track.targetUpload to track.targetDownload
-            val upload = values.first.roundToLong().coerceAtLeast(0L)
-            val download = values.second.roundToLong().coerceAtLeast(0L)
+            val value = deviceDisplaySnapshot[cleanMac(item.mac)] ?: return@map item
             if (
-                item.realtimeUploadBytes == upload &&
-                item.realtimeDownloadBytes == download &&
-                item.connectionCount == track.connectionCount
+                item.realtimeUploadBytes == value.uploadBps &&
+                item.realtimeDownloadBytes == value.downloadBps &&
+                item.connectionCount == value.connectionCount
             ) {
                 item
             } else {
                 changed = true
                 item.copy(
-                    realtimeUploadBytes = upload,
-                    realtimeDownloadBytes = download,
-                    connectionCount = track.connectionCount,
+                    realtimeUploadBytes = value.uploadBps,
+                    realtimeDownloadBytes = value.downloadBps,
+                    connectionCount = value.connectionCount,
                 )
             }
         }
         return if (changed) next else items
     }
 
-    /** Pause presentation work without erasing the already-rendered UI values. */
+    private fun prepareDeviceDisplay(now: Long) {
+        if (lastDevicePreparedAt == now) return
+        if (devicesDirty) {
+            for (track in deviceTracks.values) {
+                if (!track.dirty) continue
+                track.displayedUpload = blendRate(track.displayedUpload, track.targetUpload, DEVICE_SAMPLE_WEIGHT)
+                track.displayedDownload = blendRate(track.displayedDownload, track.targetDownload, DEVICE_SAMPLE_WEIGHT)
+                track.dirty = false
+            }
+            deviceDisplaySnapshot.clear()
+            for ((mac, track) in deviceTracks) {
+                deviceDisplaySnapshot[mac] = DeviceDisplay(
+                    uploadBps = track.displayedUpload.roundToLong().coerceAtLeast(0L),
+                    downloadBps = track.displayedDownload.roundToLong().coerceAtLeast(0L),
+                    connectionCount = track.connectionCount,
+                )
+            }
+            devicesDirty = false
+        }
+        lastDevicePreparedAt = now
+    }
+
+    /** Pause presentation work without erasing values already shown by Compose. */
     fun pause() = reset()
 
     fun reset() {
-        routerHasSample = false
-        routerFrom = RouterVector()
+        routerInitialized = false
+        routerDisplayed = RouterVector()
         routerTarget = RouterVector()
         routerDiscrete = RouterDiscrete()
+        routerDirty = false
         routerSampleEpochMs = 0L
         routerInitialAgeMs = Long.MAX_VALUE
         routerReceivedAt = 0L
         lastRouterRender = null
         deviceTracks.clear()
+        deviceDisplaySnapshot.clear()
+        devicesDirty = false
         devicesSampleEpochMs = 0L
         devicesInitialAgeMs = Long.MAX_VALUE
         devicesReceivedAt = 0L
         devicesOnlineCount = null
+        lastDevicePreparedAt = Long.MIN_VALUE
     }
 
-    private fun routerVectorAt(now: Long): RouterVector {
-        if (!routerAnimate) return routerTarget
-        val progress = progress(routerStartedAt, now)
-        if (progress >= 1.0) {
-            routerAnimate = false
-            return routerTarget
+    private fun blend(previous: Double, target: Double, weight: Double): Double {
+        if (!previous.isFinite() || previous == 0.0) return target
+        if (!target.isFinite()) return previous
+        return previous + (target - previous) * weight
+    }
+
+    private fun blendRate(previous: Double, target: Double, baseWeight: Double): Double {
+        if (!previous.isFinite() || previous <= 0.0) return target.coerceAtLeast(0.0)
+        if (!target.isFinite()) return previous.coerceAtLeast(0.0)
+        if (target <= 0.0) return previous * 0.28
+        val low = min(previous, target).coerceAtLeast(1.0)
+        val high = max(previous, target)
+        val ratio = high / low
+        val weight = when {
+            ratio >= 8.0 -> 0.88
+            ratio >= 3.0 -> 0.80
+            abs(target - previous) < 512.0 -> 0.58
+            else -> baseWeight
         }
-        return RouterVector(
-            uploadBps = interpolate(routerFrom.uploadBps, routerTarget.uploadBps, progress),
-            downloadBps = interpolate(routerFrom.downloadBps, routerTarget.downloadBps, progress),
-            cpuPercent = interpolate(routerFrom.cpuPercent, routerTarget.cpuPercent, progress),
-            memoryPercent = interpolate(routerFrom.memoryPercent, routerTarget.memoryPercent, progress),
-            temperatureC = interpolate(routerFrom.temperatureC, routerTarget.temperatureC, progress),
-        )
+        return blend(previous, target, weight).coerceAtLeast(0.0)
     }
-
-    private fun deviceValuesAt(track: DeviceTrack, now: Long): Pair<Double, Double> {
-        if (!track.animate) return track.targetUpload to track.targetDownload
-        val progress = progress(track.startedAt, now)
-        return interpolate(track.fromUpload, track.targetUpload, progress) to
-            interpolate(track.fromDownload, track.targetDownload, progress)
-    }
-
-    private fun progress(startedAt: Long, now: Long): Double {
-        val linear = ((now - startedAt).coerceAtLeast(0L).toDouble() / TRANSITION_MS).coerceIn(0.0, 1.0)
-        return linear * linear * (3.0 - 2.0 * linear)
-    }
-
-    private fun interpolate(from: Double, to: Double, progress: Double): Double = from + (to - from) * progress
 
     private fun roundedTenth(value: Double): Double = (value * 10.0).roundToLong() / 10.0
 
