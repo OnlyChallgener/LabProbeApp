@@ -108,7 +108,11 @@ fun decodeHomeVpnRows(raw: String): List<Pair<String, String>> = runCatching {
         "val liveVpnRows = remember",
         "decodeHomeVpnRows(prefs.cacheVpnRowsJson)",
         "prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)",
+        '"router" -> RouterSettingsHomeCard { onNavigate("router_settings") }',
         '"vpn" -> HealthVpnCard(',
+        'onClick = { onNavigate("tool_router_ddns") }',
+        '"score,mini,router,exit,vpn,devices,today"',
+        'listOf("score", "mini", "router", "exit", "vpn", "devices", "today")',
         "正在等待 STUN 地址同步，获取后会保留上次有效地址。",
         "fun encodeHomeVpnRows",
         "fun decodeHomeVpnRows",
@@ -116,11 +120,15 @@ fun decodeHomeVpnRows(raw: String): List<Pair<String, String>> = runCatching {
     missing = [needle for needle in required if needle not in text]
     if missing:
         raise RuntimeError(f"build157 STUN card verification failed: {missing}")
-    if '"vpn" -> if (vpnRows.isNotEmpty())' in text:
-        raise RuntimeError("build157 STUN card is still conditionally hidden")
+    for forbidden in (
+        '"vpn" -> if (vpnRows.isNotEmpty())',
+        '"vpn" -> RouterSettingsHomeCard',
+    ):
+        if forbidden in text:
+            raise RuntimeError(f"build157 home card regression remains: {forbidden}")
 
     MAIN.write_text(text, encoding="utf-8")
-    print("build157 home VPN/STUN address card restored with last-value cache")
+    print("build157 separate router settings and cached VPN/STUN address cards verified")
 
 
 if __name__ == "__main__":
