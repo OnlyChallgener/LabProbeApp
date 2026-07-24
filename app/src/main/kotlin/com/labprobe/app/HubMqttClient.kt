@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,9 +28,10 @@ sealed interface HubRealtimeState {
 /**
  * Foreground Hub-native WebSocket client.
  *
- * The handshake is authenticated by the existing APP_TOKEN.  There is no MQTT
- * broker URL, account, password, topic subscription, or automatic HTTP
- * fallback in this realtime path.
+ * One authenticated WSS connection carries router fast and terminal deltas.
+ * OkHttp protocol pings, Hub application keepalives and a local frame watchdog
+ * jointly prevent half-open connections from sitting idle for tens of seconds.
+ * HTTP remains calibration-only and is never an automatic realtime fallback.
  */
 class HubRealtimeWebSocketClient(
     private val dnsProvider: () -> Dns,
@@ -46,7 +48,9 @@ class HubRealtimeWebSocketClient(
     @Volatile private var activeUrl = ""
     @Volatile private var activeToken = ""
     @Volatile private var hasConnectedBefore = false
+    @Volatile private var lastFrameAt = 0L
     private var reconnectJob: Job? = null
+    private var watchdogJob: Job? = null
 
     fun start(hubAddress: String, appToken: String) {
         val url = realtimeUrl(hubAddress)
@@ -74,6 +78,7 @@ class HubRealtimeWebSocketClient(
         reconnectJob?.cancel()
         reconnectJob = null
         hasConnectedBefore = false
+        lastFrameAt = 0L
         activeUrl = ""
         activeToken = ""
         stopActiveSocket()
@@ -85,13 +90,20 @@ class HubRealtimeWebSocketClient(
     }
 
     private fun stopActiveSocket() {
+        watchdogJob?.cancel()
+        watchdogJob = null
         val currentSocket = socket
         socket = null
         runCatching { currentSocket?.close(1000, "foreground stopped") }
         val currentClient = httpClient
         httpClient = null
-        runCatching { currentClient?.dispatcher?.executorService?.shutdown() }
-        runCatching { currentClient?.connectionPool?.evictAll() }
+        shutdown(currentClient)
+    }
+
+    private fun shutdown(client: OkHttpClient?) {
+        if (client == null) return
+        runCatching { client.dispatcher.executorService.shutdown() }
+        runCatching { client.connectionPool.evictAll() }
     }
 
     private fun connect(run: Long, attempt: Int) {
@@ -113,7 +125,7 @@ class HubRealtimeWebSocketClient(
                 return@launch
             }
             if (!desired || run != generation) {
-                transport.dispatcher.executorService.shutdown()
+                shutdown(transport)
                 return@launch
             }
             httpClient = transport
@@ -129,6 +141,9 @@ class HubRealtimeWebSocketClient(
                         webSocket.close(1000, "superseded")
                         return
                     }
+                    socket = webSocket
+                    lastFrameAt = SystemClock.elapsedRealtime()
+                    startFrameWatchdog(run, webSocket)
                     val reconnect = hasConnectedBefore
                     hasConnectedBefore = true
                     onState(HubRealtimeState.Connected)
@@ -137,11 +152,14 @@ class HubRealtimeWebSocketClient(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     if (!desired || run != generation) return
+                    lastFrameAt = SystemClock.elapsedRealtime()
                     val root = runCatching { JSONObject(text) }.getOrNull() ?: return
-                    val data = root.optJSONObject("data") ?: return
-                    when (root.optString("type")) {
-                        "router" -> onRouterRealtime(data.toString())
-                        "devices" -> onDevicesRealtime(data.toString())
+                    val type = root.optString("type")
+                    val data = root.optJSONObject("data")
+                    when (type) {
+                        "router" -> if (data != null) onRouterRealtime(data.toString())
+                        "devices" -> if (data != null) onDevicesRealtime(data.toString())
+                        "ready", "keepalive" -> Unit
                     }
                 }
 
@@ -150,26 +168,47 @@ class HubRealtimeWebSocketClient(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    release(webSocket)
+                    release(webSocket, transport)
                     scheduleReconnect(run, attempt, closeReason(code, reason))
                 }
 
                 override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
-                    release(webSocket)
+                    release(webSocket, transport)
                     scheduleReconnect(run, attempt, failureReason(throwable, "WSS 连接中断"))
                 }
             }
             val created = transport.newWebSocket(request, listener)
             if (!desired || run != generation) {
                 created.close(1000, "superseded")
+                shutdown(transport)
                 return@launch
             }
             socket = created
         }
     }
 
-    private fun release(webSocket: WebSocket) {
-        if (socket === webSocket) socket = null
+    private fun startFrameWatchdog(run: Long, webSocket: WebSocket) {
+        watchdogJob?.cancel()
+        watchdogJob = scope.launch {
+            while (desired && run == generation && socket === webSocket) {
+                delay(WATCHDOG_INTERVAL_MS)
+                val last = lastFrameAt
+                if (last > 0L && SystemClock.elapsedRealtime() - last >= SERVER_FRAME_TIMEOUT_MS) {
+                    webSocket.cancel()
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun release(webSocket: WebSocket, transport: OkHttpClient) {
+        if (socket === webSocket) {
+            socket = null
+            watchdogJob?.cancel()
+            watchdogJob = null
+        }
+        if (httpClient === transport) httpClient = null
+        shutdown(transport)
     }
 
     private fun scheduleReconnect(run: Long, attempt: Int, reason: String) {
@@ -196,9 +235,8 @@ class HubRealtimeWebSocketClient(
     private fun retryDelayMs(attempt: Int): Long = when (attempt) {
         1 -> 1_000L
         2 -> 2_000L
-        3 -> 4_000L
-        4 -> 8_000L
-        else -> 15_000L
+        3 -> 3_000L
+        else -> 5_000L
     }
 
     private fun failureReason(error: Throwable?, fallback: String): String =
@@ -211,7 +249,9 @@ class HubRealtimeWebSocketClient(
 
     private companion object {
         const val CONNECT_TIMEOUT_SECONDS = 8L
-        const val PING_INTERVAL_SECONDS = 15L
+        const val PING_INTERVAL_SECONDS = 10L
+        const val WATCHDOG_INTERVAL_MS = 4_000L
+        const val SERVER_FRAME_TIMEOUT_MS = 12_000L
         const val MAX_RETRY_ATTEMPT = 5
         const val REALTIME_PATH = "/api/realtime/ws"
     }
