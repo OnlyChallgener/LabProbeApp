@@ -67,8 +67,9 @@ jobs:
           SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
           NATIVE=app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
-          check() { grep -Fq "$2" "$1" || { echo "::error file=$1::missing invariant: $2"; exit 1; }; }
-          reject() { ! grep -Fq "$2" "$1" || { echo "::error file=$1::forbidden invariant remains: $2"; exit 1; }; }
+          fail() { printf '%s' "$1" > /tmp/labprobe-ci-error.txt; echo "::error::$1"; exit 1; }
+          check() { grep -Fq "$2" "$1" || fail "missing $(basename "$1"): $2"; }
+          reject() { ! grep -Fq "$2" "$1" || fail "forbidden $(basename "$1"): $2"; }
 
           check app/build.gradle.kts 'versionCode = 154'
           check app/build.gradle.kts 'versionName = "0.10.15"'
@@ -109,14 +110,13 @@ jobs:
           reject "$SMOOTH" 'kotlin.random'
           check "$MAIN" 'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)'
 
-          # Restore the exact home contract from router-control-v01011-build141.
           check "$MAIN" 'RouterSettingsHomeCard { onNavigate("router_settings") }'
           check "$MAIN" 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", LabV2.Purple, Modifier.weight(1f)) { onNavigate("tool_ssh") }'
           check "$MAIN" 'HomeDdnsMiniCard('
           check "$MAIN" 'onClick = { onNavigate("tool_router_ddns") }'
           TOOLS="$(sed -n '/fun ToolsHomeScreen/,/fun ReorderableToolSection/p' "$MAIN")"
-          ! grep -Fq 'RouterFeatureRail(' <<<"$TOOLS" || { echo '::error::router feature rail must not remain in toolbox'; exit 1; }
-          ! grep -Fq 'var routerFirewallEnabled' <<<"$TOOLS" || { echo '::error::toolbox must not preload router settings data'; exit 1; }
+          ! grep -Fq 'RouterFeatureRail(' <<<"$TOOLS" || fail 'router feature rail remains in toolbox'
+          ! grep -Fq 'var routerFirewallEnabled' <<<"$TOOLS" || fail 'toolbox still preloads router settings data'
 
           check "$NATIVE" 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")'
           check "$NATIVE" 'distinctBy { it.natHistoryProtocol() }'
@@ -132,6 +132,7 @@ jobs:
           gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-variants.log 2>&1
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
+            printf '%s' 'Gradle/Kotlin compile failed' > /tmp/labprobe-ci-error.txt
             echo "===== Kotlin/compiler errors ====="
             grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 280 || true
             echo "===== Gradle tail ====="
@@ -168,6 +169,7 @@ jobs:
               Path("app/build/outputs/apk/release/app-release-unsigned.apk"),
           ):
               if not apk.exists():
+                  Path('/tmp/labprobe-ci-error.txt').write_text(f'missing APK: {apk}', encoding='utf-8')
                   raise SystemExit(f"missing APK: {apk}")
               with zipfile.ZipFile(apk) as archive:
                   dex = b"".join(
@@ -177,9 +179,11 @@ jobs:
                   )
               for value in forbidden:
                   if value.encode("utf-8") in dex:
+                      Path('/tmp/labprobe-ci-error.txt').write_text(f'forbidden APK text: {value}', encoding='utf-8')
                       raise SystemExit(f"forbidden APK string remains in {apk.name}: {value}")
               for value in required:
                   if value.encode("utf-8") not in dex:
+                      Path('/tmp/labprobe-ci-error.txt').write_text(f'missing APK text: {value}', encoding='utf-8')
                       raise SystemExit(f"required APK string missing in {apk.name}: {value}")
               print(f"verified actual DEX strings: {apk}")
           PY
@@ -194,16 +198,21 @@ jobs:
           APK_OUTCOME: ${{ steps.inspect_apk.outcome }}
         with:
           script: |
+            const fs = require('fs');
             const stages = `prepare=${process.env.PREPARE_OUTCOME} verify=${process.env.VERIFY_OUTCOME} compile=${process.env.COMPILE_OUTCOME} apk=${process.env.APK_OUTCOME}`;
             const ok = [process.env.PREPARE_OUTCOME, process.env.VERIFY_OUTCOME, process.env.COMPILE_OUTCOME, process.env.APK_OUTCOME]
               .every(value => value === 'success');
+            let detail = stages;
+            if (fs.existsSync('/tmp/labprobe-ci-error.txt')) {
+              detail = fs.readFileSync('/tmp/labprobe-ci-error.txt', 'utf8').trim() || stages;
+            }
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: context.sha,
               state: ok ? 'success' : 'failure',
               context: 'labprobe/router-integration-stage',
-              description: stages.slice(0, 140),
+              description: detail.slice(0, 140),
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
