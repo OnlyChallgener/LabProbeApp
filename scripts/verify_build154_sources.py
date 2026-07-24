@@ -64,6 +64,14 @@ def main() -> None:
         'mergeRouterDashboardSnapshot(previous, latest)',
         'val realtimeAlive = mqttConnected',
         '实时链路正常，完整数据同步暂时失败，已保留上次数据',
+        'cacheVpnRowsJson',
+        'val liveVpnRows = remember',
+        'decodeHomeVpnRows(prefs.cacheVpnRowsJson)',
+        'prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)',
+        '"vpn" -> HealthVpnCard(',
+        '正在等待 STUN 地址同步，获取后会保留上次有效地址。',
+        'fun encodeHomeVpnRows',
+        'fun decodeHomeVpnRows',
     ):
         require(MAIN, needle)
     for needle in (
@@ -72,6 +80,7 @@ def main() -> None:
         'if (!foregroundActive || !mqttConnected) return@launch',
         'message = "正在重连 ${next.attempt}/${next.maxAttempts}"',
         'subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步"',
+        '"vpn" -> if (vpnRows.isNotEmpty())',
     ):
         forbid(MAIN, needle)
 
@@ -198,7 +207,7 @@ def main() -> None:
         require(ROUTER_SETTINGS, needle)
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print("build157 router UX, Chinese text, cache, WSS and real routes verified")
+    print("build157 router UX, Chinese text, cache, STUN card, WSS and real routes verified")
 
 
 if __name__ == "__main__":
