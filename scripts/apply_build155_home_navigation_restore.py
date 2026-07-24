@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Restore the home navigation contract from router-control build141.
+"""Restore home navigation without replacing the original VPN/STUN address card.
 
-This patch is intentionally independent from realtime/WSS migrations. It keeps:
-- the router settings entry on the home page;
-- the compact home shortcut opening SSH;
-- the dedicated DDNS card opening the router DDNS page;
-- router feature management out of the toolbox overview.
+Final contract:
+- router settings has its own reorderable Home card;
+- the score shortcut opens SSH;
+- the compact second card is DDNS;
+- the original VPN/STUN address card remains and opens DDNS;
+- router management stays out of the toolbox overview.
 """
 from pathlib import Path
 import re
@@ -57,8 +58,34 @@ def apply() -> None:
                         onClick = { onNavigate("events") }
                     )'''
     old_big_ddns = old_big_events.replace('onNavigate("events")', 'onNavigate("tool_router_ddns")')
-    router_card = '                    "vpn" -> RouterSettingsHomeCard { onNavigate("router_settings") }'
-    text = replace_any(text, (old_big_events, old_big_ddns), router_card, "home router settings card")
+    old_bad_router_only = '                    "vpn" -> RouterSettingsHomeCard { onNavigate("router_settings") }'
+    router_and_stun = '''                    "router" -> RouterSettingsHomeCard { onNavigate("router_settings") }
+                    "vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(
+                        rows = vpnRows,
+                        privacyMode = privacyMode,
+                        onTogglePrivacy = {
+                            privacyMode = !privacyMode
+                            prefs.privacyMode = privacyMode
+                        },
+                        onClick = { onNavigate("tool_router_ddns") }
+                    )'''
+    text = replace_any(
+        text,
+        (old_big_events, old_big_ddns, old_bad_router_only),
+        router_and_stun,
+        "separate router settings and VPN/STUN cards",
+    )
+
+    text = text.replace(
+        'var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"',
+        'var homeOrder: String get() = sp.getString("home_order", "score,mini,router,exit,vpn,devices,today") ?: "score,mini,router,exit,vpn,devices,today"',
+        1,
+    )
+    text = text.replace(
+        'val all = listOf("score", "mini", "exit", "vpn", "devices", "today")',
+        'val all = listOf("score", "mini", "router", "exit", "vpn", "devices", "today")',
+        1,
+    )
 
     tools_start = text.find('@Composable\nfun ToolsHomeScreen')
     tools_end = text.find('\n@Composable\nfun ReorderableToolSection', tools_start)
@@ -66,7 +93,6 @@ def apply() -> None:
         raise RuntimeError("missing ToolsHomeScreen boundaries")
     tools = text[tools_start:tools_end]
 
-    # The build141 contract keeps router settings on Home, not as a toolbox rail.
     if "var routerFirewallEnabled" in tools:
         tools, count = re.subn(
             r'(fun ToolsHomeScreen\(prefs: AppPrefs, topNav: @Composable \(\) -> Unit, open: \(String\) -> Unit\) = ScreenShell\("工具箱", "长按功能卡可调整分组顺序", topNav = topNav\) \{\n).*?(    val ctx = LocalContext.current\n)',
@@ -95,10 +121,13 @@ def apply() -> None:
     text = text[:tools_start] + tools + text[tools_end:]
 
     required = (
-        'RouterSettingsHomeCard { onNavigate("router_settings") }',
+        '"router" -> RouterSettingsHomeCard { onNavigate("router_settings") }',
+        '"vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(',
+        'onClick = { onNavigate("tool_router_ddns") }',
         'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", LabV2.Purple, Modifier.weight(1f)) { onNavigate("tool_ssh") }',
         'HomeDdnsMiniCard(',
-        'onClick = { onNavigate("tool_router_ddns") }',
+        '"score,mini,router,exit,vpn,devices,today"',
+        'listOf("score", "mini", "router", "exit", "vpn", "devices", "today")',
     )
     missing = [value for value in required if value not in text]
     if missing:
@@ -107,9 +136,11 @@ def apply() -> None:
     final_tools = text[tools_start:text.find('\n@Composable\nfun ReorderableToolSection', tools_start)]
     if "RouterFeatureRail(" in final_tools or "var routerFirewallEnabled" in final_tools:
         raise RuntimeError("router settings rail still remains in toolbox")
+    if '"vpn" -> RouterSettingsHomeCard' in text:
+        raise RuntimeError("router settings still replaces the VPN/STUN card")
 
     MAIN.write_text(text, encoding="utf-8")
-    print("build155 home navigation contract restored")
+    print("build155 home router settings, SSH, DDNS and original STUN card restored")
 
 
 if __name__ == "__main__":
