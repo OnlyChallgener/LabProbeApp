@@ -62,7 +62,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build156 fields, connection and real router functions
+      - name: Verify build157 UX, fields, cache and connection consistency
         shell: bash
         run: python3 scripts/verify_build154_sources.py
 
@@ -105,16 +105,24 @@ jobs:
                   for name in archive.namelist()
                   if name.startswith("classes") and name.endswith(".dex")
               )
-          for forbidden in (
+
+          forbidden = (
               "实时数据稍旧，等待 Agent 更新",
               "实时链路正在自动重连",
+              "Waiting for Hub status",
+              "Hub is online, but router data is unavailable",
+              "Hub router data is available",
               "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
-          ):
-              if forbidden.encode("utf-8") in dex:
-                  raise SystemExit(f"forbidden signed APK string remains: {forbidden}")
-          for required in (
-              "路由字段与长连接完整修复",
-              "实时数据暂时未变化，保留上次结果",
+          )
+          required = (
+              "路由交互与状态回归修复",
+              "实时数据暂时未变化，已保留上次结果",
+              "STUN 类型",
+              "WAN 类型",
+              "未知 NAT 类型",
+              "请求超时，请稍后重试",
+              "Hub 已连接，正在等待路由器实时数据",
+              "实时链路正常，完整数据同步暂时失败，已保留上次数据",
               "/api/realtime/ws",
               "temperature2gC",
               "temperature5gC",
@@ -128,10 +136,14 @@ jobs:
               "路由 NAT 诊断",
               "Beta 在线升级",
               "实时同步正常",
-          ):
-              if required.encode("utf-8") not in dex:
-                  raise SystemExit(f"required signed APK string missing: {required}")
-          print("signed APK DEX strings verified")
+          )
+          for value in forbidden:
+              if value.encode("utf-8") in dex:
+                  raise SystemExit(f"forbidden signed APK string remains: {value}")
+          for value in required:
+              if value.encode("utf-8") not in dex:
+                  raise SystemExit(f"required signed APK string missing: {value}")
+          print("signed build157 APK DEX strings verified")
           PY
 
       - name: Upload Gradle log
