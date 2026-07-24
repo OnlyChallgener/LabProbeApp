@@ -10,6 +10,7 @@ from apply_build155_connection_routes_sync import apply as apply_build155_connec
 from apply_build155_wss_watchdog import apply as apply_build155_wss_watchdog
 from apply_build156_router_fields import apply as apply_build156_router_fields
 from apply_build157_regression_restore import apply as apply_build157_regression_restore
+from apply_build157_stun_card_restore import apply as apply_build157_stun_card_restore
 from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_build149_about_compile_fix import apply as apply_build149_about_compile_fix
 from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
@@ -58,7 +59,7 @@ if __name__ == "__main__":
     )
 
     # Realtime migrations must never bypass the user-approved interaction,
-    # Chinese text and cache-preserving refresh fixes.
+    # Chinese text, cache-preserving refresh and original home STUN card.
     if "private suspend fun calibrateRealtimeCache()" in current:
         apply_build155_home_navigation()
         apply_build150_lite_realtime()
@@ -70,7 +71,8 @@ if __name__ == "__main__":
         apply_build155_wss_watchdog()
         apply_build156_router_fields()
         apply_build157_regression_restore()
-        print("Android build157 WSS, router UX, Chinese text and cache fixes prepared")
+        apply_build157_stun_card_restore()
+        print("Android build157 WSS, router UX, Chinese text, cache and STUN card prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -106,4 +108,5 @@ if __name__ == "__main__":
     apply_build155_wss_watchdog()
     apply_build156_router_fields()
     apply_build157_regression_restore()
-    print("Android source fixes, build141 functions and build157 regression guards prepared")
+    apply_build157_stun_card_restore()
+    print("Android source fixes, build141 functions and build157 STUN/card guards prepared")
