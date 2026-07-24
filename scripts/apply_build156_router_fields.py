@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Final build156 mapping for BE72 radio temperatures and storage."""
+"""Final CI-validated build156 mapping for BE72 radio temperatures and storage."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
