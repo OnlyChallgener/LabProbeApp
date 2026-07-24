@@ -6,6 +6,7 @@ from apply_refresh_stability_fixes import apply as apply_refresh_stability
 from apply_release_text_fixes import apply as apply_release_texts
 from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_build155_home_navigation_restore import apply as apply_build155_home_navigation
+from apply_build155_connection_routes_sync import apply as apply_build155_connection_routes_sync
 from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_build149_about_compile_fix import apply as apply_build149_about_compile_fix
 from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
@@ -48,10 +49,11 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 实时连接租约与离线节流"' in current
         or '"v$NAME build$CODE · Hub 原生 WSS 实时链路"' in current
         or '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' in current
+        or '"v$NAME build$CODE · 长连接启动与路由功能恢复"' in current
     )
 
-    # Realtime migrations must never bypass the established home navigation.
-    # This runs before every fast-path build and is independently idempotent.
+    # Realtime migrations must never bypass the established home navigation or
+    # the real router settings route table restored from build141.
     if "private suspend fun calibrateRealtimeCache()" in current:
         apply_build155_home_navigation()
         apply_build150_lite_realtime()
@@ -59,7 +61,8 @@ if __name__ == "__main__":
         apply_build152_connection_gate()
         apply_build153_single_wss()
         apply_build154_realtime_stability()
-        print("Android build154 WSS and build141 home navigation sources prepared")
+        apply_build155_connection_routes_sync()
+        print("Android build155 WSS, terminal sync and real router functions prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -91,4 +94,5 @@ if __name__ == "__main__":
     apply_build153_single_wss()
     apply_build154_realtime_stability()
     apply_build155_home_navigation()
-    print("Android source fixes and build141 home navigation prepared")
+    apply_build155_connection_routes_sync()
+    print("Android source fixes, build141 router functions and build155 connection fixes prepared")
