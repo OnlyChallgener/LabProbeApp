@@ -114,7 +114,7 @@ jobs:
               "/api/realtime/ws",
               "SSH",
               "DDNS",
-              "路由器设置",
+              "路由设置",
           ]
           for apk in (
               Path("app/build/outputs/apk/debug/app-debug.apk"),
