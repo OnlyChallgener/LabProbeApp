@@ -216,6 +216,14 @@ jobs:
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
+      - name: Upload exact CI diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: labprobe-ci-diagnostic
+          path: /tmp/labprobe-ci-error.txt
+          if-no-files-found: ignore
+
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
