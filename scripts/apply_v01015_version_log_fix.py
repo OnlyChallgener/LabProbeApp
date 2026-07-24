@@ -18,11 +18,10 @@ APP_VERSION_BLOCK = '''object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 路由实时推送与刷新修复" to listOf(
-                "路由仪表盘接入 Hub MQTT 推送，实时快照到达后立即刷新",
-                "MQTT 快照超过 2.5 秒未更新时，每 1 秒通过 HTTP 自动兜底",
-                "手动刷新不再等待宽带账号密码，避免刷新按钮长时间占用",
-                "NAT 历史按 RFC3489 与 RFC5780 分别保留最近一条"
+            "v$NAME build$CODE · 实时连接租约与离线节流" to listOf(
+                "APP 实时数字只订阅 Hub WSS 小样本，不再订阅完整 Dashboard",
+                "首次进入和 WSS 重连后只读取一次 Hub 内存缓存做状态校准",
+                "APP 退到后台或实时链路断开时暂停平滑渲染和高频实时需求"
             )
         )
 }'''
@@ -40,7 +39,7 @@ def apply() -> None:
         raise RuntimeError(f"expected one AppVersion block, replaced {count}")
 
     required = (
-        '"v$NAME build$CODE · 路由实时推送与刷新修复"',
+        '"v$NAME build$CODE · 实时连接租约与离线节流"',
         'val CHANGELOG: List<Pair<String, List<String>>>',
     )
     missing = [item for item in required if item not in next_text]

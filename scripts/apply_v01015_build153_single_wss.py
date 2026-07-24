@@ -164,6 +164,15 @@ def apply() -> None:
         present = [value for value in forbidden if value in text]
         if present:
             raise RuntimeError(f"automatic HTTP realtime fallback remains: {present}")
+        required = (
+            'dashboardTopic = ""',
+            '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}',
+            '"v$NAME build$CODE · 实时连接租约与离线节流"',
+            "foregroundActive && mqttConnected",
+        )
+        missing = [value for value in required if value not in text]
+        if missing:
+            raise RuntimeError(f"single-WSS APP verification failed: {missing}")
         print("single-WSS APP realtime path already applied")
         return
 
@@ -218,6 +227,9 @@ def apply() -> None:
         "onRealtimeReady = { reconnect ->",
         "private suspend fun calibrateRealtimeCache()",
         "foregroundActive && mqttConnected",
+        'dashboardTopic = ""',
+        '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}',
+        '"v$NAME build$CODE · 实时连接租约与离线节流"',
         'routerRealtimeTopic = root.optString("routerRealtimeTopic")',
     )
     missing = [value for value in required if value not in text]

@@ -452,7 +452,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
     }
     LaunchedEffect(state.mqttConnected) {
         while (isActive) {
-            delay(if (state.mqttConnected) 15_000L else 20_000L)
+            delay(60_000L)
             state.refreshRouterDashboard(silent = true)
         }
     }

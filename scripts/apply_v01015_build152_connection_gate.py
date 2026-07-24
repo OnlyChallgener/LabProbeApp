@@ -19,10 +19,9 @@ VERSION_BLOCK = '''object AppVersion {
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
             "v$NAME build$CODE · 实时连接租约与离线节流" to listOf(
-                "轻量路由接口成功响应作为 APP 与 Hub 的实时连接租约，租约有效期 5 秒",
-                "连接中断后停止终端实时请求、200ms 平滑渲染和缓存计算",
-                "断线期间仅保留一个路由探测，并按 3/5/10/15 秒逐级退避",
-                "连接恢复后自动恢复每秒真实样本和短时平滑显示"
+                "APP 实时数字只订阅 Hub WSS 小样本，不再订阅完整 Dashboard",
+                "首次进入和 WSS 重连后只读取一次 Hub 内存缓存做状态校准",
+                "APP 退到后台或实时链路断开时暂停平滑渲染和高频实时需求"
             )
         )
 }'''

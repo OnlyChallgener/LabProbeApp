@@ -172,13 +172,14 @@ object AppVersion {
     val NAME: String get() = BuildConfig.VERSION_NAME
     val CODE: Int get() = BuildConfig.VERSION_CODE
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
-    val CHANGELOG = listOf(
-        "v0.10.6 build134 · 首页关注与概览显示修复" to listOf(
-            "首页关注终端只显示当前仍在关注列表中的设备",
-            "移出关注后首页立即同步隐藏，不再残留",
-            "今日概览底部同步说明支持横向滑动查看完整内容"
+    val CHANGELOG: List<Pair<String, List<String>>>
+        get() = listOf(
+            "v$NAME build$CODE · 实时连接租约与离线节流" to listOf(
+                "APP 实时数字只订阅 Hub WSS 小样本，不再订阅完整 Dashboard",
+                "首次进入和 WSS 重连后只读取一次 Hub 内存缓存做状态校准",
+                "APP 退到后台或实时链路断开时暂停平滑渲染和高频实时需求"
+            )
         )
-    )
 }
 
 private val LabTypography: Typography = run {
@@ -1158,7 +1159,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         startRealtimeRendering()
         val stored = prefs.mqttConfig
         val remote = runCatching { HubApi(prefs).getMqttConfig() }.getOrElse { stored }
-        val effective = remote.copy(publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl })
+        val effective = remote.copy(
+            publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl },
+            dashboardTopic = "",
+        )
         prefs.mqttConfig = effective
         realtimeClient.start(effective)
     }
@@ -9339,7 +9343,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         }
     }
     ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
-        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\nv0.10.6：首页关注列表与今日概览底部滑动已修复。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
+        Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\n${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }
 
