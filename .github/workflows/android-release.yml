@@ -71,24 +71,26 @@ jobs:
           set -e
           MAIN=app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          MQTT=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          WSS=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
           SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
 
-          grep -q 'versionCode = 152' app/build.gradle.kts
+          grep -q 'versionCode = 153' app/build.gradle.kts
           grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · 实时连接租约与离线节流"' "$MAIN"
+          grep -Fq '"v$NAME build$CODE · Hub 原生 WSS 实时链路"' "$MAIN"
           ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
           ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
 
-          grep -Fq 'dashboardTopic = ""' "$MAIN"
-          ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
-          ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
+          ! grep -Fq 'getMqttConfig()' "$MAIN"
+          ! grep -Fq 'mqttUrlOverride' "$MAIN"
+          ! grep -Fq 'MqttAsyncClient' "$WSS"
+          ! grep -Fq 'org.eclipse.paho' "$WSS"
+          grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
+          grep -Fq '"/api/realtime/ws"' "$WSS"
+          grep -Fq 'Authorization", "Bearer $token"' "$WSS"
+          grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
           grep -Fq 'onRouterRealtime = { raw ->' "$MAIN"
           grep -Fq 'onDevicesRealtime = { raw ->' "$MAIN"
-          grep -Fq 'config.routerRealtimeTopic to 0' "$MQTT"
-          grep -Fq 'config.devicesRealtimeTopic to 0' "$MQTT"
-          grep -Fq 'realtimeDemandTopic' "$MQTT"
           grep -Fq 'private suspend fun calibrateRealtimeCache()' "$MAIN"
           grep -Fq 'realtimeSmoother.acceptRouter(it)' "$MAIN"
           grep -Fq 'realtimeSmoother.acceptDevices(it)' "$MAIN"
@@ -154,7 +156,8 @@ jobs:
               if old.encode("utf-8") in dex:
                   raise SystemExit(f"obsolete signed APK string remains: {old}")
           for required in (
-              "实时连接租约与离线节流",
+              "Hub 原生 WSS 实时链路",
+              "/api/realtime/ws",
               "/api/router/realtime",
               "/api/devices/realtime",
           ):

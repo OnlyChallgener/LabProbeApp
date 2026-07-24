@@ -153,6 +153,29 @@ def replace_function(text: str, signature: str, replacement: str) -> str:
 
 def apply() -> None:
     text = MAIN.read_text(encoding="utf-8")
+    if "HubRealtimeWebSocketClient(" in text:
+        forbidden = (
+            "getMqttConfig()",
+            "mqttUrlOverride",
+            "MqttAsyncClient",
+            "org.eclipse.paho",
+        )
+        present = [value for value in forbidden if value in text]
+        if present:
+            raise RuntimeError(f"legacy MQTT realtime dependency remains: {present}")
+        required = (
+            "private suspend fun calibrateRealtimeCache()",
+            "realtimeClient.start(prefs.hub, prefs.token)",
+            "onRouterRealtime = { raw ->",
+            "onDevicesRealtime = { raw ->",
+            "foregroundActive && mqttConnected",
+        )
+        missing = [value for value in required if value not in text]
+        if missing:
+            raise RuntimeError(f"Hub-native WSS verification failed: {missing}")
+        print("Hub-native WSS realtime path already prepared")
+        return
+
     if "private suspend fun calibrateRealtimeCache()" in text and "onRouterRealtime = { raw ->" in text:
         forbidden = (
             "private fun startLiteRealtimePolling()",

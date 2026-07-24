@@ -174,10 +174,10 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 实时连接租约与离线节流" to listOf(
-                "APP 实时数字只订阅 Hub WSS 小样本，不再订阅完整 Dashboard",
-                "首次进入和 WSS 重连后只读取一次 Hub 内存缓存做状态校准",
-                "APP 退到后台或实时链路断开时暂停平滑渲染和高频实时需求"
+            "v$NAME build$CODE · Hub 原生 WSS 实时链路" to listOf(
+                "APP 使用现有 APP Token 直接连接 Hub 原生 WSS，不再需要 MQTT 地址或账号密码",
+                "路由 fast 与终端增量仅经 Hub 内存快照推送，HTTP 只用于首次与重连校准",
+                "APP 退到后台或 WSS 断开时暂停平滑渲染和终端高频采样需求"
             )
         )
 }
@@ -239,7 +239,6 @@ fun Activity.applyLabProbeSystemBars() {
 class AppPrefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
-    private val secureMqttStore = SecureMqttStore(context)
     init {
         clearDeprecatedHookToken(context)
         val legacy = sp.getString("token", "").orEmpty().trim()
@@ -254,15 +253,6 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
     var autoRefresh: String get() = "实时"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
-    var mqttUrlOverride: String get() = sp.getString("mqtt_url_override_v1", "") ?: ""
-        set(v) = sp.edit().putString("mqtt_url_override_v1", v.trim()).apply()
-    var mqttConfig: HubMqttConfig get() = HubMqttConfig.fromJson(secureMqttStore.get())
-        set(v) = secureMqttStore.set(v.toJson())
-    var mqttClientId: String
-        get() = sp.getString("mqtt_client_id_v1", "").orEmpty().ifBlank {
-            HubMqttClient.newClientId().also { sp.edit().putString("mqtt_client_id_v1", it).apply() }
-        }
-        set(v) = sp.edit().putString("mqtt_client_id_v1", v.trim()).apply()
     var ignoredUpdateCode: Int get() = sp.getInt("ignored_update_code", 0)
         set(v) = sp.edit().putInt("ignored_update_code", v).apply()
     var lastUpdateCheckAt: Long get() = sp.getLong("last_update_check_at", 0L)
@@ -945,7 +935,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val appContext = context.applicationContext
     private val refreshMutex = Mutex()
     private val stateScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val mqttRevisionSignals = Channel<Long>(Channel.CONFLATED)
     private val foregroundRecoverySignals = Channel<Boolean>(Channel.CONFLATED)
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
@@ -954,8 +943,8 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val realtimeSmoother = RealtimeDisplaySmoother()
     private var liteRenderJob: Job? = null
     @Volatile private var foregroundActive = true
-    private val realtimeClient = HubMqttClient(
-        clientId = prefs.mqttClientId,
+    private val realtimeClient = HubRealtimeWebSocketClient(
+        dnsProvider = { CustomDns(prefs.hubDns) },
         onState = { next ->
             stateScope.launch {
                 mqttState = next
@@ -972,10 +961,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                         mqttConnected = false
                         message = "正在重连 ${next.attempt}/${next.maxAttempts}"
                     }
-                    is HubRealtimeState.HttpFallback -> {
-                        mqttConnected = false
-                        message = "实时链路未连接"
-                    }
                     HubRealtimeState.Disabled -> {
                         mqttConnected = false
                         message = if (hubConnected) "Hub 已连接，等待实时链路" else message
@@ -983,7 +968,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 }
             }
         },
-        onRevision = { revision -> mqttRevisionSignals.trySend(revision) },
         onRouterRealtime = { raw ->
             stateScope.launch {
                 if (!foregroundActive || !mqttConnected) return@launch
@@ -1033,11 +1017,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
     init {
-        stateScope.launch {
-            for (targetRevision in mqttRevisionSignals) {
-                if (foregroundActive && targetRevision > prefs.syncRevision) refreshAll(silent = true)
-            }
-        }
         stateScope.launch {
             for (firstSignal in foregroundRecoverySignals) {
                 var forceFull = firstSignal
@@ -1157,14 +1136,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
         calibrateRealtimeCache()
         startRealtimeRendering()
-        val stored = prefs.mqttConfig
-        val remote = runCatching { HubApi(prefs).getMqttConfig() }.getOrElse { stored }
-        val effective = remote.copy(
-            publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl },
-            dashboardTopic = "",
-        )
-        prefs.mqttConfig = effective
-        realtimeClient.start(effective)
+        realtimeClient.start(prefs.hub, prefs.token)
     }
 
     suspend fun refreshRouterDashboard(silent: Boolean = true) {
@@ -1229,7 +1201,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     fun close() {
         realtimeClient.close()
         pauseRealtimeRendering()
-        mqttRevisionSignals.close()
         foregroundRecoverySignals.close()
         cacheScope.cancel()
         stateScope.cancel()
@@ -4223,7 +4194,7 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                Text(if (state.mqttConnected) "MQTT 实时" else "实时未连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
+                Text(if (state.mqttConnected) "WSS 实时" else "实时未连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
             }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
         }
@@ -9219,18 +9190,17 @@ fun recentSevenDates(): List<String> {
     return out
 }
 
-private fun mqttFailureText(raw: String): String {
+private fun realtimeFailureText(raw: String): String {
     val reason = raw.trim()
     if (reason.isBlank()) return ""
     return when {
-        reason.contains("not authorized", true) || reason.contains("bad user", true) ||
-            reason.contains("MQTT错误 4") || reason.contains("MQTT错误 5") -> "MQTT认证失败，请检查账号和密码"
+        reason.contains("unauthorized", true) || reason.contains("forbidden", true) || reason.contains("1008") -> "APP Token 认证失败"
         reason.contains("SSLHandshake", true) || reason.contains("certificate", true) || reason.contains("CertPath", true) -> "TLS证书验证失败"
-        reason.contains("UnknownHost", true) || reason.contains("unable to resolve", true) -> "MQTT域名解析失败"
-        reason.contains("timeout", true) || reason.contains("timed out", true) -> "MQTT连接超时"
+        reason.contains("UnknownHost", true) || reason.contains("unable to resolve", true) -> "Hub 域名解析失败"
+        reason.contains("timeout", true) || reason.contains("timed out", true) -> "WSS 连接超时"
         reason.contains("WebSocket", true) || reason.contains("handshake", true) -> "WSS握手失败"
-        reason.contains("connection refused", true) -> "MQTT服务拒绝连接"
-        reason.contains("network is unreachable", true) || reason.contains("no route", true) -> "当前网络无法到达MQTT地址"
+        reason.contains("connection refused", true) -> "Hub 拒绝实时连接"
+        reason.contains("network is unreachable", true) || reason.contains("no route", true) -> "当前网络无法到达 Hub"
         else -> reason.take(120)
     }
 }
@@ -9240,13 +9210,11 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
-    var mqttUrl by remember { mutableStateOf(prefs.mqttUrlOverride) }
     var msg by remember { mutableStateOf("") }
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
-    ExpressiveCard("连接设置", "MQTT 实时同步，断线自动重连并由 HTTP 校准兜底。", Icons.Rounded.Link, Color(0xFF2563EB)) {
+    ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
-        LabeledInput("MQTT", "自动读取 Hub；也可填写 wss://自己的域名:端口/mqtt", mqttUrl, { mqttUrl = it })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("DNS", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
@@ -9259,10 +9227,9 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                         Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
                         Spacer(Modifier.width(6.dp))
                         val syncLabel = when (val realtime = state.mqttState) {
-                            HubRealtimeState.Connected -> "MQTT 实时"
+                            HubRealtimeState.Connected -> "WSS 实时"
                             HubRealtimeState.Connecting -> "正在连接"
                             is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
-                            is HubRealtimeState.HttpFallback -> "实时未连接"
                             HubRealtimeState.Disabled -> "实时未连接"
                         }
                         Text(syncLabel, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
@@ -9274,33 +9241,29 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             HubRealtimeState.Connected -> "实时同步正常"
             HubRealtimeState.Connecting -> if (state.hubConnected) "正在连接实时同步" else "正在连接 Hub"
             is HubRealtimeState.Reconnecting -> "正在重连实时同步 ${realtime.attempt}/${realtime.maxAttempts}"
-            is HubRealtimeState.HttpFallback -> if (state.hubConnected) "Hub 已连接，实时链路未连接" else "Hub 连接失败"
             HubRealtimeState.Disabled -> if (state.hubConnected) "Hub 已连接，等待实时链路" else state.message.ifBlank { "等待连接" }
         }
         val connectionMessage = msg.ifBlank { liveConnectionMessage }
-        val mqttFailure = when (val realtime = state.mqttState) {
-            is HubRealtimeState.Reconnecting -> mqttFailureText(realtime.reason)
-            is HubRealtimeState.HttpFallback -> mqttFailureText(realtime.reason)
+        val realtimeFailure = when (val realtime = state.mqttState) {
+            is HubRealtimeState.Reconnecting -> realtimeFailureText(realtime.reason)
             else -> ""
         }
         Text(connectionMessage, color = if (state.mqttConnected) LabV2.Green else if (state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (mqttFailure.isNotBlank()) {
-            Text("原因：$mqttFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (realtimeFailure.isNotBlank()) {
+            Text("原因：$realtimeFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val cleanHub = normalizeHubAddressForDisplay(hub)
                 val cleanAppToken = appToken.trim()
                 val connectionChanged = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
-                val mqttChanged = prefs.mqttUrlOverride != mqttUrl.trim()
                 hub = cleanHub
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
-                prefs.mqttUrlOverride = mqttUrl
                 prefs.addHistory("hub", cleanHub)
                 if (connectionChanged) state.markHubChanged() else state.markHubSavedWithoutConnectionChange()
-                if (mqttChanged || connectionChanged) scope.launch {
+                if (connectionChanged) scope.launch {
                     if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)
                     state.startRealtime()
                 }
@@ -9316,7 +9279,6 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
-                prefs.mqttUrlOverride = mqttUrl
                 prefs.addHistory("hub", cleanHub)
                 if (changed) state.markHubChanged()
                 scope.launch {
@@ -9390,25 +9352,6 @@ class HubApi(private val prefs: AppPrefs) {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         retryText("/api/sync/revision", attempts)
     }
-
-    suspend fun getMqttConfig(): HubMqttConfig = withContext(Dispatchers.IO) {
-        val root = try {
-            requestJson("/api/mqtt/config")
-        } catch (error: HubHttpException) {
-            if (error.statusCode == 404 || error.statusCode == 405) return@withContext HubMqttConfig()
-            throw error
-        }
-        mqttConfigFromApi(root.optJSONObject("mqtt") ?: root)
-    }
-
-    private fun mqttConfigFromApi(root: JSONObject): HubMqttConfig = HubMqttConfig(
-        enabled = root.optBoolean("enabled", false),
-        publicUrl = root.optString("publicUrl"),
-        username = root.optString("username"),
-        password = root.optString("password"),
-        revisionTopic = root.optString("revisionTopic"),
-        availabilityTopic = root.optString("availabilityTopic")
-    )
 
     suspend fun getSyncSnapshot(): HubSyncSnapshot = withContext(Dispatchers.IO) {
         val root = try {
