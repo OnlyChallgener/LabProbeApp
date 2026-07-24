@@ -62,36 +62,9 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build154 realtime sources before compile
+      - name: Verify build154 and restored home navigation
         shell: bash
-        run: |
-          set -e
-          MAIN=app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          STATUS=app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
-          WSS=app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
-          LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
-          SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
-
-          grep -q 'versionCode = 154' app/build.gradle.kts
-          grep -Fq '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' "$MAIN"
-          grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
-          grep -Fq 'const val REALTIME_PATH = "/api/realtime/ws"' "$WSS"
-          grep -Fq 'const val PING_INTERVAL_SECONDS = 8L' "$WSS"
-          grep -Fq 'const val WATCHDOG_INTERVAL_MS = 1_000L' "$WSS"
-          grep -Fq 'const val SERVER_FRAME_TIMEOUT_MS = 8_000L' "$WSS"
-          grep -Fq 'const val MAX_RETRY_ATTEMPT = 3' "$WSS"
-          grep -Fq 'else -> 3_000L' "$WSS"
-          grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
-          grep -Fq 'stateScope.launch { calibrateRealtimeCache() }' "$MAIN"
-          grep -Fq 'const val FRAME_INTERVAL_MS = 1_000L' "$SMOOTH"
-          ! grep -Fq 'FRAME_INTERVAL_MS = 200L' "$SMOOTH"
-          ! grep -Fq 'TRANSITION_MS = 900L' "$SMOOTH"
-          ! grep -Fq '等待 Agent 更新' "$STATUS"
-          grep -Fq '实时链路正在自动重连' "$STATUS"
-          grep -Fq 'if (!stale) root.put("online", true)' "$LITE"
-          ! grep -Fq 'MqttAsyncClient' "$WSS"
-          ! grep -Fq 'org.eclipse.paho' "$WSS"
-          ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
+        run: python3 scripts/verify_build154_sources.py
 
       - name: Build signed release APK
         shell: bash
@@ -142,6 +115,9 @@ jobs:
               "原生 fast 秒级稳定刷新",
               "实时链路正在自动重连",
               "/api/realtime/ws",
+              "SSH",
+              "DDNS",
+              "路由设置",
           ):
               if required.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {required}")
@@ -154,6 +130,7 @@ jobs:
         with:
           name: router-control-gradle-log
           path: /tmp/gradle-build.log
+          if-no-files-found: ignore
 
       - name: Verify release APK exists
         shell: bash
