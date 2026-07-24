@@ -70,19 +70,19 @@ jobs:
           ! grep -Fq '等待 Agent 更新' "$STATUS"
           grep -Fq '实时链路正在自动重连' "$STATUS"
 
-          # Hub-native WSS is the only automatic realtime transport.
           grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
           grep -Fq 'const val REALTIME_PATH = "/api/realtime/ws"' "$WSS"
-          grep -Fq 'const val PING_INTERVAL_SECONDS = 10L' "$WSS"
-          grep -Fq 'const val SERVER_FRAME_TIMEOUT_MS = 12_000L' "$WSS"
+          grep -Fq 'const val PING_INTERVAL_SECONDS = 8L' "$WSS"
+          grep -Fq 'const val WATCHDOG_INTERVAL_MS = 1_000L' "$WSS"
+          grep -Fq 'const val SERVER_FRAME_TIMEOUT_MS = 8_000L' "$WSS"
+          grep -Fq 'const val MAX_RETRY_ATTEMPT = 3' "$WSS"
           grep -Fq 'webSocket.cancel()' "$WSS"
-          grep -Fq 'else -> 5_000L' "$WSS"
+          grep -Fq 'else -> 3_000L' "$WSS"
           ! grep -Fq 'MqttAsyncClient' "$WSS"
           ! grep -Fq 'org.eclipse.paho' "$WSS"
           ! grep -Fq 'getMqttConfig()' "$MAIN"
           ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
 
-          # WSS starts before background HTTP memory calibration.
           grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
           grep -Fq 'stateScope.launch { calibrateRealtimeCache() }' "$MAIN"
           grep -Fq 'onRouterRealtime = { raw ->' "$MAIN"
@@ -93,7 +93,6 @@ jobs:
           grep -Fq '.callTimeout(2_500, TimeUnit.MILLISECONDS)' "$LITE"
           grep -Fq 'if (!stale) root.put("online", true)' "$LITE"
 
-          # Visible values update at most once per second; no 200ms animation.
           grep -Fq 'const val FRAME_INTERVAL_MS = 1_000L' "$SMOOTH"
           grep -Fq 'const val STALE_WARNING_AGE_MS = 10_000L' "$SMOOTH"
           grep -Fq 'ROUTER_SAMPLE_WEIGHT = 0.72' "$SMOOTH"
@@ -103,7 +102,6 @@ jobs:
           ! grep -Fq 'kotlin.random' "$SMOOTH"
           grep -Fq 'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)' "$MAIN"
 
-          # Preserve existing NAT and popup fixes.
           grep -Fq 'ROUTER_NAT_HISTORY_PROTOCOLS = setOf("3489", "5780")' "$NATIVE"
           grep -Fq 'distinctBy { it.natHistoryProtocol() }' "$NATIVE"
           grep -Fq 'private val NativePopupShape = RoundedCornerShape(22.dp)' "$NATIVE"
