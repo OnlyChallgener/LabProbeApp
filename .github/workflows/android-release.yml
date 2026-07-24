@@ -62,7 +62,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build155 connection and real router functions
+      - name: Verify build156 fields, connection and real router functions
         shell: bash
         run: python3 scripts/verify_build154_sources.py
 
@@ -113,9 +113,12 @@ jobs:
               if forbidden.encode("utf-8") in dex:
                   raise SystemExit(f"forbidden signed APK string remains: {forbidden}")
           for required in (
-              "长连接启动与路由功能恢复",
+              "路由字段与长连接完整修复",
               "实时数据暂时未变化，保留上次结果",
               "/api/realtime/ws",
+              "temperature2gC",
+              "temperature5gC",
+              "storagePercent",
               "SSH",
               "DDNS 与证书",
               "路由设置",
