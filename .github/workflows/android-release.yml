@@ -36,10 +36,7 @@ jobs:
           set -e
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "platform-tools"
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Set up Gradle 9.5.1
         uses: gradle/actions/setup-gradle@v4
@@ -65,7 +62,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify single-WSS realtime sources before compile
+      - name: Verify build154 realtime sources before compile
         shell: bash
         run: |
           set -e
@@ -75,40 +72,24 @@ jobs:
           LITE=app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt
           SMOOTH=app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt
 
-          grep -q 'versionCode = 153' app/build.gradle.kts
-          grep -Fq '${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}' "$MAIN"
-          grep -Fq '"v$NAME build$CODE · Hub 原生 WSS 实时链路"' "$MAIN"
-          ! grep -Fq 'v0.10.6：首页关注列表与今日概览底部滑动已修复。' "$MAIN"
-          ! grep -Fq 'v0.10.6 build134 · 首页关注与概览显示修复' "$MAIN"
-
-          ! grep -Fq 'getMqttConfig()' "$MAIN"
-          ! grep -Fq 'mqttUrlOverride' "$MAIN"
+          grep -q 'versionCode = 154' app/build.gradle.kts
+          grep -Fq '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' "$MAIN"
+          grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
+          grep -Fq 'const val REALTIME_PATH = "/api/realtime/ws"' "$WSS"
+          grep -Fq 'const val PING_INTERVAL_SECONDS = 10L' "$WSS"
+          grep -Fq 'const val SERVER_FRAME_TIMEOUT_MS = 12_000L' "$WSS"
+          grep -Fq 'else -> 5_000L' "$WSS"
+          grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
+          grep -Fq 'stateScope.launch { calibrateRealtimeCache() }' "$MAIN"
+          grep -Fq 'const val FRAME_INTERVAL_MS = 1_000L' "$SMOOTH"
+          ! grep -Fq 'FRAME_INTERVAL_MS = 200L' "$SMOOTH"
+          ! grep -Fq 'TRANSITION_MS = 900L' "$SMOOTH"
+          ! grep -Fq '等待 Agent 更新' "$STATUS"
+          grep -Fq '实时链路正在自动重连' "$STATUS"
+          grep -Fq 'if (!stale) root.put("online", true)' "$LITE"
           ! grep -Fq 'MqttAsyncClient' "$WSS"
           ! grep -Fq 'org.eclipse.paho' "$WSS"
-          grep -Fq 'class HubRealtimeWebSocketClient' "$WSS"
-          grep -Fq '"/api/realtime/ws"' "$WSS"
-          grep -Fq 'Authorization", "Bearer $token"' "$WSS"
-          grep -Fq 'realtimeClient.start(prefs.hub, prefs.token)' "$MAIN"
-          grep -Fq 'onRouterRealtime = { raw ->' "$MAIN"
-          grep -Fq 'onDevicesRealtime = { raw ->' "$MAIN"
-          grep -Fq 'private suspend fun calibrateRealtimeCache()' "$MAIN"
-          grep -Fq 'realtimeSmoother.acceptRouter(it)' "$MAIN"
-          grep -Fq 'realtimeSmoother.acceptDevices(it)' "$MAIN"
-          grep -Fq 'realtimeSmoother.renderRouter(routerDashboard, now)' "$MAIN"
-          ! grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
-          grep -Fq '/api/router/realtime' "$LITE"
-          grep -Fq '/api/devices/realtime' "$LITE"
-          grep -Fq 'const val TRANSITION_MS = 900L' "$SMOOTH"
-          grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
-          grep -Fq 'fun pause() = reset()' "$SMOOTH"
-
-          grep -Fq 'realtimeSmoother.pause()' "$MAIN"
-          ! grep -Fq 'realtimeSmoother.reset()' "$MAIN"
-          grep -Fq 'foregroundActive && mqttConnected' "$MAIN"
           ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
-
-          ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
-          ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
 
       - name: Build signed release APK
         shell: bash
@@ -149,17 +130,16 @@ jobs:
                   for name in archive.namelist()
                   if name.startswith("classes") and name.endswith(".dex")
               )
-          for old in (
+          for forbidden in (
+              "实时数据稍旧，等待 Agent 更新",
               "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
-              "v0.10.6 build134 · 首页关注与概览显示修复",
           ):
-              if old.encode("utf-8") in dex:
-                  raise SystemExit(f"obsolete signed APK string remains: {old}")
+              if forbidden.encode("utf-8") in dex:
+                  raise SystemExit(f"forbidden signed APK string remains: {forbidden}")
           for required in (
-              "Hub 原生 WSS 实时链路",
+              "原生 fast 秒级稳定刷新",
+              "实时链路正在自动重连",
               "/api/realtime/ws",
-              "/api/router/realtime",
-              "/api/devices/realtime",
           ):
               if required.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {required}")
