@@ -4,6 +4,7 @@
 - Connect Hub-native WSS before optional HTTP memory calibration.
 - Keep realtime display updates on a one-second cadence.
 - Remove misleading Agent wording from router native fast status.
+- Keep the actual version name and build code visible in the version dialog.
 """
 from pathlib import Path
 
@@ -40,6 +41,9 @@ NEW_START = '''    suspend fun startRealtime() {
         stateScope.launch { calibrateRealtimeCache() }
     }'''
 
+OLD_VERSION_TITLE = 'title = { Text("极客网探 v${AppVersion.NAME}", fontWeight = FontWeight.Black) },'
+NEW_VERSION_TITLE = 'title = { Text("极客网探 · 版本 ${AppVersion.NAME} build ${AppVersion.CODE}", fontWeight = FontWeight.Black) },'
+
 
 def apply() -> None:
     main = MAIN.read_text(encoding="utf-8")
@@ -53,11 +57,17 @@ def apply() -> None:
     elif NEW_START not in main:
         raise RuntimeError("missing realtime start method")
 
+    if OLD_VERSION_TITLE in main:
+        main = main.replace(OLD_VERSION_TITLE, NEW_VERSION_TITLE, 1)
+    elif NEW_VERSION_TITLE not in main:
+        raise RuntimeError("missing version dialog title")
+
     required_main = (
         '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'stateScope.launch { calibrateRealtimeCache() }',
         'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)',
+        '版本 ${AppVersion.NAME} build ${AppVersion.CODE}',
     )
     missing = [value for value in required_main if value not in main]
     if missing:
