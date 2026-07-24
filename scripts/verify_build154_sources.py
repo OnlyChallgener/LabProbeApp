@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify final generated Android sources used by APP build156."""
+"""Verify final generated Android sources used by APP build157."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +9,9 @@ WSS = ROOT / "app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt"
 LITE = ROOT / "app/src/main/kotlin/com/labprobe/app/LiteRealtime.kt"
 SMOOTH = ROOT / "app/src/main/kotlin/com/labprobe/app/RealtimeSmoothing.kt"
 NATIVE = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt"
+ROUTER_API = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt"
+ROUTER_SETTINGS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt"
+ROUTER_CONTROL = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
 GRADLE = ROOT / "app/build.gradle.kts"
 DIAGNOSTIC = Path("/tmp/labprobe-ci-error.txt")
 
@@ -40,12 +43,12 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    for needle in ('versionCode = 156', 'versionName = "0.10.15"'):
+    for needle in ('versionCode = 157', 'versionName = "0.10.15"'):
         require(GRADLE, needle)
 
     for needle in (
         '版本 ${AppVersion.NAME} build ${AppVersion.CODE}',
-        '"v$NAME build$CODE · 路由字段与长连接完整修复"',
+        '"v$NAME build$CODE · 路由交互与状态回归修复"',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'stateScope.launch { calibrateRealtimeCache() }',
         'onRouterRealtime = { raw ->',
@@ -57,6 +60,10 @@ def main() -> None:
         'hubConnected = true',
         'onlineCount > 0 -> "$onlineCount 台在线"',
         'state.hubConnected -> "实时同步正常"',
+        'cacheRouterDashboard',
+        'mergeRouterDashboardSnapshot(previous, latest)',
+        'val realtimeAlive = mqttConnected',
+        '实时链路正常，完整数据同步暂时失败，已保留上次数据',
     ):
         require(MAIN, needle)
     for needle in (
@@ -108,7 +115,7 @@ def main() -> None:
 
     forbid(STATUS, '等待 Agent 更新')
     forbid(STATUS, '实时链路正在自动重连')
-    require(STATUS, '实时数据暂时未变化，保留上次结果')
+    require(STATUS, '实时数据暂时未变化，已保留上次结果')
     for needle in (
         'temperature2g = jsonNumber(telemetry, "temperature2gC")',
         'temperature5g = jsonNumber(telemetry, "temperature5gC")',
@@ -138,18 +145,60 @@ def main() -> None:
         if obsolete in tools:
             fail(f"toolbox still contains router settings UI: {obsolete}")
 
-    # Validate actual NAT behavior, not a removed private set constant.
+    # NAT controls must remain the approved white, rounded dropdown design.
+    nat = section(NATIVE, 'fun RouterNatDiagnosticScreen', 'fun RouterBetaUpgradeScreen')
     for needle in (
-        '路由器原生 RFC3489 / RFC5780',
-        'FilterChip(selected = mode == "classic"',
-        'FilterChip(selected = mode == "5780"',
-        'history.take(10)',
-        'saveNatHistory(context, it)',
+        'label = "STUN 类型"',
+        'label = "WAN 类型"',
+        'private fun NativeSelector',
+        'nativeBlueShadow',
+        'RoundedCornerShape(18.dp)',
+        'colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White)',
+        'modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(Color.White)',
+        'natStatusZh(result.status)',
+        'natTypeZh(result.natType)',
+        'natLogZh(result.log)',
+        'natErrorZh(it.message)',
+        'saveNatHistory(context, normalized)',
     ):
-        require(NATIVE, needle)
+        if needle not in NATIVE.read_text(encoding="utf-8") and needle not in nat:
+            fail(f"missing NAT regression guard: {needle}")
+    if 'FilterChip(' in nat:
+        fail('NAT protocol/WAN controls regressed to FilterChip')
+    for forbidden in ('NativeBlue.copy(alpha = .08f) else Color.White', 'port-restricted cone'):
+        if forbidden in nat:
+            fail(f"NAT UI/result still contains regressed text or fill: {forbidden}")
+
+    # Router pages must preserve data and present user-visible state in Chinese.
+    for needle in (
+        'RouterControlMemoryCache.ddnsRows',
+        'loadRouterDiagnosticCache(context)',
+        'saveRouterDiagnosticCache(context, value)',
+    ):
+        require(ROUTER_CONTROL, needle)
+    for needle in (
+        '正在等待 Hub 状态',
+        'Hub 已连接，正在等待路由器实时数据',
+        'routerApiMessageZh',
+    ):
+        require(ROUTER_API, needle)
+    for forbidden in (
+        'Waiting for Hub status',
+        'Hub is online, but router data is unavailable',
+        'Hub router data is available',
+        'Hub could not log in to the router',
+        'Hub router request failed',
+    ):
+        forbid(ROUTER_API, forbidden)
+    for needle in (
+        'routerSettingsRawMessageZh',
+        'connected -> "路由器实时数据正常"',
+        'hubOnline -> "Hub 已连接"',
+    ):
+        require(ROUTER_SETTINGS, needle)
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print("build156 startup, WSS keepalive, terminal state, router fields and real routes verified")
+    print("build157 router UX, Chinese text, cache, WSS and real routes verified")
 
 
 if __name__ == "__main__":
