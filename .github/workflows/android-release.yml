@@ -62,7 +62,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build154 and restored home navigation
+      - name: Verify build155 connection and real router functions
         shell: bash
         run: python3 scripts/verify_build154_sources.py
 
@@ -107,17 +107,24 @@ jobs:
               )
           for forbidden in (
               "实时数据稍旧，等待 Agent 更新",
+              "实时链路正在自动重连",
               "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
           ):
               if forbidden.encode("utf-8") in dex:
                   raise SystemExit(f"forbidden signed APK string remains: {forbidden}")
           for required in (
-              "原生 fast 秒级稳定刷新",
-              "实时链路正在自动重连",
+              "长连接启动与路由功能恢复",
+              "实时数据暂时未变化，保留上次结果",
               "/api/realtime/ws",
               "SSH",
-              "DDNS",
+              "DDNS 与证书",
               "路由设置",
+              "映射与 UPnP",
+              "防火墙",
+              "网络自检",
+              "路由 NAT 诊断",
+              "Beta 在线升级",
+              "实时同步正常",
           ):
               if required.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {required}")
