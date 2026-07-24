@@ -68,7 +68,11 @@ def main() -> None:
         'val liveVpnRows = remember',
         'decodeHomeVpnRows(prefs.cacheVpnRowsJson)',
         'prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)',
+        '"router" -> RouterSettingsHomeCard { onNavigate("router_settings") }',
         '"vpn" -> HealthVpnCard(',
+        'onClick = { onNavigate("tool_router_ddns") }',
+        '"score,mini,router,exit,vpn,devices,today"',
+        'listOf("score", "mini", "router", "exit", "vpn", "devices", "today")',
         '正在等待 STUN 地址同步，获取后会保留上次有效地址。',
         'fun encodeHomeVpnRows',
         'fun decodeHomeVpnRows',
@@ -81,6 +85,7 @@ def main() -> None:
         'message = "正在重连 ${next.attempt}/${next.maxAttempts}"',
         'subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步"',
         '"vpn" -> if (vpnRows.isNotEmpty())',
+        '"vpn" -> RouterSettingsHomeCard',
     ):
         forbid(MAIN, needle)
 
@@ -132,7 +137,6 @@ def main() -> None:
     ):
         require(STATUS, needle)
 
-    # Exact home navigation and real router settings contract restored from build141.
     for needle in (
         'RouterSettingsHomeCard { onNavigate("router_settings") }',
         'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", LabV2.Purple, Modifier.weight(1f)) { onNavigate("tool_ssh") }',
@@ -154,7 +158,6 @@ def main() -> None:
         if obsolete in tools:
             fail(f"toolbox still contains router settings UI: {obsolete}")
 
-    # NAT controls must remain the approved white, rounded dropdown design.
     nat = section(NATIVE, 'fun RouterNatDiagnosticScreen', 'fun RouterBetaUpgradeScreen')
     for needle in (
         'label = "STUN 类型"',
@@ -178,11 +181,10 @@ def main() -> None:
         if forbidden in nat:
             fail(f"NAT UI/result still contains regressed text or fill: {forbidden}")
 
-    # Router pages must preserve data and present user-visible state in Chinese.
     for needle in (
         'RouterControlMemoryCache.ddnsRows',
         'loadRouterDiagnosticCache(context)',
-        'saveRouterDiagnosticCache(context, value)',
+        'saveRouterDiagnosticCache(context,value)',
     ):
         require(ROUTER_CONTROL, needle)
     for needle in (
