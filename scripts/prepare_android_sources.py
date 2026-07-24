@@ -10,6 +10,7 @@ from apply_v01015_build149_about_compile_fix import apply as apply_build149_abou
 from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
 from apply_v01015_build151_smooth_realtime import apply as apply_build151_smooth_realtime
 from apply_v01015_build152_connection_gate import apply as apply_build152_connection_gate
+from apply_v01015_build153_single_wss import apply as apply_build153_single_wss
 from apply_v01015_ddns_cache_hotfix import apply as apply_v01015_ddns_cache
 from apply_v01015_final_scoped_fixes import apply as apply_v01015_scoped
 from apply_v01015_nat_text_hotfix import apply as apply_v01015_nat_text
@@ -45,6 +46,16 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 实时连接租约与离线节流"' in current
     )
 
+    # Final generated sources are authoritative. Re-running legacy mutation
+    # patches after this point can no longer match their old UI templates.
+    if "private suspend fun calibrateRealtimeCache()" in current:
+        apply_build150_lite_realtime()
+        apply_build151_smooth_realtime()
+        apply_build152_connection_gate()
+        apply_build153_single_wss()
+        print("Android single-WSS sources already prepared")
+        raise SystemExit(0)
+
     if not base_generated and not refresh_generated and not final_generated:
         patch_main()
         patch_router_ui()
@@ -66,12 +77,12 @@ if __name__ == "__main__":
     apply_v01015_realtime_delivery()
     apply_v01015_version_log()
 
-    # Legacy compatibility fixes run first. Build150 establishes the lightweight
-    # transport, build151 adds truthful smoothing, and build152 gates all high-
-    # frequency work on an active APP-to-Hub connection lease.
+    # Legacy compatibility fixes run first. Build153 then removes automatic HTTP
+    # polling and makes compact foreground WSS deltas authoritative.
     apply_build148_release_fix()
     apply_build149_about_compile_fix()
     apply_build150_lite_realtime()
     apply_build151_smooth_realtime()
     apply_build152_connection_gate()
+    apply_build153_single_wss()
     print("Android source fixes prepared")

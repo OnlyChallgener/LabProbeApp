@@ -75,6 +75,7 @@ class RealtimeDisplaySmoother {
     private var devicesSampleEpochMs = 0L
     private var devicesInitialAgeMs = Long.MAX_VALUE
     private var devicesReceivedAt = 0L
+    private var devicesOnlineCount: Int? = null
 
     fun acceptRouter(payload: JSONObject, now: Long = SystemClock.elapsedRealtime()) {
         val epochMs = payload.optLong("sampleEpochMs", 0L)
@@ -132,6 +133,10 @@ class RealtimeDisplaySmoother {
         if (epochMs < devicesSampleEpochMs) return
 
         val rows = payload.optJSONArray("devices") ?: JSONArray()
+        val delta = payload.optBoolean("delta", false)
+        if (payload.has("onlineDeviceCount")) {
+            devicesOnlineCount = payload.optInt("onlineDeviceCount", 0).coerceAtLeast(0)
+        }
         val freshEnoughToAnimate = devicesSampleEpochMs > 0L && ageMs <= MAX_ANIMATION_SAMPLE_AGE_MS
         val seen = HashSet<String>(rows.length())
         for (index in 0 until rows.length()) {
@@ -156,7 +161,7 @@ class RealtimeDisplaySmoother {
                     (current.first != targetUpload || current.second != targetDownload),
             )
         }
-        deviceTracks.keys.retainAll(seen)
+        if (!delta) deviceTracks.keys.retainAll(seen)
         devicesSampleEpochMs = epochMs
         devicesInitialAgeMs = ageMs
         devicesReceivedAt = now
@@ -174,7 +179,8 @@ class RealtimeDisplaySmoother {
             memoryPercent = roundedTenth(vector.memoryPercent),
             temperatureC = roundedTenth(vector.temperatureC),
         )
-        val key = RouterRenderKey(rounded, routerDiscrete, routerSampleEpochMs, stale)
+        val discrete = devicesOnlineCount?.let { routerDiscrete.copy(onlineDeviceCount = it) } ?: routerDiscrete
+        val key = RouterRenderKey(rounded, discrete, routerSampleEpochMs, stale)
         if (key == lastRouterRender) return null
         lastRouterRender = key
 
@@ -187,15 +193,15 @@ class RealtimeDisplaySmoother {
             .put("cpuPercent", rounded.cpuPercent)
             .put("memoryPercent", rounded.memoryPercent)
             .put("temperatureC", rounded.temperatureC)
-            .put("totalUploadBytes", routerDiscrete.totalUploadBytes)
-            .put("totalDownloadBytes", routerDiscrete.totalDownloadBytes)
-            .put("uptimeSeconds", routerDiscrete.uptimeSeconds)
-            .put("onlineDeviceCount", routerDiscrete.onlineDeviceCount)
-            .put("ipv4Connections", routerDiscrete.ipv4Connections)
-            .put("ipv6Connections", routerDiscrete.ipv6Connections)
-            .put("ipv4HalfConnections", routerDiscrete.ipv4HalfConnections)
-            .put("ipv6HalfConnections", routerDiscrete.ipv6HalfConnections)
-            .put("cps", routerDiscrete.cps)
+            .put("totalUploadBytes", discrete.totalUploadBytes)
+            .put("totalDownloadBytes", discrete.totalDownloadBytes)
+            .put("uptimeSeconds", discrete.uptimeSeconds)
+            .put("onlineDeviceCount", discrete.onlineDeviceCount)
+            .put("ipv4Connections", discrete.ipv4Connections)
+            .put("ipv6Connections", discrete.ipv6Connections)
+            .put("ipv4HalfConnections", discrete.ipv4HalfConnections)
+            .put("ipv6HalfConnections", discrete.ipv6HalfConnections)
+            .put("cps", discrete.cps)
         return mergeLiteRouterRealtime(base, sample).also {
             it.put("realtimeSampleAgeMs", ageMs)
             it.put("realtimeSmoothing", !stale)
@@ -246,6 +252,7 @@ class RealtimeDisplaySmoother {
         devicesSampleEpochMs = 0L
         devicesInitialAgeMs = Long.MAX_VALUE
         devicesReceivedAt = 0L
+        devicesOnlineCount = null
     }
 
     private fun routerVectorAt(now: Long): RouterVector {

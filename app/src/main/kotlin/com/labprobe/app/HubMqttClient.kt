@@ -27,9 +27,14 @@ data class HubMqttConfig(
     val password: String = "",
     val revisionTopic: String = "",
     val availabilityTopic: String = "",
-    val dashboardTopic: String = ""
+    val dashboardTopic: String = "",
+    val routerRealtimeTopic: String = "",
+    val devicesRealtimeTopic: String = "",
+    val realtimeDemandTopic: String = "",
 ) {
-    fun usable(): Boolean = enabled && publicUrl.isNotBlank() && revisionTopic.isNotBlank()
+    fun usable(): Boolean = enabled && publicUrl.isNotBlank() &&
+        routerRealtimeTopic.isNotBlank() && devicesRealtimeTopic.isNotBlank() &&
+        realtimeDemandTopic.isNotBlank()
 
     fun toJson(): String = JSONObject()
         .put("enabled", enabled)
@@ -39,6 +44,9 @@ data class HubMqttConfig(
         .put("revisionTopic", revisionTopic)
         .put("availabilityTopic", availabilityTopic)
         .put("dashboardTopic", dashboardTopic)
+        .put("routerRealtimeTopic", routerRealtimeTopic)
+        .put("devicesRealtimeTopic", devicesRealtimeTopic)
+        .put("realtimeDemandTopic", realtimeDemandTopic)
         .toString()
 
     companion object {
@@ -53,7 +61,10 @@ data class HubMqttConfig(
                     password = root.optString("password"),
                     revisionTopic = root.optString("revisionTopic"),
                     availabilityTopic = root.optString("availabilityTopic"),
-                    dashboardTopic = root.optString("dashboardTopic")
+                    dashboardTopic = root.optString("dashboardTopic"),
+                    routerRealtimeTopic = root.optString("routerRealtimeTopic"),
+                    devicesRealtimeTopic = root.optString("devicesRealtimeTopic"),
+                    realtimeDemandTopic = root.optString("realtimeDemandTopic"),
                 )
             }.getOrDefault(HubMqttConfig())
         }
@@ -65,22 +76,28 @@ sealed interface HubRealtimeState {
     data object Connecting : HubRealtimeState
     data object Connected : HubRealtimeState
     data class Reconnecting(val attempt: Int, val maxAttempts: Int, val reason: String) : HubRealtimeState
+    /** Source-compatibility only. The WSS supervisor never emits this state. */
     data class HttpFallback(val reason: String) : HubRealtimeState
 }
 
-/** Foreground MQTT supervisor for revision, availability and router dashboard snapshots. */
+/** Foreground WSS supervisor for sync signals and compact realtime deltas. */
 class HubMqttClient(
     private val clientId: String,
     private val onState: (HubRealtimeState) -> Unit,
     private val onRevision: (Long) -> Unit,
-    private val onRouterDashboard: (String) -> Unit = {}
+    private val onRouterRealtime: (String) -> Unit = {},
+    private val onDevicesRealtime: (String) -> Unit = {},
+    private val onRealtimeReady: (Boolean) -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var client: MqttAsyncClient? = null
     private var reconnectJob: Job? = null
+    private var demandHeartbeatJob: Job? = null
     @Volatile private var desired = false
     @Volatile private var generation = 0L
     @Volatile private var activeConfig = HubMqttConfig()
+    @Volatile private var activeDemandTopic = ""
+    @Volatile private var hasConnectedBefore = false
 
     fun start(config: HubMqttConfig) {
         val normalized = config.copy(publicUrl = normalizeMqttUrl(config.publicUrl))
@@ -104,6 +121,9 @@ class HubMqttClient(
         generation += 1L
         reconnectJob?.cancel()
         reconnectJob = null
+        demandHeartbeatJob?.cancel()
+        demandHeartbeatJob = null
+        hasConnectedBefore = false
         stopClient()
     }
 
@@ -112,16 +132,27 @@ class HubMqttClient(
         generation += 1L
         reconnectJob?.cancel()
         reconnectJob = null
+        demandHeartbeatJob?.cancel()
+        demandHeartbeatJob = null
+        hasConnectedBefore = false
         val current = detachClient()
+        val demandTopic = activeDemandTopic
+        activeDemandTopic = ""
         scope.launch {
-            teardownClient(current)
+            teardownClient(current, announceOffline = true, demandTopic = demandTopic)
             scope.cancel()
         }
     }
 
     private fun stopClient() {
+        demandHeartbeatJob?.cancel()
+        demandHeartbeatJob = null
         val current = detachClient()
-        if (current != null) scope.launch { teardownClient(current) }
+        val demandTopic = activeDemandTopic
+        activeDemandTopic = ""
+        if (current != null) {
+            scope.launch { teardownClient(current, announceOffline = true, demandTopic = demandTopic) }
+        }
     }
 
     private fun detachClient(): MqttAsyncClient? {
@@ -130,47 +161,97 @@ class HubMqttClient(
         return current
     }
 
-    private fun teardownClient(current: MqttAsyncClient?) {
+    private fun demandClientTopic(config: HubMqttConfig, run: Long): String {
+        val base = config.realtimeDemandTopic.trimEnd('/')
+        return if (base.isBlank()) "" else "$base/$clientId-$run"
+    }
+
+    private fun teardownClient(
+        current: MqttAsyncClient?,
+        announceOffline: Boolean,
+        demandTopic: String,
+    ) {
         if (current == null) return
+        if (announceOffline && current.isConnected && demandTopic.isNotBlank()) {
+            runCatching {
+                current.publish(demandTopic, "offline".toByteArray(), 1, false)
+                    .waitForCompletion(1_500L)
+            }
+        }
         runCatching { if (current.isConnected) current.disconnectForcibly() }
         runCatching { current.close() }
+    }
+
+    private fun publishDemand(mqtt: MqttAsyncClient, demandTopic: String) {
+        if (!desired || !mqtt.isConnected || demandTopic.isBlank()) return
+        runCatching { mqtt.publish(demandTopic, "online".toByteArray(), 1, false) }
+    }
+
+    private fun startDemandHeartbeat(run: Long, mqtt: MqttAsyncClient, demandTopic: String) {
+        demandHeartbeatJob?.cancel()
+        demandHeartbeatJob = scope.launch {
+            while (desired && run == generation && client === mqtt && mqtt.isConnected) {
+                publishDemand(mqtt, demandTopic)
+                delay(DEMAND_HEARTBEAT_MS)
+            }
+        }
     }
 
     private fun connect(run: Long, fastAttempt: Int, slowRetry: Boolean) {
         if (!desired || run != generation) return
         scope.launch {
+            val config = activeConfig
+            val demandTopic = demandClientTopic(config, run)
             val mqtt = runCatching {
-                MqttAsyncClient(activeConfig.publicUrl, clientId, MemoryPersistence())
+                MqttAsyncClient(config.publicUrl, clientId, MemoryPersistence())
             }.getOrElse {
-                scheduleReconnect(run, fastAttempt, slowRetry, failureReason(it, "MQTT地址无效"))
+                scheduleReconnect(run, fastAttempt, slowRetry, failureReason(it, "WSS 地址无效"))
                 return@launch
             }
             client = mqtt
+            activeDemandTopic = demandTopic
             mqtt.setCallback(object : MqttCallbackExtended {
                 override fun connectComplete(reconnect: Boolean, serverURI: String?) = Unit
 
                 override fun connectionLost(cause: Throwable?) {
-                    if (client === mqtt) client = null
+                    if (client === mqtt) {
+                        demandHeartbeatJob?.cancel()
+                        demandHeartbeatJob = null
+                        client = null
+                        activeDemandTopic = ""
+                    }
                     runCatching { mqtt.close() }
-                    scheduleReconnect(run, 0, false, failureReason(cause, "连接中断"))
+                    scheduleReconnect(run, 0, false, failureReason(cause, "WSS 连接中断"))
                 }
 
                 override fun messageArrived(topic: String?, message: MqttMessage?) {
                     if (message == null) return
                     when (topic) {
-                        activeConfig.revisionTopic -> {
+                        config.revisionTopic -> {
                             val revision = runCatching {
                                 JSONObject(String(message.payload, Charsets.UTF_8)).optLong("revision", 0L)
                             }.getOrDefault(0L)
                             if (revision > 0L) onRevision(revision)
                         }
-                        activeConfig.availabilityTopic -> {
+                        config.availabilityTopic -> {
                             when (String(message.payload, Charsets.UTF_8).trim().lowercase()) {
-                                "online" -> onState(HubRealtimeState.Connected)
-                                "offline" -> onState(HubRealtimeState.HttpFallback("Hub MQTT发布端离线"))
+                                "online" -> {
+                                    publishDemand(mqtt, demandTopic)
+                                    onState(HubRealtimeState.Connected)
+                                }
+                                "offline" -> onState(
+                                    HubRealtimeState.Reconnecting(
+                                        FAST_RETRY_COUNT,
+                                        FAST_RETRY_COUNT,
+                                        "Hub WSS 推送端离线",
+                                    )
+                                )
                             }
                         }
-                        activeConfig.dashboardTopic -> onRouterDashboard(String(message.payload, Charsets.UTF_8))
+                        config.routerRealtimeTopic ->
+                            onRouterRealtime(String(message.payload, Charsets.UTF_8))
+                        config.devicesRealtimeTopic ->
+                            onDevicesRealtime(String(message.payload, Charsets.UTF_8))
                     }
                 }
 
@@ -182,8 +263,9 @@ class HubMqttClient(
                 connectionTimeout = 8
                 keepAliveInterval = 25
                 mqttVersion = MqttConnectOptions.MQTT_VERSION_3_1_1
-                if (activeConfig.username.isNotBlank()) userName = activeConfig.username
-                if (activeConfig.password.isNotBlank()) password = activeConfig.password.toCharArray()
+                setWill(demandTopic, "offline".toByteArray(), 1, false)
+                if (config.username.isNotBlank()) userName = config.username
+                if (config.password.isNotBlank()) password = config.password.toCharArray()
             }
             val connectListener = object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
@@ -193,22 +275,30 @@ class HubMqttClient(
                         return
                     }
                     val topicQos = listOf(
-                        activeConfig.revisionTopic to 1,
-                        activeConfig.availabilityTopic to 1,
-                        activeConfig.dashboardTopic to 1
+                        config.revisionTopic to 1,
+                        config.availabilityTopic to 1,
+                        config.routerRealtimeTopic to 0,
+                        config.devicesRealtimeTopic to 0,
                     ).filter { it.first.isNotBlank() }.distinctBy { it.first }
                     val topics = topicQos.map { it.first }
                     val qoses = topicQos.map { it.second }.toIntArray()
                     mqtt.subscribe(topics.toTypedArray(), qoses, null, object : IMqttActionListener {
                         override fun onSuccess(asyncActionToken: IMqttToken?) {
-                            if (desired && run == generation) onState(HubRealtimeState.Connected)
+                            if (desired && run == generation) {
+                                publishDemand(mqtt, demandTopic)
+                                startDemandHeartbeat(run, mqtt, demandTopic)
+                                val reconnect = hasConnectedBefore
+                                hasConnectedBefore = true
+                                onState(HubRealtimeState.Connected)
+                                onRealtimeReady(reconnect)
+                            }
                         }
 
                         override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
                             if (client === mqtt) client = null
                             runCatching { mqtt.disconnectForcibly() }
                             runCatching { mqtt.close() }
-                            scheduleReconnect(run, fastAttempt, slowRetry, failureReason(exception, "订阅失败"))
+                            scheduleReconnect(run, fastAttempt, slowRetry, failureReason(exception, "WSS 订阅失败"))
                         }
                     })
                 }
@@ -216,7 +306,7 @@ class HubMqttClient(
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
                     if (client === mqtt) client = null
                     runCatching { mqtt.close() }
-                    scheduleReconnect(run, fastAttempt, slowRetry, failureReason(exception, "连接失败"))
+                    scheduleReconnect(run, fastAttempt, slowRetry, failureReason(exception, "WSS 连接失败"))
                 }
             }
             try {
@@ -224,7 +314,7 @@ class HubMqttClient(
             } catch (error: Exception) {
                 if (client === mqtt) client = null
                 runCatching { mqtt.close() }
-                scheduleReconnect(run, fastAttempt, slowRetry, failureReason(error, "连接失败"))
+                scheduleReconnect(run, fastAttempt, slowRetry, failureReason(error, "WSS 连接失败"))
             }
         }
     }
@@ -234,7 +324,7 @@ class HubMqttClient(
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             if (slowRetry || fastAttempt >= FAST_RETRY_COUNT) {
-                onState(HubRealtimeState.HttpFallback(reason))
+                onState(HubRealtimeState.Reconnecting(FAST_RETRY_COUNT, FAST_RETRY_COUNT, reason))
                 delay(SLOW_RETRY_MS)
                 connect(run, FAST_RETRY_COUNT, slowRetry = true)
                 return@launch
@@ -251,7 +341,7 @@ class HubMqttClient(
         val parts = mutableListOf<String>()
         var current: Throwable? = error
         while (current != null && parts.size < 3) {
-            if (current is MqttException) parts += "MQTT错误 ${current.reasonCode}"
+            if (current is MqttException) parts += "WSS 错误 ${current.reasonCode}"
             current.message?.trim()?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotBlank() }?.let { parts += it }
             current = current.cause
         }
@@ -261,8 +351,10 @@ class HubMqttClient(
     companion object {
         private const val FAST_RETRY_COUNT = 5
         private const val SLOW_RETRY_MS = 60_000L
+        private const val DEMAND_HEARTBEAT_MS = 15_000L
 
-        fun newClientId(): String = "labprobe-app-" + UUID.randomUUID().toString().replace("-", "").take(20)
+        fun newClientId(): String =
+            "labprobe-app-" + UUID.randomUUID().toString().replace("-", "").take(20)
 
         private fun normalizeMqttUrl(raw: String): String {
             val clean = raw.trim().trimEnd('/')

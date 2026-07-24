@@ -258,6 +258,8 @@ def patch_router_status() -> None:
 
 def patch_mqtt() -> None:
     text = MQTT.read_text(encoding="utf-8")
+    if "Foreground WSS supervisor for sync signals and compact realtime deltas" in text:
+        return
     text = text.replace(
         '/** Foreground MQTT supervisor for revision, availability and router dashboard snapshots. */',
         '/** Foreground MQTT supervisor for revision and availability only. */',
@@ -269,6 +271,10 @@ def patch_mqtt() -> None:
 
 
 def apply() -> None:
+    current = MAIN.read_text(encoding="utf-8")
+    if "private suspend fun calibrateRealtimeCache()" in current and "onRouterRealtime = { raw ->" in current:
+        print("single-WSS realtime architecture already applied")
+        return
     patch_main()
     patch_router_status()
     patch_mqtt()

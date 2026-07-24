@@ -126,6 +126,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Dns
@@ -948,6 +949,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
     private val cacheWriteVersion = AtomicLong(0L)
+    private val liteRealtimeApi = LiteRealtimeApi(prefs)
+    private val realtimeSmoother = RealtimeDisplaySmoother()
+    private var liteRenderJob: Job? = null
     @Volatile private var foregroundActive = true
     private val realtimeClient = HubMqttClient(
         clientId = prefs.mqttClientId,
@@ -969,16 +973,34 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                     }
                     is HubRealtimeState.HttpFallback -> {
                         mqttConnected = false
-                        message = "已切换 HTTP 同步"
+                        message = "实时链路未连接"
                     }
                     HubRealtimeState.Disabled -> {
                         mqttConnected = false
-                        message = if (hubConnected) "HTTP 同步正常" else message
+                        message = if (hubConnected) "Hub 已连接，等待实时链路" else message
                     }
                 }
             }
         },
-        onRevision = { revision -> mqttRevisionSignals.trySend(revision) }
+        onRevision = { revision -> mqttRevisionSignals.trySend(revision) },
+        onRouterRealtime = { raw ->
+            stateScope.launch {
+                if (!foregroundActive || !mqttConnected) return@launch
+                runCatching { JSONObject(raw) }.getOrNull()?.let {
+                    realtimeSmoother.acceptRouter(it)
+                    routerDashboardError = ""
+                }
+            }
+        },
+        onDevicesRealtime = { raw ->
+            stateScope.launch {
+                if (!foregroundActive || !mqttConnected) return@launch
+                runCatching { JSONObject(raw) }.getOrNull()?.let { realtimeSmoother.acceptDevices(it) }
+            }
+        },
+        onRealtimeReady = { reconnect ->
+            if (reconnect) stateScope.launch { calibrateRealtimeCache() }
+        }
     )
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
     var deviceOverrides by mutableStateOf(parseDeviceOverrides(prefs.deviceOverridesJson))
@@ -1085,8 +1107,55 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         }
     }
 
+    private suspend fun calibrateRealtimeCache() {
+        if (!foregroundActive || prefs.hub.isBlank() || prefs.token.isBlank()) return
+        supervisorScope {
+            val router = async { runCatching { liteRealtimeApi.router() }.getOrNull() }
+            val devicesRuntime = async { runCatching { liteRealtimeApi.devices() }.getOrNull() }
+            router.await()?.let {
+                realtimeSmoother.acceptRouter(it)
+                routerDashboardError = ""
+            }
+            devicesRuntime.await()?.let { realtimeSmoother.acceptDevices(it) }
+            val now = SystemClock.elapsedRealtime()
+            realtimeSmoother.renderRouter(routerDashboard, now)?.let { routerDashboard = it }
+            val nextOnline = realtimeSmoother.renderDevices(onlineDevices, now)
+            if (nextOnline !== onlineDevices) onlineDevices = nextOnline
+            val nextDevices = realtimeSmoother.renderDevices(devices, now)
+            if (nextDevices !== devices) devices = nextDevices
+        }
+    }
+
+    private fun startRealtimeRendering() {
+        if (liteRenderJob?.isActive == true) return
+        liteRenderJob = stateScope.launch {
+            while (isActive) {
+                if (foregroundActive && mqttConnected) {
+                    val now = SystemClock.elapsedRealtime()
+                    realtimeSmoother.renderRouter(routerDashboard, now)?.let { routerDashboard = it }
+                    val nextOnline = realtimeSmoother.renderDevices(onlineDevices, now)
+                    if (nextOnline !== onlineDevices) onlineDevices = nextOnline
+                    val nextDevices = realtimeSmoother.renderDevices(devices, now)
+                    if (nextDevices !== devices) devices = nextDevices
+                    delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)
+                } else {
+                    realtimeSmoother.pause()
+                    delay(1_000L)
+                }
+            }
+        }
+    }
+
+    private fun pauseRealtimeRendering() {
+        liteRenderJob?.cancel()
+        liteRenderJob = null
+        realtimeSmoother.pause()
+    }
+
     suspend fun startRealtime() {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
+        calibrateRealtimeCache()
+        startRealtimeRendering()
         val stored = prefs.mqttConfig
         val remote = runCatching { HubApi(prefs).getMqttConfig() }.getOrElse { stored }
         val effective = remote.copy(publicUrl = prefs.mqttUrlOverride.ifBlank { remote.publicUrl })
@@ -1140,6 +1209,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     fun stopRealtime() {
         realtimeClient.stop()
+        pauseRealtimeRendering()
         mqttConnected = false
     }
 
@@ -1154,6 +1224,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     fun close() {
         realtimeClient.close()
+        pauseRealtimeRendering()
         mqttRevisionSignals.close()
         foregroundRecoverySignals.close()
         cacheScope.cancel()
@@ -1424,9 +1495,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     }
 
     fun markHubSavedWithoutConnectionChange() {
+        if (!mqttConnected && hubConnected) {
+            message = "Hub 已连接，等待实时链路"
+            return
+        }
         message = when {
             mqttConnected -> "实时同步正常"
-            hubConnected -> "HTTP 同步正常"
+            hubConnected -> "Hub 已连接，等待实时链路"
             else -> "Hub 设置已保存，等待自动连接"
         }
     }
@@ -1686,12 +1761,6 @@ fun LabProbeApp(prefs: AppPrefs) {
                 if (info.hasUpdate && prefs.ignoredUpdateCode != info.versionCode) showUpdateDialog = true
             }
         updateChecking = false
-    }
-    LaunchedEffect(appForeground, state.mqttConnected) {
-        while (true) {
-            delay(30_000L)
-            if (appForeground && !state.mqttConnected && !state.loading) state.refreshAll(silent = true)
-        }
     }
     LaunchedEffect(Unit) {
         while (true) {
@@ -4150,7 +4219,7 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                Text(if (state.mqttConnected) "MQTT 实时" else "HTTP 兜底", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
+                Text(if (state.mqttConnected) "MQTT 实时" else "实时未连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
             }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
         }
@@ -9189,8 +9258,8 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                             HubRealtimeState.Connected -> "MQTT 实时"
                             HubRealtimeState.Connecting -> "正在连接"
                             is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
-                            is HubRealtimeState.HttpFallback -> "HTTP 同步"
-                            HubRealtimeState.Disabled -> "HTTP 同步"
+                            is HubRealtimeState.HttpFallback -> "实时未连接"
+                            HubRealtimeState.Disabled -> "实时未连接"
                         }
                         Text(syncLabel, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
                     }
@@ -9201,8 +9270,8 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             HubRealtimeState.Connected -> "实时同步正常"
             HubRealtimeState.Connecting -> if (state.hubConnected) "正在连接实时同步" else "正在连接 Hub"
             is HubRealtimeState.Reconnecting -> "正在重连实时同步 ${realtime.attempt}/${realtime.maxAttempts}"
-            is HubRealtimeState.HttpFallback -> if (state.hubConnected) "HTTP 同步正常" else "Hub 连接失败"
-            HubRealtimeState.Disabled -> if (state.hubConnected) "HTTP 同步正常" else state.message.ifBlank { "等待连接" }
+            is HubRealtimeState.HttpFallback -> if (state.hubConnected) "Hub 已连接，实时链路未连接" else "Hub 连接失败"
+            HubRealtimeState.Disabled -> if (state.hubConnected) "Hub 已连接，等待实时链路" else state.message.ifBlank { "等待连接" }
         }
         val connectionMessage = msg.ifBlank { liveConnectionMessage }
         val mqttFailure = when (val realtime = state.mqttState) {

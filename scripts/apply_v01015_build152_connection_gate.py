@@ -180,6 +180,9 @@ def replace_function(text: str, signature: str, replacement: str) -> str:
 
 def apply() -> None:
     text = MAIN.read_text(encoding="utf-8")
+    if "private suspend fun calibrateRealtimeCache()" in text and "onRouterRealtime = { raw ->" in text:
+        print("single-WSS realtime foreground gate already applied")
+        return
     text, count = re.subn(
         r'object AppVersion \{.*?\n\}\n\nprivate val LabTypography:',
         VERSION_BLOCK + '\n\nprivate val LabTypography:',

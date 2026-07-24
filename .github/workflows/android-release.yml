@@ -65,7 +65,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify final build152 sources before compile
+      - name: Verify single-WSS realtime sources before compile
         shell: bash
         run: |
           set -e
@@ -84,8 +84,14 @@ jobs:
           grep -Fq 'dashboardTopic = ""' "$MAIN"
           ! grep -Fq 'onRouterDashboard = { raw ->' "$MAIN"
           ! grep -Fq 'activeConfig.dashboardTopic to 1' "$MQTT"
-          grep -Fq 'realtimeSmoother.acceptRouter(latest)' "$MAIN"
-          grep -Fq 'realtimeSmoother.acceptDevices(latest)' "$MAIN"
+          grep -Fq 'onRouterRealtime = { raw ->' "$MAIN"
+          grep -Fq 'onDevicesRealtime = { raw ->' "$MAIN"
+          grep -Fq 'config.routerRealtimeTopic to 0' "$MQTT"
+          grep -Fq 'config.devicesRealtimeTopic to 0' "$MQTT"
+          grep -Fq 'realtimeDemandTopic' "$MQTT"
+          grep -Fq 'private suspend fun calibrateRealtimeCache()' "$MAIN"
+          grep -Fq 'realtimeSmoother.acceptRouter(it)' "$MAIN"
+          grep -Fq 'realtimeSmoother.acceptDevices(it)' "$MAIN"
           grep -Fq 'realtimeSmoother.renderRouter(routerDashboard, now)' "$MAIN"
           ! grep -Fq 'mergeLiteRouterRealtime(routerDashboard, latest)' "$MAIN"
           grep -Fq '/api/router/realtime' "$LITE"
@@ -94,18 +100,10 @@ jobs:
           grep -Fq 'const val STALE_WARNING_AGE_MS = 8_000L' "$SMOOTH"
           grep -Fq 'fun pause() = reset()' "$SMOOTH"
 
-          grep -Fq 'now - liteRouterLastSuccessAt <= 5_000L' "$MAIN"
-          grep -Fq 'if (!liteRouterSessionActive())' "$MAIN"
-          grep -Fq 'liteDevicesLastSuccessAt = 0L' "$MAIN"
           grep -Fq 'realtimeSmoother.pause()' "$MAIN"
           ! grep -Fq 'realtimeSmoother.reset()' "$MAIN"
-          grep -Fq 'latest != null && liteRouterSessionActive()' "$MAIN"
-          grep -Fq 'liteDisconnectedRetryDelay(liteRouterFailureCount)' "$MAIN"
-          grep -Fq 'failures <= 1 -> 3_000L' "$MAIN"
-          grep -Fq 'failures == 2 -> 5_000L' "$MAIN"
-          grep -Fq 'failures == 3 -> 10_000L' "$MAIN"
-          grep -Fq 'else -> 15_000L' "$MAIN"
-          grep -Fq 'delay(if (routerActive || devicesActive) RealtimeDisplaySmoother.FRAME_INTERVAL_MS else 1_000L)' "$MAIN"
+          grep -Fq 'foregroundActive && mqttConnected' "$MAIN"
+          ! grep -Fq 'LaunchedEffect(appForeground, state.mqttConnected)' "$MAIN"
 
           ! grep -Fq 'routerDashboardMqttFresh()' "$STATUS"
           ! grep -Fq 'delay(if (state.mqttConnected) 15_000L else 20_000L)' "$STATUS"
