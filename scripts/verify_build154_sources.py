@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the final generated Android sources used by build154.
-
-Checks focus on observable behavior and stable architecture contracts rather than
-obsolete private constant names. The script writes a short diagnostic for CI.
-"""
+"""Verify final generated Android sources used by APP build155."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,35 +40,46 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    for needle in ('versionCode = 154', 'versionName = "0.10.15"'):
+    for needle in ('versionCode = 155', 'versionName = "0.10.15"'):
         require(GRADLE, needle)
 
     for needle in (
         '版本 ${AppVersion.NAME} build ${AppVersion.CODE}',
-        '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"',
+        '"v$NAME build$CODE · 长连接启动与路由功能恢复"',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'stateScope.launch { calibrateRealtimeCache() }',
         'onRouterRealtime = { raw ->',
         'onDevicesRealtime = { raw ->',
+        'onRealtimeReady = { _ ->',
         'private suspend fun calibrateRealtimeCache()',
         'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)',
+        'state.startRealtime()\n        launch { state.refreshAll(forceFull = true) }',
+        'hubConnected = true',
+        'onlineCount > 0 -> "$onlineCount 台在线"',
+        'state.hubConnected -> "实时同步正常"',
     ):
         require(MAIN, needle)
-    for needle in ('getMqttConfig()', 'LaunchedEffect(appForeground, state.mqttConnected)'):
+    for needle in (
+        'getMqttConfig()',
+        'LaunchedEffect(appForeground, state.mqttConnected)',
+        'if (!foregroundActive || !mqttConnected) return@launch',
+        'message = "正在重连 ${next.attempt}/${next.maxAttempts}"',
+        'subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步"',
+    ):
         forbid(MAIN, needle)
 
     for needle in (
         'class HubRealtimeWebSocketClient',
         'const val REALTIME_PATH = "/api/realtime/ws"',
-        'const val PING_INTERVAL_SECONDS = 8L',
+        'const val PING_INTERVAL_SECONDS = 10L',
         'const val WATCHDOG_INTERVAL_MS = 1_000L',
-        'const val SERVER_FRAME_TIMEOUT_MS = 8_000L',
+        'const val SERVER_FRAME_TIMEOUT_MS = 20_000L',
         'const val MAX_RETRY_ATTEMPT = 3',
         'webSocket.cancel()',
         'else -> 3_000L',
     ):
         require(WSS, needle)
-    for needle in ('MqttAsyncClient', 'org.eclipse.paho'):
+    for needle in ('MqttAsyncClient', 'org.eclipse.paho', 'SERVER_FRAME_TIMEOUT_MS = 8_000L'):
         forbid(WSS, needle)
 
     for needle in (
@@ -94,14 +101,24 @@ def main() -> None:
         forbid(SMOOTH, needle)
 
     forbid(STATUS, '等待 Agent 更新')
-    require(STATUS, '实时链路正在自动重连')
+    forbid(STATUS, '实时链路正在自动重连')
+    require(STATUS, '实时数据暂时未变化，保留上次结果')
 
-    # Exact home navigation contract restored from router-control-v01011-build141.
+    # Exact home navigation and real router settings contract restored from build141.
     for needle in (
         'RouterSettingsHomeCard { onNavigate("router_settings") }',
         'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", LabV2.Purple, Modifier.weight(1f)) { onNavigate("tool_ssh") }',
         'HomeDdnsMiniCard(',
         'onClick = { onNavigate("tool_router_ddns") }',
+        'route == "router_settings" -> "home"',
+        '"router_settings" -> RouterSettingsScreen',
+        '"tool_portmap" -> MappingAndUpnpScreen',
+        '"tool_router_firewall" -> RouterFirewallScreen',
+        '"tool_router_ddns" -> RouterDdnsScreen',
+        '"tool_router_diag" -> RouterDiagnosticScreen',
+        '"tool_router_nat" -> RouterNatDiagnosticScreen',
+        '"tool_router_beta" -> RouterBetaUpgradeScreen',
+        '"tool_router_login" -> RouterHubStatusScreen',
     ):
         require(MAIN, needle)
     tools = section(MAIN, 'fun ToolsHomeScreen', 'fun ReorderableToolSection')
@@ -120,7 +137,7 @@ def main() -> None:
         require(NATIVE, needle)
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print("build154 source and build141 home navigation invariants verified")
+    print("build155 startup, WSS keepalive, terminal state and real router routes verified")
 
 
 if __name__ == "__main__":
