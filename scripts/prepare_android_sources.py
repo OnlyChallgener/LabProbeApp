@@ -8,6 +8,7 @@ from apply_router_ui_fixes import patch_main, patch_router_ui
 from apply_build155_home_navigation_restore import apply as apply_build155_home_navigation
 from apply_build155_connection_routes_sync import apply as apply_build155_connection_routes_sync
 from apply_build155_wss_watchdog import apply as apply_build155_wss_watchdog
+from apply_build156_router_fields import apply as apply_build156_router_fields
 from apply_v01015_build148_release_fix import apply as apply_build148_release_fix
 from apply_v01015_build149_about_compile_fix import apply as apply_build149_about_compile_fix
 from apply_v01015_build150_lite_realtime import apply as apply_build150_lite_realtime
@@ -51,6 +52,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · Hub 原生 WSS 实时链路"' in current
         or '"v$NAME build$CODE · 原生 fast 秒级稳定刷新"' in current
         or '"v$NAME build$CODE · 长连接启动与路由功能恢复"' in current
+        or '"v$NAME build$CODE · 路由字段与长连接完整修复"' in current
     )
 
     # Realtime migrations must never bypass the established home navigation or
@@ -64,7 +66,8 @@ if __name__ == "__main__":
         apply_build154_realtime_stability()
         apply_build155_connection_routes_sync()
         apply_build155_wss_watchdog()
-        print("Android build155 WSS, terminal sync and real router functions prepared")
+        apply_build156_router_fields()
+        print("Android build156 WSS, terminal sync, router fields and real functions prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -98,4 +101,5 @@ if __name__ == "__main__":
     apply_build155_home_navigation()
     apply_build155_connection_routes_sync()
     apply_build155_wss_watchdog()
-    print("Android source fixes, build141 router functions and build155 connection fixes prepared")
+    apply_build156_router_fields()
+    print("Android source fixes, build141 router functions and build156 field/connection fixes prepared")
