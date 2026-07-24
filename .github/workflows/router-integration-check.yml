@@ -40,7 +40,7 @@ jobs:
               sha: context.sha,
               state: 'pending',
               context: 'labprobe/router-integration-stage',
-              description: 'workflow started; preparing build156 sources',
+              description: 'workflow started; preparing build157 sources',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
@@ -69,7 +69,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build156 fields, connection and real router functions
+      - name: Verify build157 UX, cache and connection consistency
         id: verify
         shell: bash
         run: python3 scripts/verify_build154_sources.py
@@ -107,11 +107,20 @@ jobs:
           forbidden = [
               "实时数据稍旧，等待 Agent 更新",
               "实时链路正在自动重连",
+              "Waiting for Hub status",
+              "Hub is online, but router data is unavailable",
+              "Hub router data is available",
               "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
           ]
           required = [
-              "路由字段与长连接完整修复",
-              "实时数据暂时未变化，保留上次结果",
+              "路由交互与状态回归修复",
+              "实时数据暂时未变化，已保留上次结果",
+              "STUN 类型",
+              "WAN 类型",
+              "未知 NAT 类型",
+              "请求超时，请稍后重试",
+              "Hub 已连接，正在等待路由器实时数据",
+              "实时链路正常，完整数据同步暂时失败，已保留上次数据",
               "/api/realtime/ws",
               "temperature2gC",
               "temperature5gC",
@@ -190,7 +199,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: labprobe-generated-sources-build156
+          name: labprobe-generated-sources-build157
           path: |
             app/src/main/kotlin/com/labprobe/app/MainActivity.kt
             app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
@@ -199,12 +208,14 @@ jobs:
             app/src/main/kotlin/com/labprobe/app/RouterStatus.kt
             app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
             app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
+            app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
+            app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
 
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build156-gradle-log
+          name: LabProbe-v0.10.15-build157-gradle-log
           path: /tmp/gradle-variants.log
           if-no-files-found: ignore
 
@@ -212,12 +223,12 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build156-router-debug
+          name: LabProbe-v0.10.15-build157-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.15-build156-router-release-unsigned
+          name: LabProbe-v0.10.15-build157-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
