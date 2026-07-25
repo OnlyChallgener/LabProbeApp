@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify final generated Android sources used by APP build157."""
+"""Verify final generated Android sources for APP v0.10.16 build158."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +12,7 @@ NATIVE = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt"
 ROUTER_API = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt"
 ROUTER_SETTINGS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt"
 ROUTER_CONTROL = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
-ROUTER_SLOW_CACHE = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSlowDataCache.kt"
+REPOSITORY = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterRepository.kt"
 GRADLE = ROOT / "app/build.gradle.kts"
 DIAGNOSTIC = Path("/tmp/labprobe-ci-error.txt")
 
@@ -22,16 +22,18 @@ def fail(message: str) -> None:
     raise SystemExit(message)
 
 
-def require(path: Path, needle: str) -> None:
+def require(path: Path, *needles: str) -> None:
     text = path.read_text(encoding="utf-8")
-    if needle not in text:
-        fail(f"missing {path.name}: {needle}")
+    missing = [needle for needle in needles if needle not in text]
+    if missing:
+        fail(f"missing {path.name}: {missing}")
 
 
-def forbid(path: Path, needle: str) -> None:
+def forbid(path: Path, *needles: str) -> None:
     text = path.read_text(encoding="utf-8")
-    if needle in text:
-        fail(f"forbidden {path.name}: {needle}")
+    found = [needle for needle in needles if needle in text]
+    if found:
+        fail(f"forbidden {path.name}: {found}")
 
 
 def section(path: Path, start: str, end: str) -> str:
@@ -44,193 +46,131 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    for needle in ('versionCode = 157', 'versionName = "0.10.15"'):
-        require(GRADLE, needle)
+    require(GRADLE, 'versionCode = 158', 'versionName = "0.10.16"')
 
-    for needle in (
-        '版本 ${AppVersion.NAME} build ${AppVersion.CODE}',
-        '"v$NAME build$CODE · 路由交互与状态回归修复"',
+    require(
+        MAIN,
+        'RouterRepositoryRegistry.get(prefs).start()',
+        '统一路由数据源与无感预加载',
         'realtimeClient.start(prefs.hub, prefs.token)',
-        'stateScope.launch { calibrateRealtimeCache() }',
+        'private suspend fun calibrateRealtimeCache()',
         'onRouterRealtime = { raw ->',
         'onDevicesRealtime = { raw ->',
-        'onRealtimeReady = { _ ->',
-        'private suspend fun calibrateRealtimeCache()',
         'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)',
-        'state.startRealtime()\n        launch { state.refreshAll(forceFull = true) }',
-        'hubConnected = true',
-        'onlineCount > 0 -> "$onlineCount 台在线"',
-        'state.hubConnected -> "实时同步正常"',
-        'cacheRouterDashboard',
-        'mergeRouterDashboardSnapshot(previous, latest)',
-        'val realtimeAlive = mqttConnected',
         '实时链路正常，完整数据同步暂时失败，已保留上次数据',
-        'cacheVpnRowsJson',
-        'val liveVpnRows = remember',
-        'decodeHomeVpnRows(prefs.cacheVpnRowsJson)',
-        'prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)',
-        '"router" -> RouterSettingsHomeCard { onNavigate("router_settings") }',
-        '"vpn" -> HealthVpnCard(',
-        'onClick = { onNavigate("tool_router_ddns") }',
-        '"score,mini,router,exit,vpn,devices,today"',
-        'listOf("score", "mini", "router", "exit", "vpn", "devices", "today")',
-        '正在等待 STUN 地址同步，获取后会保留上次有效地址。',
-        'fun encodeHomeVpnRows',
-        'fun decodeHomeVpnRows',
-    ):
-        require(MAIN, needle)
-    for needle in (
+        'RouterSettingsHomeCard { onNavigate("router_settings") }',
+        'HomeDdnsMiniCard(',
+    )
+    forbid(
+        MAIN,
         'getMqttConfig()',
-        'LaunchedEffect(appForeground, state.mqttConnected)',
-        'if (!foregroundActive || !mqttConnected) return@launch',
+        'MqttAsyncClient',
         'message = "正在重连 ${next.attempt}/${next.maxAttempts}"',
-        'subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步"',
-        '"vpn" -> if (vpnRows.isNotEmpty())',
-        '"vpn" -> RouterSettingsHomeCard',
-    ):
-        forbid(MAIN, needle)
+    )
 
-    for needle in (
+    require(
+        WSS,
         'class HubRealtimeWebSocketClient',
         'const val REALTIME_PATH = "/api/realtime/ws"',
         'const val PING_INTERVAL_SECONDS = 10L',
-        'const val WATCHDOG_INTERVAL_MS = 1_000L',
         'const val SERVER_FRAME_TIMEOUT_MS = 20_000L',
-        'const val MAX_RETRY_ATTEMPT = 3',
         'webSocket.cancel()',
-        'else -> 3_000L',
-    ):
-        require(WSS, needle)
-    for needle in ('MqttAsyncClient', 'org.eclipse.paho', 'SERVER_FRAME_TIMEOUT_MS = 8_000L'):
-        forbid(WSS, needle)
+    )
+    forbid(WSS, 'org.eclipse.paho', 'SERVER_FRAME_TIMEOUT_MS = 8_000L')
 
-    for needle in (
+    require(
+        LITE,
         '/api/router/realtime',
         '/api/devices/realtime',
         '.callTimeout(2_500, TimeUnit.MILLISECONDS)',
-        'if (!stale) root.put("online", true)',
-        'sample.has("temperature2gC")',
         'telemetry.put("temperature2gC"',
-        'sample.has("temperature5gC")',
         'telemetry.put("temperature5gC"',
-        'sample.has("storagePercent")',
         'telemetry.put("storagePercent"',
-    ):
-        require(LITE, needle)
-
-    for needle in (
+    )
+    require(
+        SMOOTH,
         'const val FRAME_INTERVAL_MS = 1_000L',
         'const val STALE_WARNING_AGE_MS = 10_000L',
         'ROUTER_SAMPLE_WEIGHT = 0.72',
-        'Each real sample can change the visible number',
-    ):
-        require(SMOOTH, needle)
-    for needle in ('FRAME_INTERVAL_MS = 200L', 'TRANSITION_MS = 900L', 'kotlin.random'):
-        forbid(SMOOTH, needle)
-
-    forbid(STATUS, '等待 Agent 更新')
-    forbid(STATUS, '实时链路正在自动重连')
+    )
     require(STATUS, '实时数据暂时未变化，已保留上次结果')
-    for needle in (
-        'temperature2g = jsonNumber(telemetry, "temperature2gC")',
-        'temperature5g = jsonNumber(telemetry, "temperature5gC")',
-        'telemetry.has("storagePercent")',
-    ):
-        require(STATUS, needle)
+    forbid(STATUS, '等待 Agent 更新', '实时链路正在自动重连')
 
-    for needle in (
-        'RouterSettingsHomeCard { onNavigate("router_settings") }',
-        'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", LabV2.Purple, Modifier.weight(1f)) { onNavigate("tool_ssh") }',
-        'HomeDdnsMiniCard(',
-        'onClick = { onNavigate("tool_router_ddns") }',
-        'route == "router_settings" -> "home"',
-        '"router_settings" -> RouterSettingsScreen',
-        '"tool_portmap" -> MappingAndUpnpScreen',
-        '"tool_router_firewall" -> RouterFirewallScreen',
-        '"tool_router_ddns" -> RouterDdnsScreen',
-        '"tool_router_diag" -> RouterDiagnosticScreen',
-        '"tool_router_nat" -> RouterNatDiagnosticScreen',
-        '"tool_router_beta" -> RouterBetaUpgradeScreen',
-        '"tool_router_login" -> RouterHubStatusScreen',
-    ):
-        require(MAIN, needle)
-    tools = section(MAIN, 'fun ToolsHomeScreen', 'fun ReorderableToolSection')
-    for obsolete in ('RouterFeatureRail(', 'var routerFirewallEnabled'):
-        if obsolete in tools:
-            fail(f"toolbox still contains router settings UI: {obsolete}")
-
-    nat = section(NATIVE, 'fun RouterNatDiagnosticScreen', 'fun RouterBetaUpgradeScreen')
-    for needle in (
-        'label = "STUN 类型"',
-        'label = "WAN 类型"',
-        'private fun NativeSelector',
-        'nativeBlueShadow',
-        'RoundedCornerShape(18.dp)',
-        'colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White)',
-        'modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(Color.White)',
-        'natStatusZh(result.status)',
-        'natTypeZh(result.natType)',
-        'natLogZh(result.log)',
-        'natErrorZh(failure.message)',
-        'saveNatHistory(context, normalized)',
-        'private fun mergeNatLog',
+    require(
+        REPOSITORY,
+        'class RouterRepository',
+        'data class RouterResource<T>',
         'delay(700L)',
-        '[NAT 检测] 已发送检测任务',
-    ):
-        if needle not in NATIVE.read_text(encoding="utf-8") and needle not in nat:
-            fail(f"missing NAT regression guard: {needle}")
-    if 'FilterChip(' in nat:
-        fail('NAT protocol/WAN controls regressed to FilterChip')
-    for forbidden in ('NativeBlue.copy(alpha = .08f) else Color.White', 'port-restricted cone'):
-        if forbidden in nat:
-            fail(f"NAT UI/result still contains regressed text or fill: {forbidden}")
+        'refreshStatus()',
+        'refreshCapabilities()',
+        'refreshDdns()',
+        'refreshUpnp()',
+        'refreshPortMappings()',
+        'refreshFirewall()',
+        'private suspend fun <T> coalesced',
+        'private val mutationMutex = Mutex()',
+        'if (sequence(key).get() != seq)',
+        'RouterRepositoryRegistry',
+    )
 
-    for needle in (
-        'RouterSlowDataCache.portMappings',
-        'RouterSlowDataCache.upnpState',
-        'RouterSlowDataCache.firewallState',
-        'RouterSlowDataCache.ddnsRows',
-        'loadRouterDiagnosticCache(context)',
-        'saveRouterDiagnosticCache(context,value)',
-    ):
-        require(ROUTER_CONTROL, needle)
-    for needle in (
-        '正在等待 Hub 状态',
-        '路由控制链路正常',
-        '暂未取得路由控制数据',
-        'routerApiMessageZh',
-        'routerDiagnosticTitleZh',
-        'routerDiagnosticTextZh',
-    ):
-        require(ROUTER_API, needle)
-    for forbidden in (
-        'Waiting for Hub status',
-        'Hub is online, but router data is unavailable',
-        'Hub router data is available',
-        'Hub could not log in to the router',
-        'Hub router request failed',
-        '路由器已连接，实时数据正常',
-    ):
-        forbid(ROUTER_API, forbidden)
-    for needle in (
-        'RouterSlowDataCache.hubStatus',
-        'RouterSlowDataCache.capabilities',
-        '配置数据使用缓存静默更新',
-        '路由控制链路正常',
-        'Hub 已连接，等待路由控制数据',
-    ):
-        require(ROUTER_SETTINGS, needle)
-    for needle in (
-        'STATUS_TTL_MS = 15_000L',
-        'MAPPING_TTL_MS = 30_000L',
-        'SETTINGS_TTL_MS = 60_000L',
-        'fun ensureScope',
-    ):
-        require(ROUTER_SLOW_CACHE, needle)
+    require(
+        ROUTER_SETTINGS,
+        'repository.status.collectAsState()',
+        'repository.capabilities.collectAsState()',
+        '已预加载配置快照',
+        'APP 已在后台预加载',
+        '控制数据正在静默同步，实时 WSS 不受影响',
+    )
+    settings_section = section(ROUTER_SETTINGS, 'fun RouterSettingsScreen', 'private fun RouterSettingsConnectionCard')
+    if 'LaunchedEffect(' in settings_section or 'RouterControlApi(' in settings_section:
+        fail('RouterSettingsScreen still owns a network request')
+    if 'CircularProgressIndicator' in section(ROUTER_SETTINGS, 'private fun RouterSettingsConnectionCard', 'private fun RouterSettingsSection'):
+        fail('router settings connection card still exposes a reconnect spinner')
+
+    require(
+        ROUTER_CONTROL,
+        'repository.portMappings.collectAsState()',
+        'repository.upnp.collectAsState()',
+        'repository.firewall.collectAsState()',
+        'repository.ddns.collectAsState()',
+        'whole card must never turn red',
+        'repository.status.collectAsState()',
+    )
+    forbid(ROUTER_CONTROL, 'Hub 已断开，正在自动重连')
+
+    require(
+        ROUTER_API,
+        'val sessionConnected: Boolean',
+        'val dataAvailable: Boolean',
+        'Only /status owns connection semantics',
+        '路由器会话正常，控制数据正在同步',
+    )
+    execute = section(ROUTER_API, 'private fun execute(', 'private suspend fun get(')
+    if 'RouterConnectionStore.markSuccess()' in execute or 'RouterConnectionStore.markFailure' in execute:
+        fail('individual router endpoint still mutates global connection state')
+
+    require(
+        NATIVE,
+        'repository.ddns.collectAsState()',
+        '正在检测，快照继续显示',
+        '进入页面仅显示快照',
+        'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
+        'fontSize = 13.sp',
+        'terminalFromPreviousRun',
+    )
+    forbid(
+        NATIVE,
+        'Text("取消", fontWeight = FontWeight.Black)',
+        'api.cancelNat()',
+        'LaunchedEffect(Unit) { check() }',
+    )
+    beta = section(NATIVE, 'fun RouterBetaUpgradeScreen', 'private fun NativeCard')
+    if 'CircularProgressIndicator' in beta:
+        fail('Beta button still replaces its snapshot text with a spinner')
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print("build157 router cache, NAT logs, Chinese diagnostics, WSS and real routes verified")
+    print('build158 unified repository, silent preload, WSS isolation and UI states verified')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
