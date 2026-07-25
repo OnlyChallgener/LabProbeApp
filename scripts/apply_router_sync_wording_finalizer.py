@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Remove the last ambiguous router-control wording after generated patches run."""
+"""Remove ambiguous router-control wording before and after presentation checks."""
 from pathlib import Path
+
+import apply_router_sync_presentation_fix as _presentation
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt"
@@ -22,6 +24,20 @@ def apply() -> None:
         raise RuntimeError("ambiguous router realtime wording still exists")
     SETTINGS.write_text(text, encoding="utf-8")
     print("router control/realtime wording finalized")
+
+
+# prepare_android_sources imports the presentation module before this module.
+# Patch its internal verifier so the legacy wording is removed before that
+# verifier executes; otherwise the build exits before the normal finalizer call.
+_original_verify = _presentation.verify
+
+
+def _verify_after_wording_fix() -> None:
+    apply()
+    _original_verify()
+
+
+_presentation.verify = _verify_after_wording_fix
 
 
 if __name__ == "__main__":
