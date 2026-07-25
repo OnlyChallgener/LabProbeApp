@@ -51,6 +51,7 @@ def main() -> None:
     require(
         MAIN,
         'RouterRepositoryRegistry.get(prefs).start()',
+        'RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)',
         '统一路由数据源与无感预加载',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'private suspend fun calibrateRealtimeCache()',
@@ -100,7 +101,9 @@ def main() -> None:
         REPOSITORY,
         'class RouterRepository',
         'data class RouterResource<T>',
-        'delay(700L)',
+        'delay(3_000L)',
+        'fun onRealtimeReady(reconnect: Boolean)',
+        'now - previous < 15_000L',
         'refreshStatus()',
         'refreshCapabilities()',
         'refreshDdns()',
@@ -110,6 +113,10 @@ def main() -> None:
         'private suspend fun <T> coalesced',
         'private val mutationMutex = Mutex()',
         'if (sequence(key).get() != seq)',
+        'if (_ddns.value.mutating) return',
+        'if (_upnp.value.mutating) return',
+        'if (_portMappings.value.mutating) return',
+        'if (_firewall.value.mutating) return',
         'RouterRepositoryRegistry',
     )
 
@@ -169,7 +176,7 @@ def main() -> None:
         fail('Beta button still replaces its snapshot text with a spinner')
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print('build158 unified repository, silent preload, WSS isolation and UI states verified')
+    print('build158 WSS-first repository, mutation priority, silent preload and UI states verified')
 
 
 if __name__ == '__main__':
