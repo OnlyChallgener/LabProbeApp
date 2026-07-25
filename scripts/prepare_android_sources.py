@@ -30,6 +30,7 @@ from apply_v01015_router_stability import patch_router_native as patch_v01015_ro
 from apply_v01015_runtime_cache_hotfix import apply as apply_v01015_runtime_cache
 from apply_v01015_version_log_fix import apply as apply_v01015_version_log
 from apply_router_sync_presentation_fix import apply as apply_router_sync_presentation
+from apply_router_sync_wording_finalizer import apply as apply_router_sync_wording_finalizer
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +77,7 @@ if __name__ == "__main__":
         apply_build157_regression_restore()
         apply_build157_stun_card_restore()
         apply_router_sync_presentation()
+        apply_router_sync_wording_finalizer()
         print("Android build157 WSS, router UX, Chinese text, cache and STUN card prepared")
         raise SystemExit(0)
 
@@ -115,4 +117,5 @@ if __name__ == "__main__":
     apply_build157_regression_restore()
     apply_build157_stun_card_restore()
     apply_router_sync_presentation()
+    apply_router_sync_wording_finalizer()
     print("Android source fixes, build141 functions and build157 STUN/card guards prepared")
