@@ -12,6 +12,7 @@ NATIVE = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt"
 ROUTER_API = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt"
 ROUTER_SETTINGS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt"
 ROUTER_CONTROL = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
+ROUTER_SLOW_CACHE = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSlowDataCache.kt"
 GRADLE = ROOT / "app/build.gradle.kts"
 DIAGNOSTIC = Path("/tmp/labprobe-ci-error.txt")
 
@@ -170,8 +171,11 @@ def main() -> None:
         'natStatusZh(result.status)',
         'natTypeZh(result.natType)',
         'natLogZh(result.log)',
-        'natErrorZh(it.message)',
+        'natErrorZh(failure.message)',
         'saveNatHistory(context, normalized)',
+        'private fun mergeNatLog',
+        'delay(700L)',
+        '[NAT 检测] 已发送检测任务',
     ):
         if needle not in NATIVE.read_text(encoding="utf-8") and needle not in nat:
             fail(f"missing NAT regression guard: {needle}")
@@ -182,15 +186,21 @@ def main() -> None:
             fail(f"NAT UI/result still contains regressed text or fill: {forbidden}")
 
     for needle in (
-        'RouterControlMemoryCache.ddnsRows',
+        'RouterSlowDataCache.portMappings',
+        'RouterSlowDataCache.upnpState',
+        'RouterSlowDataCache.firewallState',
+        'RouterSlowDataCache.ddnsRows',
         'loadRouterDiagnosticCache(context)',
         'saveRouterDiagnosticCache(context,value)',
     ):
         require(ROUTER_CONTROL, needle)
     for needle in (
         '正在等待 Hub 状态',
-        'Hub 已连接，正在等待路由器实时数据',
+        '路由控制链路正常',
+        '暂未取得路由控制数据',
         'routerApiMessageZh',
+        'routerDiagnosticTitleZh',
+        'routerDiagnosticTextZh',
     ):
         require(ROUTER_API, needle)
     for forbidden in (
@@ -199,17 +209,27 @@ def main() -> None:
         'Hub router data is available',
         'Hub could not log in to the router',
         'Hub router request failed',
+        '路由器已连接，实时数据正常',
     ):
         forbid(ROUTER_API, forbidden)
     for needle in (
-        'routerSettingsRawMessageZh',
-        'connected -> "路由器实时数据正常"',
-        'hubOnline -> "Hub 已连接"',
+        'RouterSlowDataCache.hubStatus',
+        'RouterSlowDataCache.capabilities',
+        '配置数据使用缓存静默更新',
+        '路由控制链路正常',
+        'Hub 已连接，等待路由控制数据',
     ):
         require(ROUTER_SETTINGS, needle)
+    for needle in (
+        'STATUS_TTL_MS = 15_000L',
+        'MAPPING_TTL_MS = 30_000L',
+        'SETTINGS_TTL_MS = 60_000L',
+        'fun ensureScope',
+    ):
+        require(ROUTER_SLOW_CACHE, needle)
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print("build157 router UX, Chinese text, cache, STUN card, WSS and real routes verified")
+    print("build157 router cache, NAT logs, Chinese diagnostics, WSS and real routes verified")
 
 
 if __name__ == "__main__":
