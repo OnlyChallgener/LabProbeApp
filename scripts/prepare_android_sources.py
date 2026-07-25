@@ -33,6 +33,7 @@ from apply_router_sync_presentation_fix import apply as apply_router_sync_presen
 from apply_router_sync_wording_finalizer import apply as apply_router_sync_wording_finalizer
 from apply_nat_cancel_history_limit_fix import apply as apply_nat_cancel_history_limit
 from apply_nat_beta_snapshot_final_fix_v2 import apply as apply_nat_beta_snapshot_final
+from apply_build158_router_repository import apply as apply_build158_router_repository
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 长连接启动与路由功能恢复"' in current
         or '"v$NAME build$CODE · 路由字段与长连接完整修复"' in current
         or '"v$NAME build$CODE · 路由交互与状态回归修复"' in current
+        or '"v$NAME build$CODE · 统一路由数据源与无感预加载"' in current
     )
 
     if "private suspend fun calibrateRealtimeCache()" in current:
@@ -80,7 +82,8 @@ if __name__ == "__main__":
         apply_router_sync_wording_finalizer()
         apply_nat_cancel_history_limit()
         apply_nat_beta_snapshot_final()
-        print("Android build157 WSS, router UX, NAT history and Beta snapshot prepared")
+        apply_build158_router_repository()
+        print("Android build158 unified router repository, silent preload and UI state fixes prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -122,4 +125,5 @@ if __name__ == "__main__":
     apply_router_sync_wording_finalizer()
     apply_nat_cancel_history_limit()
     apply_nat_beta_snapshot_final()
-    print("Android source fixes, NAT five-row history and Beta snapshot prepared")
+    apply_build158_router_repository()
+    print("Android build158 unified router repository, silent preload and UI state fixes prepared")
