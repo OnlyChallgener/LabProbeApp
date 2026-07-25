@@ -153,7 +153,7 @@ def main() -> None:
         NATIVE,
         'repository.ddns.collectAsState()',
         '正在检测，快照继续显示',
-        '进入页面仅显示快照',
+        '显示上次检查快照',
         'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
         'fontSize = 13.sp',
         'terminalFromPreviousRun',
