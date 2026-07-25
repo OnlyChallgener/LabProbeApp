@@ -32,7 +32,7 @@ from apply_v01015_version_log_fix import apply as apply_v01015_version_log
 from apply_router_sync_presentation_fix import apply as apply_router_sync_presentation
 from apply_router_sync_wording_finalizer import apply as apply_router_sync_wording_finalizer
 from apply_nat_cancel_history_limit_fix import apply as apply_nat_cancel_history_limit
-from apply_nat_beta_snapshot_final_fix import apply as apply_nat_beta_snapshot_final
+from apply_nat_beta_snapshot_final_fix_v2 import apply as apply_nat_beta_snapshot_final
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         and '"tool_router_nat" -> RouterNatDiagnosticScreen' in current
         and "v0.10.13 build143 · 路由诊断与首页联动" in current
     )
-    refresh_generated = "v0.10.14 build144 · 实时刷新与页面稳定性修复" in current
+    refresh_generated = "v0.10.14 build144 · 实时刷新与页面稳定性修复"
     final_generated = (
         "v0.10.15 build145 · 路由页面稳定与诊断交互修复" in current
         or "v0.10.15 build146 · 路由实时推送与刷新修复" in current
@@ -63,8 +63,6 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 路由交互与状态回归修复"' in current
     )
 
-    # Realtime migrations must never bypass the user-approved interaction,
-    # Chinese text, cache-preserving refresh and original home STUN card.
     if "private suspend fun calibrateRealtimeCache()" in current:
         apply_build155_home_navigation()
         apply_build150_lite_realtime()
