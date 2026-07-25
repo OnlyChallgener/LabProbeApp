@@ -34,6 +34,7 @@ from apply_router_sync_wording_finalizer import apply as apply_router_sync_wordi
 from apply_nat_cancel_history_limit_fix import apply as apply_nat_cancel_history_limit
 from apply_nat_beta_snapshot_final_fix_v2 import apply as apply_nat_beta_snapshot_final
 from apply_build158_router_repository import apply as apply_build158_router_repository
+from apply_build158_repository_conflict_guard import apply as apply_build158_repository_conflict_guard
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +84,8 @@ if __name__ == "__main__":
         apply_nat_cancel_history_limit()
         apply_nat_beta_snapshot_final()
         apply_build158_router_repository()
-        print("Android build158 unified router repository, silent preload and UI state fixes prepared")
+        apply_build158_repository_conflict_guard()
+        print("Android build158 unified router repository, mutation priority, silent preload and UI state fixes prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -126,4 +128,5 @@ if __name__ == "__main__":
     apply_nat_cancel_history_limit()
     apply_nat_beta_snapshot_final()
     apply_build158_router_repository()
-    print("Android build158 unified router repository, silent preload and UI state fixes prepared")
+    apply_build158_repository_conflict_guard()
+    print("Android build158 unified router repository, mutation priority, silent preload and UI state fixes prepared")
