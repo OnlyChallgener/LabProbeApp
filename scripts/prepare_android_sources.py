@@ -46,7 +46,7 @@ if __name__ == "__main__":
         and '"tool_router_nat" -> RouterNatDiagnosticScreen' in current
         and "v0.10.13 build143 · 路由诊断与首页联动" in current
     )
-    refresh_generated = "v0.10.14 build144 · 实时刷新与页面稳定性修复"
+    refresh_generated = "v0.10.14 build144 · 实时刷新与页面稳定性修复" in current
     final_generated = (
         "v0.10.15 build145 · 路由页面稳定与诊断交互修复" in current
         or "v0.10.15 build146 · 路由实时推送与刷新修复" in current
