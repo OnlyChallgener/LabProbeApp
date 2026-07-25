@@ -32,6 +32,7 @@ from apply_v01015_version_log_fix import apply as apply_v01015_version_log
 from apply_router_sync_presentation_fix import apply as apply_router_sync_presentation
 from apply_router_sync_wording_finalizer import apply as apply_router_sync_wording_finalizer
 from apply_nat_cancel_history_limit_fix import apply as apply_nat_cancel_history_limit
+from apply_nat_beta_snapshot_final_fix import apply as apply_nat_beta_snapshot_final
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,7 +81,8 @@ if __name__ == "__main__":
         apply_router_sync_presentation()
         apply_router_sync_wording_finalizer()
         apply_nat_cancel_history_limit()
-        print("Android build157 WSS, router UX, Chinese text, cache, NAT cancel and history prepared")
+        apply_nat_beta_snapshot_final()
+        print("Android build157 WSS, router UX, NAT history and Beta snapshot prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -121,4 +123,5 @@ if __name__ == "__main__":
     apply_router_sync_presentation()
     apply_router_sync_wording_finalizer()
     apply_nat_cancel_history_limit()
-    print("Android source fixes, build141 functions, NAT cancel and five-row history prepared")
+    apply_nat_beta_snapshot_final()
+    print("Android source fixes, NAT five-row history and Beta snapshot prepared")
