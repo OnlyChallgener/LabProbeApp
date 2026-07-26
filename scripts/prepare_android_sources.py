@@ -39,6 +39,7 @@ from apply_build158_wss_preload_trigger import apply as apply_build158_wss_prelo
 from apply_build159_router_control_reliability import apply as apply_build159_router_control_reliability
 from apply_build160_sync_task_ui import apply as apply_build160_sync_task_ui
 from apply_build160_agent_presence_finalizer import apply as apply_build160_agent_presence_finalizer
+from apply_build160_compile_finalizer import apply as apply_build160_compile_finalizer
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,7 @@ MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
 def apply_build160() -> None:
     apply_build160_sync_task_ui()
     apply_build160_agent_presence_finalizer()
+    apply_build160_compile_finalizer()
 
 
 if __name__ == "__main__":
