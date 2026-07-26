@@ -87,8 +87,15 @@ def patch_repository() -> None:
                 "firewall", "ddns", "upnp" -> resource
                 else -> return@launch
             }
+            val pendingCommand = when (resource) {
+                "ddns" -> _ddns.value.mutating
+                "upnp" -> _upnp.value.mutating
+                "portMappings" -> _portMappings.value.mutating
+                "firewall" -> _firewall.value.mutating
+                else -> false
+            }
             val seen = configRevisions.getOrPut(revisionKey) { AtomicLong(0L) }
-            if (source != "command" && revision > 0L && revision <= seen.get()) return@launch
+            if (revision > 0L && revision <= seen.get() && !(source == "command" && pendingCommand)) return@launch
             when (resource) {
                 "ddns" -> {
                     val old = _ddns.value
@@ -136,7 +143,7 @@ def verify() -> None:
         "RouterRepositoryRegistry.get(prefs).acceptConfigRealtime(raw)",
         "fun acceptConfigRealtime(raw: String)",
         "private val configRevisions",
-        'source != "command" && revision > 0L && revision <= seen.get()',
+        'source == "command" && pendingCommand',
         'old.mutating && source != "command"',
         "internal fun parseNativePortRules",
         "internal fun parseUpnp",
