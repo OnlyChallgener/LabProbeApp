@@ -61,6 +61,7 @@ def main() -> None:
         '实时链路正常，完整数据同步暂时失败，已保留上次数据',
         'RouterSettingsHomeCard { onNavigate("router_settings") }',
         'HomeDdnsMiniCard(',
+        '.readTimeout(45, TimeUnit.SECONDS)',
     )
     forbid(
         MAIN,
@@ -120,11 +121,11 @@ def main() -> None:
         'RouterRepositoryRegistry',
         'val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)',
         'private suspend fun <T> executeCommand',
-        'withTimeout(25_000L)',
+        'withTimeout(45_000L)',
         'catch (cancelled: CancellationException)',
         'executeCommand { api.setUpnp(enabled, wan) }',
     )
-    forbid(REPOSITORY, 'withTimeout(12_000L)')
+    forbid(REPOSITORY, 'withTimeout(12_000L)', 'withTimeout(25_000L)')
 
     require(
         ROUTER_SETTINGS,
