@@ -88,7 +88,7 @@ def patch_repository() -> None:
                 else -> return@launch
             }
             val seen = configRevisions.getOrPut(revisionKey) { AtomicLong(0L) }
-            if (revision > 0L && revision <= seen.get()) return@launch
+            if (source != "command" && revision > 0L && revision <= seen.get()) return@launch
             when (resource) {
                 "ddns" -> {
                     val old = _ddns.value
@@ -136,6 +136,7 @@ def verify() -> None:
         "RouterRepositoryRegistry.get(prefs).acceptConfigRealtime(raw)",
         "fun acceptConfigRealtime(raw: String)",
         "private val configRevisions",
+        'source != "command" && revision > 0L && revision <= seen.get()',
         'old.mutating && source != "command"',
         "internal fun parseNativePortRules",
         "internal fun parseUpnp",
