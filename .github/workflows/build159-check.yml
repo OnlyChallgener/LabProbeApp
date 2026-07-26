@@ -73,7 +73,8 @@ jobs:
           grep -F 'versionCode = 159' app/build.gradle.kts
           grep -F 'versionName = "0.10.17"' app/build.gradle.kts
           grep -F 'val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
-          grep -F 'withTimeout(25_000L)' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
+          grep -F 'withTimeout(45_000L)' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
+          grep -F '.readTimeout(45, TimeUnit.SECONDS)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -F 'executeCommand { api.setUpnp(enabled, wan) }' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
           grep -F 'repository.refreshUpnp(false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -F '设置正在后台应用，页面可以安全退出' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
@@ -81,6 +82,7 @@ jobs:
           ! grep -F 'Modifier.width(158.dp).height(44.dp).nativeBlueShadow' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           ! grep -F 'repository.refreshUpnp(true)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           ! grep -F 'withTimeout(12_000L)' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
+          ! grep -F 'withTimeout(25_000L)' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
 
       - name: Compile debug and release variants
         shell: bash
