@@ -62,7 +62,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build158 repository, UI and WSS isolation
+      - name: Verify build159 router control and WSS isolation
         shell: bash
         run: python3 scripts/verify_build154_sources.py
 
@@ -115,12 +115,14 @@ jobs:
               "路由器已连接，实时数据正常",
               "Hub 已连接，正在等待路由器实时数据",
               "路由交互与状态回归修复",
+              "统一路由数据源与无感预加载",
           )
           required = (
-              "统一路由数据源与无感预加载",
+              "路由控制队列与可靠指令",
               "实时数据暂时未变化，已保留上次结果",
               "已预加载配置快照",
               "控制数据正在静默同步，实时 WSS 不受影响",
+              "设置正在后台应用，页面可以安全退出",
               "正在检测，快照继续显示",
               "STUN 类型",
               "WAN 类型",
@@ -143,7 +145,7 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build158 APK DEX strings verified")
+          print("signed build159 APK DEX strings verified")
           PY
 
       - name: Upload Gradle log
