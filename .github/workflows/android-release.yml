@@ -62,9 +62,19 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build159 router control and WSS isolation
+      - name: Verify build160 state and task invariants
         shell: bash
-        run: python3 scripts/verify_build154_sources.py
+        run: |
+          set -e
+          python3 scripts/verify_build154_sources.py
+          grep -q 'versionCode = 160' app/build.gradle.kts
+          grep -q 'versionName = "0.10.18"' app/build.gradle.kts
+          grep -q 'SERVER_FRAME_TIMEOUT_MS = 45_000L' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          grep -q 'onTaskUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          grep -q '/api/router/tasks/$kind' app/src/main/kotlin/com/labprobe/app/RouterTaskRepository.kt
+          grep -q 'realtimeDataFresh by mutableStateOf(false)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '检测已由 Hub 接管，可以安全离开页面' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          ! grep -q 'state.hubConnected -> "实时同步正常"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
       - name: Build signed release APK
         shell: bash
@@ -116,17 +126,21 @@ jobs:
               "Hub 已连接，正在等待路由器实时数据",
               "路由交互与状态回归修复",
               "统一路由数据源与无感预加载",
+              "路由控制队列与可靠指令",
           )
           required = (
-              "路由控制队列与可靠指令",
-              "实时数据暂时未变化，已保留上次结果",
-              "已预加载配置快照",
-              "控制数据正在静默同步，实时 WSS 不受影响",
+              "状态闭环与后台任务",
+              "实时链路已连接，等待首帧数据",
+              "实时链路恢复中，已保留上次数据",
+              "实时数据暂时未更新，已保留上次结果",
+              "检测已由 Hub 接管，可以安全离开页面",
+              "Hub 正在提交 NAT 检测任务",
+              "显示上次检查快照 · 仅手动检测",
               "设置正在后台应用，页面可以安全退出",
-              "正在检测，快照继续显示",
               "STUN 类型",
               "WAN 类型",
               "/api/realtime/ws",
+              "/api/router/tasks/",
               "temperature2gC",
               "temperature5gC",
               "storagePercent",
@@ -145,14 +159,14 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build159 APK DEX strings verified")
+          print("signed build160 APK DEX strings verified")
           PY
 
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: router-control-gradle-log
+          name: router-state-task-gradle-log
           path: /tmp/gradle-build.log
           if-no-files-found: ignore
 
