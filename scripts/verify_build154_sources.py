@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify final generated Android sources for APP v0.10.16 build158."""
+"""Verify final generated Android sources for APP v0.10.17 build159."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,13 +46,13 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    require(GRADLE, 'versionCode = 158', 'versionName = "0.10.16"')
+    require(GRADLE, 'versionCode = 159', 'versionName = "0.10.17"')
 
     require(
         MAIN,
         'RouterRepositoryRegistry.get(prefs).start()',
         'RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)',
-        '统一路由数据源与无感预加载',
+        '路由控制队列与可靠指令',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'private suspend fun calibrateRealtimeCache()',
         'onRouterRealtime = { raw ->',
@@ -118,7 +118,13 @@ def main() -> None:
         'if (_portMappings.value.mutating) return',
         'if (_firewall.value.mutating) return',
         'RouterRepositoryRegistry',
+        'val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)',
+        'private suspend fun <T> executeCommand',
+        'withTimeout(25_000L)',
+        'catch (cancelled: CancellationException)',
+        'executeCommand { api.setUpnp(enabled, wan) }',
     )
+    forbid(REPOSITORY, 'withTimeout(12_000L)')
 
     require(
         ROUTER_SETTINGS,
@@ -142,8 +148,20 @@ def main() -> None:
         'repository.ddns.collectAsState()',
         'whole card must never turn red',
         'repository.status.collectAsState()',
+        '设置正在后台应用，页面可以安全退出',
+        'repository.refreshPortMappings(false)',
+        'repository.refreshUpnp(false)',
+        'repository.refreshFirewall(false)',
+        'repository.refreshDdns(false)',
     )
-    forbid(ROUTER_CONTROL, 'Hub 已断开，正在自动重连')
+    forbid(
+        ROUTER_CONTROL,
+        'Hub 已断开，正在自动重连',
+        'repository.refreshPortMappings(true)',
+        'repository.refreshUpnp(true)',
+        'repository.refreshFirewall(true)',
+        'repository.refreshDdns(true)',
+    )
 
     require(
         ROUTER_API,
@@ -164,19 +182,21 @@ def main() -> None:
         'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
         'fontSize = 13.sp',
         'terminalFromPreviousRun',
+        'modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow',
     )
     forbid(
         NATIVE,
         'Text("取消", fontWeight = FontWeight.Black)',
         'api.cancelNat()',
         'LaunchedEffect(Unit) { check() }',
+        'Modifier.width(158.dp).height(44.dp).nativeBlueShadow',
     )
     beta = section(NATIVE, 'fun RouterBetaUpgradeScreen', 'private fun NativeCard')
     if 'CircularProgressIndicator' in beta:
         fail('Beta button still replaces its snapshot text with a spinner')
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print('build158 WSS-first repository, mutation priority, silent preload and UI states verified')
+    print('build159 reliable router command lifecycle, cache-first refresh and full-width NAT UI verified')
 
 
 if __name__ == '__main__':
