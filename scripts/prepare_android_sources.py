@@ -40,6 +40,7 @@ from apply_build159_router_control_reliability import apply as apply_build159_ro
 from apply_build160_sync_task_ui import apply as apply_build160_sync_task_ui
 from apply_build160_agent_presence_finalizer import apply as apply_build160_agent_presence_finalizer
 from apply_build160_compile_finalizer import apply as apply_build160_compile_finalizer
+from apply_build160_config_sync_finalizer import apply as apply_build160_config_sync_finalizer
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,7 @@ def apply_build160() -> None:
     apply_build160_sync_task_ui()
     apply_build160_agent_presence_finalizer()
     apply_build160_compile_finalizer()
+    apply_build160_config_sync_finalizer()
 
 
 if __name__ == "__main__":
@@ -101,7 +103,7 @@ if __name__ == "__main__":
         apply_build158_wss_preload_trigger()
         apply_build159_router_control_reliability()
         apply_build160()
-        print("Android build160 truthful realtime state, Hub-owned tasks, Agent presence and snapshot-preserving pages prepared")
+        print("Android build160 realtime, config, task and Agent state closure prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -148,4 +150,4 @@ if __name__ == "__main__":
     apply_build158_wss_preload_trigger()
     apply_build159_router_control_reliability()
     apply_build160()
-    print("Android build160 truthful realtime state, Hub-owned tasks, Agent presence and snapshot-preserving pages prepared")
+    print("Android build160 realtime, config, task and Agent state closure prepared")
