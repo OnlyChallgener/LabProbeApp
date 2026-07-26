@@ -38,10 +38,16 @@ from apply_build158_repository_conflict_guard import apply as apply_build158_rep
 from apply_build158_wss_preload_trigger import apply as apply_build158_wss_preload_trigger
 from apply_build159_router_control_reliability import apply as apply_build159_router_control_reliability
 from apply_build160_sync_task_ui import apply as apply_build160_sync_task_ui
+from apply_build160_agent_presence_finalizer import apply as apply_build160_agent_presence_finalizer
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
+
+
+def apply_build160() -> None:
+    apply_build160_sync_task_ui()
+    apply_build160_agent_presence_finalizer()
 
 
 if __name__ == "__main__":
@@ -92,8 +98,8 @@ if __name__ == "__main__":
         apply_build158_repository_conflict_guard()
         apply_build158_wss_preload_trigger()
         apply_build159_router_control_reliability()
-        apply_build160_sync_task_ui()
-        print("Android build160 truthful realtime state, Hub-owned tasks and snapshot-preserving pages prepared")
+        apply_build160()
+        print("Android build160 truthful realtime state, Hub-owned tasks, Agent presence and snapshot-preserving pages prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -139,5 +145,5 @@ if __name__ == "__main__":
     apply_build158_repository_conflict_guard()
     apply_build158_wss_preload_trigger()
     apply_build159_router_control_reliability()
-    apply_build160_sync_task_ui()
-    print("Android build160 truthful realtime state, Hub-owned tasks and snapshot-preserving pages prepared")
+    apply_build160()
+    print("Android build160 truthful realtime state, Hub-owned tasks, Agent presence and snapshot-preserving pages prepared")
