@@ -121,11 +121,24 @@ def patch_portmap() -> None:
         liveAgent?.let {
             agent = it
             PortMappingMemoryCache.agent = it
+            loading = false
         }
     }
 
     val visible = rules.filter {''',
         "observe Agent presence",
+    )
+    text = replace_once(
+        text,
+        '''        if (loading && rules.isEmpty()) {
+            Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        } else if (visible.isEmpty()) {''',
+        '''        if (loading && rules.isEmpty()) {
+            LabV2Card(compact = true) {
+                Text("正在后台同步映射快照，页面可以继续操作", color = LabV2.InkMuted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+            }
+        } else if (visible.isEmpty()) {''',
+        "no full page mapping spinner",
     )
     text = replace_once(
         text,
@@ -168,6 +181,8 @@ def verify() -> None:
         "AgentPresenceStoreRegistry.get(prefs).acceptRealtime(raw)",
         "val liveAgent by presenceStore.state.collectAsState()",
         "presenceStore.acceptHttp(newAgent)",
+        "loading = false",
+        "正在后台同步映射快照，页面可以继续操作",
         '"stale" -> "Agent 状态稍旧"',
         "state.realtimeDataFresh",
     )
@@ -177,10 +192,11 @@ def verify() -> None:
     forbidden = (
         "color = if (state.mqttConnected) LabV2.Green",
         "tint = if (state.mqttConnected) LabV2.Green",
+        "Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }",
     )
     remaining = [value for value in forbidden if value in combined]
     if remaining:
-        raise RuntimeError(f"false green realtime state remains: {remaining}")
+        raise RuntimeError(f"false green or full-page loading state remains: {remaining}")
 
 
 def apply() -> None:
@@ -188,7 +204,7 @@ def apply() -> None:
     patch_main()
     patch_portmap()
     verify()
-    print("build160 Agent presence and truthful realtime colors finalized")
+    print("build160 Agent presence, truthful realtime colors and non-blocking mapping page finalized")
 
 
 if __name__ == "__main__":
