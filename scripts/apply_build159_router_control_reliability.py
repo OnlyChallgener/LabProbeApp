@@ -46,7 +46,7 @@ def apply() -> None:
         message_block,
         message_block + '''
     private suspend fun <T> executeCommand(block: suspend () -> T): Result<T> = try {
-        Result.success(withTimeout(25_000L) { block() })
+        Result.success(withTimeout(45_000L) { block() })
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: Throwable) {
@@ -136,17 +136,37 @@ Spacer(Modifier.width(8.dp))
     GRADLE.write_text(gradle, encoding="utf-8")
 
     main = MAIN.read_text(encoding="utf-8")
+    main = replace_once(
+        main,
+        '''    private val client = OkHttpClient.Builder()
+        .dns(CustomDns(prefs.hubDns))
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)''',
+        '''    private val client = OkHttpClient.Builder()
+        .dns(CustomDns(prefs.hubDns))
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)''',
+        "Hub control read timeout",
+    )
     main = main.replace(
         '"v$NAME build$CODE · 统一路由数据源与无感预加载"',
         '"v$NAME build$CODE · 路由控制队列与可靠指令"',
     )
     MAIN.write_text(main, encoding="utf-8")
 
-    combined = REPOSITORY.read_text(encoding="utf-8") + UI.read_text(encoding="utf-8") + NAT_UI.read_text(encoding="utf-8")
+    combined = (
+        REPOSITORY.read_text(encoding="utf-8")
+        + UI.read_text(encoding="utf-8")
+        + NAT_UI.read_text(encoding="utf-8")
+        + MAIN.read_text(encoding="utf-8")
+    )
     required = (
         "val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)",
         "executeCommand { api.setUpnp(enabled, wan) }",
-        "withTimeout(25_000L)",
+        "withTimeout(45_000L)",
+        ".readTimeout(45, TimeUnit.SECONDS)",
         "repository.refreshUpnp(false)",
         "设置正在后台应用，页面可以安全退出",
         "modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow",
