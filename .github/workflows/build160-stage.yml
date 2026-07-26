@@ -3,6 +3,8 @@ name: Build160 Stage
 on:
   push:
     branches: [build160]
+  pull_request:
+    branches: [build159]
   workflow_dispatch:
 
 concurrency:
@@ -45,11 +47,16 @@ jobs:
           grep -q 'versionName = "0.10.18"' app/build.gradle.kts
           grep -q 'SERVER_FRAME_TIMEOUT_MS = 45_000L' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q 'onTaskUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          grep -q 'onAgentUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q '/api/router/tasks/$kind' app/src/main/kotlin/com/labprobe/app/RouterTaskRepository.kt
+          grep -q 'class AgentPresenceStore' app/src/main/kotlin/com/labprobe/app/AgentPresenceStore.kt
           grep -q 'realtimeDataFresh by mutableStateOf(false)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '检测已由 Hub 接管，可以安全离开页面' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'Agent 状态稍旧' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           ! grep -q 'state.hubConnected -> "实时同步正常"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -q 'color = if (state.mqttConnected) LabV2.Green' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -q 'while (running && isActive)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          ! grep -q 'PortAmber' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
       - name: Compile debug and release
         env:
           LABPROBE_SKIP_SOURCE_PREPARE: '1'
