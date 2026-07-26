@@ -37,6 +37,7 @@ from apply_build158_router_repository import apply as apply_build158_router_repo
 from apply_build158_repository_conflict_guard import apply as apply_build158_repository_conflict_guard
 from apply_build158_wss_preload_trigger import apply as apply_build158_wss_preload_trigger
 from apply_build159_router_control_reliability import apply as apply_build159_router_control_reliability
+from apply_build160_sync_task_ui import apply as apply_build160_sync_task_ui
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 路由交互与状态回归修复"' in current
         or '"v$NAME build$CODE · 统一路由数据源与无感预加载"' in current
         or '"v$NAME build$CODE · 路由控制队列与可靠指令"' in current
+        or '"v$NAME build$CODE · 状态闭环与后台任务"' in current
     )
 
     if "private suspend fun calibrateRealtimeCache()" in current:
@@ -90,7 +92,8 @@ if __name__ == "__main__":
         apply_build158_repository_conflict_guard()
         apply_build158_wss_preload_trigger()
         apply_build159_router_control_reliability()
-        print("Android build159 reliable router command lifecycle, cache-first refresh and full-width NAT UI prepared")
+        apply_build160_sync_task_ui()
+        print("Android build160 truthful realtime state, Hub-owned tasks and snapshot-preserving pages prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -136,4 +139,5 @@ if __name__ == "__main__":
     apply_build158_repository_conflict_guard()
     apply_build158_wss_preload_trigger()
     apply_build159_router_control_reliability()
-    print("Android build159 reliable router command lifecycle, cache-first refresh and full-width NAT UI prepared")
+    apply_build160_sync_task_ui()
+    print("Android build160 truthful realtime state, Hub-owned tasks and snapshot-preserving pages prepared")
