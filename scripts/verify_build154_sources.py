@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify final generated Android sources for APP v0.10.17 build159."""
+"""Verify final generated Android sources for APP v0.10.18 build160."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +13,8 @@ ROUTER_API = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt"
 ROUTER_SETTINGS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt"
 ROUTER_CONTROL = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
 REPOSITORY = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterRepository.kt"
+TASKS = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterTaskRepository.kt"
+PORTMAP = ROOT / "app/src/main/kotlin/com/labprobe/app/PortMapping.kt"
 GRADLE = ROOT / "app/build.gradle.kts"
 DIAGNOSTIC = Path("/tmp/labprobe-ci-error.txt")
 
@@ -46,19 +48,23 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    require(GRADLE, 'versionCode = 159', 'versionName = "0.10.17"')
+    require(GRADLE, 'versionCode = 160', 'versionName = "0.10.18"')
 
     require(
         MAIN,
         'RouterRepositoryRegistry.get(prefs).start()',
         'RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)',
-        '路由控制队列与可靠指令',
+        '状态闭环与后台任务',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'private suspend fun calibrateRealtimeCache()',
         'onRouterRealtime = { raw ->',
         'onDevicesRealtime = { raw ->',
+        'onTaskUpdate = { raw -> RouterTaskRepositoryRegistry.get(prefs).acceptRealtime(raw) }',
+        'realtimeDataFresh by mutableStateOf(false)',
+        'lastRouterRealtimeAt by mutableLongStateOf(0L)',
+        '实时链路已连接，等待首帧数据',
+        '实时链路恢复中，已保留上次数据',
         'delay(RealtimeDisplaySmoother.FRAME_INTERVAL_MS)',
-        '实时链路正常，完整数据同步暂时失败，已保留上次数据',
         'RouterSettingsHomeCard { onNavigate("router_settings") }',
         'HomeDdnsMiniCard(',
         '.readTimeout(45, TimeUnit.SECONDS)',
@@ -68,6 +74,8 @@ def main() -> None:
         'getMqttConfig()',
         'MqttAsyncClient',
         'message = "正在重连 ${next.attempt}/${next.maxAttempts}"',
+        'state.hubConnected -> "实时同步正常"',
+        'HubRealtimeState.Connected -> "实时同步正常"',
     )
 
     require(
@@ -75,10 +83,33 @@ def main() -> None:
         'class HubRealtimeWebSocketClient',
         'const val REALTIME_PATH = "/api/realtime/ws"',
         'const val PING_INTERVAL_SECONDS = 10L',
-        'const val SERVER_FRAME_TIMEOUT_MS = 20_000L',
+        'const val SERVER_FRAME_TIMEOUT_MS = 45_000L',
+        'onTaskUpdate: (String) -> Unit',
+        '"task" -> if (data != null) onTaskUpdate(data.toString())',
+        '"ready" -> if (!readyReceived)',
         'webSocket.cancel()',
     )
-    forbid(WSS, 'org.eclipse.paho', 'SERVER_FRAME_TIMEOUT_MS = 8_000L')
+    forbid(
+        WSS,
+        'org.eclipse.paho',
+        'SERVER_FRAME_TIMEOUT_MS = 8_000L',
+        'SERVER_FRAME_TIMEOUT_MS = 20_000L',
+        'onState(HubRealtimeState.Connected)\n                    onRealtimeReady(reconnect)',
+    )
+
+    require(
+        TASKS,
+        'class RouterTaskRepository',
+        'data class RouterTaskSnapshot',
+        'val nat: StateFlow<RouterTaskSnapshot>',
+        'val diagnostic: StateFlow<RouterTaskSnapshot>',
+        'val beta: StateFlow<RouterTaskSnapshot>',
+        '/api/router/tasks/$kind',
+        'fun acceptRealtime(raw: String)',
+        'private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)',
+        'taskMessageZh',
+        'taskErrorZh',
+    )
 
     require(
         LITE,
@@ -105,12 +136,6 @@ def main() -> None:
         'delay(3_000L)',
         'fun onRealtimeReady(reconnect: Boolean)',
         'now - previous < 15_000L',
-        'refreshStatus()',
-        'refreshCapabilities()',
-        'refreshDdns()',
-        'refreshUpnp()',
-        'refreshPortMappings()',
-        'refreshFirewall()',
         'private suspend fun <T> coalesced',
         'private val mutationMutex = Mutex()',
         'if (sequence(key).get() != seq)',
@@ -118,7 +143,6 @@ def main() -> None:
         'if (_upnp.value.mutating) return',
         'if (_portMappings.value.mutating) return',
         'if (_firewall.value.mutating) return',
-        'RouterRepositoryRegistry',
         'val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)',
         'private suspend fun <T> executeCommand',
         'withTimeout(45_000L)',
@@ -148,12 +172,14 @@ def main() -> None:
         'repository.firewall.collectAsState()',
         'repository.ddns.collectAsState()',
         'whole card must never turn red',
-        'repository.status.collectAsState()',
         '设置正在后台应用，页面可以安全退出',
         'repository.refreshPortMappings(false)',
         'repository.refreshUpnp(false)',
         'repository.refreshFirewall(false)',
         'repository.refreshDdns(false)',
+        'RouterTaskRepositoryRegistry.get(prefs)',
+        '检测已由 Hub 接管，可以安全离开页面',
+        'tasks.startDiagnostic()',
     )
     forbid(
         ROUTER_CONTROL,
@@ -162,6 +188,8 @@ def main() -> None:
         'repository.refreshUpnp(true)',
         'repository.refreshFirewall(true)',
         'repository.refreshDdns(true)',
+        'while(running)',
+        'api.startDiagnostic()',
     )
 
     require(
@@ -170,20 +198,21 @@ def main() -> None:
         'val dataAvailable: Boolean',
         'Only /status owns connection semantics',
         '路由器会话正常，控制数据正在同步',
+        'internal fun parseDiagnostic',
     )
-    execute = section(ROUTER_API, 'private fun execute(', 'private suspend fun get(')
-    if 'RouterConnectionStore.markSuccess()' in execute or 'RouterConnectionStore.markFailure' in execute:
-        fail('individual router endpoint still mutates global connection state')
 
     require(
         NATIVE,
         'repository.ddns.collectAsState()',
-        '正在检测，快照继续显示',
-        '显示上次检查快照',
         'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
         'fontSize = 13.sp',
-        'terminalFromPreviousRun',
         'modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow',
+        'RouterTaskRepositoryRegistry.get(prefs)',
+        'tasks.startNat(server, port, interfaceName, mode)',
+        'result.stageText.ifBlank { "检测中" }',
+        'NativeValueRow("已耗时"',
+        '显示上次检查快照 · 仅手动检测',
+        'tasks.startBeta()',
     )
     forbid(
         NATIVE,
@@ -191,13 +220,21 @@ def main() -> None:
         'api.cancelNat()',
         'LaunchedEffect(Unit) { check() }',
         'Modifier.width(158.dp).height(44.dp).nativeBlueShadow',
+        'while (running && isActive)',
+        'api.betaInfo()',
     )
-    beta = section(NATIVE, 'fun RouterBetaUpgradeScreen', 'private fun NativeCard')
-    if 'CircularProgressIndicator' in beta:
-        fail('Beta button still replaces its snapshot text with a spinner')
+
+    require(
+        PORTMAP,
+        'private object PortMappingMemoryCache',
+        'mutableStateOf(PortMappingMemoryCache.rules)',
+        'PortMappingMemoryCache.agent',
+        'refresh(silent = rules.isNotEmpty() || PortMappingMemoryCache.agent != null)',
+    )
+    forbid(PORTMAP, 'while (true) {\n            delay(10_000)')
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print('build159 reliable router command lifecycle, cache-first refresh and full-width NAT UI verified')
+    print('build160 truthful realtime state, Hub-owned task lifecycle and snapshot-preserving pages verified')
 
 
 if __name__ == '__main__':
