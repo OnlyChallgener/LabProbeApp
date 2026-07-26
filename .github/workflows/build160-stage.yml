@@ -39,16 +39,19 @@ jobs:
           gradle-version: 9.5.1
       - name: Prepare generated sources
         run: python3 scripts/prepare_android_sources.py
-      - name: Verify state and task invariants
+      - name: Verify state, config and task invariants
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
+          python3 scripts/verify_build160_config_sync.py
           grep -q 'versionCode = 160' app/build.gradle.kts
           grep -q 'versionName = "0.10.18"' app/build.gradle.kts
           grep -q 'SERVER_FRAME_TIMEOUT_MS = 45_000L' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q 'onTaskUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
+          grep -q 'onConfigUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q 'onAgentUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q '/api/router/tasks/$kind' app/src/main/kotlin/com/labprobe/app/RouterTaskRepository.kt
+          grep -q 'fun acceptConfigRealtime(raw: String)' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
           grep -q 'class AgentPresenceStore' app/src/main/kotlin/com/labprobe/app/AgentPresenceStore.kt
           grep -q 'realtimeDataFresh by mutableStateOf(false)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '检测已由 Hub 接管，可以安全离开页面' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
