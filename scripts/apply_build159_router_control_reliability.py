@@ -150,6 +150,16 @@ Spacer(Modifier.width(8.dp))
         .writeTimeout(20, TimeUnit.SECONDS)''',
         "Hub control read timeout",
     )
+    main = replace_once(
+        main,
+        '"hub is online, but router data is unavailable" in lower -> "Hub 已连接，正在等待路由器实时数据"',
+        '"router data is unavailable" in lower && "hub" in lower -> "控制数据暂未更新，已保留上次结果"',
+        "legacy Hub router waiting wording",
+    )
+    main = main.replace(
+        '"waiting for hub status" in lower -> "正在等待 Hub 状态"',
+        '"hub status" in lower && "waiting" in lower -> "正在连接 Hub，已保留上次结果"',
+    )
     main = main.replace(
         '"v$NAME build$CODE · 统一路由数据源与无感预加载"',
         '"v$NAME build$CODE · 路由控制队列与可靠指令"',
@@ -170,11 +180,20 @@ Spacer(Modifier.width(8.dp))
         "repository.refreshUpnp(false)",
         "设置正在后台应用，页面可以安全退出",
         "modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow",
+        "控制数据暂未更新，已保留上次结果",
     )
     missing = [value for value in required if value not in combined]
     if missing:
         raise RuntimeError(f"build159 verification failed: {missing}")
-    print("build159 reliable router commands, cache-first refresh and full-width NAT button applied")
+    forbidden = (
+        "Hub 已连接，正在等待路由器实时数据",
+        '"hub is online, but router data is unavailable" in lower',
+        "正在等待 Hub 状态",
+    )
+    remaining = [value for value in forbidden if value in combined]
+    if remaining:
+        raise RuntimeError(f"legacy build159 status wording remains: {remaining}")
+    print("build159 reliable router commands, cache-first refresh, status wording and full-width NAT button applied")
 
 
 if __name__ == "__main__":
