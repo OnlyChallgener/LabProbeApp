@@ -42,6 +42,7 @@ from apply_build160_agent_presence_finalizer import apply as apply_build160_agen
 from apply_build160_compile_finalizer import apply as apply_build160_compile_finalizer
 from apply_build160_config_sync_finalizer import apply as apply_build160_config_sync_finalizer
 from apply_build161_history_portmap_fix import apply as apply_build161_history_portmap_fix
+from apply_build161_verifier_fix import apply as apply_build161_verifier_fix
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +59,7 @@ def apply_build160() -> None:
 def apply_build161() -> None:
     apply_build160()
     apply_build161_history_portmap_fix()
+    apply_build161_verifier_fix()
 
 
 if __name__ == "__main__":
