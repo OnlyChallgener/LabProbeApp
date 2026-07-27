@@ -3,6 +3,8 @@ name: Build162 Stage
 on:
   push:
     branches: [build162]
+  pull_request:
+    branches: [build161]
   workflow_dispatch:
 
 concurrency:
