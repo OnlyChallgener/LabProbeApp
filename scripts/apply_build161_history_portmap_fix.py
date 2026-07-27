@@ -8,6 +8,7 @@ PORTMAP = SRC / "PortMapping.kt"
 STORE = SRC / "PortMappingRuleStore.kt"
 MAIN = SRC / "MainActivity.kt"
 GRADLE = ROOT / "app/build.gradle.kts"
+VERIFIER = ROOT / "scripts/verify_build154_sources.py"
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -221,8 +222,29 @@ def patch_version() -> None:
     MAIN.write_text(main, encoding="utf-8")
 
 
+def patch_legacy_verifier() -> None:
+    text = VERIFIER.read_text(encoding="utf-8")
+    text = text.replace(
+        '"""Verify final generated Android sources for APP v0.10.18 build160."""',
+        '"""Verify final generated Android sources for APP v0.10.19 build161."""',
+    )
+    text = text.replace(
+        "require(GRADLE, 'versionCode = 160', 'versionName = \"0.10.18\"')",
+        "require(GRADLE, 'versionCode = 161', 'versionName = \"0.10.19\"')",
+    )
+    text = text.replace(
+        "        'mutableStateOf(PortMappingMemoryCache.rules)',\n        'PortMappingMemoryCache.agent',\n        'refresh(silent = rules.isNotEmpty() || PortMappingMemoryCache.agent != null)',",
+        "        'PortMappingRuleStore.load(context, prefs)',\n        'PortMappingMemoryCache.agent',\n        'explicitNewerEmpty',\n        'Hub 本次未返回规则，已保留 APP 中的映射设置',\n        '规则保存在 Hub 与 APP；Agent 离线不会删除设置',",
+    )
+    text = text.replace(
+        "print('build160 truthful realtime state, Hub-owned task lifecycle and snapshot-preserving pages verified')",
+        "print('build161 realtime, durable mapping and history presentation verified')",
+    )
+    VERIFIER.write_text(text, encoding="utf-8")
+
+
 def verify() -> None:
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in (PORTMAP, STORE, MAIN, GRADLE))
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in (PORTMAP, STORE, MAIN, GRADLE, VERIFIER))
     required = (
         "data class PortMapListSnapshot",
         'rulesLoaded = root.optBoolean("rulesLoaded", false)',
@@ -234,6 +256,7 @@ def verify() -> None:
         "规则保存在 Hub 与 APP；Agent 离线不会删除设置",
         "versionCode = 161",
         'versionName = "0.10.19"',
+        "Verify final generated Android sources for APP v0.10.19 build161",
     )
     missing = [value for value in required if value not in combined]
     if missing:
@@ -241,10 +264,11 @@ def verify() -> None:
     forbidden = (
         "val (newRules, newAgent) = api.list()",
         "PortMappingMemoryCache.rules = newRules",
+        "require(GRADLE, 'versionCode = 160'",
     )
-    remaining = [value for value in forbidden if value in PORTMAP.read_text(encoding="utf-8")]
+    remaining = [value for value in forbidden if value in combined]
     if remaining:
-        raise RuntimeError(f"mapping empty-overwrite path remains: {remaining}")
+        raise RuntimeError(f"mapping empty-overwrite or old verifier path remains: {remaining}")
 
 
 def apply() -> None:
@@ -253,8 +277,9 @@ def apply() -> None:
     text = patch_screen(text)
     PORTMAP.write_text(text, encoding="utf-8")
     patch_version()
+    patch_legacy_verifier()
     verify()
-    print("build161 durable mapping rules and history release finalized")
+    print("build161 durable mapping rules, history release and verifier finalized")
 
 
 if __name__ == "__main__":
