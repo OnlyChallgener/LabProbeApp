@@ -5,6 +5,7 @@ on:
     branches:
       - build152
       - build160
+      - build161
       - codex/router-control-v01011-build141
     paths:
       - app/build.gradle.kts
@@ -47,7 +48,7 @@ jobs:
               sha: context.sha,
               state: 'pending',
               context: 'labprobe/router-integration-stage',
-              description: 'workflow started; preparing build160 sources',
+              description: 'workflow started; preparing build161 sources',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
@@ -76,7 +77,7 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build160 state, tasks and snapshot consistency
+      - name: Verify build161 state, history and mapping consistency
         id: verify
         shell: bash
         run: python3 scripts/verify_build154_sources.py
@@ -122,10 +123,11 @@ jobs:
               "路由交互与状态回归修复",
               "统一路由数据源与无感预加载",
               "路由控制队列与可靠指令",
+              "状态闭环与后台任务",
               "v0.10.6：首页关注列表与今日概览底部滑动已修复。",
           ]
           required = [
-              "状态闭环与后台任务",
+              "终端历史与映射持久化",
               "实时链路已连接，等待首帧数据",
               "实时链路恢复中，已保留上次数据",
               "实时数据暂时未更新，已保留上次结果",
@@ -134,6 +136,9 @@ jobs:
               "显示上次检查快照 · 仅手动检测",
               "Agent 状态稍旧",
               "设置正在后台应用，页面可以安全退出",
+              "Hub 本次未返回规则，已保留 APP 中的映射设置",
+              "映射状态暂未同步，已保留全部设置",
+              "规则保存在 Hub 与 APP；Agent 离线不会删除设置",
               "STUN 类型",
               "WAN 类型",
               "未知 NAT 类型",
@@ -217,14 +222,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: labprobe-generated-sources-build160
+          name: labprobe-generated-sources-build161
           path: app/src/main/kotlin/com/labprobe/app
 
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.18-build160-gradle-log
+          name: LabProbe-v0.10.19-build161-gradle-log
           path: /tmp/gradle-variants.log
           if-no-files-found: ignore
 
@@ -232,12 +237,12 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.18-build160-router-debug
+          name: LabProbe-v0.10.19-build161-router-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload unsigned release APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.18-build160-router-release-unsigned
+          name: LabProbe-v0.10.19-build161-router-release-unsigned
           path: app/build/outputs/apk/release/*.apk
