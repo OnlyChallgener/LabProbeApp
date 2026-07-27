@@ -8,6 +8,7 @@ from apply_build162_ddns_field_compat_fix import apply as apply_build162_ddns_fi
 ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts/verify_build154_sources.py"
 CONTROL = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
+API = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt"
 
 
 def apply() -> None:
@@ -29,6 +30,14 @@ def apply() -> None:
 
     apply_build162_ddns_click_crash_fix()
     apply_build162_ddns_field_compat_fix()
+
+    api = API.read_text(encoding="utf-8")
+    if "import java.util.Locale" not in api:
+        anchor = "import org.json.JSONObject\n"
+        if anchor not in api:
+            raise RuntimeError("build162 RouterControlApi import anchor missing")
+        api = api.replace(anchor, anchor + "import java.util.Locale\n", 1)
+        API.write_text(api, encoding="utf-8")
 
     control = CONTROL.read_text(encoding="utf-8")
     marker = "    // Editing, switching and the overflow menu are separate hit targets."
