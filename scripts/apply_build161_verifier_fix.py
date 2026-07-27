@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from apply_build162_ddns_click_crash_fix import apply as apply_build162_ddns_click_crash_fix
+from apply_build162_ddns_field_compat_fix import apply as apply_build162_ddns_field_compat_fix
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts/verify_build154_sources.py"
@@ -25,7 +26,9 @@ def apply() -> None:
         raise RuntimeError("build161 release-note verifier missing")
     VERIFIER.write_text(text, encoding="utf-8")
     print("build161 legacy verifier release-note requirement updated")
+
     apply_build162_ddns_click_crash_fix()
+    apply_build162_ddns_field_compat_fix()
 
     control = CONTROL.read_text(encoding="utf-8")
     marker = "    // Editing, switching and the overflow menu are separate hit targets."
