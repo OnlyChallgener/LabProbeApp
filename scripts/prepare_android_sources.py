@@ -41,6 +41,7 @@ from apply_build160_sync_task_ui import apply as apply_build160_sync_task_ui
 from apply_build160_agent_presence_finalizer import apply as apply_build160_agent_presence_finalizer
 from apply_build160_compile_finalizer import apply as apply_build160_compile_finalizer
 from apply_build160_config_sync_finalizer import apply as apply_build160_config_sync_finalizer
+from apply_build161_history_portmap_fix import apply as apply_build161_history_portmap_fix
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +53,11 @@ def apply_build160() -> None:
     apply_build160_agent_presence_finalizer()
     apply_build160_compile_finalizer()
     apply_build160_config_sync_finalizer()
+
+
+def apply_build161() -> None:
+    apply_build160()
+    apply_build161_history_portmap_fix()
 
 
 if __name__ == "__main__":
@@ -79,6 +85,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 统一路由数据源与无感预加载"' in current
         or '"v$NAME build$CODE · 路由控制队列与可靠指令"' in current
         or '"v$NAME build$CODE · 状态闭环与后台任务"' in current
+        or '"v$NAME build$CODE · 终端历史与映射持久化"' in current
     )
 
     if "private suspend fun calibrateRealtimeCache()" in current:
@@ -102,8 +109,8 @@ if __name__ == "__main__":
         apply_build158_repository_conflict_guard()
         apply_build158_wss_preload_trigger()
         apply_build159_router_control_reliability()
-        apply_build160()
-        print("Android build160 realtime, config, task and Agent state closure prepared")
+        apply_build161()
+        print("Android build161 durable terminal history and mapping persistence prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -149,5 +156,5 @@ if __name__ == "__main__":
     apply_build158_repository_conflict_guard()
     apply_build158_wss_preload_trigger()
     apply_build159_router_control_reliability()
-    apply_build160()
-    print("Android build160 realtime, config, task and Agent state closure prepared")
+    apply_build161()
+    print("Android build161 durable terminal history and mapping persistence prepared")
