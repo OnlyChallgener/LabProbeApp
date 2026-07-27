@@ -1,0 +1,64 @@
+name: Build162 Stage
+
+on:
+  push:
+    branches: [build162]
+  workflow_dispatch:
+
+concurrency:
+  group: build162-stage-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove legacy Java sources
+        run: rm -rf app/src/main/java
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK packages
+        run: |
+          set -e
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+      - name: Prepare generated sources
+        run: python3 scripts/prepare_android_sources.py
+      - name: Verify DDNS click isolation and full-screen editor
+        run: |
+          set -e
+          python3 scripts/verify_build154_sources.py
+          grep -q 'versionCode = 162' app/build.gradle.kts
+          grep -q 'versionName = "0.10.20"' app/build.gradle.kts
+          grep -q 'androidx.compose.ui.window.Dialog(' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'DialogProperties(usePlatformDefaultWidth = false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'Modifier.weight(1f).clickable(onClick=onEdit)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'Icon(Icons.Rounded.MoreVert,"更多操作"' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          ! grep -q 'PremiumCard(accent,Modifier.clickable(onClick=onEdit))' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          ! grep -q 'if(adding||editing!=null)DdnsEditorPage' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+      - name: Compile debug and release
+        env:
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-v0.10.20-build162-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-v0.10.20-build162-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-build162-generated-sources
+          path: app/src/main/kotlin/com/labprobe/app
