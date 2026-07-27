@@ -62,18 +62,21 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build160 state and task invariants
+      - name: Verify build161 state, history and mapping invariants
         shell: bash
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 160' app/build.gradle.kts
-          grep -q 'versionName = "0.10.18"' app/build.gradle.kts
+          grep -q 'versionCode = 161' app/build.gradle.kts
+          grep -q 'versionName = "0.10.19"' app/build.gradle.kts
           grep -q 'SERVER_FRAME_TIMEOUT_MS = 45_000L' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q 'onTaskUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q '/api/router/tasks/$kind' app/src/main/kotlin/com/labprobe/app/RouterTaskRepository.kt
           grep -q 'realtimeDataFresh by mutableStateOf(false)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '检测已由 Hub 接管，可以安全离开页面' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'PortMappingRuleStore.load(context, prefs)' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+          grep -q 'explicitNewerEmpty' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+          grep -q '规则保存在 Hub 与 APP；Agent 离线不会删除设置' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           ! grep -q 'state.hubConnected -> "实时同步正常"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
       - name: Build signed release APK
@@ -127,9 +130,10 @@ jobs:
               "路由交互与状态回归修复",
               "统一路由数据源与无感预加载",
               "路由控制队列与可靠指令",
+              "状态闭环与后台任务",
           )
           required = (
-              "状态闭环与后台任务",
+              "终端历史与映射持久化",
               "实时链路已连接，等待首帧数据",
               "实时链路恢复中，已保留上次数据",
               "实时数据暂时未更新，已保留上次结果",
@@ -137,6 +141,9 @@ jobs:
               "Hub 正在提交 NAT 检测任务",
               "显示上次检查快照 · 仅手动检测",
               "设置正在后台应用，页面可以安全退出",
+              "Hub 本次未返回规则，已保留 APP 中的映射设置",
+              "映射状态暂未同步，已保留全部设置",
+              "规则保存在 Hub 与 APP；Agent 离线不会删除设置",
               "STUN 类型",
               "WAN 类型",
               "/api/realtime/ws",
@@ -159,14 +166,14 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build160 APK DEX strings verified")
+          print("signed build161 APK DEX strings verified")
           PY
 
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: router-state-task-gradle-log
+          name: router-history-mapping-gradle-log
           path: /tmp/gradle-build.log
           if-no-files-found: ignore
 
