@@ -36,7 +36,7 @@ jobs:
           gradle-version: 9.5.1
       - name: Prepare generated sources
         run: python3 scripts/prepare_android_sources.py
-      - name: Verify DDNS click isolation and full-screen editor
+      - name: Verify DDNS editor isolation and field compatibility
         run: |
           exec > >(tee /tmp/build162-verify.log) 2>&1
           set -ex
@@ -47,6 +47,12 @@ jobs:
           grep -q 'DialogProperties(usePlatformDefaultWidth = false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'Modifier.weight(1f).clickable(onClick=onEdit)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'Icon(Icons.Rounded.MoreVert,"更多操作"' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'val normalizedInitial=remember(initial)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'val visibleError=error.ifBlank{externalError}' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q '未识别服务商' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'private fun JSONObject.ddnsText' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
+          grep -q 'private fun JSONObject.ddnsFlag' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
+          grep -q 'data.optJSONArray("records")' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
           ! grep -q 'PremiumCard(accent,Modifier.clickable(onClick=onEdit))' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           ! grep -q 'if(adding||editing!=null)DdnsEditorPage' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
       - uses: actions/upload-artifact@v4
