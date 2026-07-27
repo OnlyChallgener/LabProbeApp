@@ -62,13 +62,13 @@ jobs:
           set -e
           python3 scripts/prepare_android_sources.py
 
-      - name: Verify build161 state, history and mapping invariants
+      - name: Verify build162 DDNS editor and field compatibility
         shell: bash
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 161' app/build.gradle.kts
-          grep -q 'versionName = "0.10.19"' app/build.gradle.kts
+          grep -q 'versionCode = 162' app/build.gradle.kts
+          grep -q 'versionName = "0.10.20"' app/build.gradle.kts
           grep -q 'SERVER_FRAME_TIMEOUT_MS = 45_000L' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q 'onTaskUpdate: (String) -> Unit' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q '/api/router/tasks/$kind' app/src/main/kotlin/com/labprobe/app/RouterTaskRepository.kt
@@ -77,6 +77,11 @@ jobs:
           grep -q 'PortMappingRuleStore.load(context, prefs)' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -q 'explicitNewerEmpty' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -q '规则保存在 Hub 与 APP；Agent 离线不会删除设置' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+          grep -q 'androidx.compose.ui.window.Dialog(' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'val normalizedInitial=remember(initial)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q '未识别服务商' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'private fun JSONObject.ddnsText' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
+          grep -q 'private fun JSONObject.ddnsFlag' app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt
           ! grep -q 'state.hubConnected -> "实时同步正常"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
       - name: Build signed release APK
@@ -131,9 +136,13 @@ jobs:
               "统一路由数据源与无感预加载",
               "路由控制队列与可靠指令",
               "状态闭环与后台任务",
+              "终端历史与映射持久化",
           )
           required = (
-              "终端历史与映射持久化",
+              "DDNS 页面点击闪退修复",
+              "更多操作",
+              "未识别服务商",
+              "DDNS 设置未生效，请稍后重试",
               "实时链路已连接，等待首帧数据",
               "实时链路恢复中，已保留上次数据",
               "实时数据暂时未更新，已保留上次结果",
@@ -166,14 +175,14 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build161 APK DEX strings verified")
+          print("signed build162 APK DEX strings verified")
           PY
 
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: router-history-mapping-gradle-log
+          name: router-ddns-build162-gradle-log
           path: /tmp/gradle-build.log
           if-no-files-found: ignore
 
