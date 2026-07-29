@@ -29,12 +29,6 @@ def patch_main(text: str) -> str:
     if count != 1 and "if (foregroundActive) startRealtime()\n                refreshAll(forceFull = forceFull, silent = true)" not in text:
         raise RuntimeError("missing foreground recovery order anchor")
 
-    old_start = '''    suspend fun startRealtime() {
-        if (prefs.hub.isBlank() || prefs.token.isBlank()) return
-        calibrateRealtimeCache()
-        startRealtimeRendering()
-        realtimeClient.start(prefs.hub, prefs.token)
-    }'''
     new_start = '''    suspend fun startRealtime() {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
         // Connect first so Hub can replay its latest in-memory frames immediately.
@@ -43,7 +37,12 @@ def patch_main(text: str) -> str:
         realtimeClient.start(prefs.hub, prefs.token)
         stateScope.launch { calibrateRealtimeCache() }
     }'''
-    text = replace_once(text, old_start, new_start, "non-blocking realtime start")
+    if new_start not in text:
+        start = text.find("    suspend fun startRealtime() {")
+        end = text.find("\n\n    suspend fun refreshRouterDashboard", start)
+        if start < 0 or end < 0:
+            raise RuntimeError("missing generated startRealtime boundaries")
+        text = text[:start] + new_start + text[end:]
 
     # A dedicated short-timeout client keeps a local-only daily query from inheriting
     # the 20-second timeout used by router operations.
