@@ -88,10 +88,11 @@ def apply_build163() -> None:
         + WSS.read_text(encoding="utf-8")
         + GRADLE.read_text(encoding="utf-8")
     )
+    generated_version_ready = "versionCode = 163" in generated or "versionCode = 164" in generated
     if (
         "private fun acceptDevicesSnapshot(raw: String)" not in generated
         or '"devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())' not in generated
-        or "versionCode = 163" not in generated
+        or not generated_version_ready
     ):
         apply_build163_terminal_live_sync()
     apply_build163_followup_fixes()
@@ -124,6 +125,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 状态闭环与后台任务"' in current
         or '"v$NAME build$CODE · 终端历史与映射持久化"' in current
         or '"v$NAME build$CODE · 终端列表五秒实时同步"' in current
+        or '"v$NAME build$CODE · 终端卡片与 NAT 参数样式优化"' in current
     )
 
     if "private suspend fun calibrateRealtimeCache()" in current:
@@ -148,7 +150,7 @@ if __name__ == "__main__":
         apply_build158_wss_preload_trigger()
         apply_build159_router_control_reliability()
         apply_build163()
-        print("Android build163 terminal realtime and daily-summary follow-up prepared")
+        print("Android v0.10.22 build164 terminal and NAT field polish prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -195,4 +197,4 @@ if __name__ == "__main__":
     apply_build158_wss_preload_trigger()
     apply_build159_router_control_reliability()
     apply_build163()
-    print("Android build163 terminal realtime and daily-summary follow-up prepared")
+    print("Android v0.10.22 build164 terminal and NAT field polish prepared")
