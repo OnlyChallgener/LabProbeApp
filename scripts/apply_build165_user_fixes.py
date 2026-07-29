@@ -286,7 +286,9 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {'''
     section = replace_once(section, old_prefix, new_prefix, "native port editor full screen")
-    tail = "\n    }\n}\n\n"
+    # Original closing order is Column -> ModalBottomSheet -> function (three braces).
+    # New closing order is Column -> Surface -> Dialog -> function (four braces).
+    tail = "\n        }\n    }\n}\n\n"
     if not section.endswith(tail):
         raise RuntimeError("unexpected NativePortEditorSheet tail")
     section = section[:-len(tail)] + "\n            }\n        }\n    }\n}\n\n"
