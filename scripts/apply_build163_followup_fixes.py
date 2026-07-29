@@ -22,7 +22,6 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def patch_main(text: str) -> str:
-    # Resume the native realtime channel before any full/incremental HTTP calibration.
     text, count = re.subn(
         r"\s+refreshAll\(forceFull = forceFull, silent = true\)\n\s+if \(foregroundActive\) startRealtime\(\)",
         "\n                if (foregroundActive) startRealtime()\n                refreshAll(forceFull = forceFull, silent = true)",
@@ -34,8 +33,6 @@ def patch_main(text: str) -> str:
 
     new_start = '''    suspend fun startRealtime() {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
-        // Connect first so Hub can replay its latest in-memory frames immediately.
-        // HTTP cache calibration is a background safety net and must not block first paint.
         startRealtimeRendering()
         realtimeClient.start(prefs.hub, prefs.token)
         stateScope.launch { calibrateRealtimeCache() }
@@ -47,8 +44,6 @@ def patch_main(text: str) -> str:
             raise RuntimeError("missing generated startRealtime boundaries")
         text = text[:start] + new_start + text[end:]
 
-    # Status polling must use Hub's cached manifest. Remote refresh happens in Hub's
-    # background task and must not block this page.
     text = text.replace(
         'requestJson("/api/agent/update/status?refresh=1")',
         'requestJson("/api/agent/update/status")',
@@ -72,7 +67,6 @@ def patch_main(text: str) -> str:
     fun loadDate(d: String) {
         dailyLoadJob?.cancel()
         val requestId = ++dailyRequestId
-        // Render cached events immediately. The network response only enriches this shell.
         noteText = ""
         data = localDailyShell()
         dailySyncMessage = "正在后台同步…"
@@ -154,8 +148,6 @@ fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Col
         1,
     )
 
-    # Keep connection count close to the realtime rates instead of pinning it to
-    # the far-right edge. A fixed gap stays stable on different screen widths.
     realtime_old = '''            Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
             Spacer(Modifier.weight(1f))
             Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)'''
@@ -180,8 +172,6 @@ fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Col
 
 
 def patch_router_native(text: str) -> str:
-    # All NAT parameter controls use the same 54dp field, 14dp radius and
-    # 12.5sp value typography. Labels stay compact and values are vertically centered.
     text = text.replace('val serverShape = RoundedCornerShape(18.dp)', 'val serverShape = RoundedCornerShape(14.dp)', 1)
     text = text.replace(
         'modifier = Modifier.fillMaxWidth().height(50.dp).nativeBlueShadow(serverShape, 5.dp),',
@@ -224,7 +214,7 @@ def patch_router_native(text: str) -> str:
     text = replace_once(text, selector_old, selector_new, "NAT selector field typography")
 
     port_start = text.find('@Composable\nprivate fun NativeCompactPortField(')
-    port_end = text.find('\n\n@Composable', port_start + 12)
+    port_end = text.find('\n\nprivate data class RouterNatResult', port_start + 12)
     if port_start < 0 or port_end < 0:
         raise RuntimeError("missing NativeCompactPortField boundaries")
     port_field = '''@Composable
@@ -274,7 +264,6 @@ def patch_design(text: str) -> str:
 
 
 def patch_port_mapping(text: str) -> str:
-    # The whole card is already clickable; only tighten whitespace without shrinking text.
     text = text.replace(
         'contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)',
         'contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)',
