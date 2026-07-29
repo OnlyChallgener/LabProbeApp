@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Align the long-lived Android verifier with build161, then apply build162."""
+"""Align legacy verifiers, apply build162 DDNS fixes, then build163 terminal sync."""
 from pathlib import Path
 
 from apply_build162_ddns_click_crash_fix import apply as apply_build162_ddns_click_crash_fix
 from apply_build162_ddns_field_compat_fix import apply as apply_build162_ddns_field_compat_fix
+from apply_build163_terminal_live_sync import apply as apply_build163_terminal_live_sync
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / "scripts/verify_build154_sources.py"
@@ -48,6 +49,8 @@ def apply() -> None:
         control = control.replace(marker, invariant + "\n" + marker, 1)
         CONTROL.write_text(control, encoding="utf-8")
     print("build162 DDNS informational-card invariant preserved")
+
+    apply_build163_terminal_live_sync()
 
 
 if __name__ == "__main__":
