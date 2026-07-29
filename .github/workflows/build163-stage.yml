@@ -36,7 +36,7 @@ jobs:
           gradle-version: 9.5.1
       - name: Prepare build165 generated sources
         run: python3 scripts/prepare_android_sources_build165.py
-      - name: Verify build165 NAT, Agent and mapping fixes
+      - name: Verify build165 NAT, Agent, mapping and home fixes
         run: |
           exec > >(tee /tmp/build165-verify.log) 2>&1
           set -ex
@@ -47,11 +47,17 @@ jobs:
           grep -q 'requestAgentUpdateCheck()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '"/api/agent/update/check"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'agentUpdateUiError' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'item.route == "tool_ssh"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'Color(0xFFE9EDF3)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val thresholdPx = with(LocalDensity.current) { 72.dp.toPx() }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val syncLabel = if (snapshot.source.startsWith("已同步")) "实时同步" else "本地缓存"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'kotlinx.coroutines.withTimeoutOrNull(2_500L)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -q 'HealthCard(Modifier.clickable { onClick() })' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'NativeValueRow("最终响应", "已收到")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'RoundedCornerShape(24.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'Text("STUN 服务器", fontSize = 9.sp' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'Text("STUN 端口", fontSize = 9.sp' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'Modifier.clickable(onClick = onEdit)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'onClick = onEdit' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'DialogProperties(usePlatformDefaultWidth = false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           ! grep -q '来源：全部公网地址' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
