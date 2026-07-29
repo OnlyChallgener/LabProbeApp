@@ -47,6 +47,7 @@ from apply_build162_ddns_click_crash_fix import apply as apply_build162_ddns_cli
 from apply_build162_ddns_field_compat_fix import apply as apply_build162_ddns_field_compat_fix
 from apply_build163_terminal_live_sync import apply as apply_build163_terminal_live_sync
 from apply_build163_followup_fixes import apply as apply_build163_followup_fixes
+from apply_build164_release_note_finalizer import apply as apply_build164_release_note_finalizer
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +97,7 @@ def apply_build163() -> None:
     ):
         apply_build163_terminal_live_sync()
     apply_build163_followup_fixes()
+    apply_build164_release_note_finalizer()
 
 
 if __name__ == "__main__":
