@@ -44,28 +44,8 @@ def patch_main(text: str) -> str:
             raise RuntimeError("missing generated startRealtime boundaries")
         text = text[:start] + new_start + text[end:]
 
-    # A dedicated short-timeout client keeps a local-only daily query from inheriting
-    # the 20-second timeout used by router operations.
-    client_anchor = '''    private val client = OkHttpClient.Builder()
-        .dns(CustomDns(prefs.hubDns))
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .addInterceptor(HubAuthInterceptor { prefs.token })
-        .build()
-'''
-    client_new = client_anchor + '''    private val dailyClient = client.newBuilder()
-        .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(6, TimeUnit.SECONDS)
-        .build()
-'''
-    text = replace_once(text, client_anchor, client_new, "daily HTTP timeout")
-    text = text.replace(
-        '        client.newCall(request).execute().use { response ->',
-        '        (if (path.startsWith("/api/daily")) dailyClient else client).newCall(request).execute().use { response ->',
-        1,
-    )
+    # Status polling must use Hub's cached manifest. Remote refresh happens in Hub's
+    # background task and must not block this page.
     text = text.replace(
         'requestJson("/api/agent/update/status?refresh=1")',
         'requestJson("/api/agent/update/status")',
@@ -90,7 +70,8 @@ def patch_main(text: str) -> str:
         dailyLoadJob?.cancel()
         val requestId = ++dailyRequestId
         // Render cached events immediately. The network response only enriches this shell.
-        data = localDailyShell(if (d == selected) noteText else "")
+        noteText = ""
+        data = localDailyShell()
         dailySyncMessage = "正在后台同步…"
         dailyLoadJob = scope.launch {
             val result = runCatching { HubApi(prefs).getDaily(d) }
@@ -197,8 +178,7 @@ def verify(main: str, design: str, port_mapping: str) -> None:
     required = (
         'if (foregroundActive) startRealtime()\n                refreshAll(forceFull = forceFull, silent = true)',
         'stateScope.launch { calibrateRealtimeCache() }',
-        'private val dailyClient = client.newBuilder()',
-        'data = localDailyShell',
+        'data = localDailyShell()',
         '同步失败，已显示本地缓存',
         'SelectionContainer {',
         'Arrangement.spacedBy(if (kind == "devices") 6.dp else 0.dp)',
