@@ -51,6 +51,10 @@ from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
+ROUTER_CONTROL = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
+ROUTER_API = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlApi.kt"
+WSS = ROOT / "app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt"
+GRADLE = ROOT / "app/build.gradle.kts"
 
 
 def apply_build160() -> None:
@@ -68,13 +72,28 @@ def apply_build161() -> None:
 
 def apply_build162() -> None:
     apply_build161()
-    apply_build162_ddns_click_crash_fix()
-    apply_build162_ddns_field_compat_fix()
+    control = ROUTER_CONTROL.read_text(encoding="utf-8")
+    if "DialogProperties(usePlatformDefaultWidth = false)" not in control:
+        apply_build162_ddns_click_crash_fix()
+        control = ROUTER_CONTROL.read_text(encoding="utf-8")
+    api = ROUTER_API.read_text(encoding="utf-8")
+    if "val normalizedInitial=remember(initial)" not in control or "private fun JSONObject.ddnsText" not in api:
+        apply_build162_ddns_field_compat_fix()
 
 
 def apply_build163() -> None:
     apply_build162()
-    apply_build163_terminal_live_sync()
+    generated = (
+        MAIN.read_text(encoding="utf-8")
+        + WSS.read_text(encoding="utf-8")
+        + GRADLE.read_text(encoding="utf-8")
+    )
+    if (
+        "private fun acceptDevicesSnapshot(raw: String)" not in generated
+        or '"devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())' not in generated
+        or "versionCode = 163" not in generated
+    ):
+        apply_build163_terminal_live_sync()
     apply_build163_followup_fixes()
 
 
