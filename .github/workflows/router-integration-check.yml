@@ -79,9 +79,15 @@ jobs:
           grep -q 'NAT 诊断、Agent 更新与映射界面修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'requestAgentUpdateCheck()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'agentUpdateUiError' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'item.route == "tool_ssh"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'Color(0xFFE9EDF3)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val thresholdPx = with(LocalDensity.current) { 72.dp.toPx() }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val syncLabel = if (snapshot.source.startsWith("已同步")) "实时同步" else "本地缓存"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'kotlinx.coroutines.withTimeoutOrNull(2_500L)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -q 'HealthCard(Modifier.clickable { onClick() })' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'NativeValueRow("最终响应", "已收到")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'RoundedCornerShape(24.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'Modifier.clickable(onClick = onEdit)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -q 'onClick = onEdit' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'DialogProperties(usePlatformDefaultWidth = false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           grep -q 'Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false))' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
@@ -121,6 +127,8 @@ jobs:
               "最终响应",
               "已收到",
               "/api/agent/update/check",
+              "本地缓存",
+              "设备、VPN 与 DDNS 今日变化",
               "devices_snapshot",
               "/api/realtime/ws",
               "/api/router/tasks/",
