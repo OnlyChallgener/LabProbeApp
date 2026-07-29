@@ -38,6 +38,10 @@ class HubRealtimeWebSocketClient(
     private val onState: (HubRealtimeState) -> Unit,
     private val onRouterRealtime: (String) -> Unit = {},
     private val onDevicesRealtime: (String) -> Unit = {},
+    private val onDevicesSnapshot: (String) -> Unit = {},
+    private val onTaskUpdate: (String) -> Unit = {},
+    private val onConfigUpdate: (String) -> Unit = {},
+    private val onAgentUpdate: (String) -> Unit = {},
     private val onRealtimeReady: (Boolean) -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -142,6 +146,8 @@ class HubRealtimeWebSocketClient(
                 .header("Accept", "application/json")
                 .build()
             var opened = false
+            var readyReceived = false
+            var reconnect = false
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     if (!desired || run != generation) {
@@ -154,10 +160,10 @@ class HubRealtimeWebSocketClient(
                     socket = webSocket
                     lastFrameAt = SystemClock.elapsedRealtime()
                     startFrameWatchdog(run, webSocket)
-                    val reconnect = hasConnectedBefore
+                    reconnect = hasConnectedBefore
                     hasConnectedBefore = true
-                    onState(HubRealtimeState.Connected)
-                    onRealtimeReady(reconnect)
+                    // A TCP/WebSocket open is not yet a healthy realtime session.
+                    // Wait for Hub's authenticated ready frame before declaring Connected.
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -169,7 +175,16 @@ class HubRealtimeWebSocketClient(
                     when (type) {
                         "router" -> if (data != null) onRouterRealtime(data.toString())
                         "devices" -> if (data != null) onDevicesRealtime(data.toString())
-                        "ready", "keepalive" -> Unit
+                        "devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())
+                        "task" -> if (data != null) onTaskUpdate(data.toString())
+                        "config" -> if (data != null) onConfigUpdate(data.toString())
+                        "agent" -> if (data != null) onAgentUpdate(data.toString())
+                        "ready" -> if (!readyReceived) {
+                            readyReceived = true
+                            onState(HubRealtimeState.Connected)
+                            onRealtimeReady(reconnect)
+                        }
+                        "keepalive" -> Unit
                     }
                 }
 
@@ -254,9 +269,9 @@ class HubRealtimeWebSocketClient(
 
     private companion object {
         const val CONNECT_TIMEOUT_SECONDS = 6L
-        const val PING_INTERVAL_SECONDS = 8L
+        const val PING_INTERVAL_SECONDS = 10L
         const val WATCHDOG_INTERVAL_MS = 1_000L
-        const val SERVER_FRAME_TIMEOUT_MS = 8_000L
+        const val SERVER_FRAME_TIMEOUT_MS = 45_000L
         const val MAX_RETRY_ATTEMPT = 3
         const val REALTIME_PATH = "/api/realtime/ws"
     }

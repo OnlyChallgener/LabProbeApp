@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BasicTooltipBox
@@ -31,6 +32,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -48,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 private val RouterBlue = Color(0xFF2E6BE6)
@@ -60,6 +64,64 @@ private val RouterMuted = Color(0xFF687890)
 private val RouterField = Color(0xFFF7F9FD)
 private val RouterBorder = Color(0xFFE4EAF3)
 private val RouterPage = Color(0xFFF5F8FD)
+
+private const val ROUTER_DIAGNOSTIC_CACHE_PREF = "router_diagnostic_cache_v1"
+
+private fun RouterDiagnostic.toCacheJson(): JSONObject = JSONObject()
+    .put("progress", progress)
+    .put("errorCount", errorCount)
+    .put("items", JSONArray().apply {
+        items.forEach { item ->
+            put(JSONObject()
+                .put("type", item.type)
+                .put("title", item.title)
+                .put("status", item.status)
+                .put("result", item.result)
+                .put("tips", item.tips)
+                .put("advise", item.advise)
+                .put("port", item.port))
+        }
+    })
+
+private fun loadRouterDiagnosticCache(context: Context): RouterDiagnostic {
+    val raw = context.getSharedPreferences("router_control", Context.MODE_PRIVATE)
+        .getString(ROUTER_DIAGNOSTIC_CACHE_PREF, "")
+        .orEmpty()
+    if (raw.isBlank()) return RouterDiagnostic()
+    return runCatching {
+        val root = JSONObject(raw)
+        val array = root.optJSONArray("items") ?: JSONArray()
+        RouterDiagnostic(
+            progress = root.optString("progress", "100%"),
+            errorCount = root.optInt("errorCount", 0),
+            items = (0 until array.length()).mapNotNull { index ->
+                array.optJSONObject(index)?.let { item ->
+                    RouterDiagnosticItem(
+                        type = item.optString("type"),
+                        title = item.optString("title"),
+                        status = item.optString("status"),
+                        result = item.optString("result"),
+                        tips = item.optString("tips"),
+                        advise = item.optString("advise"),
+                        port = item.optString("port")
+                    )
+                }
+            }
+        )
+    }.getOrDefault(RouterDiagnostic())
+}
+
+private fun saveRouterDiagnosticCache(context: Context, result: RouterDiagnostic) {
+    if (result.items.isEmpty()) return
+    context.getSharedPreferences("router_control", Context.MODE_PRIVATE)
+        .edit()
+        .putString(ROUTER_DIAGNOSTIC_CACHE_PREF, result.toCacheJson().toString())
+        .apply()
+}
+
+private object RouterControlMemoryCache {
+    var ddnsRows: List<DdnsRecord> = emptyList()
+}
 
 @Composable
 fun RouterFeatureRail(
@@ -241,33 +303,26 @@ private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
 
 @Composable
 private fun NativePortMappingPage(prefs: AppPrefs) {
-    val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
-    val scope = rememberCoroutineScope()
-    var rules by remember { mutableStateOf<List<NativePortMapRule>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val resource by repository.portMappings.collectAsState()
+    val rules = resource.value.orEmpty()
+    val scope = repository.commandScope
+    var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<NativePortMapRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<NativePortMapRule?>(null) }
-
-    suspend fun refresh(force: Boolean = false) {
-        if (!force) loading = true
-        runCatching { api.nativePortMappings(force) }
-            .onSuccess { rules = it; error = "" }
-            .onFailure { error = it.message.orEmpty() }
-        loading = false
-    }
-    LaunchedEffect(Unit) { refresh() }
+    val error = actionError.ifBlank { resource.error }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { CompactToolbar("路由器原生映射", "${rules.size} 条 · IPv4 NAT", loading, { scope.launch { refresh(true) } }, { adding = true }) }
-        if (error.isNotBlank()) item { CompactMessage(error, RouterRed) }
-        if (loading && rules.isEmpty()) item { LoadingBlock() }
-        if (!loading && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { adding = true } }
+        item { CompactToolbar("路由器原生映射", "${rules.size} 条 · IPv4 NAT", false, { scope.launch { repository.refreshPortMappings(false) } }, { adding = true }) }
+        if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+        if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
+        if (resource.value == null) item { CompactMessage("端口映射正在后台预加载，页面无需等待", RouterBlue) }
+        if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { adding = true } }
         items(rules, key = { it.ruleName }) { rule ->
             NativePortRuleCard(rule, onEdit = { editing = rule }, onDelete = { deleteTarget = rule })
         }
@@ -280,11 +335,10 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
             onDismiss = { adding = false; editing = null },
             onSave = { saved ->
                 scope.launch {
-                    runCatching {
-                        if (editing == null) api.addNativePortMapping(saved)
-                        else api.updateNativePortMapping(editing!!.ruleName, saved)
-                    }.onSuccess { rules = it; adding = false; editing = null; error = "" }
-                        .onFailure { error = it.message.orEmpty() }
+                    val result = if (editing == null) repository.addPortMapping(saved)
+                    else repository.updatePortMapping(editing!!.ruleName, saved)
+                    result.onSuccess { adding = false; editing = null; actionError = "" }
+                        .onFailure { actionError = it.message.orEmpty().ifBlank { "DDNS 设置未生效，请稍后重试" } }
                 }
             }
         )
@@ -292,9 +346,9 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     deleteTarget?.let { target ->
         ConfirmDialog("删除端口映射？", "删除“${target.ruleName}”后，外部访问会立即中断。", "删除", {
             scope.launch {
-                runCatching { api.deleteNativePortMapping(target.ruleName) }
-                    .onSuccess { rules = it; deleteTarget = null }
-                    .onFailure { error = it.message.orEmpty() }
+                repository.deletePortMapping(target.ruleName)
+                    .onSuccess { deleteTarget = null; actionError = "" }
+                    .onFailure { actionError = it.message.orEmpty() }
             }
         }) { deleteTarget = null }
     }
@@ -303,23 +357,40 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
 @Composable
 private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDelete: () -> Unit) {
     var menu by remember(rule.ruleName) { mutableStateOf(false) }
-    PremiumCard(RouterBlue) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    val shape = RoundedCornerShape(16.dp)
+    Surface(
+        onClick = onEdit,
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, RouterBlue.copy(alpha = .10f)),
+        shadowElevation = 1.5.dp
+    ) {
+        Row(
+            Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(RouterBlue.copy(alpha = .038f), Color.Transparent))).padding(horizontal = 11.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             RouterGlyphIcon(RouterGlyph.Port, RouterBlue, Modifier.size(27.dp))
             Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(rule.ruleName, Modifier.weight(1f), fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(rule.ruleName, Modifier.weight(1f), fontSize = 12.6.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     TinyBadge(rule.proto.uppercase(), RouterBlue)
                 }
-                Text("WAN ${rule.srcPort}  →  ${rule.destIp}:${rule.destPort}", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (rule.srcIp.isBlank()) "来源：全部公网地址" else "来源：${rule.srcIp}", fontSize = 9.4.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
+                Text("WAN ${rule.srcPort}  →  ${rule.destIp}:${rule.destPort}", fontSize = 10.7.sp, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, null, Modifier.size(17.dp), tint = RouterMuted) }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(14.dp), containerColor = Color.White) {
-                    DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
+                DropdownMenu(
+                    expanded = menu,
+                    onDismissRequest = { menu = false },
+                    shape = RoundedCornerShape(22.dp),
+                    containerColor = Color.White,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 9.dp
+                ) {
+                    DropdownMenuItem(text = { Text("编辑", fontSize = 11.8.sp, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("删除", fontSize = 11.8.sp, fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -331,16 +402,15 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
 private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set<String>, onDismiss: () -> Unit, onSave: (NativePortMapRule) -> Unit) {
     var draft by remember(initial) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
-    ModalBottomSheet(
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-        containerColor = Color.White,
-        dragHandle = { Box(Modifier.padding(top = 8.dp, bottom = 4.dp).width(32.dp).height(3.dp).background(RouterBorder, RoundedCornerShape(99.dp))) }
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
-            Modifier.fillMaxWidth().fillMaxHeight(.86f).verticalScroll(rememberScrollState()).padding(horizontal = 15.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = RouterPage) {
+            Column(
+                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 15.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(if (initial.ruleName.isBlank()) "新增端口映射" else "编辑端口映射", fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
@@ -384,30 +454,26 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
                 ) { Text("保存并同步", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
             }
             Spacer(Modifier.height(12.dp))
+            }
         }
     }
 }
 
 @Composable
 private fun UpnpPage(prefs: AppPrefs) {
-    val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
-    val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf(UpnpState()) }
-    var loading by remember { mutableStateOf(true) }
-    var saving by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val resource by repository.upnp.collectAsState()
+    val state = resource.value ?: UpnpState()
+    val scope = repository.commandScope
+    var actionError by remember { mutableStateOf("") }
     var confirmDisable by remember { mutableStateOf(false) }
-
-    suspend fun refresh(force: Boolean = false) {
-        if (!force) loading = true
-        runCatching { api.upnp(force) }.onSuccess { state = it; error = "" }.onFailure { error = it.message.orEmpty() }
-        loading = false
-    }
-    LaunchedEffect(Unit) { refresh() }
+    val error = actionError.ifBlank { resource.error }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { CompactToolbar("UPnP 服务", "${state.mappings.size} 条动态映射", loading, { scope.launch { refresh(true) } }, null) }
-        if (error.isNotBlank()) item { CompactMessage(error, RouterRed) }
+        item { CompactToolbar("UPnP 服务", "${state.mappings.size} 条动态映射", false, { scope.launch { repository.refreshUpnp(false) } }, null) }
+        if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+        if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
+        if (resource.value == null) item { CompactMessage("UPnP 快照正在后台预加载", RouterBlue) }
         item {
             PremiumCard(RouterCyan) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -417,13 +483,14 @@ private fun UpnpPage(prefs: AppPrefs) {
                         Text("自动端口发现", fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
                         Text("默认线路 ${state.wan} · ${state.mappings.size} 条活动映射", fontSize = 9.6.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                     }
-                    if (saving) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp) else Switch(
+                    Switch(
                         checked = state.enabled,
+                        enabled = !resource.mutating,
                         onCheckedChange = { next ->
                             if (!next) confirmDisable = true else scope.launch {
-                                saving = true
-                                runCatching { api.setUpnp(true, state.wan) }.onSuccess { state = it }.onFailure { error = it.message.orEmpty() }
-                                saving = false
+                                repository.setUpnp(true, state.wan)
+                                    .onSuccess { actionError = "" }
+                                    .onFailure { actionError = it.message.orEmpty() }
                             }
                         },
                         modifier = Modifier.scale(.84f),
@@ -435,16 +502,16 @@ private fun UpnpPage(prefs: AppPrefs) {
                     Spacer(Modifier.weight(1f))
                     CompactChoice("", state.wan, listOf("AUTO", "WAN"), Modifier.width(116.dp)) { wan ->
                         scope.launch {
-                            saving = true
-                            runCatching { api.setUpnp(state.enabled, wan) }.onSuccess { state = it }.onFailure { error = it.message.orEmpty() }
-                            saving = false
+                            repository.setUpnp(state.enabled, wan)
+                                .onSuccess { actionError = "" }
+                                .onFailure { actionError = it.message.orEmpty() }
                         }
                     }
                 }
             }
         }
         item { Text("动态映射", fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.padding(top = 2.dp, start = 2.dp)) }
-        if (!loading && state.mappings.isEmpty()) item { CompactEmpty("暂无动态映射", "内网设备申请 UPnP 端口后会显示在这里", RouterGlyph.Upnp, null) }
+        if (resource.value != null && state.mappings.isEmpty()) item { CompactEmpty("暂无动态映射", "内网设备申请 UPnP 端口后会显示在这里", RouterGlyph.Upnp, null) }
         items(state.mappings, key = { "${it.clientIp}-${it.protocol}-${it.externalPort}" }) { row ->
             PremiumCard(if (row.protocol == "TCP") RouterBlue else RouterCyan) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -463,41 +530,35 @@ private fun UpnpPage(prefs: AppPrefs) {
     if (confirmDisable) ConfirmDialog("关闭 UPnP？", "部分游戏、下载和远程访问可能受到影响。", "关闭", {
         confirmDisable = false
         scope.launch {
-            saving = true
-            runCatching { api.setUpnp(false, state.wan) }.onSuccess { state = it }.onFailure { error = it.message.orEmpty() }
-            saving = false
+            repository.setUpnp(false, state.wan)
+                .onSuccess { actionError = "" }
+                .onFailure { actionError = it.message.orEmpty() }
         }
     }) { confirmDisable = false }
 }
 
 @Composable
 fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
-    val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf(FirewallState()) }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val resource by repository.firewall.collectAsState()
+    val state = resource.value ?: FirewallState()
+    val scope = repository.commandScope
     var direction by remember { mutableStateOf("forward") }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
+    var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<FirewallRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<FirewallRule?>(null) }
-
-    suspend fun refresh(force: Boolean = false) {
-        if (!force) loading = true
-        runCatching { api.firewall(force) }.onSuccess { state = it; error = "" }.onFailure { error = it.message.orEmpty() }
-        loading = false
-    }
-    LaunchedEffect(Unit) { refresh() }
     val visible = state.rules.filter { it.direction == direction }
+    val error = actionError.ifBlank { resource.error }
 
     if (adding || editing != null) {
         FirewallEditorPage(
             initial = editing ?: FirewallRule(direction = direction, inIface = if (direction == "outbound") "" else "wan", outIface = if (direction == "inbound") "" else "lan"),
             onBack = { adding = false; editing = null },
             onSave = { rule -> scope.launch {
-                runCatching { if (editing == null) api.addFirewallRule(rule) else api.updateFirewallRule(rule) }
-                    .onSuccess { state = it; adding = false; editing = null }
-                    .onFailure { error = it.message.orEmpty() }
+                val result = if (editing == null) repository.addFirewallRule(rule) else repository.updateFirewallRule(rule)
+                result.onSuccess { adding = false; editing = null; actionError = "" }
+                    .onFailure { actionError = it.message.orEmpty() }
             } }
         )
         return
@@ -514,17 +575,22 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${visible.size} 条规则", fontSize = 10.3.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { scope.launch { refresh(true) } }, modifier = Modifier.size(34.dp)) { if (loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
+                    IconButton(onClick = { scope.launch { repository.refreshFirewall(false) } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
                     Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(19.dp)) } }
                 }
             }
-            if (error.isNotBlank()) item { CompactMessage(error, RouterRed) }
-            if (!loading && visible.isEmpty()) item { CompactEmpty("暂无${when(direction){"inbound"->"入站";"outbound"->"出站";else->"转发"}}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
+            if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+            if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
+            if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${when(direction){"inbound"->"入站";"outbound"->"出站";else->"转发"}}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
             items(visible, key = { it.uuid }) { rule ->
                 FirewallRuleCard(
                     rule,
                     onOpen = { editing = rule },
-                    onToggle = { scope.launch { runCatching { api.setFirewallEnabled(rule.uuid, !rule.enabled) }.onSuccess { state = it }.onFailure { error = it.message.orEmpty() } } },
+                    onToggle = { scope.launch {
+                        repository.setFirewallEnabled(rule.uuid, !rule.enabled)
+                            .onSuccess { actionError = "" }
+                            .onFailure { actionError = it.message.orEmpty() }
+                    } },
                     onDelete = { deleteTarget = rule }
                 )
             }
@@ -532,7 +598,11 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     deleteTarget?.let { rule ->
         ConfirmDialog("删除防火墙规则？", "删除“${rule.ruleName}”可能立即影响远程访问。", "删除", {
-            scope.launch { runCatching { api.deleteFirewallRule(rule.uuid) }.onSuccess { state = it; deleteTarget = null }.onFailure { error = it.message.orEmpty() } }
+            scope.launch {
+                repository.deleteFirewallRule(rule.uuid)
+                    .onSuccess { deleteTarget = null; actionError = "" }
+                    .onFailure { actionError = it.message.orEmpty() }
+            }
         }) { deleteTarget = null }
     }
 }
@@ -630,83 +700,160 @@ fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
 @Composable
 private fun DdnsRecordsSection(prefs: AppPrefs) {
-    val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
-    val scope = rememberCoroutineScope()
-    var rows by remember { mutableStateOf<List<DdnsRecord>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val resource by repository.ddns.collectAsState()
+    val rows = resource.value.orEmpty()
+    val scope = repository.commandScope
+    var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<DdnsRecord?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<DdnsRecord?>(null) }
-    suspend fun refresh(force:Boolean=false){ if(!force)loading=true;runCatching{api.ddns(force)}.onSuccess{rows=it;error=""}.onFailure{error=it.message.orEmpty()};loading=false }
-    LaunchedEffect(Unit){refresh()}
+    val error = actionError.ifBlank { resource.error }
+
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("${rows.count { it.enabled }} 条启用 · ${rows.count { it.status.contains("error",true) || it.status.contains("fail",true) }} 条异常", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
         Spacer(Modifier.weight(1f))
-        IconButton(onClick={scope.launch{refresh(true)}},modifier=Modifier.size(33.dp)){if(loading)CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)else Icon(Icons.Rounded.Refresh,null,Modifier.size(17.dp),tint=RouterBlue)}
+        IconButton(onClick={scope.launch{repository.refreshDdns(false)}},modifier=Modifier.size(33.dp)){Icon(Icons.Rounded.Refresh,null,Modifier.size(17.dp),tint=RouterBlue)}
         Surface(onClick={adding=true},shape=CircleShape,color=RouterBlue,modifier=Modifier.size(34.dp)){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(18.dp))}}
     }
-    if(error.isNotBlank())CompactMessage(error,RouterRed)
-    if(!loading&&rows.isEmpty())CompactEmpty("暂无DDNS记录","新增后由路由器原生服务更新",RouterGlyph.Ddns){adding=true}
+    if(error.isNotBlank())CompactMessage(error,RouterAmber)
+    if(resource.mutating)CompactMessage("设置正在后台应用，页面可以安全退出",RouterBlue)
+    if(resource.value==null)CompactMessage("DDNS 快照正在后台预加载",RouterCyan)
+    if(resource.value!=null&&rows.isEmpty())CompactEmpty("暂无DDNS记录","新增后由路由器原生服务更新",RouterGlyph.Ddns){adding=true}
     rows.forEach { record ->
-        DdnsCard(record,onEdit={editing=record},onToggle={scope.launch{runCatching{api.updateDdns(record.copy(enabled=!record.enabled),null)}.onSuccess{rows=it}.onFailure{error=it.message.orEmpty()}}},onDelete={deleteTarget=record})
+        DdnsCard(record,onEdit={editing=record},onToggle={scope.launch{
+            repository.updateDdns(record.copy(enabled=!record.enabled),null)
+                .onSuccess{actionError=""}.onFailure{actionError=it.message.orEmpty()}
+        }},onDelete={deleteTarget=record})
     }
-    if(adding||editing!=null)DdnsEditorPage(editing?:DdnsRecord(),onBack={adding=false;editing=null}){record,password->scope.launch{runCatching{if(editing==null)api.addDdns(record,password.orEmpty())else api.updateDdns(record,password)}.onSuccess{rows=it;adding=false;editing=null}.onFailure{error=it.message.orEmpty()}}}
-    deleteTarget?.let { target -> ConfirmDialog("删除DDNS记录？", "确认删除 ${target.domain}？", "删除", { scope.launch { runCatching { api.deleteDdns(target.serviceId) }.onSuccess { rows=it; deleteTarget=null }.onFailure { error=it.message.orEmpty() } } }) { deleteTarget=null } }
+    if (adding || editing != null) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { adding = false; editing = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(modifier = Modifier.fillMaxSize(), color = RouterPage) {
+                DdnsEditorPage(
+                    initial = editing ?: DdnsRecord(),
+                    externalError = actionError,
+                    onBack = { adding = false; editing = null },
+                ) { record, password ->
+                    scope.launch {
+                        val result = if (editing == null) {
+                            repository.addDdns(record, password.orEmpty())
+                        } else {
+                            repository.updateDdns(record, password)
+                        }
+                        result.onSuccess {
+                            adding = false
+                            editing = null
+                            actionError = ""
+                        }.onFailure {
+                            actionError = it.message.orEmpty()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    deleteTarget?.let { target -> ConfirmDialog("删除DDNS记录？", "确认删除 ${target.domain}？", "删除", { scope.launch {
+        repository.deleteDdns(target.serviceId).onSuccess{deleteTarget=null;actionError=""}.onFailure{actionError=it.message.orEmpty()}
+    } }) { deleteTarget=null } }
 }
 
 @Composable
 private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelete:()->Unit){
-    val good=record.status.isBlank()||record.status.contains("success",true)||record.status.contains("ok",true)
-    val accent=if(good)RouterGreen else RouterRed
+    // whole card must never turn red
+    // Editing, switching and the overflow menu are separate hit targets.  The
+    // overflow icon must never bubble into the card's edit action.
+    val accent=RouterCyan
+    val warning=record.status.contains("error",true)||record.status.contains("fail",true)
+    val domainText=record.domain.ifBlank{"未命名 DDNS 记录"}
+    val providerText=record.provider.ifBlank{"未识别服务商"}
+    val interfaceText=record.interfaceName.ifBlank{"wan"}.uppercase(Locale.ROOT)
     var menu by remember(record.serviceId){mutableStateOf(false)}
-    PremiumCard(accent,Modifier.clickable(onClick=onEdit)){
+    PremiumCard(accent){
         Row(verticalAlignment=Alignment.CenterVertically){
-            RouterGlyphIcon(RouterGlyph.Ddns,accent,Modifier.size(27.dp));Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
-                Text(record.domain,fontSize=11.9.sp,fontWeight=FontWeight.Black,color=RouterInk,maxLines=1,overflow=TextOverflow.Ellipsis)
-                Text("${record.provider} · ${if(record.useIpv6)"IPv6" else "IPv4"} · ${record.interfaceName.uppercase()}",fontSize=9.5.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
-                Text(record.ip.ifBlank{record.status.ifBlank{"等待更新"}},fontSize=9.8.sp,fontWeight=FontWeight.SemiBold,color=if(record.ip.isBlank())RouterMuted else RouterBlue,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Row(
+                modifier=Modifier.weight(1f).clickable(onClick=onEdit),
+                verticalAlignment=Alignment.CenterVertically,
+            ){
+                RouterGlyphIcon(RouterGlyph.Ddns,accent,Modifier.size(27.dp))
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
+                    Text(domainText,fontSize=11.9.sp,fontWeight=FontWeight.Black,color=RouterInk,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    Text("$providerText · ${if(record.useIpv6)"IPv6" else "IPv4"} · $interfaceText",fontSize=9.5.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
+                    Text(record.ip.ifBlank{record.status.ifBlank{"等待更新"}},fontSize=9.8.sp,fontWeight=FontWeight.SemiBold,color=if(warning)RouterAmber else if(record.ip.isBlank())RouterMuted else RouterBlue,maxLines=1,overflow=TextOverflow.Ellipsis)
+                }
             }
             Switch(checked=record.enabled,onCheckedChange={onToggle()},modifier=Modifier.scale(.76f),colors=SwitchDefaults.colors(checkedTrackColor=accent))
-            Box{IconButton(onClick={menu=true},modifier=Modifier.size(28.dp)){Icon(Icons.Rounded.MoreVert,null,Modifier.size(16.dp),tint=RouterMuted)};DropdownMenu(expanded=menu,onDismissRequest={menu=false}){DropdownMenuItem(text={Text("编辑",fontSize=11.5.sp)},onClick={menu=false;onEdit()});DropdownMenuItem(text={Text("删除",fontSize=11.5.sp,color=RouterRed)},onClick={menu=false;onDelete()})}}
+            Box{
+                IconButton(onClick={menu=true},modifier=Modifier.size(28.dp)){
+                    Icon(Icons.Rounded.MoreVert,"更多操作",Modifier.size(16.dp),tint=RouterMuted)
+                }
+                DropdownMenu(expanded=menu,onDismissRequest={menu=false}){
+                    DropdownMenuItem(text={Text("编辑",fontSize=11.5.sp)},onClick={menu=false;onEdit()})
+                    DropdownMenuItem(text={Text("删除",fontSize=11.5.sp,color=RouterRed)},onClick={menu=false;onDelete()})
+                }
+            }
         }
     }
 }
-
 @Composable
-private fun DdnsEditorPage(initial:DdnsRecord,onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
-    var record by remember(initial.serviceId){mutableStateOf(initial)}
-    var password by remember{mutableStateOf("")}
+private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
+    val normalizedInitial=remember(initial){
+        initial.copy(
+            provider=initial.provider.trim().ifBlank{"aliyun.com"},
+            interfaceName=initial.interfaceName.trim().ifBlank{"wan"},
+            domain=initial.domain.trim(),
+            username=initial.username.trim(),
+        )
+    }
+    var record by remember(normalizedInitial){mutableStateOf(normalizedInitial)}
+    var password by remember(normalizedInitial.serviceId){mutableStateOf("")}
     var showPassword by remember{mutableStateOf(false)}
     var error by remember{mutableStateOf("")}
+    val providerOptions=remember(record.provider){
+        val defaults=listOf("aliyun.com","dnspod.cn","no-ip.com")
+        if(record.provider in defaults)defaults else listOf(record.provider)+defaults
+    }
+    val interfaceOptions=remember(record.interfaceName){
+        val defaults=listOf("wan","wan1")
+        if(record.interfaceName in defaults)defaults else listOf(record.interfaceName)+defaults
+    }
     BackHandler(onBack=onBack)
-    RouterFormPage(if(initial.serviceId.isBlank())"新增DDNS" else "编辑DDNS","密钥由你输入；留空保持原值",onBack){
-        CompactChoice("服务商",record.provider,listOf("aliyun.com","dnspod.cn","no-ip.com")){record=record.copy(provider=it)}
+    RouterFormPage(if(normalizedInitial.serviceId.isBlank())"新增DDNS" else "编辑DDNS","密钥由你输入；留空保持原值",onBack){
+        CompactChoice("服务商",record.provider,providerOptions){record=record.copy(provider=it)}
         CompactField("域名 / 记录",record.domain,"例如 rj.lab86@shinya.icu"){record=record.copy(domain=it.take(128))}
         CompactField("用户名 / AccessKey",record.username,"AccessKey ID"){record=record.copy(username=it.take(160))}
-        CompactPasswordField(if(initial.passwordConfigured)"密码 / Secret（留空保持）" else "密码 / Secret",password,"请输入密钥",showPassword,{showPassword=!showPassword}){password=it.take(256)}
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){CompactChoice("接口",record.interfaceName,listOf("wan","wan1"),Modifier.weight(1f)){record=record.copy(interfaceName=it)};CompactChoice("记录类型",if(record.useIpv6)"IPv6" else "IPv4",listOf("IPv6","IPv4"),Modifier.weight(1f)){record=record.copy(useIpv6=it=="IPv6")}}
+        CompactPasswordField(if(normalizedInitial.passwordConfigured)"密码 / Secret（留空保持）" else "密码 / Secret",password,"请输入密钥",showPassword,{showPassword=!showPassword}){password=it.take(256)}
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){CompactChoice("接口",record.interfaceName,interfaceOptions,Modifier.weight(1f)){record=record.copy(interfaceName=it)};CompactChoice("记录类型",if(record.useIpv6)"IPv6" else "IPv4",listOf("IPv6","IPv4"),Modifier.weight(1f)){record=record.copy(useIpv6=it=="IPv6")}}
         Row(verticalAlignment=Alignment.CenterVertically){Text("启用记录",fontSize=10.5.sp,fontWeight=FontWeight.Bold,color=RouterMuted);Spacer(Modifier.weight(1f));Switch(record.enabled,{record=record.copy(enabled=it)},modifier=Modifier.scale(.85f),colors=SwitchDefaults.colors(checkedTrackColor=RouterCyan))}
-        if(error.isNotBlank())Text(error,fontSize=10.5.sp,color=RouterRed)
-        Button(onClick={error=when{record.domain.isBlank()->"请填写域名";record.username.isBlank()->"请填写账号/AccessKey";initial.serviceId.isBlank()&&password.isBlank()->"请填写密码/Secret";else->""};if(error.isBlank())onSave(record,password.ifBlank{null})},modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize=11.5.sp,fontWeight=FontWeight.Black)}
+        val visibleError=error.ifBlank{externalError}
+        if(visibleError.isNotBlank())Text(visibleError,fontSize=10.5.sp,color=RouterRed)
+        Button(onClick={error=when{record.domain.isBlank()->"请填写域名";record.username.isBlank()->"请填写账号/AccessKey";normalizedInitial.serviceId.isBlank()&&password.isBlank()->"请填写密码/Secret";else->""};if(error.isBlank())onSave(record,password.ifBlank{null})},modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize=11.5.sp,fontWeight=FontWeight.Black)}
     }
 }
-
 @Composable
 fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
-    val api=remember(prefs.hub,prefs.token,prefs.hubDns){RouterControlApi(prefs)}
-    val scope=rememberCoroutineScope()
-    var result by remember{mutableStateOf(RouterDiagnostic())}
-    var running by remember{mutableStateOf(false)}
-    var error by remember{mutableStateOf("")}
-    suspend fun refresh(){runCatching{api.diagnostic()}.onSuccess{result=it;error=""}.onFailure{error=it.message.orEmpty()}}
-    LaunchedEffect(Unit){refresh()}
-    LaunchedEffect(running){while(running){refresh();if(result.progress.startsWith("100"))running=false else delay(1000)}}
+    val tasks=remember(prefs.hub,prefs.token,prefs.hubDns){RouterTaskRepositoryRegistry.get(prefs)}
+    val task by tasks.diagnostic.collectAsState()
+    val result=remember(task.updatedAt,task.state){parseDiagnostic(task.result)}
+    LaunchedEffect(Unit){tasks.ensure("diagnostic")}
     Scaffold(containerColor=RouterPage,topBar={CompactTopBar("网络自检",onBack,"物理接线 · 协商速率 · 网络状态")}){padding->
         LazyColumn(Modifier.fillMaxSize().padding(padding),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-            item{PremiumCard(if(result.errorCount==0)RouterGreen else RouterAmber){Row(verticalAlignment=Alignment.CenterVertically){RouterGlyphIcon(RouterGlyph.Diagnostic,if(result.errorCount==0)RouterGreen else RouterAmber,Modifier.size(31.dp));Spacer(Modifier.width(9.dp));Column(Modifier.weight(1f)){Text(if(running)"检测进行中" else if(result.items.isEmpty())"尚未检测" else if(result.errorCount==0)"网络状态正常" else "发现 ${result.errorCount} 项异常",fontSize=12.5.sp,fontWeight=FontWeight.Black,color=RouterInk);Text("进度 ${result.progress}",fontSize=9.7.sp,color=RouterMuted)};Button(onClick={scope.launch{running=true;runCatching{api.startDiagnostic()}.onFailure{error=it.message.orEmpty();running=false}}},enabled=!running,shape=RoundedCornerShape(12.dp),contentPadding=PaddingValues(horizontal=10.dp),modifier=Modifier.height(35.dp)){Text(if(running)"检测中" else "重新检测",fontSize=10.3.sp,fontWeight=FontWeight.Black)}}}}
-            if(error.isNotBlank())item{CompactMessage(error,RouterRed)}
+            item{PremiumCard(if(task.failed)RouterRed else if(result.errorCount==0)RouterGreen else RouterAmber){
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    RouterGlyphIcon(RouterGlyph.Diagnostic,if(task.failed)RouterRed else if(result.errorCount==0)RouterGreen else RouterAmber,Modifier.size(31.dp))
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                        Text(when{task.active->task.stageText;task.failed->task.message.ifBlank{task.stageText};result.items.isEmpty()->"尚未检测";result.errorCount==0->"网络状态正常";else->"发现 ${result.errorCount} 项异常"},fontSize=12.5.sp,fontWeight=FontWeight.Black,color=RouterInk)
+                        Text(if(task.active)"已耗时 ${task.elapsedSeconds} 秒 · 进度 ${result.progress}" else "进度 ${result.progress}",fontSize=9.7.sp,color=RouterMuted)
+                        if(task.active&&task.lastRouterResponseAt<=0L)Text("检测已由 Hub 接管，可以安全离开页面",fontSize=9.4.sp,color=RouterMuted)
+                    }
+                    Button(onClick={tasks.startDiagnostic()},enabled=!task.active,shape=RoundedCornerShape(12.dp),contentPadding=PaddingValues(horizontal=10.dp),modifier=Modifier.height(35.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterBlue,contentColor=Color.White,disabledContainerColor=RouterBlue.copy(alpha=.62f),disabledContentColor=Color.White)){Text(if(task.active)"检测中" else "开始检测",fontSize=10.3.sp,fontWeight=FontWeight.Black)}
+                }
+            }}
+            if(task.failed)item{CompactMessage(task.message.ifBlank{task.stageText},RouterRed)}
             items(result.items){item->val accent=if(item.status=="success")RouterGreen else RouterAmber;PremiumCard(accent){Row(verticalAlignment=Alignment.Top){Icon(if(item.status=="success")Icons.Rounded.CheckCircle else Icons.Rounded.Warning,null,tint=accent,modifier=Modifier.size(18.dp));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){Text(item.title.ifBlank{item.type},fontSize=11.7.sp,fontWeight=FontWeight.Black,color=RouterInk);Text(item.result,fontSize=10.2.sp,fontWeight=FontWeight.SemiBold,color=RouterInk);if(item.port.isNotBlank())Text("问题接口：${item.port}",fontSize=9.7.sp,color=RouterRed);if(item.tips.isNotBlank())Text(item.tips,fontSize=9.5.sp,color=RouterMuted);if(item.advise.isNotBlank())Text(item.advise,fontSize=9.5.sp,color=RouterMuted,lineHeight=13.sp)}}}}
         }
     }
@@ -714,45 +861,27 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
 
 @Composable
 fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
-    val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf(RouterHubStatus()) }
-    var error by remember { mutableStateOf("") }
-    var refreshing by remember { mutableStateOf(false) }
-
-    suspend fun refreshStatus() {
-        refreshing = true
-        runCatching { api.hubStatus() }
-            .onSuccess {
-                status = it
-                error = ""
-            }
-            .onFailure {
-                error = when (it) {
-                    is HubAuthenticationException -> "APP_TOKEN 错误：请检查 Hub API Authorization"
-                    is HubRouterNoDataException -> "Hub 在线，但没有路由器数据"
-                    is HubRouterLoginException -> "Hub 登录路由器失败"
-                    else -> it.message ?: "Hub 状态请求失败"
-                }
-            }
-        refreshing = false
-    }
-
-    LaunchedEffect(Unit) { refreshStatus() }
-
-    val headline = when (status.state) {
-        "ready" -> "Hub 已连接路由器"
-        "router_login_failed" -> "Hub 登录路由器失败"
-        else -> "Hub 在线，但没有路由器数据"
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val resource by repository.status.collectAsState()
+    val status = resource.value
+    val scope = repository.commandScope
+    val sessionConnected = status?.sessionConnected == true || status?.connected == true
+    val headline = when {
+        sessionConnected && status?.dataAvailable == true -> "路由控制链路正常"
+        sessionConnected -> "路由器会话正常"
+        status == null -> "正在准备 Hub 状态"
+        status.state == "router_login_failed" -> "路由器登录失败"
+        else -> "路由控制暂不可用"
     }
     val detail = when {
-        error.isNotBlank() -> error
-        status.connected -> "路由器登录 Cookie 与会话由 Hub 自动维护"
-        else -> status.message
+        status == null -> "状态已在 APP 启动后预加载，页面不会重新建立连接"
+        resource.error.isNotBlank() -> "后台同步较慢，已保留上次状态"
+        sessionConnected && status.dataAvailable != true -> "路由器会话正常，控制快照正在同步"
+        else -> status.message.ifBlank { "路由器登录与会话由 Hub 自动维护" }
     }
-    val accent = if (status.connected && error.isBlank()) RouterGreen else RouterRed
+    val accent = if (sessionConnected) RouterGreen else RouterAmber
 
-    RouterFormPage("Hub 状态", "路由器登录与会话由 Hub 维护", onBack) {
+    RouterFormPage("Hub 状态", "实时 WSS 与路由控制状态独立", onBack) {
         PremiumCard(accent) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(30.dp))
@@ -760,22 +889,23 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(headline, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
                     Text(detail, fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = RouterMuted, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    if (status.lastSuccessAt > 0L) Text(routerLastSyncText(status.lastSuccessAt), fontSize = 9.6.sp, color = RouterMuted)
+                    if ((status?.lastSuccessAt ?: 0L) > 0L) Text(routerLastSyncText(status!!.lastSuccessAt), fontSize = 9.6.sp, color = RouterMuted)
                 }
                 Surface(shape = RoundedCornerShape(99.dp), color = accent.copy(alpha = .09f)) {
-                    Text(if (status.connected && error.isBlank()) "正常" else "异常", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = 9.2.sp, fontWeight = FontWeight.Black, color = accent)
+                    Text(if (sessionConnected) "正常" else "待同步", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = 9.2.sp, fontWeight = FontWeight.Black, color = accent)
                 }
             }
         }
         Button(
-            onClick = { scope.launch { refreshStatus() } },
-            enabled = !refreshing,
+            onClick = { scope.launch { repository.refreshStatus(true) } },
+            enabled = !resource.refreshing,
             modifier = Modifier.fillMaxWidth().height(42.dp),
             shape = RoundedCornerShape(13.dp),
             colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)
         ) {
-            if (refreshing) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
-            else Text("刷新 Hub 状态", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+            Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(if (resource.refreshing) "正在后台刷新" else "刷新 Hub 状态", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
         }
     }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify final generated Android sources for APP v0.10.18 build160."""
+"""Verify final generated Android sources for APP v0.10.19 build161."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,13 +48,13 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    require(GRADLE, 'versionCode = 160', 'versionName = "0.10.18"')
+    require(GRADLE, 'versionCode = 166', 'versionName = "0.10.24"')
 
     require(
         MAIN,
         'RouterRepositoryRegistry.get(prefs).start()',
         'RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)',
-        '状态闭环与后台任务',
+        '首页视觉与映射状态修复',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'private suspend fun calibrateRealtimeCache()',
         'onRouterRealtime = { raw ->',
@@ -205,7 +205,7 @@ def main() -> None:
         NATIVE,
         'repository.ddns.collectAsState()',
         'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
-        'fontSize = 12.5.sp',
+        'fontSize = 13.sp',
         'modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow',
         'RouterTaskRepositoryRegistry.get(prefs)',
         'tasks.startNat(server, port, interfaceName, mode)',
@@ -227,14 +227,50 @@ def main() -> None:
     require(
         PORTMAP,
         'private object PortMappingMemoryCache',
-        'mutableStateOf(PortMappingMemoryCache.rules)',
+        'PortMappingRuleStore.load(context, prefs)',
         'PortMappingMemoryCache.agent',
-        'refresh(silent = rules.isNotEmpty() || PortMappingMemoryCache.agent != null)',
+        'explicitNewerEmpty',
+        'Hub 本次未返回规则，已保留 APP 中的映射设置',
+        '规则保存在 Hub 与 APP；Agent 离线不会删除设置',
     )
     forbid(PORTMAP, 'while (true) {\n            delay(10_000)')
+    require(
+        ROUTER_CONTROL,
+        'androidx.compose.ui.window.Dialog(',
+        'DialogProperties(usePlatformDefaultWidth = false)',
+        'Modifier.weight(1f).clickable(onClick=onEdit)',
+        'Icon(Icons.Rounded.MoreVert,"更多操作"',
+    )
+    forbid(ROUTER_CONTROL, 'PremiumCard(accent,Modifier.clickable(onClick=onEdit))')
+    require(
+        WSS,
+        'private val onDevicesSnapshot: (String) -> Unit = {}',
+        '"devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())',
+    )
+    require(
+        MAIN,
+        'private fun acceptDevicesSnapshot(raw: String)',
+        'lastDevicesSnapshotEpoch',
+        'root.optBoolean("confirmedEmpty", false)',
+        'persistCachesAsync()',
+    )
+    require(
+        ROUTER_CONTROL,
+        'val normalizedInitial=remember(initial)',
+        'val visibleError=error.ifBlank{externalError}',
+        '未识别服务商',
+    )
+    require(
+        ROUTER_API,
+        'private fun JSONObject.ddnsText',
+        'private fun JSONObject.ddnsFlag',
+        'data.optJSONArray("records")',
+        '"serviceId", "service_id"',
+        '"currentIp", "current_ip"',
+    )
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print('build160 truthful realtime state, Hub-owned task lifecycle and snapshot-preserving pages verified')
+    print('build166 home visual consistency and portmap runtime verified')
 
 
 if __name__ == '__main__':

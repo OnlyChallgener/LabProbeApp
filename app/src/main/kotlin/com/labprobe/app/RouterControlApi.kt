@@ -7,52 +7,76 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 /** App-facing state. Router credentials and eWeb session details remain in Hub only. */
 data class RouterConnectionSnapshot(
     val connected: Boolean = false,
-    val statusText: String = "Waiting for Hub status",
+    val statusText: String = "正在等待 Hub 状态",
     val lastSuccessAt: Long = 0L,
     val lastError: String = ""
 )
 
 data class RouterHubStatus(
-    val state: String = "no_router_data",
+    val state: String = "checking",
     val connected: Boolean = false,
-    val message: String = "Hub is online, but router data is unavailable",
-    val errorCode: String = "HUB_NO_ROUTER_DATA",
+    val sessionConnected: Boolean = false,
+    val dataAvailable: Boolean = false,
+    val message: String = "正在准备路由控制数据",
+    val errorCode: String = "",
     val lastSuccessAt: Long = 0L
 )
+
+private fun routerApiMessageZh(raw: String): String {
+    val text = raw.trim()
+    val lower = text.lowercase()
+    return when {
+        text.isBlank() -> "正在检查路由器状态"
+        "hub is online, but router data is unavailable" in lower -> "Hub 已连接，暂未取得路由控制数据"
+        "waiting for hub status" in lower -> "正在等待 Hub 状态"
+        "timeout" in lower || "timed out" in lower -> "请求超时，请稍后重试"
+        "login" in lower && ("failed" in lower || "error" in lower) -> "Hub 登录路由器失败"
+        else -> text
+    }
+}
 
 object RouterConnectionStore {
     var snapshot by mutableStateOf(RouterConnectionSnapshot())
         private set
 
     fun apply(status: RouterHubStatus) {
+        val sessionConnected = status.sessionConnected || status.connected
+        val localized = when {
+            sessionConnected && status.dataAvailable -> "路由控制链路正常"
+            sessionConnected -> "路由器会话正常，控制数据正在同步"
+            status.state == "router_login_failed" -> "路由器连接异常，请检查密码或网络"
+            else -> routerApiMessageZh(status.message)
+        }
         snapshot = RouterConnectionSnapshot(
-            connected = status.connected,
-            statusText = status.message,
+            connected = sessionConnected,
+            statusText = localized,
             lastSuccessAt = status.lastSuccessAt,
-            lastError = if (status.connected) "" else status.message
+            lastError = if (sessionConnected) "" else localized
         )
     }
 
     fun markSuccess() {
         snapshot = snapshot.copy(
             connected = true,
-            statusText = "Hub router data is available",
+            statusText = "路由控制链路正常",
             lastSuccessAt = System.currentTimeMillis() / 1000L,
             lastError = ""
         )
     }
 
     fun markFailure(message: String) {
+        val localized = routerApiMessageZh(message)
         snapshot = snapshot.copy(
             connected = false,
-            statusText = message,
-            lastError = message
+            statusText = localized,
+            lastError = localized
         )
     }
 }
@@ -62,27 +86,13 @@ class RouterControlApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
 
     private fun execute(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
-        return try {
-            val root = hubApi.requestJson(path, method, body)
-            if (root.has("ok") && !root.optBoolean("ok")) {
-                throw RouterStatusUnavailableException()
-            }
-            if (!path.substringBefore('?').endsWith("/status")) {
-                RouterConnectionStore.markSuccess()
-            }
-            root
-        } catch (error: HubAuthenticationException) {
-            throw error
-        } catch (error: HubRouterNoDataException) {
-            RouterConnectionStore.markFailure(error.message ?: "Hub is online, but router data is unavailable")
-            throw error
-        } catch (error: HubRouterLoginException) {
-            RouterConnectionStore.markFailure(error.message ?: "Hub could not log in to the router")
-            throw error
-        } catch (error: Exception) {
-            RouterConnectionStore.markFailure(error.message ?: "Hub router request failed")
-            throw error
+        // A DDNS/firewall/UPnP read failure is a resource refresh failure, not a
+        // global Hub/router disconnect. Only /status owns connection semantics.
+        val root = hubApi.requestJson(path, method, body)
+        if (root.has("ok") && !root.optBoolean("ok")) {
+            throw RouterStatusUnavailableException()
         }
+        return root
     }
     private suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {
         execute(path)
@@ -111,10 +121,12 @@ class RouterControlApi(private val prefs: AppPrefs) {
     suspend fun hubStatus(): RouterHubStatus {
         val root = get("/api/router/status")
         return RouterHubStatus(
-            state = cleanApiText(root.optString("state", "no_router_data")),
+            state = cleanApiText(root.optString("state", "checking")),
             connected = root.optBoolean("connected", false),
-            message = cleanApiText(root.optString("message", "Hub is online, but router data is unavailable")),
-            errorCode = cleanApiText(root.optString("errorCode", "HUB_NO_ROUTER_DATA")),
+            sessionConnected = root.optBoolean("sessionConnected", root.optBoolean("connected", false)),
+            dataAvailable = root.optBoolean("dataAvailable", root.optBoolean("connected", false)),
+            message = cleanApiText(root.optString("message", "正在准备路由控制数据")),
+            errorCode = cleanApiText(root.optString("errorCode", "")),
             lastSuccessAt = root.optLong("lastSuccessAt", 0L)
         ).also(RouterConnectionStore::apply)
     }
@@ -211,7 +223,7 @@ data class NativePortMapRule(
         .put("proto", proto)
 }
 
-private fun parseNativePortRules(data: JSONObject): List<NativePortMapRule> {
+internal fun parseNativePortRules(data: JSONObject): List<NativePortMapRule> {
     val arr = data.optJSONArray("portMapping") ?: data.optJSONArray("list") ?: JSONArray()
     return (0 until arr.length()).mapNotNull { i ->
         arr.optJSONObject(i)?.let { o ->
@@ -242,7 +254,7 @@ data class UpnpState(
     val mappings: List<UpnpMapping> = emptyList()
 )
 
-private fun parseUpnp(o: JSONObject): UpnpState {
+internal fun parseUpnp(o: JSONObject): UpnpState {
     val arr = o.optJSONArray("upnpds") ?: JSONArray()
     return UpnpState(
         enabled = o.optString("enable_upnp").equals("true", true),
@@ -306,7 +318,7 @@ data class FirewallState(
     val maxRules: Int = 20
 )
 
-private fun parseFirewall(data: JSONObject): FirewallState {
+internal fun parseFirewall(data: JSONObject): FirewallState {
     val arr = data.optJSONArray("list") ?: JSONArray()
     val rules = (0 until arr.length()).mapNotNull { i ->
         arr.optJSONObject(i)?.let { o ->
@@ -357,23 +369,101 @@ data class DdnsRecord(
     }
 }
 
-private fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
-    val arr = data.optJSONArray("list") ?: data.optJSONArray("data") ?: JSONArray()
+private fun JSONObject.ddnsText(vararg keys:String):String{
+    for(key in keys){
+        if(!has(key)||isNull(key))continue
+        val text=cleanApiText(opt(key)?.toString())
+        if(text.isNotBlank())return text
+    }
+    return ""
+}
+
+private fun JSONObject.ddnsFlag(default:Boolean,vararg keys:String):Boolean{
+    for(key in keys){
+        if(!has(key)||isNull(key))continue
+        return when(val value=opt(key)){
+            is Boolean->value
+            is Number->value.toInt()!=0
+            else->when(cleanApiText(value?.toString()).lowercase(Locale.ROOT)){
+                "1","true","yes","on","enabled","enable","ipv6"->true
+                "0","false","no","off","disabled","disable","ipv4"->false
+                else->default
+            }
+        }
+    }
+    return default
+}
+
+internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
+    val arr = data.optJSONArray("list") ?: data.optJSONArray("data") ?: data.optJSONArray("records") ?: JSONArray()
     return (0 until arr.length()).mapNotNull { i ->
         arr.optJSONObject(i)?.let { o ->
             DdnsRecord(
-                serviceId = cleanApiText(o.optString("service")).ifBlank { cleanApiText(o.optString("id")) },
-                provider = cleanApiText(o.optString("service_name")).ifBlank { cleanApiText(o.optString("provider", "aliyun.com")) },
-                domain = cleanApiText(o.optString("domain")),
-                username = cleanApiText(o.optString("username")),
-                enabled = o.optString("enable", "1") != "0",
-                useIpv6 = o.optString("use_ipv6", "1") == "1",
-                interfaceName = cleanApiText(o.optString("interface")).ifBlank { cleanApiText(o.optString("wan", "wan")) },
-                status = cleanApiText(o.optString("status")),
-                ip = cleanApiText(o.optString("ip")),
-                passwordConfigured = o.optBoolean("passwordConfigured")
+                serviceId = o.ddnsText("service", "serviceId", "service_id", "id", "uuid"),
+                provider = o.ddnsText("service_name", "serviceName", "provider", "providerName").ifBlank { "aliyun.com" },
+                domain = o.ddnsText("domain", "host", "hostname", "record"),
+                username = o.ddnsText("username", "user", "accessKey", "accessKeyId", "access_key_id"),
+                enabled = o.ddnsFlag(true, "enable", "enabled", "isEnabled"),
+                useIpv6 = o.ddnsFlag(true, "use_ipv6", "useIpv6", "ipv6", "ipVersion"),
+                interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface").ifBlank { "wan" },
+                status = o.ddnsText("status", "state", "message", "msg"),
+                ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
+                passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password")
             )
         }
+    }
+}
+
+private fun routerDiagnosticTitleZh(type: String, raw: String): String {
+    val text = cleanApiText(raw).trim()
+    if (text.any { it.code > 127 }) return text
+    val lower = (type + " " + text).lowercase()
+    return when {
+        "wan" in lower || "external network port" in lower -> "外网口连接"
+        "lan" in lower || "internal network" in lower -> "局域网连接"
+        "dns" in lower -> "DNS 解析"
+        "gateway" in lower -> "网关连接"
+        "internet" in lower || "network access" in lower -> "互联网连接"
+        "speed" in lower || "negotiation" in lower -> "端口协商速率"
+        "cable" in lower || "link" in lower -> "网线连接"
+        else -> "网络状态检查"
+    }
+}
+
+private fun routerDiagnosticTextZh(raw: String): String {
+    var text = cleanApiText(raw).replace("<br>", "\n", true).trim()
+    if (text.isBlank() || text.any { it.code > 127 } || !Regex("[A-Za-z]{3,}").containsMatchIn(text)) return text
+    val replacements = listOf(
+        "check external network port network cable is OK" to "请检查外网口网线连接是否正常",
+        "external network port network cable is OK" to "外网口网线连接正常",
+        "check wan port network cable" to "请检查 WAN 口网线连接",
+        "network cable is unplugged" to "网线未连接",
+        "network cable is connected" to "网线已连接",
+        "link is normal" to "链路正常",
+        "network is normal" to "网络状态正常",
+        "internet access is normal" to "互联网连接正常",
+        "dns is normal" to "DNS 解析正常",
+        "gateway is reachable" to "网关可达",
+        "negotiation speed" to "协商速率",
+        "please check" to "请检查",
+        "success" to "正常",
+        "failed" to "失败",
+        "failure" to "失败",
+        "abnormal" to "异常",
+        "normal" to "正常"
+    )
+    replacements.forEach { (old, new) -> text = text.replace(old, new, ignoreCase = true) }
+    if (!Regex("[A-Za-z]{3,}").containsMatchIn(text)) return text
+    val lower = text.lowercase()
+    return when {
+        "cable" in lower || "port" in lower && "link" in lower -> "请检查对应接口的网线连接"
+        "speed" in lower || "negotiation" in lower -> "请检查端口协商速率"
+        "dns" in lower -> "请检查 DNS 配置和解析状态"
+        "gateway" in lower -> "请检查网关配置和连通性"
+        "internet" in lower || "network" in lower -> "请检查互联网连接状态"
+        "ok" in lower || "success" in lower || "normal" in lower -> "检测正常"
+        "fail" in lower || "error" in lower || "abnormal" in lower -> "检测异常"
+        else -> "请检查该项网络状态"
     }
 }
 
@@ -393,7 +483,7 @@ data class RouterDiagnostic(
     val items: List<RouterDiagnosticItem> = emptyList()
 )
 
-private fun parseDiagnostic(data: JSONObject): RouterDiagnostic {
+internal fun parseDiagnostic(data: JSONObject): RouterDiagnostic {
     val groups = data.optJSONArray("list") ?: JSONArray()
     val rows = mutableListOf<RouterDiagnosticItem>()
     for (i in 0 until groups.length()) {
@@ -402,11 +492,11 @@ private fun parseDiagnostic(data: JSONObject): RouterDiagnostic {
         if (children.length() == 0) {
             rows += RouterDiagnosticItem(
                 type = cleanApiText(group.optString("type")),
-                title = cleanApiText(group.optString("item")),
+                title = routerDiagnosticTitleZh(group.optString("type"), group.optString("item")),
                 status = cleanApiText(group.optString("status")),
-                result = cleanApiText(group.optString("result")),
-                tips = cleanApiText(group.optString("tips")),
-                advise = cleanApiText(group.optString("advise"))
+                result = routerDiagnosticTextZh(group.optString("result")),
+                tips = routerDiagnosticTextZh(group.optString("tips")),
+                advise = routerDiagnosticTextZh(group.optString("advise"))
             )
         }
         for (j in 0 until children.length()) {
@@ -414,11 +504,11 @@ private fun parseDiagnostic(data: JSONObject): RouterDiagnostic {
             val childData = child.optJSONObject("data") ?: JSONObject()
             rows += RouterDiagnosticItem(
                 type = cleanApiText(group.optString("type")),
-                title = cleanApiText(child.optString("item")),
+                title = routerDiagnosticTitleZh(group.optString("type"), child.optString("item")),
                 status = cleanApiText(child.optString("status")),
-                result = cleanApiText(child.optString("result")),
-                tips = cleanApiText(child.optString("tips")),
-                advise = cleanApiText(child.optString("advise")).replace("<br>", "\n", true),
+                result = routerDiagnosticTextZh(child.optString("result")),
+                tips = routerDiagnosticTextZh(child.optString("tips")),
+                advise = routerDiagnosticTextZh(child.optString("advise")),
                 port = cleanApiText(childData.optString("port"))
             )
         }

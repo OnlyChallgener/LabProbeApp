@@ -478,8 +478,8 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
             refreshing = true
             runCatching { state.requestRouterDashboardRefresh() }
                 .onFailure { state.refreshRouterDashboard(silent = false) }
-            runCatching { state.requestRouterCredentialsRefresh() }
             refreshing = false
+            launch { runCatching { state.requestRouterCredentialsRefresh() } }
         }
     }
 
@@ -698,7 +698,7 @@ private fun RouterHeroCard(
                     ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF7C3AED), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
-                    Text("实时数据稍旧，等待 Agent 更新", fontSize = 8.6.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
+                    Text("实时数据暂时未变化，已保留上次结果", fontSize = 8.6.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

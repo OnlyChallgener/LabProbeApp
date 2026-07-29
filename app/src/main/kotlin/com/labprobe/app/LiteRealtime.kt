@@ -65,6 +65,15 @@ fun mergeLiteRouterRealtime(base: JSONObject?, sample: JSONObject): JSONObject {
     telemetry.put("cpuPercent", sample.optDouble("cpuPercent", telemetry.optDouble("cpuPercent", 0.0)))
     telemetry.put("memoryPercent", sample.optDouble("memoryPercent", telemetry.optDouble("memoryPercent", 0.0)))
     telemetry.put("temperatureC", sample.optDouble("temperatureC", telemetry.optDouble("temperatureC", 0.0)))
+    if (sample.has("temperature2gC") && !sample.isNull("temperature2gC")) {
+        telemetry.put("temperature2gC", sample.optDouble("temperature2gC", telemetry.optDouble("temperature2gC", 0.0)))
+    }
+    if (sample.has("temperature5gC") && !sample.isNull("temperature5gC")) {
+        telemetry.put("temperature5gC", sample.optDouble("temperature5gC", telemetry.optDouble("temperature5gC", 0.0)))
+    }
+    if (sample.has("storagePercent") && !sample.isNull("storagePercent")) {
+        telemetry.put("storagePercent", sample.optDouble("storagePercent", telemetry.optDouble("storagePercent", 0.0)))
+    }
     telemetry.put("uptimeSeconds", sample.optLong("uptimeSeconds", telemetry.optLong("uptimeSeconds", 0L)))
     telemetry.put("onlineDeviceCount", sample.optInt("onlineDeviceCount", telemetry.optInt("onlineDeviceCount", 0)))
     connections.put("ipv4", sample.optLong("ipv4Connections", connections.optLong("ipv4", 0L)))

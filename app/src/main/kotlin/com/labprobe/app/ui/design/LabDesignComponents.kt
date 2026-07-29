@@ -156,9 +156,10 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
     val contentModifier = if (scrollable) {
         Modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.88f)
+            .fillMaxHeight(0.96f)
             .verticalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 6.dp)
+            .navigationBarsPadding()
     } else {
         Modifier
             .fillMaxWidth()

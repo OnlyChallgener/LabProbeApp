@@ -103,7 +103,7 @@ data class PortMapRule(
     val effectiveDesiredState: String get() = desiredState.ifBlank { if (enabled) "running" else "stopped" }
     val isRunning: Boolean get() = effectiveActualState == "running"
     val isActiveOrPending: Boolean get() = effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || syncState == "syncing"
-    val shouldStop: Boolean get() = effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || (syncState == "syncing" && effectiveDesiredState == "running")
+    val shouldStop: Boolean get() = effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || (syncState in setOf("syncing", "stale") && effectiveDesiredState == "running")
     val modeText: String get() = if (mode == "6to4") "6→4" else "6→6"
     val targetText: String get() = when {
         mode == "6to4" -> "$targetIpv4:$targetPort"
@@ -122,7 +122,11 @@ data class PortMapAgentInfo(
     val hubVersion: String = "",
     val agentVersion: String = "",
     val relayVersion: String = "",
-    val capabilities: String = ""
+    val capabilities: String = "",
+    val state: String = if (online) "online" else "offline",
+    val ageSeconds: Long = 0L,
+    val lastSeenEpoch: Long = 0L,
+    val revision: Long = 0L,
 )
 
 data class PortMapHistoryPoint(
@@ -175,15 +179,24 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
     )
 }
 
+data class PortMapListSnapshot(
+    val rules: List<PortMapRule>,
+    val agent: PortMapAgentInfo,
+    val rulesLoaded: Boolean,
+    val rulesRevision: Long,
+    val rulesUpdatedAt: String,
+    val revision: Long,
+)
+
 class PortMapApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
 
-    suspend fun list(): Pair<List<PortMapRule>, PortMapAgentInfo> = withContext(Dispatchers.IO) {
+    suspend fun list(): PortMapListSnapshot = withContext(Dispatchers.IO) {
         val root = JSONObject(get("/api/portmaps"))
         val range = root.optJSONObject("portRange") ?: JSONObject()
-        val rules = root.optJSONArray("rules") ?: JSONArray()
-        val rows = (0 until rules.length()).mapNotNull { rules.optJSONObject(it)?.let(::parsePortMapRule) }
-        rows to PortMapAgentInfo(
+        val array = root.optJSONArray("rules") ?: JSONArray()
+        val rows = (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::parsePortMapRule) }
+        val agent = PortMapAgentInfo(
             online = root.optBoolean("agentOnline", false),
             router = cleanApiText(root.optString("router", "router")),
             lastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
@@ -193,7 +206,21 @@ class PortMapApi(private val prefs: AppPrefs) {
             hubVersion = cleanApiText(root.optString("hubVersion")),
             agentVersion = cleanApiText(root.optString("agentVersion")),
             relayVersion = cleanApiText(root.optString("relayVersion")),
-            capabilities = compactPortCapabilities(root.opt("capabilities"))
+            capabilities = compactPortCapabilities(root.opt("capabilities")),
+            state = cleanApiText(root.optString("agentState")).ifBlank {
+                if (root.optBoolean("agentOnline", false)) "online" else "offline"
+            },
+            ageSeconds = root.optLong("agentAgeSeconds", 0L),
+            lastSeenEpoch = root.optLong("agentLastSeenEpoch", 0L),
+            revision = root.optLong("agentRevision", 0L),
+        )
+        PortMapListSnapshot(
+            rules = rows,
+            agent = agent,
+            rulesLoaded = root.optBoolean("rulesLoaded", false),
+            rulesRevision = root.optLong("rulesRevision", 0L).coerceAtLeast(0L),
+            rulesUpdatedAt = cleanApiText(root.optString("rulesUpdatedAt")),
+            revision = root.optLong("revision", 0L).coerceAtLeast(0L),
         )
     }
 
@@ -314,19 +341,57 @@ data class PortMapDraft(
     }
 }
 
+private object PortMappingMemoryCache {
+    var rules: List<PortMapRule> = emptyList()
+    var rulesRevision: Long = 0L
+    var rulesUpdatedAt: String = ""
+    var snapshotRevision: Long = 0L
+    var devices: List<DeviceItem> = emptyList()
+    var agent: PortMapAgentInfo? = null
+}
+
 @Composable
 fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
+    val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
+    val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
+    val liveAgent by presenceStore.state.collectAsState()
+    val persistentRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs) }
+    val initialRules = remember(prefs.hub, prefs.hubDns) {
+        PortMappingMemoryCache.rules.ifEmpty { persistentRules.rules }
+    }
     val scope = rememberCoroutineScope()
-    var rules by remember { mutableStateOf<List<PortMapRule>>(emptyList()) }
-    var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
-    var agent by remember { mutableStateOf(PortMapAgentInfo(false, "router", "", 20000, 20020)) }
-    var loading by remember { mutableStateOf(true) }
+    var rules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(initialRules) }
+    var rulesRevision by remember(prefs.hub, prefs.hubDns) {
+        mutableLongStateOf(maxOf(PortMappingMemoryCache.rulesRevision, persistentRules.revision))
+    }
+    var rulesUpdatedAt by remember(prefs.hub, prefs.hubDns) {
+        mutableStateOf(PortMappingMemoryCache.rulesUpdatedAt.ifBlank { persistentRules.updatedAt })
+    }
+    var snapshotRevision by remember(prefs.hub, prefs.hubDns) {
+        mutableLongStateOf(PortMappingMemoryCache.snapshotRevision)
+    }
+    var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
+    var agent by remember { mutableStateOf(PortMappingMemoryCache.agent ?: PortMapAgentInfo(false, "router", "", 20000, 20020)) }
+    var loading by remember { mutableStateOf(PortMappingMemoryCache.agent == null && initialRules.isEmpty()) }
+    var refreshInFlight by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("全部") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
+
+    fun commitRulesLocally(next: List<PortMapRule>, revision: Long = rulesRevision, updatedAt: String = rulesUpdatedAt, sourceRevision: Long = snapshotRevision) {
+        rules = next
+        rulesRevision = revision.coerceAtLeast(rulesRevision)
+        snapshotRevision = sourceRevision.coerceAtLeast(snapshotRevision)
+        rulesUpdatedAt = updatedAt.ifBlank { rulesUpdatedAt }
+        PortMappingMemoryCache.rules = next
+        PortMappingMemoryCache.rulesRevision = rulesRevision
+        PortMappingMemoryCache.snapshotRevision = snapshotRevision
+        PortMappingMemoryCache.rulesUpdatedAt = rulesUpdatedAt
+        PortMappingRuleStore.save(context, prefs, next, rulesRevision, rulesUpdatedAt)
+    }
 
     fun markSyncing(rule: PortMapRule, action: String) {
         rules = rules.map {
@@ -338,28 +403,61 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     suspend fun refresh(silent: Boolean = false) {
+        if (refreshInFlight) return
+        refreshInFlight = true
         if (!silent) loading = true
-        runCatching {
-            val (newRules, newAgent) = api.list()
-            rules = newRules
+        try {
+            val snapshot = kotlinx.coroutines.withTimeout(4_000L) { api.list() }
+            val newAgent = snapshot.agent
+            val explicitNewerEmpty = snapshot.rulesLoaded && snapshot.rules.isEmpty() && snapshot.rulesRevision > rulesRevision
+            val sourceIsCurrent = snapshot.revision >= snapshotRevision
+            val mayAccept = sourceIsCurrent && (snapshot.rules.isNotEmpty() || explicitNewerEmpty || (rules.isEmpty() && !persistentRules.hasDocument))
+            if (mayAccept) {
+                commitRulesLocally(snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt, snapshot.revision)
+            }
             agent = newAgent
-            if (devices.isEmpty()) devices = deviceApi.getDevices(true)
-            message = ""
-        }.onFailure { message = it.message ?: "加载失败" }
-        loading = false
+            PortMappingMemoryCache.agent = newAgent
+            presenceStore.acceptHttp(newAgent)
+            if (devices.isEmpty()) devices = runCatching { deviceApi.getDevices(true) }.getOrDefault(devices)
+            PortMappingMemoryCache.devices = devices
+            message = if (!mayAccept && snapshot.rules.isEmpty() && rules.isNotEmpty()) {
+                "Hub 本次未返回规则，已保留 APP 中的映射设置"
+            } else ""
+        } catch (error: Throwable) {
+            val agentKnownOnline = liveAgent?.online == true || agent.online
+            if (rules.isNotEmpty() && agentKnownOnline) {
+                val staleRules = rules.map { it.copy(syncState = "stale") }
+                rules = staleRules
+                PortMappingMemoryCache.rules = staleRules
+            }
+            message = if (rules.isNotEmpty()) {
+                if (agentKnownOnline) "Agent 在线，正在重新获取映射运行状态" else "映射状态暂未同步，已保留全部设置"
+            } else (error.message ?: "加载失败")
+        } finally {
+            refreshInFlight = false
+            loading = false
+        }
     }
 
-    LaunchedEffect(Unit) {
-        refresh()
+    LaunchedEffect(Unit) { refresh(silent = rules.isNotEmpty() || PortMappingMemoryCache.agent != null) }
+    LaunchedEffect(liveAgent?.lastSeenAt) {
+        liveAgent?.let {
+            agent = it
+            PortMappingMemoryCache.agent = it
+            loading = false
+            if (it.online) refresh(true)
+        }
+    }
+    LaunchedEffect(agent.online) {
         while (true) {
-            delay(10_000)
+            kotlinx.coroutines.delay(if (agent.online) 3_000L else 8_000L)
             refresh(true)
         }
     }
 
     val visible = rules.filter {
         when (filter) {
-            "运行中" -> it.effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || it.syncState == "syncing"
+            "运行中" -> it.effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || it.syncState == "syncing" || (it.syncState == "stale" && it.effectiveDesiredState == "running")
             "已停止" -> it.effectiveActualState == "stopped" && it.syncState != "syncing"
             "已到期" -> it.effectiveActualState == "expired"
             else -> true
@@ -386,7 +484,10 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             onDelete = {
                 scope.launch {
                     runCatching { api.delete(selected.id) }
-                        .onSuccess { selectedId = null }
+                        .onSuccess {
+                            commitRulesLocally(rules.filterNot { it.id == selected.id })
+                            selectedId = null
+                        }
                         .onFailure { message = it.message ?: "删除失败" }
                     refresh(true)
                 }
@@ -421,13 +522,17 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         }
 
         AnimatedVisibility(message.isNotBlank()) {
-            Surface(shape = RoundedCornerShape(18.dp), color = PortRed.copy(alpha = .09f), border = androidx.compose.foundation.BorderStroke(1.dp, PortRed.copy(alpha = .16f))) {
-                Text(message, Modifier.padding(12.dp), color = PortRed, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+            val informational = message.startsWith("Agent 在线") || message.contains("已保留")
+            val messageColor = if (informational) Color(0xFFF59E0B) else PortRed
+            Surface(shape = RoundedCornerShape(18.dp), color = messageColor.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, messageColor.copy(alpha = .15f))) {
+                Text(message, Modifier.padding(12.dp), color = messageColor, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
         if (loading && rules.isEmpty()) {
-            Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            LabV2Card(compact = true) {
+                Text("正在后台同步映射快照，页面可以继续操作", color = LabV2.InkMuted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+            }
         } else if (visible.isEmpty()) {
             PortMapEmptyCard { editDraft = PortMapDraft(listenPort = nextPort(rules, agent).toString()) }
         } else {
@@ -460,7 +565,11 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 scope.launch {
                     runCatching {
                         if (draft.id.isBlank()) api.create(draft) else api.update(draft.id, draft)
-                    }.onSuccess {
+                    }.onSuccess { saved ->
+                        val next = if (rules.any { it.id == saved.id }) {
+                            rules.map { if (it.id == saved.id) saved else it }
+                        } else rules + saved
+                        commitRulesLocally(next)
                         editDraft = null
                         refresh(true)
                     }.onFailure { message = it.message ?: "保存失败" }
@@ -478,7 +587,12 @@ private fun nextPort(rules: List<PortMapRule>, agent: PortMapAgentInfo): Int {
 
 @Composable
 private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefresh: () -> Unit) {
-    val color = if (agent.online) PortGreen else PortRed
+    val presenceState = agent.state.ifBlank { if (agent.online) "online" else "offline" }
+    val color = when (presenceState) {
+        "online" -> PortGreen
+        "stale" -> Color(0xFFF59E0B)
+        else -> PortRed
+    }
     LabV2Card(compact = true) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
@@ -494,7 +608,16 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(7.dp).background(color, CircleShape))
                     Spacer(Modifier.width(5.dp))
-                    Text(if (agent.online) "Agent 在线" else "Agent 未连接", color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        when (presenceState) {
+                            "online" -> "Agent 在线"
+                            "stale" -> "Agent 状态稍旧"
+                            else -> "Agent 未连接"
+                        },
+                        color = color,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                     if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = 9.3.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (agent.protocolVersion.isNotBlank() || agent.capabilities.isNotBlank()) {
@@ -514,8 +637,8 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
         Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 52)
             Spacer(Modifier.height(10.dp))
-            Text("暂无端口映射", fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Text("创建 6→4 或 6→6 TCP 四层反代规则", fontSize = 10.5.sp, color = LabV2.InkMuted)
+            Text("暂无端口映射设置", fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("规则保存在 Hub 与 APP；Agent 离线不会删除设置", fontSize = 10.5.sp, color = LabV2.InkMuted)
             Spacer(Modifier.height(13.dp))
             Button(onClick = onAdd, shape = LabV2.ButtonShape) {
                 Icon(Icons.Rounded.Add, null)
@@ -529,7 +652,7 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 @Composable
 private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
     val status = portMapStatus(rule)
-    LabV2Card(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+    LabV2Card(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(7.dp).background(status.color, CircleShape))
@@ -553,7 +676,7 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
             val error = portMapErrorText(rule.runtime.lastError)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    if (error.isNotBlank() && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) Text(error, color = PortRed, fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (error.isNotBlank() && rule.syncState != "stale" && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) Text(error, color = PortRed, fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(portMapTimeText(rule), fontSize = 10.2.sp, lineHeight = 12.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
                 }
                 OutlinedButton(onClick = onToggle, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.shouldStop) PortRed else PortBlue)) {
@@ -570,7 +693,7 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
 
 @Composable
 private fun PortMapCompactMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.height(46.dp), shape = RoundedCornerShape(13.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
+    Surface(modifier = modifier.height(42.dp), shape = RoundedCornerShape(13.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
         Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
             Text(label, fontSize = 9.5.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
             Text(value, fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
@@ -583,6 +706,7 @@ private fun portMapStatus(rule: PortMapRule): PortMapStatusUi = when {
     rule.syncState == "agent_offline" -> PortMapStatusUi("路由器 Agent 离线", PortRed)
     rule.syncState == "syncing" -> PortMapStatusUi("正在同步", PortBlue)
     rule.syncState == "error" -> PortMapStatusUi("同步失败", PortRed)
+    rule.syncState == "stale" -> PortMapStatusUi("状态待同步", Color(0xFFF59E0B))
     rule.effectiveActualState == "starting" -> PortMapStatusUi("启动中", PortBlue)
     rule.effectiveActualState == "running" -> PortMapStatusUi("运行中", PortGreen)
     rule.effectiveActualState == "waiting_target" -> PortMapStatusUi("等待目标 IPv6", Color(0xFFF59E0B))
@@ -618,7 +742,12 @@ private fun PortMapEditorSheet(
         devices.firstOrNull { cleanMac(it.mac).equals(cleanMac(draft.targetMac), ignoreCase = true) }
     }
 
-    LabBottomSheet(onDismiss = onDismiss, scrollable = true) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = PortSheetBg) {
+            Column(
+                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(if (draft.id.isBlank()) "新建映射" else "编辑映射", fontSize = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
@@ -784,6 +913,8 @@ private fun PortMapEditorSheet(
             colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)
         ) { Text("保存映射", fontWeight = FontWeight.Black) }
         Spacer(Modifier.height(8.dp))
+            }
+        }
     }
 
     if (showDevicePicker) {
@@ -1365,6 +1496,7 @@ private fun portMapSyncText(rule: PortMapRule): String = when (rule.syncState) {
     "syncing" -> "正在同步"
     "agent_offline" -> "路由器 Agent 离线"
     "error" -> "同步失败"
+    "stale" -> "状态待同步"
     else -> rule.syncState.ifBlank { "同步状态未知" }
 }
 
@@ -1406,6 +1538,7 @@ private fun portMapRemainingText(rule: PortMapRule): String {
 private fun portMapTimeText(rule: PortMapRule): String = when {
     rule.syncState == "agent_offline" -> "等待路由器 Agent 恢复"
     rule.syncState == "syncing" -> if (rule.effectiveDesiredState == "stopped") "停止命令已提交 · 正在同步" else "启动命令已提交 · 正在同步"
+    rule.syncState == "stale" -> "Agent 在线 · 正在重新获取运行状态"
     rule.effectiveActualState == "starting" -> "启动中 · 等待 Hub 返回实际状态"
     rule.effectiveActualState == "running" -> "已运行 ${formatPortDuration(portMapRunningDuration(rule))} · 剩余 ${portMapRemainingText(rule)}"
     rule.effectiveActualState == "waiting_target" -> "等待目标 IPv6 · 每 30 秒重试"

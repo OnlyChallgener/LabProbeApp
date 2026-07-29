@@ -11,7 +11,18 @@ internal class AgentPresenceStore {
     val state: StateFlow<PortMapAgentInfo?> = _state.asStateFlow()
 
     fun acceptHttp(value: PortMapAgentInfo) {
-        _state.value = merge(_state.value, value)
+        accept(value)
+    }
+
+    private fun accept(next: PortMapAgentInfo) {
+        val previous = _state.value
+        if (previous != null && !isNewer(previous, next)) return
+        _state.value = merge(previous, next)
+    }
+
+    private fun isNewer(previous: PortMapAgentInfo, next: PortMapAgentInfo): Boolean {
+        if (next.revision > 0L || previous.revision > 0L) return next.revision >= previous.revision
+        return next.lastSeenEpoch >= previous.lastSeenEpoch
     }
 
     fun acceptRealtime(raw: String) {
@@ -32,9 +43,11 @@ internal class AgentPresenceStore {
             relayVersion = previous?.relayVersion.orEmpty(),
             capabilities = previous?.capabilities.orEmpty(),
             state = stateName,
-            ageSeconds = root.optLong("agentAgeSeconds", previous?.ageSeconds ?: 0L)
+            ageSeconds = root.optLong("agentAgeSeconds", previous?.ageSeconds ?: 0L),
+            lastSeenEpoch = root.optLong("agentLastSeenEpoch", previous?.lastSeenEpoch ?: 0L),
+            revision = root.optLong("agentRevision", previous?.revision ?: 0L),
         )
-        _state.value = merge(previous, next)
+        accept(next)
     }
 
     private fun merge(previous: PortMapAgentInfo?, next: PortMapAgentInfo): PortMapAgentInfo = next.copy(

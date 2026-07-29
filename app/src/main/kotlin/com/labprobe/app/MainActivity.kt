@@ -174,10 +174,19 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · Hub 原生 WSS 实时链路" to listOf(
-                "APP 使用现有 APP Token 直接连接 Hub 原生 WSS，不再需要 MQTT 地址或账号密码",
-                "路由 fast 与终端增量仅经 Hub 内存快照推送，HTTP 只用于首次与重连校准",
-                "APP 退到后台或 WSS 断开时暂停平滑渲染和终端高频采样需求"
+            "v$NAME build$CODE · 首页视觉与映射状态修复" to listOf(
+                "网络健康得分标题完整显示，刷新状态移到标题下一行",
+                "SSH 小卡片改为浅灰色，终端在线与 DDNS 卡片统一白色层级",
+                "主导航选中阴影统一为科技蓝，不再出现紫色",
+                "IPv6 映射在线轮询实际状态，失联时不再误显示旧执行失败",
+                "NAT 下拉菜单改为大圆角白色浮层，参数标题与内容拉开间距",
+                "Agent 更新检查改为 Hub 后台任务，502 不再显示原始 HTML",
+                "SSH 小卡片改为浅灰色，今日概览同步状态移到右上角",
+                "首页卡片拖动响应加快，点击反馈按卡片圆角裁剪",
+                "终端实时栏的速率与连接数改为固定间距",
+                "NAT 任务完成后耗时和路由器响应停止累计，保留最终结果",
+                "路由状态、DDNS 与网络自检刷新保留上次有效数据，不再白屏",
+                "统一 Hub、WSS 与路由器数据状态，避免实时正常却显示 Hub 断开"
             )
         )
 }
@@ -207,6 +216,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = AppPrefs(this)
+        // Preload the shared router-control repository before any settings page
+        // is opened. The repository waits briefly so WSS startup stays first.
+        RouterRepositoryRegistry.get(prefs).start()
         applyLabProbeSystemBars()
         setContent { LabProbeApp(prefs) }
     }
@@ -262,7 +274,7 @@ class AppPrefs(context: Context) {
     var agentUpdateMessage: String get() = sp.getString("agent_update_message_v1", "") ?: ""
         set(v) = sp.edit().putString("agent_update_message_v1", v).apply()
 
-    var homeOrder: String get() = sp.getString("home_order", "score,mini,exit,vpn,devices,today") ?: "score,mini,exit,vpn,devices,today"
+    var homeOrder: String get() = sp.getString("home_order", "score,mini,router,exit,vpn,devices,today") ?: "score,mini,router,exit,vpn,devices,today"
         set(v) = sp.edit().putString("home_order", v).apply()
     var toolSectionOrder: String get() = sp.getString("tool_section_order", "net,public,device") ?: "net,public,device"
         set(v) = sp.edit().putString("tool_section_order", v).apply()
@@ -354,6 +366,10 @@ class AppPrefs(context: Context) {
 
     var cacheStatus: String get() = sp.getString("cache_status", "") ?: ""
         set(v) = sp.edit().putString("cache_status", v).apply()
+    var cacheRouterDashboard: String get() = sp.getString("cache_router_dashboard_v1", "") ?: ""
+        set(v) = sp.edit().putString("cache_router_dashboard_v1", v).apply()
+    var cacheVpnRowsJson: String get() = sp.getString("cache_home_vpn_rows_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("cache_home_vpn_rows_v1", v).apply()
     var cacheDevices: String get() = sp.getString("cache_devices", "") ?: ""
         set(v) = sp.edit().putString("cache_devices", v).apply()
     var cacheOnlineDevices: String get() = sp.getString("cache_online_devices", "") ?: ""
@@ -931,6 +947,21 @@ open class HubRouterNoDataException(message: String = "Hub 在线，但没有路
 class HubRouterLoginException(message: String = "Hub 登录路由器失败") : RuntimeException(message)
 class RouterStatusUnavailableException(message: String = "Hub 在线，但没有路由器数据") : HubRouterNoDataException(message)
 
+private fun appErrorZh(raw: String?, fallback: String = "请求失败"): String {
+    val text = raw.orEmpty().trim()
+    val lower = text.lowercase()
+    return when {
+        text.isBlank() -> fallback
+        "router data is unavailable" in lower && "hub" in lower -> "控制数据暂未更新，已保留上次结果"
+        "hub status" in lower && "waiting" in lower -> "正在连接 Hub，已保留上次结果"
+        "timeout" in lower || "timed out" in lower -> "请求超时，请稍后重试"
+        "unable to resolve" in lower || "unknown host" in lower || "dns" in lower -> "域名解析失败"
+        "failed to connect" in lower || "connection refused" in lower -> "无法连接 Hub"
+        "unauthorized" in lower || "forbidden" in lower || "http 401" in lower || "http 403" in lower -> "Hub 认证失败"
+        else -> text
+    }
+}
+
 class AppState(private val prefs: AppPrefs, context: Context) {
     private val appContext = context.applicationContext
     private val refreshMutex = Mutex()
@@ -942,6 +973,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val liteRealtimeApi = LiteRealtimeApi(prefs)
     private val realtimeSmoother = RealtimeDisplaySmoother()
     private var liteRenderJob: Job? = null
+    private var realtimeFreshnessJob: Job? = null
     @Volatile private var foregroundActive = true
     private val realtimeClient = HubRealtimeWebSocketClient(
         dnsProvider = { CustomDns(prefs.hubDns) },
@@ -951,15 +983,19 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 when (next) {
                     HubRealtimeState.Connected -> {
                         mqttConnected = true
-                        message = "实时同步正常"
+                        hubConnected = true
+                        realtimeDataFresh = false
+                        message = "实时链路已连接，等待首帧数据"
                     }
                     HubRealtimeState.Connecting -> {
                         mqttConnected = false
-                        message = "正在连接实时同步"
+                        realtimeDataFresh = false
+                        message = if (hubConnected) "正在连接实时链路，已保留上次数据" else "正在连接 Hub"
                     }
                     is HubRealtimeState.Reconnecting -> {
                         mqttConnected = false
-                        message = "正在重连 ${next.attempt}/${next.maxAttempts}"
+                        realtimeDataFresh = false
+                        message = if (hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
                     }
                     HubRealtimeState.Disabled -> {
                         mqttConnected = false
@@ -970,21 +1006,46 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         },
         onRouterRealtime = { raw ->
             stateScope.launch {
-                if (!foregroundActive || !mqttConnected) return@launch
+                if (!foregroundActive) return@launch
                 runCatching { JSONObject(raw) }.getOrNull()?.let {
                     realtimeSmoother.acceptRouter(it)
                     routerDashboardError = ""
+                    mqttConnected = true
+                    realtimeDataFresh = true
+                    lastRouterRealtimeAt = SystemClock.elapsedRealtime()
+                    message = "实时同步正常"
+                    realtimeFreshnessJob?.cancel()
+                    realtimeFreshnessJob = stateScope.launch {
+                        val expected = lastRouterRealtimeAt
+                        delay(15_000L)
+                        if (lastRouterRealtimeAt == expected && mqttConnected) {
+                            realtimeDataFresh = false
+                            message = "实时数据暂时未更新，已保留上次结果"
+                        }
+                    }
                 }
             }
         },
         onDevicesRealtime = { raw ->
             stateScope.launch {
-                if (!foregroundActive || !mqttConnected) return@launch
+                if (!foregroundActive) return@launch
                 runCatching { JSONObject(raw) }.getOrNull()?.let { realtimeSmoother.acceptDevices(it) }
             }
         },
+        onDevicesSnapshot = { raw ->
+            stateScope.launch {
+                if (!foregroundActive) return@launch
+                acceptDevicesSnapshot(raw)
+            }
+        },
+        onTaskUpdate = { raw -> RouterTaskRepositoryRegistry.get(prefs).acceptRealtime(raw) },
+        onConfigUpdate = { raw -> RouterRepositoryRegistry.get(prefs).acceptConfigRealtime(raw) },
+        onAgentUpdate = { raw -> AgentPresenceStoreRegistry.get(prefs).acceptRealtime(raw) },
         onRealtimeReady = { reconnect ->
-            if (reconnect) stateScope.launch { calibrateRealtimeCache() }
+            // WSS wins startup. Router settings preload starts only after Hub ready;
+            // reconnect refresh is silent and limited to lightweight essentials.
+            RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)
+            stateScope.launch { calibrateRealtimeCache() }
         }
     )
     var status by mutableStateOf<JSONObject?>(prefs.cacheStatus.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() })
@@ -1009,8 +1070,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var loading by mutableStateOf(false)
     var hubConnected by mutableStateOf(false)
     var mqttConnected by mutableStateOf(false)
+    var realtimeDataFresh by mutableStateOf(false)
+    var lastRouterRealtimeAt by mutableLongStateOf(0L)
+    private var lastDevicesSnapshotEpoch = 0L
     var mqttState by mutableStateOf<HubRealtimeState>(HubRealtimeState.Disabled)
-    var routerDashboard by mutableStateOf<JSONObject?>(null)
+    var routerDashboard by mutableStateOf<JSONObject?>(
+        prefs.cacheRouterDashboard.takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
+    )
     var routerCredentials by mutableStateOf<JSONObject?>(null)
     var routerDashboardError by mutableStateOf("")
     var message by mutableStateOf(if (prefs.lastRefresh.isBlank()) "等待刷新" else "最后成功：${prefs.lastRefresh}")
@@ -1025,8 +1091,8 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                     val next = foregroundRecoverySignals.tryReceive().getOrNull() ?: break
                     forceFull = forceFull || next
                 }
-                refreshAll(forceFull = forceFull, silent = true)
                 if (foregroundActive) startRealtime()
+                refreshAll(forceFull = forceFull, silent = true)
             }
         }
     }
@@ -1061,30 +1127,79 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                     }
                 }
             } catch (first: Exception) {
+                val realtimeAlive = mqttConnected
                 val wasConnected = hubConnected
-                hubConnected = false
-                if (wasConnected) {
-                    if (!silent) message = "Hub 已断开，正在自动重连..."
-                    try {
-                        val api = HubApi(prefs)
-        
-                        api.keepaliveWithRetry(5)
-                        hubConnected = true
-                        if (!silent) message = "重连成功，正在校准完整数据..."
-                        syncFull(api, silent)
-                    } catch (second: Exception) {
-                        hubConnected = false
-                        message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${second.message}"
-                    }
-                } else if (attemptedReconnect) {
-                    message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
+                if (realtimeAlive) {
+                    // A healthy WSS proves Hub is reachable. A failed full-sync endpoint
+                    // must not flip the Hub card to disconnected or clear cached data.
+                    hubConnected = true
+                    if (!silent) message = "实时链路正常，完整数据同步暂时失败，已保留上次数据"
                 } else {
-                    message = "Hub 已断开，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${first.message}"
+                    hubConnected = false
+                    if (wasConnected) {
+                        if (!silent) message = "Hub 已断开，正在自动重连..."
+                        try {
+                            val api = HubApi(prefs)
+                            api.keepaliveWithRetry(5)
+                            hubConnected = true
+                            if (!silent) message = "重连成功，正在校准完整数据..."
+                            syncFull(api, silent)
+                        } catch (second: Exception) {
+                            hubConnected = false
+                            message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${appErrorZh(second.message)}"
+                        }
+                    } else if (attemptedReconnect) {
+                        message = "Hub 已断开，自动重连 5 次失败 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${appErrorZh(first.message)}"
+                    } else {
+                        message = "Hub 已断开，已保留数据 · 最后更新 ${prefs.lastRefresh.ifBlank { "未知" }}：${appErrorZh(first.message)}"
+                    }
                 }
             } finally {
                 if (!silent) loading = false
             }
         }
+    }
+
+    private fun acceptDevicesSnapshot(raw: String) {
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        if (!root.optBoolean("accepted", true) || !root.optBoolean("fullSnapshot", false)) return
+        val epoch = root.optLong("sampleEpochMs", 0L)
+        if (epoch > 0L && epoch <= lastDevicesSnapshotEpoch) return
+        val values = root.optJSONArray("devices") ?: return
+        val fresh = applyDeviceOverrides(parseDeviceArray(values.toString()), deviceOverrides)
+        val confirmedEmpty = root.optBoolean("confirmedEmpty", false)
+        if (fresh.isEmpty() && onlineDevices.isNotEmpty() && !confirmedEmpty) return
+        if (epoch > 0L) lastDevicesSnapshotEpoch = epoch
+
+        // The full snapshot owns terminal identity, online time and traffic. The
+        // compact devices frame only smooths instantaneous speed between snapshots.
+        realtimeSmoother.acceptDevices(root)
+        val previousOnline = onlineDevices
+        val freshByMac = fresh.associateBy { cleanMac(it.mac) }
+        val disappeared = previousOnline
+            .filterNot { old -> freshByMac.containsKey(cleanMac(old.mac)) }
+            .map { old ->
+                old.copy(
+                    online = false,
+                    offlineAt = old.offlineAt.ifBlank { offlineNow() },
+                    lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() },
+                )
+            }
+        val updatedWatched = devices.map { current ->
+            val currentMac = cleanMac(current.mac)
+            val currentFresh = freshByMac[currentMac] ?: return@map current
+            currentFresh.copy(
+                remark = current.remark.ifBlank { currentFresh.remark },
+                manualType = current.manualType.ifBlank { currentFresh.manualType },
+                wolEnabledOverride = current.wolEnabledOverride ?: currentFresh.wolEnabledOverride,
+                followedOverride = current.followedOverride ?: currentFresh.followedOverride,
+            )
+        }
+
+        if (fresh != onlineDevices) onlineDevices = fresh
+        if (updatedWatched != devices) devices = updatedWatched
+        refreshOfflineDevices(offlineDevices + disappeared, fresh)
+        persistCachesAsync()
     }
 
     private suspend fun calibrateRealtimeCache() {
@@ -1134,32 +1249,45 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     suspend fun startRealtime() {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
-        calibrateRealtimeCache()
         startRealtimeRendering()
         realtimeClient.start(prefs.hub, prefs.token)
+        stateScope.launch { calibrateRealtimeCache() }
     }
 
     suspend fun refreshRouterDashboard(silent: Boolean = true) {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
+        val previous = routerDashboard
         runCatching { HubApi(prefs).getRouterDashboard() }
-            .onSuccess { routerDashboard = it; routerDashboardError = "" }
-            .onFailure {
-                routerDashboardError = it.message ?: "Hub无法获取路由器状态"
-                if (!silent) message = routerDashboardError
+            .onSuccess { latest ->
+                routerDashboard = mergeRouterDashboardSnapshot(previous, latest)
+                routerDashboard?.let { prefs.cacheRouterDashboard = it.toString() }
+                routerDashboardError = ""
+            }
+            .onFailure { failure ->
+                if (previous != null) {
+                    routerDashboard = previous
+                    routerDashboardError = ""
+                } else {
+                    routerDashboardError = appErrorZh(failure.message, "Hub 暂时无法获取路由器状态")
+                    if (!silent) message = routerDashboardError
+                }
             }
     }
 
     suspend fun requestRouterDashboardRefresh(): Long {
+        val previous = routerDashboard
         val nonce = HubApi(prefs).requestRouterDashboardRefresh()
-        repeat(6) {
-            delay(700L)
+        repeat(4) {
+            delay(350L)
             val latest = runCatching { HubApi(prefs).getRouterDashboard() }.getOrNull()
             if (latest != null) {
-                routerDashboard = latest
+                routerDashboard = mergeRouterDashboardSnapshot(routerDashboard ?: previous, latest)
+                routerDashboard?.let { prefs.cacheRouterDashboard = it.toString() }
                 routerDashboardError = ""
                 if (latest.optLong("refreshCompletedNonce", 0L) >= nonce) return nonce
             }
         }
+        if (routerDashboard == null && previous != null) routerDashboard = previous
         return nonce
     }
 
@@ -1186,7 +1314,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     fun stopRealtime() {
         realtimeClient.stop()
         pauseRealtimeRendering()
+        realtimeFreshnessJob?.cancel()
+        realtimeFreshnessJob = null
         mqttConnected = false
+        realtimeDataFresh = false
     }
 
     fun setForeground(active: Boolean) {
@@ -1470,13 +1601,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     }
 
     fun markHubSavedWithoutConnectionChange() {
-        if (!mqttConnected && hubConnected) {
-            message = "Hub 已连接，等待实时链路"
-            return
-        }
         message = when {
-            mqttConnected -> "实时同步正常"
-            hubConnected -> "Hub 已连接，等待实时链路"
+            realtimeDataFresh -> "实时同步正常"
+            mqttConnected -> "实时链路已连接，等待首帧数据"
+            hubConnected -> "Hub 已连接，实时链路恢复中"
             else -> "Hub 设置已保存，等待自动连接"
         }
     }
@@ -1725,8 +1853,10 @@ fun LabProbeApp(prefs: AppPrefs) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         CertificateReminderCenter.notifyDue(context, prefs)
-        state.refreshAll(forceFull = true)
+        // Establish Hub-native WSS first. Full HTTP sync is independent and must
+        // never delay the connected state or initial realtime snapshots.
         state.startRealtime()
+        launch { state.refreshAll(forceFull = true) }
         delay(1500L)
         updateChecking = true
         runCatching { fetchGithubLatestInfo() }
@@ -1772,6 +1902,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             route == "daily" -> dailyReturnRoute.takeIf { it in mainRoutes } ?: "events"
             route == "health_score" -> "home"
             route == "router_status" -> "home"
+            route == "router_settings" -> "home"
             route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
             route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
@@ -1779,16 +1910,21 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
         val navigate: (String) -> Unit = { target ->
-            if (target.startsWith("tool_")) toolReturnRoute = if (route in mainRoutes) route else normalized
+            if (target.startsWith("tool_")) toolReturnRoute = when {
+                route == "router_settings" -> "router_settings"
+                route in mainRoutes -> route
+                else -> normalized
+            }
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
             route = target
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "wol" || route == "device_traffic" || route == "device_detail" || route == "settings") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "device_traffic" || route == "device_detail" || route == "settings") {
             route = when (route) {
                 "daily" -> dailyReturnRoute
                 "health_score" -> "home"
                 "router_status" -> "home"
+                "router_settings" -> "home"
                 "wol" -> "home"
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
@@ -1850,6 +1986,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "health_score" -> HealthScoreDetailScreen(prefs, state) { route = "home" }
                         "router_status" -> RouterStatusScreen(prefs, state, onBack = { route = "home" }, onOpenDevices = { route = "devices" })
+                        "router_settings" -> RouterSettingsScreen(prefs, onBack = { route = "home" }) { target -> navigate(target) }
                         "wol" -> WolDetailScreen(state) { route = "home" }
                         "devices" -> DevicesScreen(state, topNav, onOpenTraffic = { route = "device_traffic" }, onOpenDetails = { mac -> selectedDeviceMac = mac; route = "device_detail" })
                         "device_traffic" -> TodayTrafficScreen(state) { route = "devices" }
@@ -1890,6 +2027,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
+                        "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
+                        "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool)
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
@@ -1988,6 +2127,7 @@ fun DetailShell(
 
 @Composable
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
+    val techBlue = Color(0xFF2D63D8)
     Surface(
         color = Color.White.copy(alpha = 0.92f),
         shape = RoundedCornerShape(32.dp),
@@ -2003,18 +2143,32 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
         ) {
             titles.forEachIndexed { i, t ->
                 val active = i == selected
+                val itemShape = RoundedCornerShape(24.dp)
+                val itemModifier = Modifier
+                    .height(40.dp)
+                    .weight(1f)
+                    .then(
+                        if (active) Modifier.shadow(
+                            elevation = 5.dp,
+                            shape = itemShape,
+                            clip = false,
+                            ambientColor = techBlue.copy(alpha = .18f),
+                            spotColor = techBlue.copy(alpha = .28f)
+                        ) else Modifier
+                    )
                 Surface(
                     onClick = { onSelect(i) },
-                    shape = RoundedCornerShape(24.dp),
-                    color = if (active) Color.White.copy(alpha = .98f) else Color.Transparent,
-                    shadowElevation = if (active) 2.dp else 0.dp,
-                    modifier = Modifier.height(40.dp).weight(1f)
+                    shape = itemShape,
+                    color = if (active) Color(0xFFF8FBFF) else Color.Transparent,
+                    shadowElevation = 0.dp,
+                    border = if (active) androidx.compose.foundation.BorderStroke(1.dp, techBlue.copy(alpha = .14f)) else null,
+                    modifier = itemModifier
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             icons[i],
                             contentDescription = t,
-                            tint = if (active) Color(0xFF2D63D8) else Color(0xFF64748B),
+                            tint = if (active) techBlue else Color(0xFF64748B),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -2739,7 +2893,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
             }) { Text("GitHub", fontWeight = FontWeight.Black) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Bold) } },
-        title = { Text("极客网探 v${AppVersion.NAME}", fontWeight = FontWeight.Black) },
+        title = { Text("极客网探 · 版本 ${AppVersion.NAME} build ${AppVersion.CODE}", fontWeight = FontWeight.Black) },
         text = {
             Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
@@ -2969,9 +3123,17 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = safeNasIpv6ForUi(nas, router)
-    val vpnRows = remember(state.status, nasV6, state.events) {
+    val liveVpnRows = remember(state.status, nasV6, state.events) {
         buildVpnRowsForHome(data, nasV6, state.events)
     }
+    var cachedVpnRows by remember { mutableStateOf(decodeHomeVpnRows(prefs.cacheVpnRowsJson)) }
+    LaunchedEffect(liveVpnRows) {
+        if (liveVpnRows.isNotEmpty()) {
+            cachedVpnRows = liveVpnRows
+            prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)
+        }
+    }
+    val vpnRows = if (liveVpnRows.isNotEmpty()) liveVpnRows else cachedVpnRows
     val onlineCount = state.onlineDevices.size
     val watchedCount = remember(state.devices) { followedDeviceList(state.devices).size }
     val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
@@ -3042,17 +3204,21 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             unit = "台",
                             icon = Icons.Rounded.Devices,
                             accent = Color(0xFF22C55E),
-                            subtitle = if (watchedCount > 0) "关注 $watchedCount 台" else "等待同步",
-                            modifier = Modifier.weight(1f).clickable { onNavigate("devices") }
+                            subtitle = when {
+                                watchedCount > 0 -> "关注 $watchedCount 台"
+                                onlineCount > 0 -> "$onlineCount 台在线"
+                                state.realtimeDataFresh -> "实时同步正常"
+                                state.mqttConnected -> "实时链路已连接，等待首帧数据"
+                                state.hubConnected -> "实时链路恢复中，已保留上次数据"
+                                else -> "等待连接"
+                            },
+                            modifier = Modifier.weight(1f),
+                            onClick = { onNavigate("devices") }
                         )
-                        HealthMiniCard(
-                            title = "VPN / STUN",
-                            value = "${vpnRows.size}",
-                            unit = "条",
-                            icon = Icons.Rounded.VpnKey,
-                            accent = Color(0xFF7C3AED),
-                            subtitle = vpnRows.firstOrNull()?.first ?: "暂无地址",
-                            modifier = Modifier.weight(1f).clickable { onNavigate("events") }
+                        HomeDdnsMiniCard(
+                            prefs = prefs,
+                            onClick = { onNavigate("tool_router_ddns") },
+                            modifier = Modifier.weight(1f)
                         )
                     }
                     "exit" -> HealthExitCard(
@@ -3062,14 +3228,15 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         onClick = { onNavigate("tool_ping") },
                         onIconClick = { onNavigate("tool_portmap") }
                     )
-                    "vpn" -> if (vpnRows.isNotEmpty()) HealthVpnCard(
+                    "router" -> RouterSettingsHomeCard { onNavigate("router_settings") }
+                    "vpn" -> HealthVpnCard(
                         rows = vpnRows,
                         privacyMode = privacyMode,
                         onTogglePrivacy = {
                             privacyMode = !privacyMode
                             prefs.privacyMode = privacyMode
                         },
-                        onClick = { onNavigate("events") }
+                        onClick = { onNavigate("tool_router_ddns") }
                     )
                     "devices" -> HealthDevicesCard(state) { onNavigate("devices") }
                     "today" -> HealthTodayCard(prefs, state, prefs.lastRefresh) { onNavigate("daily") }
@@ -3180,6 +3347,25 @@ fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem
     return rows
 }
 
+
+fun encodeHomeVpnRows(rows: List<Pair<String, String>>): String = JSONArray().apply {
+    rows.forEach { (label, address) ->
+        if (label.isNotBlank() && address.isNotBlank()) {
+            put(JSONObject().put("label", label).put("address", address))
+        }
+    }
+}.toString()
+
+fun decodeHomeVpnRows(raw: String): List<Pair<String, String>> = runCatching {
+    val array = JSONArray(raw.ifBlank { "[]" })
+    (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val label = cleanApiText(item.optString("label"))
+        val address = cleanApiText(item.optString("address"))
+        if (label.isBlank() || address.isBlank()) null else label to address
+    }.distinctBy { it.first.lowercase(Locale.getDefault()) }
+}.getOrDefault(emptyList())
+
 fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, events: List<EventItem>): Int {
     var score = 64
     if (hubOk) score += 12
@@ -3286,7 +3472,18 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("网络健康得分", Modifier.weight(1f), fontSize = 17.sp, lineHeight = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
+                        Text(
+                            "网络健康得分",
+                            Modifier.weight(1f),
+                            fontSize = 15.sp,
+                            lineHeight = 18.sp,
+                            fontWeight = FontWeight.Black,
+                            color = LabV2.Ink,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip
+                        )
+                        Spacer(Modifier.width(5.dp))
                         Surface(shape = RoundedCornerShape(99.dp), color = scoreColor.copy(alpha = .10f)) {
                             Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
@@ -3294,7 +3491,15 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                             }
                         }
                     }
-                    Text(message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待刷新" } }, fontSize = 10.8.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
+                        fontSize = 9.2.sp,
+                        lineHeight = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     HealthStatePill(
                         icon = Icons.Rounded.PowerSettingsNew,
                         label = "WOL",
@@ -3313,13 +3518,25 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                     )
                 }
             }
-            Spacer(Modifier.height(11.dp))
+            Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 HealthShortcutTile(Icons.Rounded.Router, "Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
                 HealthShortcutTile(Icons.Rounded.Public, "出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("router_status") }
-                HealthShortcutTile(Icons.Rounded.VpnKey, "VPN", if (vpnOk) "已记录" else "无数据", if (vpnOk) LabV2.Purple else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("events") }
+                HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B), Modifier.weight(1f)) { onNavigate("tool_ssh") }
             }
         }
+    }
+}
+
+private fun agentUpdateUiError(raw: String?): String {
+    val text = raw.orEmpty().trim()
+    val lower = text.lowercase()
+    return when {
+        text.isBlank() -> "更新检查失败，已保留上次结果"
+        "502" in lower || "<!doctype" in lower || "<html" in lower -> "更新源暂不可用，Hub 已保留上次版本信息"
+        "timeout" in lower || "timed out" in lower -> "更新检查超时，Hub 将继续在后台重试"
+        "404" in lower -> "Hub 版本过旧，请先更新 Hub 后再检查 Agent"
+        else -> "更新检查失败：${text.take(120)}"
     }
 }
 
@@ -3535,19 +3752,33 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 onClick = {
                     scope.launch {
                         agentBusy = true
-                        runCatching { HubApi(prefs).getAgentUpdateStatus() }
-                            .onSuccess { info ->
-                                val checkedMessage = if (info.updateAvailable) "发现 Rust Agent 新版本" else info.message.ifBlank { "当前已是最新版本" }
-                                agentInfo = info
-                                agentMessage = checkedMessage
-                                prefs.agentUpdateInfoJson = info.toStoredJson()
-                                prefs.agentUpdateMessage = checkedMessage
+                        runCatching {
+                            val api = HubApi(prefs)
+                            api.requestAgentUpdateCheck()
+                            var info = api.getAgentUpdateStatus()
+                            repeat(8) {
+                                val settled = info.latestVersion != "未知" ||
+                                    (info.message.isNotBlank() && !info.message.contains("正在后台"))
+                                if (settled) return@runCatching info
+                                delay(750L)
+                                info = api.getAgentUpdateStatus()
                             }
-                            .onFailure {
-                                val failedMessage = "检查失败：${it.message} · 已保留上次结果"
-                                agentMessage = failedMessage
-                                prefs.agentUpdateMessage = failedMessage
+                            info
+                        }.onSuccess { info ->
+                            val checkedMessage = when {
+                                info.updateAvailable -> "发现 Rust Agent 新版本"
+                                info.latestVersion == "未知" -> info.message.ifBlank { "Hub 正在后台检查更新" }
+                                else -> info.message.ifBlank { "当前已是最新版本" }
                             }
+                            agentInfo = info
+                            agentMessage = checkedMessage
+                            prefs.agentUpdateInfoJson = info.toStoredJson()
+                            prefs.agentUpdateMessage = checkedMessage
+                        }.onFailure {
+                            val failedMessage = agentUpdateUiError(it.message)
+                            agentMessage = failedMessage
+                            prefs.agentUpdateMessage = failedMessage
+                        }
                         agentBusy = false
                     }
                 },
@@ -3857,8 +4088,19 @@ fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modi
 }
 
 @Composable
-fun HealthMiniCard(title: String, value: String, unit: String, icon: ImageVector, accent: Color, subtitle: String, modifier: Modifier = Modifier) {
-    HealthCard(modifier, verticalPadding = 11.dp) {
+fun HealthMiniCard(
+    title: String,
+    value: String,
+    unit: String,
+    icon: ImageVector,
+    accent: Color,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
+) {
+    val shape = RoundedCornerShape(30.dp)
+    val cardModifier = if (onClick != null) modifier.clip(shape).clickable(onClick = onClick) else modifier
+    HealthCard(cardModifier, verticalPadding = 11.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
@@ -3917,7 +4159,7 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 
 @Composable
 fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
-    HealthCard(Modifier.clickable { onClick() }) {
+    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
         Spacer(Modifier.height(13.dp))
         HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
@@ -3934,7 +4176,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
 
 @Composable
 fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
-    HealthCard(Modifier.clickable { onClick() }) {
+    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -3953,9 +4195,18 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
         }
         Spacer(Modifier.height(13.dp))
-        rows.forEachIndexed { idx, row ->
-            HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
-            if (idx != rows.lastIndex) Spacer(Modifier.height(9.dp))
+        if (rows.isEmpty()) {
+            Text(
+                "正在等待 STUN 地址同步，获取后会保留上次有效地址。",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LabV2.InkMuted
+            )
+        } else {
+            rows.forEachIndexed { idx, row ->
+                HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
+                if (idx != rows.lastIndex) Spacer(Modifier.height(9.dp))
+            }
         }
     }
 }
@@ -3963,7 +4214,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 @Composable
 fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
     val visibleDevices = remember(state.devices) { followedDeviceList(state.devices).take(4) }
-    HealthCard(Modifier.clickable { onClick() }) {
+    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
         if (visibleDevices.isEmpty()) {
@@ -4078,38 +4329,48 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
     val fallback = remember(state.events, today) { homeDailyFromEvents(state.events, today) }
     var snapshot by remember(today, prefs.hub, prefs.token) { mutableStateOf(fallback) }
 
-    LaunchedEffect(today, prefs.hub, prefs.token, lastRefresh, state.events.size) {
+    LaunchedEffect(fallback) {
         snapshot = fallback
-        if (prefs.hub.isNotBlank()) {
-            runCatching { HubApi(prefs).getDaily(today) }
-                .onSuccess { snapshot = homeDailyFromApi(it, today, fallback) }
-                .onFailure { snapshot = fallback.copy(source = "每日总结暂不可用，已用本地事件兜底") }
+    }
+    LaunchedEffect(today, prefs.hub, prefs.token, lastRefresh) {
+        if (prefs.hub.isBlank()) return@LaunchedEffect
+        val remote = kotlinx.coroutines.withTimeoutOrNull(2_500L) {
+            runCatching { HubApi(prefs).getDaily(today) }.getOrNull()
+        }
+        if (remote != null) {
+            snapshot = homeDailyFromApi(remote, today, fallback)
+        } else if (snapshot == fallback) {
+            snapshot = fallback.copy(source = "本地事件缓存")
         }
     }
 
-    HealthCard(Modifier.clickable { onClick() }) {
-        HealthSectionTitle("今日概览", "和记录页每日总结同步，点卡片查看详情。", Icons.Rounded.CalendarMonth, Color(0xFF2563EB))
-        Spacer(Modifier.height(12.dp))
+    val syncLabel = if (snapshot.source.startsWith("已同步")) "实时同步" else "本地缓存"
+    val syncColor = if (syncLabel == "实时同步") Color(0xFF16A34A) else Color(0xFF64748B)
+    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }, verticalPadding = 12.dp) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF2563EB).copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.CalendarMonth, null, tint = Color(0xFF2563EB), modifier = Modifier.size(19.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("今日概览", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Text("设备、VPN 与 DDNS 今日变化", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
+            }
+            Surface(shape = RoundedCornerShape(99.dp), color = syncColor.copy(alpha = .10f)) {
+                Text(syncLabel, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.2.sp, lineHeight = 10.sp, fontWeight = FontWeight.Black, color = syncColor)
+            }
+        }
+        Spacer(Modifier.height(9.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HealthStatusBadge("设备上线", "${snapshot.up} 次", Color(0xFF16A34A), Modifier.weight(1f))
             HealthStatusBadge("设备下线", "${snapshot.down} 次", Color(0xFFEF4444), Modifier.weight(1f))
             HealthStatusBadge("VPN-STUN", "${snapshot.vpn} 次", Color(0xFF7C3AED), Modifier.weight(1f))
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(7.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HealthStatusBadge("DDNS", "${snapshot.ddns} 次", Color(0xFF0EA5E9), Modifier.weight(1f))
             HealthStatusBadge("备注", if (snapshot.hasNote) "1 条" else "0 条", Color(0xFF64748B), Modifier.weight(1f))
         }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            snapshot.source + " · 最后成功 ${lastRefresh.ifBlank { "-" }}",
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF64748B),
-            maxLines = 1,
-            softWrap = false
-        )
     }
 }
 
@@ -4117,8 +4378,8 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
 fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<String>) -> Unit, content: @Composable () -> Unit) {
     var dragging by remember(cardKey) { mutableStateOf(false) }
     var dragY by remember(cardKey) { mutableStateOf(0f) }
-    val scale by animateFloatAsState(if (dragging) 0.982f else 1f, animationSpec = tween(180), label = "home-card-scale")
-    val thresholdPx = with(LocalDensity.current) { 128.dp.toPx() }
+    val scale by animateFloatAsState(if (dragging) 0.986f else 1f, animationSpec = tween(90), label = "home-card-scale")
+    val thresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
 
     fun commitOrder() {
         val current = order.indexOf(cardKey)
@@ -4194,7 +4455,7 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                Text(if (state.mqttConnected) "WSS 实时" else "实时未连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
+                Text(if (state.realtimeDataFresh) "实时数据正常" else if (state.mqttConnected) "等待首帧" else "实时未连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
             }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
         }
@@ -4689,7 +4950,7 @@ fun DeviceRealtimeStatusBar(d: DeviceItem) {
             Text("↑${formatRealtimeRate(d.realtimeUploadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), maxLines = 1)
             Spacer(Modifier.width(7.dp))
             Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(16.dp))
             Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
         }
     }
@@ -4848,36 +5109,6 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
 
 @Composable
 fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (String) -> Unit) = ScreenShell("工具箱", "长按功能卡可调整分组顺序", topNav = topNav) {
-    var routerFirewallEnabled by remember { mutableIntStateOf(0) }
-    var routerDdnsHealthy by remember { mutableIntStateOf(0) }
-    var routerNativeMappingCount by remember { mutableIntStateOf(0) }
-    var routerUpnpMappingCount by remember { mutableIntStateOf(0) }
-    var routerUpnpEnabled by remember { mutableStateOf(false) }
-    var routerDiagnosticErrors by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
-        if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
-        val api = RouterControlApi(prefs)
-        runCatching { api.firewall() }.onSuccess { state ->
-            routerFirewallEnabled = state.rules.count { it.enabled }
-        }
-        runCatching { api.ddns() }.onSuccess { records ->
-            routerDdnsHealthy = records.count {
-                it.enabled && !it.status.contains("error", true) && !it.status.contains("fail", true)
-            }
-        }
-        runCatching { api.nativePortMappings() }.onSuccess {
-            routerNativeMappingCount = it.size
-        }
-        runCatching { api.upnp() }.onSuccess {
-            routerUpnpEnabled = it.enabled
-            routerUpnpMappingCount = it.mappings.size
-        }
-        runCatching { api.diagnostic() }.onSuccess {
-            routerDiagnosticErrors = it.errorCount
-        }
-    }
-
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var profile by remember { mutableStateOf(detectNetworkProfile(ctx, prefs)) }
@@ -4954,19 +5185,6 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             }
         }
     }
-    RouterFeatureRail(
-        firewallEnabled = routerFirewallEnabled,
-        ddnsHealthy = routerDdnsHealthy,
-        mappingCount = routerNativeMappingCount + routerUpnpMappingCount,
-        upnpEnabled = routerUpnpEnabled,
-        diagnosticErrors = routerDiagnosticErrors,
-        onConnection = { open("tool_router_login") },
-        onMapping = { open("tool_portmap") },
-        onDdns = { open("tool_router_ddns") },
-        onFirewall = { open("tool_router_firewall") },
-        onDiagnostic = { open("tool_router_diag") }
-    )
-
     val toolSections = remember {
         mapOf(
             "net" to listOf(
@@ -4985,7 +5203,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
                 ToolMosaicItem("WiFi 漫游", Icons.Rounded.Wifi, Color(0xFF2A85DE), "tool_roam"),
                 ToolMosaicItem("MTU / PMTU", Icons.Rounded.CompareArrows, LabV2.Green, "tool_mtu"),
                 ToolMosaicItem("SSH 终端", Icons.Rounded.Terminal, Color(0xFF52647A), "tool_ssh"),
-                ToolMosaicItem("端口映射", Icons.Rounded.SwapHoriz, LabV2.Primary, "tool_portmap")
+                ToolMosaicItem("WOL 唤醒", Icons.Rounded.PowerSettingsNew, LabV2.Primary, "wol")
             )
         )
     }
@@ -4999,7 +5217,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
     Column(
         Modifier
             .fillMaxWidth()
-            .animateContentSize(animationSpec = tween(220)),
+            .animateContentSize(animationSpec = tween(120)),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         toolOrder.forEach { key ->
@@ -5149,11 +5367,17 @@ fun ToolMosaicSection(title: String, items: List<ToolMosaicItem>, open: (String)
 @Composable
 fun ToolMosaicTile(item: ToolMosaicItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(18.dp)
+    val tileBrush = if (item.route == "tool_ssh") {
+        Brush.verticalGradient(listOf(Color(0xFFF5F7FA), Color(0xFFE9EDF3)))
+    } else {
+        Brush.verticalGradient(listOf(Color(0xFFFCFEFF), item.color.copy(alpha = .055f)))
+    }
+    val tileBorder = if (item.route == "tool_ssh") Color(0xFFD7DEE8) else LabV2.Border.copy(alpha = .86f)
     Column(
         modifier
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFFFCFEFF), item.color.copy(alpha = .055f))))
-            .border(1.dp, LabV2.Border.copy(alpha = .86f), shape)
+            .background(tileBrush)
+            .border(1.dp, tileBorder, shape)
             .clickable { onClick() }
             .padding(horizontal = 4.dp, vertical = 9.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -8973,7 +9197,38 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     var expanded by remember { mutableStateOf(false) }
     var noteEdit by remember { mutableStateOf(false) }
     var noteText by remember { mutableStateOf("") }
-    fun loadDate(d: String) { scope.launch { runCatching { HubApi(prefs).getDaily(d) }.onSuccess { val v = it.optJSONObject("daily") ?: it; data = v; noteText = v.optString("note") } } }
+    var dailyLoadJob by remember { mutableStateOf<Job?>(null) }
+    var dailyRequestId by remember { mutableLongStateOf(0L) }
+    var dailySyncMessage by remember { mutableStateOf("") }
+
+    fun localDailyShell(note: String = ""): JSONObject = JSONObject()
+        .put("summary", JSONObject())
+        .put("sections", JSONObject())
+        .put("note", note)
+
+    fun loadDate(d: String) {
+        dailyLoadJob?.cancel()
+        val requestId = ++dailyRequestId
+        noteText = ""
+        data = localDailyShell()
+        dailySyncMessage = "正在后台同步…"
+        dailyLoadJob = scope.launch {
+            val result = runCatching { HubApi(prefs).getDaily(d) }
+            if (requestId != dailyRequestId) return@launch
+            result.onSuccess {
+                val value = it.optJSONObject("daily") ?: it
+                data = value
+                noteText = value.optString("note")
+                dailySyncMessage = ""
+            }.onFailure {
+                dailySyncMessage = "同步失败，已显示本地缓存"
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { dailyLoadJob?.cancel() }
+    }
     LaunchedEffect(Unit) {
         dates = localDates
         selected = localDates.first()
@@ -9023,6 +9278,21 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         }
     }
     CertificateExpirySection(prefs)
+    if (dailySyncMessage.isNotBlank()) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
+        ) {
+            Text(
+                dailySyncMessage,
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                fontSize = 10.8.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f),
+            )
+        }
+    }
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
@@ -9069,19 +9339,27 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
 fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Color, kind: String) {
     if (items.length() <= 0) return
     ExpressiveCard(title, "${items.length()} 条", icon, accent) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-            for (i in 0 until items.length()) {
-                val o = items.optJSONObject(i) ?: continue
-                when (kind) {
-                    "devices" -> DailyDeviceSummaryRow(o)
-                    "address" -> DailyAddressSummaryRow(o)
-                    else -> DailyTextSummaryRow(o)
+        SelectionContainer {
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(if (kind == "devices") 6.dp else 0.dp),
+            ) {
+                for (i in 0 until items.length()) {
+                    val o = items.optJSONObject(i) ?: continue
+                    when (kind) {
+                        "devices" -> DailyDeviceSummaryRow(o)
+                        "address" -> DailyAddressSummaryRow(o)
+                        else -> DailyTextSummaryRow(o)
+                    }
+                    if (i < items.length() - 1) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                    }
                 }
-                if (i < items.length() - 1) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
             }
         }
     }
 }
+
 
 @Composable
 fun DailyDeviceSummaryRow(o: JSONObject) {
@@ -9095,7 +9373,7 @@ fun DailyDeviceSummaryRow(o: JSONObject) {
     cleanApiText(o.optString("lastIp")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     cleanApiText(o.optString("lastSignal")).takeIf { it.isNotBlank() }?.let { detailParts += it }
     val fallbackDetail = lines.drop(1).joinToString(" · ")
-    Column(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Text(name.ifBlank { "未知终端" }, fontSize = 12.6.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             detailParts.joinToString(" · ").ifBlank { fallbackDetail.ifBlank { "暂无详情" } },
@@ -9151,7 +9429,7 @@ fun DailyTextSummaryRow(o: JSONObject) {
 fun todayDateString(): String = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
 
 fun normalizeHomeOrder(raw: String): List<String> {
-    val all = listOf("score", "mini", "exit", "vpn", "devices", "today")
+    val all = listOf("score", "mini", "router", "exit", "vpn", "devices", "today")
     val parsed = raw.split(",").map { it.trim() }.filter { it in all }.distinct()
     return (parsed + all.filter { it !in parsed }).take(all.size)
 }
@@ -9224,10 +9502,10 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
                 Surface(Modifier.fillMaxWidth().height(42.dp), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f))) {
                     Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.mqttConnected) LabV2.Green else LabV2.InkMuted)
+                        Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
                         Spacer(Modifier.width(6.dp))
                         val syncLabel = when (val realtime = state.mqttState) {
-                            HubRealtimeState.Connected -> "WSS 实时"
+                            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时数据正常" else "等待首帧"
                             HubRealtimeState.Connecting -> "正在连接"
                             is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
                             HubRealtimeState.Disabled -> "实时未连接"
@@ -9238,17 +9516,17 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             }
         }
         val liveConnectionMessage = when (val realtime = state.mqttState) {
-            HubRealtimeState.Connected -> "实时同步正常"
-            HubRealtimeState.Connecting -> if (state.hubConnected) "正在连接实时同步" else "正在连接 Hub"
-            is HubRealtimeState.Reconnecting -> "正在重连实时同步 ${realtime.attempt}/${realtime.maxAttempts}"
-            HubRealtimeState.Disabled -> if (state.hubConnected) "Hub 已连接，等待实时链路" else state.message.ifBlank { "等待连接" }
+            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时同步正常" else "实时链路已连接，等待首帧数据"
+            HubRealtimeState.Connecting -> if (state.hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
+            is HubRealtimeState.Reconnecting -> "实时链路恢复中，已保留上次数据"
+            HubRealtimeState.Disabled -> if (state.hubConnected) "Hub 已连接，实时链路未建立" else state.message.ifBlank { "等待连接" }
         }
         val connectionMessage = msg.ifBlank { liveConnectionMessage }
         val realtimeFailure = when (val realtime = state.mqttState) {
             is HubRealtimeState.Reconnecting -> realtimeFailureText(realtime.reason)
             else -> ""
         }
-        Text(connectionMessage, color = if (state.mqttConnected) LabV2.Green else if (state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(connectionMessage, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected || state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (realtimeFailure.isNotBlank()) {
             Text("原因：$realtimeFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
@@ -9333,7 +9611,7 @@ class HubApi(private val prefs: AppPrefs) {
     private val client = OkHttpClient.Builder()
         .dns(CustomDns(prefs.hubDns))
         .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .addInterceptor(HubAuthInterceptor { prefs.token })
         .build()
@@ -9413,7 +9691,7 @@ class HubApi(private val prefs: AppPrefs) {
         parseEvents((root.optJSONArray("events") ?: JSONArray()).toString()).reversed()
     }
     suspend fun getAgentUpdateStatus(): AgentUpdateInfo = withContext(Dispatchers.IO) {
-        val root = requestJson("/api/agent/update/status?refresh=1")
+        val root = requestJson("/api/agent/update/status")
         AgentUpdateInfo(
             currentVersion = root.optString("currentVersion", "未知"),
             latestVersion = root.optString("latestVersion", "未知"),
@@ -9422,6 +9700,9 @@ class HubApi(private val prefs: AppPrefs) {
             message = root.optString("message", ""),
             lastSeenAt = root.optString("lastSeenAt", "")
         )
+    }
+    suspend fun requestAgentUpdateCheck(): JSONObject = withContext(Dispatchers.IO) {
+        requestJson("/api/agent/update/check", "POST", JSONObject())
     }
     suspend fun requestAgentUpdate(): JSONObject = withContext(Dispatchers.IO) {
         requestJson(

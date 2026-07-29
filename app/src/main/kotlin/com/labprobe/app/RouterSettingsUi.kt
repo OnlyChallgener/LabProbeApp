@@ -30,6 +30,27 @@ private val SettingsInk = Color(0xFF17233A)
 private val SettingsMuted = Color(0xFF687890)
 private val SettingsBorder = Color(0xFFE3EAF4)
 
+private fun routerSettingsRawMessageZh(raw: String): String {
+    val text = raw.trim()
+    val lower = text.lowercase()
+    return when {
+        text.isBlank() -> "正在检查路由器状态"
+        "hub is online, but router data is unavailable" in lower -> "Hub 已连接，暂未取得路由控制数据"
+        "waiting for hub status" in lower -> "正在等待 Hub 状态"
+        "timeout" in lower || "timed out" in lower -> "状态请求超时，已保留上次结果"
+        else -> text
+    }
+}
+
+private fun routerSettingsStatusMessage(status: RouterHubStatus): String = when {
+    status.connected && status.state == "ready" -> "路由控制链路正常"
+    status.state == "syncing" -> "路由器会话已建立，正在等待控制数据"
+    status.errorCode == "HUB_NO_ROUTER_DATA" -> "Hub 已连接，暂未取得路由控制数据"
+    status.state == "unconfigured" -> "尚未配置路由器管理地址和密码"
+    status.state == "router_login_failed" -> "路由器连接失败，请检查密码或网络"
+    else -> routerSettingsRawMessageZh(status.message)
+}
+
 @Composable
 fun RouterSettingsHomeCard(onClick: () -> Unit) {
     val shape = RoundedCornerShape(30.dp)
@@ -75,38 +96,28 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
 
 @Composable
 fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -> Unit) {
-    val api = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterControlApi(prefs) }
-    var status by remember { mutableStateOf(RouterHubStatus()) }
-    var capabilities by remember {
-        mutableStateOf(
-            RouterCapabilities(
-                configured = true,
-                dashboard = true,
-                devices = true,
-                firewall = true,
-                nativePortMapping = true,
-                upnp = true,
-                ddns = true,
-                diagnostic = true
-            )
-        )
-    }
-    var loading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
-        loading = true
-        runCatching { api.hubStatus() }.onSuccess { status = it }
-        runCatching { api.capabilities() }.onSuccess { capabilities = it }
-        loading = false
-    }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val statusResource by repository.status.collectAsState()
+    val capabilityResource by repository.capabilities.collectAsState()
+    val status = statusResource.value
+    val capabilities = capabilityResource.value ?: RouterCapabilities(
+        configured = true,
+        dashboard = true,
+        devices = true,
+        firewall = true,
+        nativePortMapping = true,
+        upnp = true,
+        ddns = true,
+        diagnostic = true
+    )
 
     DetailShell(
         title = "路由设置",
-        subtitle = "路由器状态保持独立 · 此处只放配置与操作",
+        subtitle = "已预加载配置快照 · 页面打开不重复请求",
         onBack = onBack,
         compactHeader = true
     ) {
-        RouterSettingsConnectionCard(status = status, loading = loading) { onOpen("tool_router_login") }
+        RouterSettingsConnectionCard(statusResource) { onOpen("tool_router_login") }
 
         RouterSettingsSection("转发与安全") {
             RouterSettingsTile(
@@ -152,7 +163,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
             ) { onOpen("tool_router_nat") }
             RouterSettingsTile(
                 title = "Beta 在线升级",
-                subtitle = "检查 ReyeeOS Beta 版本，不自动安装",
+                subtitle = "显示上次快照，点击后才检测",
                 icon = Icons.Rounded.SystemUpdateAlt,
                 color = SettingsCyan,
                 enabled = true
@@ -162,9 +173,22 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
 }
 
 @Composable
-private fun RouterSettingsConnectionCard(status: RouterHubStatus, loading: Boolean, onClick: () -> Unit) {
-    val connected = status.connected
-    val accent = if (connected) SettingsGreen else SettingsAmber
+private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatus>, onClick: () -> Unit) {
+    val status = resource.value
+    val sessionConnected = status?.sessionConnected == true || status?.connected == true
+    val accent = if (sessionConnected) SettingsGreen else SettingsAmber
+    val title = when {
+        sessionConnected && status?.dataAvailable == true -> "路由控制链路正常"
+        sessionConnected -> "路由器会话正常"
+        resource.value == null -> "正在准备路由设置"
+        else -> "路由控制暂不可用"
+    }
+    val detail = when {
+        resource.value == null -> "APP 已在后台预加载，不需要进入页面后再等待"
+        resource.error.isNotBlank() -> "后台同步较慢，已保留上次状态"
+        sessionConnected && status?.dataAvailable != true -> "控制数据正在静默同步，实时 WSS 不受影响"
+        else -> status?.message.orEmpty().ifBlank { "路由设置快照已就绪" }
+    }
     Surface(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(19.dp)).clickable(onClick = onClick),
         shape = RoundedCornerShape(19.dp),
@@ -174,13 +198,12 @@ private fun RouterSettingsConnectionCard(status: RouterHubStatus, loading: Boole
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).background(accent.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = accent)
-                else Icon(Icons.Rounded.Hub, null, Modifier.size(21.dp), tint = accent)
+                Icon(Icons.Rounded.Hub, null, Modifier.size(21.dp), tint = accent)
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(if (connected) "Hub 已连接路由器" else "检查 Hub 路由连接", fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = SettingsInk)
-                Text(status.message, fontSize = 9.7.sp, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = SettingsInk)
+                Text(detail, fontSize = 9.7.sp, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = accent)
         }
