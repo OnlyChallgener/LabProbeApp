@@ -17,3 +17,4 @@ def run_script(path: Path) -> None:
 run_script(ROOT / "scripts/prepare_android_sources_build165.py")
 run_script(ROOT / "scripts/apply_build166_ui_state_fixes.py")
 run_script(ROOT / "scripts/apply_build166_portmap_followup.py")
+run_script(ROOT / "scripts/apply_build166_verifier_final.py")
