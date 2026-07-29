@@ -46,15 +46,20 @@ jobs:
           fi
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare build165 Android sources
-        run: python3 scripts/prepare_android_sources_build165.py
-      - name: Verify build165 source state
+      - name: Prepare build166 Android sources
+        run: python3 scripts/prepare_android_sources_build166.py
+      - name: Verify build166 source state
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 165' app/build.gradle.kts
-          grep -q 'versionName = "0.10.23"' app/build.gradle.kts
-          grep -q 'NAT 诊断、Agent 更新与映射界面修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'versionCode = 166' app/build.gradle.kts
+          grep -q 'versionName = "0.10.24"' app/build.gradle.kts
+          grep -q '首页视觉与映射状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val techBlue = Color(0xFF2D63D8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'Agent 在线，正在重新获取映射运行状态' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+          grep -q 'rule.syncState == "stale"' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -q 'requestAgentUpdateCheck()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'NativeValueRow("最终响应", "已收到")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -q 'DialogProperties(usePlatformDefaultWidth = false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
@@ -94,9 +99,14 @@ jobs:
                   if name.startswith("classes") and name.endswith(".dex")
               )
           required = (
-              "NAT 诊断、Agent 更新与映射界面修复",
+              "首页视觉与映射状态修复",
+              "网络健康得分标题完整显示",
+              "SSH 小卡片改为浅灰色",
+              "主导航选中阴影统一为科技蓝",
+              "IPv6 映射在线轮询实际状态",
+              "Agent 在线，正在重新获取映射运行状态",
+              "状态待同步",
               "更新源暂不可用，Hub 已保留上次版本信息",
-              "最终响应",
               "/api/agent/update/check",
               "devices_snapshot",
               "/api/realtime/ws",
@@ -113,13 +123,13 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build165 APK DEX strings verified")
+          print("signed build166 APK DEX strings verified")
           PY
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: router-build165-gradle-log
+          name: router-build166-gradle-log
           path: /tmp/gradle-build.log
           if-no-files-found: ignore
       - name: Verify release APK exists
