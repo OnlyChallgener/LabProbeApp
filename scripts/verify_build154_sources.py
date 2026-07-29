@@ -48,7 +48,7 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    require(GRADLE, 'versionCode = 166', 'versionName = "0.10.24"')
+    require(GRADLE, 'versionCode = 167', 'versionName = "0.10.25"')
 
     require(
         MAIN,
@@ -270,7 +270,7 @@ def main() -> None:
     )
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print('build166 home visual consistency and portmap runtime verified')
+    print('build167 home visual consistency and portmap runtime verified')
 
 
 if __name__ == '__main__':
