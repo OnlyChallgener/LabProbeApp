@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build163 follow-up: instant foreground recovery, resilient daily summary and compact sheets."""
+"""Build164 follow-up: responsive realtime UI, unified NAT fields and resilient source prep."""
 from pathlib import Path
 import re
 
@@ -7,14 +7,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "app/src/main/kotlin/com/labprobe/app"
 MAIN = SRC / "MainActivity.kt"
 PORT_MAPPING = SRC / "PortMapping.kt"
+ROUTER_NATIVE = SRC / "RouterNativeToolsUi.kt"
 DESIGN = SRC / "ui/design/LabDesignComponents.kt"
+GRADLE = ROOT / "app/build.gradle.kts"
+VERIFIER = ROOT / "scripts/verify_build154_sources.py"
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     if new in text:
         return text
     if old not in text:
-        raise RuntimeError(f"missing build163 follow-up anchor: {label}")
+        raise RuntimeError(f"missing build164 follow-up anchor: {label}")
     return text.replace(old, new, 1)
 
 
@@ -150,6 +153,113 @@ fun DailySection(title: String, items: JSONArray, icon: ImageVector, accent: Col
         'Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {',
         1,
     )
+
+    # Keep connection count close to the realtime rates instead of pinning it to
+    # the far-right edge. A fixed gap stays stable on different screen widths.
+    realtime_old = '''            Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)'''
+    realtime_new = '''            Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF06B6D4), maxLines = 1)
+            Spacer(Modifier.width(16.dp))
+            Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)'''
+    text = replace_once(text, realtime_old, realtime_new, "device realtime connection spacing")
+
+    text = text.replace(
+        '"v$NAME build$CODE · 终端列表五秒实时同步"',
+        '"v$NAME build$CODE · 终端卡片与 NAT 参数样式优化"',
+        1,
+    )
+    release_notes = {
+        "APP 使用现有 APP Token 直接连接 Hub 原生 WSS，不再需要 MQTT 地址或账号密码": "终端实时栏的速率与连接数改为固定间距，不再把连接数顶到最右侧",
+        "路由 fast 与终端增量仅经 Hub 内存快照推送，HTTP 只用于首次与重连校准": "路由 NAT 诊断参数框统一高度、圆角、字号与垂直居中",
+        "APP 退到后台或 WSS 断开时暂停平滑渲染和终端高频采样需求": "源码准备流程增加幂等保护，避免重复构建时 DDNS 补丁冲突",
+    }
+    for old, new in release_notes.items():
+        text = text.replace(old, new, 1)
+    return text
+
+
+def patch_router_native(text: str) -> str:
+    # All NAT parameter controls use the same 54dp field, 14dp radius and
+    # 12.5sp value typography. Labels stay compact and values are vertically centered.
+    text = text.replace('val serverShape = RoundedCornerShape(18.dp)', 'val serverShape = RoundedCornerShape(14.dp)', 1)
+    text = text.replace(
+        'modifier = Modifier.fillMaxWidth().height(50.dp).nativeBlueShadow(serverShape, 5.dp),',
+        'modifier = Modifier.fillMaxWidth().height(54.dp).nativeBlueShadow(serverShape, 5.dp),',
+        1,
+    )
+    server_old = '''                    Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
+                    Spacer(Modifier.width(7.dp))
+                    Text(server, Modifier.weight(1f), color = NativeInk, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)'''
+    server_new = '''                    Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                        Text("STUN 服务器", fontSize = 8.5.sp, lineHeight = 10.sp, color = NativeMuted, fontWeight = FontWeight.SemiBold)
+                        Text(server, fontSize = 12.5.sp, lineHeight = 15.sp, color = NativeInk, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)'''
+    text = replace_once(text, server_old, server_new, "NAT server field typography")
+
+    selector_old = '''            modifier = Modifier.fillMaxWidth().height(50.dp).nativeBlueShadow(shape, 5.dp),
+            shape = shape,
+            colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
+            contentPadding = PaddingValues(horizontal = 11.dp)
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                Text(label, fontSize = 8.5.sp, color = NativeMuted, fontWeight = FontWeight.SemiBold)
+                Text(value, fontSize = 11.2.sp, color = NativeInk, fontWeight = FontWeight.Black, maxLines = 1)
+            }'''
+    selector_new = '''            modifier = Modifier.fillMaxWidth().height(54.dp).nativeBlueShadow(shape, 5.dp),
+            shape = shape,
+            colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
+            contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp)
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                Text(label, fontSize = 8.5.sp, lineHeight = 10.sp, color = NativeMuted, fontWeight = FontWeight.SemiBold)
+                Text(value, fontSize = 12.5.sp, lineHeight = 15.sp, color = NativeInk, fontWeight = FontWeight.Black, maxLines = 1)
+            }'''
+    text = replace_once(text, selector_old, selector_new, "NAT selector field typography")
+
+    port_start = text.find('@Composable\nprivate fun NativeCompactPortField(')
+    port_end = text.find('\n\n@Composable', port_start + 12)
+    if port_start < 0 or port_end < 0:
+        raise RuntimeError("missing NativeCompactPortField boundaries")
+    port_field = '''@Composable
+private fun NativeCompactPortField(value: String, onValueChange: (String) -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(54.dp).nativeBlueShadow(shape, 4.dp),
+        shape = shape,
+        color = Color.White,
+        border = BorderStroke(1.dp, NativeBlue.copy(alpha = .30f))
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("STUN 端口", fontSize = 8.5.sp, lineHeight = 10.sp, color = NativeMuted, fontWeight = FontWeight.SemiBold)
+            BasicTextField(
+                value = value,
+                onValueChange = { onValueChange(it.filter(Char::isDigit).take(5)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = NativeInk,
+                    fontSize = 12.5.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center
+                ),
+                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                cursorBrush = SolidColor(NativeBlue)
+            )
+        }
+    }
+}'''
+    text = text[:port_start] + port_field + text[port_end:]
     return text
 
 
@@ -174,7 +284,23 @@ def patch_port_mapping(text: str) -> str:
     return text
 
 
-def verify(main: str, design: str, port_mapping: str) -> None:
+def patch_version_and_verifier() -> tuple[str, str]:
+    gradle = GRADLE.read_text(encoding="utf-8")
+    gradle = gradle.replace("versionCode = 163", "versionCode = 164", 1)
+    gradle = gradle.replace('versionName = "0.10.21"', 'versionName = "0.10.22"', 1)
+
+    verifier = VERIFIER.read_text(encoding="utf-8")
+    verifier = verifier.replace("APP v0.10.21 build163", "APP v0.10.22 build164")
+    verifier = verifier.replace("'versionCode = 163', 'versionName = \"0.10.21\"'", "'versionCode = 164', 'versionName = \"0.10.22\"'")
+    verifier = verifier.replace("'终端列表五秒实时同步',", "'终端卡片与 NAT 参数样式优化',")
+    verifier = verifier.replace(
+        "print('build163 five-second full terminal snapshot merge verified')",
+        "print('build164 terminal card and NAT parameter styling verified')",
+    )
+    return gradle, verifier
+
+
+def verify(main: str, design: str, port_mapping: str, router_native: str, gradle: str, verifier: str) -> None:
     required = (
         'if (foregroundActive) startRealtime()\n                refreshAll(forceFull = forceFull, silent = true)',
         'stateScope.launch { calibrateRealtimeCache() }',
@@ -182,24 +308,39 @@ def verify(main: str, design: str, port_mapping: str) -> None:
         '同步失败，已显示本地缓存',
         'SelectionContainer {',
         'Arrangement.spacedBy(if (kind == "devices") 6.dp else 0.dp)',
+        'Spacer(Modifier.width(16.dp))',
+        '终端卡片与 NAT 参数样式优化',
         '.fillMaxHeight(0.96f)',
         'modifier = modifier.height(42.dp)',
+        'Text("STUN 服务器", fontSize = 8.5.sp',
+        'Text("STUN 端口", fontSize = 8.5.sp',
+        'fontSize = 12.5.sp',
+        'height(54.dp).nativeBlueShadow',
+        'versionCode = 164',
+        'versionName = "0.10.22"',
     )
-    combined = main + "\n" + design + "\n" + port_mapping
+    combined = main + "\n" + design + "\n" + port_mapping + "\n" + router_native + "\n" + gradle + "\n" + verifier
     missing = [value for value in required if value not in combined]
     if missing:
-        raise RuntimeError(f"build163 follow-up verification failed: {missing}")
+        raise RuntimeError(f"build164 follow-up verification failed: {missing}")
+    if 'Spacer(Modifier.weight(1f))\n            Text("连接 ${d.connectionCount.coerceAtLeast(0)}"' in main:
+        raise RuntimeError("device connection count is still pinned to the far-right edge")
 
 
 def apply() -> None:
     main = patch_main(MAIN.read_text(encoding="utf-8"))
     design = patch_design(DESIGN.read_text(encoding="utf-8"))
     port_mapping = patch_port_mapping(PORT_MAPPING.read_text(encoding="utf-8"))
+    router_native = patch_router_native(ROUTER_NATIVE.read_text(encoding="utf-8"))
+    gradle, verifier = patch_version_and_verifier()
     MAIN.write_text(main, encoding="utf-8")
     DESIGN.write_text(design, encoding="utf-8")
     PORT_MAPPING.write_text(port_mapping, encoding="utf-8")
-    verify(main, design, port_mapping)
-    print("build163 foreground recovery, daily cache-first UI, text selection and sheet sizing prepared")
+    ROUTER_NATIVE.write_text(router_native, encoding="utf-8")
+    GRADLE.write_text(gradle, encoding="utf-8")
+    VERIFIER.write_text(verifier, encoding="utf-8")
+    verify(main, design, port_mapping, router_native, gradle, verifier)
+    print("build164 device realtime spacing, unified NAT fields and resilient UI prepared")
 
 
 if __name__ == "__main__":
