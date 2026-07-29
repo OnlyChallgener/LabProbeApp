@@ -43,6 +43,10 @@ from apply_build160_compile_finalizer import apply as apply_build160_compile_fin
 from apply_build160_config_sync_finalizer import apply as apply_build160_config_sync_finalizer
 from apply_build161_history_portmap_fix import apply as apply_build161_history_portmap_fix
 from apply_build161_verifier_fix import apply as apply_build161_verifier_fix
+from apply_build162_ddns_click_crash_fix import apply as apply_build162_ddns_click_crash_fix
+from apply_build162_ddns_field_compat_fix import apply as apply_build162_ddns_field_compat_fix
+from apply_build163_terminal_live_sync import apply as apply_build163_terminal_live_sync
+from apply_build163_followup_fixes import apply as apply_build163_followup_fixes
 from apply_wol_navigation_fix import apply as apply_wol_navigation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +64,18 @@ def apply_build161() -> None:
     apply_build160()
     apply_build161_history_portmap_fix()
     apply_build161_verifier_fix()
+
+
+def apply_build162() -> None:
+    apply_build161()
+    apply_build162_ddns_click_crash_fix()
+    apply_build162_ddns_field_compat_fix()
+
+
+def apply_build163() -> None:
+    apply_build162()
+    apply_build163_terminal_live_sync()
+    apply_build163_followup_fixes()
 
 
 if __name__ == "__main__":
@@ -88,6 +104,7 @@ if __name__ == "__main__":
         or '"v$NAME build$CODE · 路由控制队列与可靠指令"' in current
         or '"v$NAME build$CODE · 状态闭环与后台任务"' in current
         or '"v$NAME build$CODE · 终端历史与映射持久化"' in current
+        or '"v$NAME build$CODE · 终端列表五秒实时同步"' in current
     )
 
     if "private suspend fun calibrateRealtimeCache()" in current:
@@ -111,8 +128,8 @@ if __name__ == "__main__":
         apply_build158_repository_conflict_guard()
         apply_build158_wss_preload_trigger()
         apply_build159_router_control_reliability()
-        apply_build161()
-        print("Android build161 durable terminal history and mapping persistence prepared")
+        apply_build163()
+        print("Android build163 terminal realtime and daily-summary follow-up prepared")
         raise SystemExit(0)
 
     if not base_generated and not refresh_generated and not final_generated:
@@ -158,5 +175,5 @@ if __name__ == "__main__":
     apply_build158_repository_conflict_guard()
     apply_build158_wss_preload_trigger()
     apply_build159_router_control_reliability()
-    apply_build161()
-    print("Android build161 durable terminal history and mapping persistence prepared")
+    apply_build163()
+    print("Android build163 terminal realtime and daily-summary follow-up prepared")
