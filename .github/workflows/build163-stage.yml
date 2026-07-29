@@ -1,4 +1,4 @@
-name: Build163 Stage
+name: Build164 Stage
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build163-stage-${{ github.ref }}
+  group: build164-stage-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -36,25 +36,29 @@ jobs:
           gradle-version: 9.5.1
       - name: Prepare generated sources
         run: python3 scripts/prepare_android_sources.py
-      - name: Verify five-second terminal snapshot merge
+      - name: Verify build164 terminal and NAT field polish
         run: |
-          exec > >(tee /tmp/build163-verify.log) 2>&1
+          exec > >(tee /tmp/build164-verify.log) 2>&1
           set -ex
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 163' app/build.gradle.kts
-          grep -q 'versionName = "0.10.21"' app/build.gradle.kts
+          grep -q 'versionCode = 164' app/build.gradle.kts
+          grep -q 'versionName = "0.10.22"' app/build.gradle.kts
           grep -q 'private val onDevicesSnapshot: (String) -> Unit = {}' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q '"devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())' app/src/main/kotlin/com/labprobe/app/HubMqttClient.kt
           grep -q 'private fun acceptDevicesSnapshot(raw: String)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'lastDevicesSnapshotEpoch' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'root.optBoolean("confirmedEmpty", false)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'refreshOfflineDevices(offlineDevices + disappeared, fresh)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '终端列表五秒实时同步' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'Spacer(Modifier.width(16.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '终端卡片与 NAT 参数样式优化' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'Text("STUN 服务器", fontSize = 8.5.sp' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'Text("STUN 端口", fontSize = 8.5.sp' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -q 'height(54.dp).nativeBlueShadow' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: LabProbe-build163-verify-log
-          path: /tmp/build163-verify.log
+          name: LabProbe-build164-verify-log
+          path: /tmp/build164-verify.log
           if-no-files-found: ignore
       - name: Compile debug and release
         env:
@@ -62,13 +66,13 @@ jobs:
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.21-build163-debug
+          name: LabProbe-v0.10.22-build164-debug
           path: app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.21-build163-release-unsigned
+          name: LabProbe-v0.10.22-build164-release-unsigned
           path: app/build/outputs/apk/release/app-release-unsigned.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-build163-generated-sources
+          name: LabProbe-build164-generated-sources
           path: app/src/main/kotlin/com/labprobe/app
