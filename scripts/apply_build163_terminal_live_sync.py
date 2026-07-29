@@ -140,7 +140,7 @@ def patch_verifier() -> None:
     text = text.replace("'DDNS 页面点击闪退修复',", "'终端列表五秒实时同步',")
     marker = "    forbid(ROUTER_CONTROL, 'PremiumCard(accent,Modifier.clickable(onClick=onEdit))')\n"
     checks = '''    require(
-        HUB_MQTT,
+        WSS,
         'private val onDevicesSnapshot: (String) -> Unit = {}',
         '"devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())',
     )
