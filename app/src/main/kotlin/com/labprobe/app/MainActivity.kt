@@ -9246,6 +9246,9 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     var dailyLoadJob by remember { mutableStateOf<Job?>(null) }
     var dailyRequestId by remember { mutableLongStateOf(0L) }
     var dailySyncMessage by remember { mutableStateOf("") }
+    var preparedLocalEvents by remember { mutableStateOf<List<EventItem>>(emptyList()) }
+    var localSnapshot by remember { mutableStateOf(HomeDailySnapshot(0, 0, 0, 0, false, "")) }
+    var localDevices by remember { mutableStateOf(JSONArray()) }
 
     fun localDailyShell(note: String = ""): JSONObject = JSONObject()
         .put("summary", JSONObject())
@@ -9279,6 +9282,35 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         dates = localDates
         selected = localDates.first()
         loadDate(selected)
+    }
+    // Parsing cache JSON and normalizing the complete event history can be
+    // expensive. Prepare it off the UI thread so every entry path opens the
+    // summary shell immediately instead of blocking the first frame.
+    LaunchedEffect(
+        prefs.cacheEvents,
+        prefs.cacheDevices,
+        prefs.cacheOnlineDevices,
+        prefs.cacheOfflineDevices,
+        prefs.deviceOverridesJson
+    ) {
+        preparedLocalEvents = withContext(Dispatchers.Default) {
+            val overrides = parseDeviceOverrides(prefs.deviceOverridesJson)
+            val devices = applyDeviceOverrides(
+                parseDeviceArray(prefs.cacheDevices) +
+                    parseDeviceArray(prefs.cacheOnlineDevices) +
+                    parseDeviceArray(prefs.cacheOfflineDevices),
+                overrides
+            )
+            applyEventDeviceNames(normalizeDeviceEvents(parseEvents(prefs.cacheEvents)), devices, overrides)
+        }
+    }
+    LaunchedEffect(preparedLocalEvents, selected) {
+        val breakdown = withContext(Dispatchers.Default) {
+            homeDailyFromEvents(preparedLocalEvents, selected, "本地规范化事件") to
+                localDailyDeviceSummary(preparedLocalEvents, selected)
+        }
+        localSnapshot = breakdown.first
+        localDevices = breakdown.second
     }
     if (noteEdit) {
         AlertDialog(
@@ -9342,20 +9374,6 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
-        val localOverrides = parseDeviceOverrides(prefs.deviceOverridesJson)
-        val cachedDevices = applyDeviceOverrides(
-            parseDeviceArray(prefs.cacheDevices) +
-                parseDeviceArray(prefs.cacheOnlineDevices) +
-                parseDeviceArray(prefs.cacheOfflineDevices),
-            localOverrides
-        )
-        val localEvents = applyEventDeviceNames(
-            normalizeDeviceEvents(parseEvents(prefs.cacheEvents)),
-            cachedDevices,
-            localOverrides
-        )
-        val localSnapshot = homeDailyFromEvents(localEvents, selected, "本地规范化事件")
-        val localDevices = localDailyDeviceSummary(localEvents, selected)
         ExpressiveCard("概览", "上线 / 下线 / VPN-STUN / DDNS / 备注", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 StatusPill("上线", localSnapshot.up.toString()+"次", Color(0xFF16A34A))
