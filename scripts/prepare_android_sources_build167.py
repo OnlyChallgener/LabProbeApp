@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
-"""Generate build167 sources without replaying legacy patches twice."""
+"""Apply the build167 migration only when preparing a pre-build168 checkout."""
 from pathlib import Path
+import re
 import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
-names = ("apply_build167_labrelay_sync.py",)
-if 'versionCode = 167' not in (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8"):
-    names = ("prepare_android_sources_build166.py", *names)
+gradle = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
+match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
+if match is None:
+    raise RuntimeError("missing Android versionCode")
+
+build_code = int(match.group(1))
+if build_code < 167:
+    names = ("prepare_android_sources_build166.py", "apply_build167_labrelay_sync.py")
+elif build_code == 167:
+    names = ("apply_build167_labrelay_sync.py",)
+else:
+    # Checked-in build168+ sources already include this migration. Replaying
+    # older textual patches against their newer layout is both unnecessary and
+    # unsafe, so a release build is deliberately a no-op here.
+    names = ()
 
 for name in names:
     try:
@@ -14,3 +27,6 @@ for name in names:
     except SystemExit as exc:
         if exc.code not in (None, 0):
             raise
+
+if not names:
+    print(f"build{build_code} sources already include the build167 migration")

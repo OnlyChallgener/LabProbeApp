@@ -1,4 +1,4 @@
-name: Build167 Stage
+name: Build168 Stage
 
 on:
   push:
@@ -24,12 +24,12 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
-      - name: Prepare build167 sources
+      - name: Prepare build168 sources
         run: python3 scripts/prepare_android_sources_build167.py
       - name: Verify version and revision guards
         run: |
-          grep -q 'versionCode = 167' app/build.gradle.kts
-          grep -q 'versionName = "0.10.25"' app/build.gradle.kts
+          grep -q 'versionCode = 168' app/build.gradle.kts
+          grep -q 'versionName = "0.10.26"' app/build.gradle.kts
           grep -q 'sourceIsCurrent = snapshot.revision >= snapshotRevision' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -q 'agentRevision' app/src/main/kotlin/com/labprobe/app/AgentPresenceStore.kt
       - name: Build debug and release
@@ -40,11 +40,11 @@ jobs:
         run: |
           set -e
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
-          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -q "package: name='com.labprobe.app' versionCode='167' versionName='0.10.25'"
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -q "package: name='com.labprobe.app' versionCode='168' versionName='0.10.26'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
           test -s app/build/outputs/apk/debug/app-debug.apk
           unzip -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.25-build167-debug
+          name: LabProbe-v0.10.26-build168-debug
           path: app/build/outputs/apk/debug/app-debug.apk

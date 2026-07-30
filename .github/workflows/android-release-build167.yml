@@ -29,7 +29,7 @@ jobs:
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare build167 sources
+      - name: Prepare build168 sources
         run: python3 scripts/prepare_android_sources_build167.py
       - name: Build signed release APK
         env:
@@ -45,16 +45,16 @@ jobs:
           test -s "$APK"
           test "$(stat -c%s "$APK")" -gt 102400
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.labprobe.app' versionCode='167' versionName='0.10.25'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.labprobe.app' versionCode='168' versionName='0.10.26'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
-          cp "$APK" LabProbe-v0.10.25-build167-release.apk
+          cp "$APK" LabProbe-v0.10.26-build168-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.25-build167-release-apk
-          path: LabProbe-v0.10.25-build167-release.apk
+          name: LabProbe-v0.10.26-build168-release-apk
+          path: LabProbe-v0.10.26-build168-release.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.10.25-build167
-          name: LabProbe v0.10.25 build167
+          tag_name: v0.10.26-build168
+          name: LabProbe v0.10.26 build168
           generate_release_notes: true
-          files: LabProbe-v0.10.25-build167-release.apk
+          files: LabProbe-v0.10.26-build168-release.apk
