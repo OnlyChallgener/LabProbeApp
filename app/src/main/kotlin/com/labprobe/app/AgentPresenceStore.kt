@@ -40,7 +40,6 @@ internal class AgentPresenceStore {
             protocolVersion = previous?.protocolVersion.orEmpty(),
             hubVersion = previous?.hubVersion.orEmpty(),
             agentVersion = root.optString("agentVersion").ifBlank { previous?.agentVersion.orEmpty() },
-            relayVersion = previous?.relayVersion.orEmpty(),
             capabilities = previous?.capabilities.orEmpty(),
             state = stateName,
             ageSeconds = root.optLong("agentAgeSeconds", previous?.ageSeconds ?: 0L),
@@ -56,7 +55,6 @@ internal class AgentPresenceStore {
         protocolVersion = next.protocolVersion.ifBlank { previous?.protocolVersion.orEmpty() },
         hubVersion = next.hubVersion.ifBlank { previous?.hubVersion.orEmpty() },
         agentVersion = next.agentVersion.ifBlank { previous?.agentVersion.orEmpty() },
-        relayVersion = next.relayVersion.ifBlank { previous?.relayVersion.orEmpty() },
         capabilities = next.capabilities.ifBlank { previous?.capabilities.orEmpty() }
     )
 }

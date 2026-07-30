@@ -3415,10 +3415,10 @@ fun HealthCard(
     Surface(
         modifier = modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(30.dp), clip = false),
         shape = RoundedCornerShape(30.dp),
-        color = Color.White.copy(alpha = .96f),
+        color = Color.White,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .95f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .88f))
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
     }
@@ -3795,10 +3795,37 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 onClick = {
                     scope.launch {
                         agentBusy = true
-                        runCatching { HubApi(prefs).requestAgentUpdate() }
+                        runCatching {
+                            val api = HubApi(prefs)
+                            val requested = api.requestAgentUpdate()
+                            var info = api.getAgentUpdateStatus()
+                            repeat(60) {
+                                if (info.state !in setOf("completed", "failed")) {
+                                    delay(1_000)
+                                    info = api.getAgentUpdateStatus()
+                                }
+                            }
+                            requested
+                                .put("message", info.message)
+                                .put("state", info.state)
+                                .put("currentVersion", info.currentVersion)
+                                .put("latestVersion", info.latestVersion)
+                                .put("updateAvailable", info.updateAvailable)
+                                .put("lastSeenAt", info.lastSeenAt)
+                            requested
+                        }
                             .onSuccess {
                                 val updateMessage = it.optString("message", "更新指令已发送")
+                                agentInfo = AgentUpdateInfo(
+                                    currentVersion = it.optString("currentVersion", agentInfo?.currentVersion ?: "未知"),
+                                    latestVersion = it.optString("latestVersion", agentInfo?.latestVersion ?: "未知"),
+                                    updateAvailable = it.optBoolean("updateAvailable", agentInfo?.updateAvailable ?: false),
+                                    state = it.optString("state", agentInfo?.state ?: "idle"),
+                                    message = updateMessage,
+                                    lastSeenAt = it.optString("lastSeenAt", agentInfo?.lastSeenAt ?: "")
+                                )
                                 agentMessage = updateMessage
+                                prefs.agentUpdateInfoJson = agentInfo!!.toStoredJson()
                                 prefs.agentUpdateMessage = updateMessage
                             }
                             .onFailure {
@@ -4529,15 +4556,34 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
         item { CompactPageHeader("设备", "设备识别 · IPv6 · WOL 唤醒") }
         item { topNav() }
         item {
-            ExpressiveCard("终端同步", "${if (mode == "online") "在线" else if (mode == "offline") "离线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) })
-                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线", fontSize = 12.sp) })
-                    FilterChip(selected = mode == "offline", onClick = { mode = "offline" }, label = { Text("离线", fontSize = 12.sp) })
-                    FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) })
-                    FilterChip(selected = false, onClick = onOpenTraffic, label = { Text("今日流量", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) })
+            val syncChipBlue = Color(0xFF2563EB)
+            val syncChipColors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                selectedContainerColor = syncChipBlue.copy(alpha = .12f),
+                selectedLabelColor = syncChipBlue,
+                selectedLeadingIconColor = syncChipBlue
+            )
+            ExpressiveCard(
+                "终端同步",
+                "${if (mode == "online") "在线" else if (mode == "offline") "离线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount",
+                Icons.Rounded.Devices,
+                Color(0xFFF59E0B),
+                headerAction = {
+                    Text(
+                        state.message,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f),
+                        fontSize = 10.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
-                Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 12.sp) }, colors = syncChipColors)
+                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线", fontSize = 12.sp) }, colors = syncChipColors)
+                    FilterChip(selected = mode == "offline", onClick = { mode = "offline" }, label = { Text("离线", fontSize = 12.sp) }, colors = syncChipColors)
+                    FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 12.sp) }, colors = syncChipColors)
+                    FilterChip(selected = false, onClick = onOpenTraffic, label = { Text("今日流量", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(16.dp)) }, colors = syncChipColors)
+                }
             }
         }
         if (mode == "wol") {

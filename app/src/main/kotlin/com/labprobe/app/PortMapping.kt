@@ -121,7 +121,6 @@ data class PortMapAgentInfo(
     val protocolVersion: String = "",
     val hubVersion: String = "",
     val agentVersion: String = "",
-    val relayVersion: String = "",
     val capabilities: String = "",
     val state: String = if (online) "online" else "offline",
     val ageSeconds: Long = 0L,
@@ -205,7 +204,6 @@ class PortMapApi(private val prefs: AppPrefs) {
             protocolVersion = cleanApiText(root.optString("protocolVersion")),
             hubVersion = cleanApiText(root.optString("hubVersion")),
             agentVersion = cleanApiText(root.optString("agentVersion")),
-            relayVersion = cleanApiText(root.optString("relayVersion")),
             capabilities = compactPortCapabilities(root.opt("capabilities")),
             state = cleanApiText(root.optString("agentState")).ifBlank {
                 if (root.optBoolean("agentOnline", false)) "online" else "offline"
@@ -601,8 +599,7 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
                 Text(agent.router.ifBlank { "路由器" }, fontWeight = FontWeight.Black, fontSize = 14.5.sp, color = LabV2.Ink)
                 val versions = listOfNotNull(
                     agent.hubVersion.takeIf { it.isNotBlank() }?.let { "Hub $it" },
-                    agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" },
-                    agent.relayVersion.takeIf { it.isNotBlank() }?.let { "Relay $it" }
+                    agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" }
                 ).joinToString(" · ")
                 Text(versions.ifBlank { "Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}" }, fontSize = 10.3.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
