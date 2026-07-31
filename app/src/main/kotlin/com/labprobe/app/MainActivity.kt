@@ -174,12 +174,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 首页视觉与映射状态修复" to listOf(
-                "网络健康得分标题完整显示，刷新状态移到标题下一行",
-                "SSH 小卡片改为浅灰色，终端在线与 DDNS 卡片统一白色层级",
-                "主导航选中阴影统一为科技蓝，不再出现紫色",
-                "IPv6 映射在线轮询实际状态，失联时不再误显示旧执行失败",
-                "NAT 下拉菜单改为大圆角白色浮层，参数标题与内容拉开间距",
+            "v$NAME build$CODE · 图标与终端状态修复" to listOf(
+                "启动图标移除背景发光圆环，保留原有青绿渐变与网络立方体",
+                "设备一级页面按返回键回到 APP 首页，不再直接退出到桌面",
+                "离线事件会校正旧归档时间，避免通知与离线卡片不一致",
+                "每日设备排行保留 Hub 返回的当天在线时长与流量数据",
                 "Agent 更新检查改为 Hub 后台任务，502 不再显示原始 HTML",
                 "SSH 小卡片改为浅灰色，今日概览同步状态移到右上角",
                 "首页卡片拖动响应加快，点击反馈按卡片圆角裁剪",

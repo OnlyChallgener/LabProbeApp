@@ -48,13 +48,13 @@ jobs:
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
       - name: Prepare current Android sources
         run: python3 scripts/prepare_android_sources_build167.py
-      - name: Verify build168 source state
+      - name: Verify build169 source state
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 168' app/build.gradle.kts
-          grep -q 'versionName = "0.10.26"' app/build.gradle.kts
-          grep -q '首页视觉与映射状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'versionCode = 169' app/build.gradle.kts
+          grep -q 'versionName = "0.10.27"' app/build.gradle.kts
+          grep -q '图标与终端状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'val techBlue = Color(0xFF2D63D8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -99,7 +99,7 @@ jobs:
                   if name.startswith("classes") and name.endswith(".dex")
               )
           required = (
-              "首页视觉与映射状态修复",
+              "图标与终端状态修复",
               "网络健康得分标题完整显示",
               "SSH 小卡片改为浅灰色",
               "主导航选中阴影统一为科技蓝",
@@ -123,7 +123,7 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build166 APK DEX strings verified")
+          print("signed build169 APK DEX strings verified")
           PY
       - name: Upload Gradle log
         if: always()
