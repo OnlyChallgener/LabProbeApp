@@ -49,7 +49,7 @@ jobs:
               sha: context.sha,
               state: 'pending',
               context: 'labprobe/router-integration-stage',
-              description: 'workflow started; preparing build166 sources',
+              description: 'workflow started; preparing build169 sources',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
       - uses: actions/setup-java@v4
@@ -66,17 +66,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.5.1
-      - name: Prepare build168 Android sources once
+      - name: Prepare build169 Android sources once
         id: prepare
         run: python3 scripts/prepare_android_sources_build167.py
-      - name: Verify build168 source invariants
+      - name: Verify build169 source invariants
         id: verify
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 168' app/build.gradle.kts
-          grep -q 'versionName = "0.10.26"' app/build.gradle.kts
-          grep -q '首页视觉与映射状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'versionCode = 169' app/build.gradle.kts
+          grep -q 'versionName = "0.10.27"' app/build.gradle.kts
+          grep -q '图标与终端状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'softWrap = false' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -124,7 +124,7 @@ jobs:
           from pathlib import Path
 
           required = [
-              "首页视觉与映射状态修复",
+              "图标与终端状态修复",
               "网络健康得分标题完整显示",
               "SSH 小卡片改为浅灰色",
               "主导航选中阴影统一为科技蓝",
@@ -199,7 +199,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-build166-integration-output
+          name: LabProbe-build169-integration-output
           path: |
             /tmp/gradle-variants.log
             /tmp/labprobe-ci-error.txt
