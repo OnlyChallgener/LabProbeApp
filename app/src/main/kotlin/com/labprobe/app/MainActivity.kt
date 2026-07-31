@@ -1359,7 +1359,11 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val disappeared = onlineDevices
             .filterNot { old -> online.any { cleanMac(it.mac) == cleanMac(old.mac) } }
             .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
-        val archivedOffline = applyDeviceOverrides(snapshot.offlineDevices + disappeared, deviceOverrides)
+        val archivedOffline = reconcileOfflineDevicesWithEvents(
+            applyDeviceOverrides(snapshot.offlineDevices + disappeared, deviceOverrides),
+            normalizeDeviceEvents(snapshot.events),
+            online
+        )
         val merged = preserveFollowedDeviceSnapshots(
             base = mergeDeviceCache(archivedOffline.filter { it.followedOverride == true }, mergeDeviceCache(devices, watched)),
             previous = devices,
@@ -1483,6 +1487,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 }
                 if (updated == events) return false
                 events = updated
+                refreshOfflineDevices(
+                    reconcileOfflineDevicesWithEvents(offlineDevices, events, onlineDevices),
+                    onlineDevices
+                )
                 return true
             }
         }
@@ -1582,7 +1590,10 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val disappeared = onlineDevices
             .filterNot { old -> devOnlineWithIpv6.any { cleanMac(it.mac) == cleanMac(old.mac) } }
             .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
-        val offlineChanged = refreshOfflineDevices(offlineDevices + disappeared, devOnlineWithIpv6)
+        val offlineChanged = refreshOfflineDevices(
+            reconcileOfflineDevicesWithEvents(offlineDevices + disappeared, evs, devOnlineWithIpv6),
+            devOnlineWithIpv6
+        )
         val eventsChanged = events != evs
         if (statusChanged) status = stRoot
         if (devicesChanged) devices = mergedDevices
@@ -1919,13 +1930,14 @@ fun LabProbeApp(prefs: AppPrefs) {
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
             route = target
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "device_traffic" || route == "device_detail" || route == "settings") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings") {
             route = when (route) {
                 "daily" -> dailyReturnRoute
                 "health_score" -> "home"
                 "router_status" -> "home"
                 "router_settings" -> "home"
                 "wol" -> "home"
+                "devices" -> "home"
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
                 "settings" -> settingsReturnRoute
