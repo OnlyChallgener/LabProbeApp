@@ -1,4 +1,4 @@
-name: Build167 Stage
+name: Build169 Stage
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build166-stage-${{ github.ref }}
+  group: build169-stage-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -34,16 +34,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.5.1
-      - name: Prepare build168 generated sources
+      - name: Prepare build169 generated sources
         run: python3 scripts/prepare_android_sources_build167.py
-      - name: Verify build168 home and mapping fixes
+      - name: Verify build169 home and mapping fixes
         run: |
-          exec > >(tee /tmp/build166-verify.log) 2>&1
+          exec > >(tee /tmp/build169-verify.log) 2>&1
           set -ex
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 168' app/build.gradle.kts
-          grep -q 'versionName = "0.10.26"' app/build.gradle.kts
-          grep -q '首页视觉与映射状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'versionCode = 169' app/build.gradle.kts
+          grep -q 'versionName = "0.10.27"' app/build.gradle.kts
+          grep -q '图标与终端状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'softWrap = false' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -64,8 +64,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: LabProbe-build166-verify-log
-          path: /tmp/build166-verify.log
+          name: LabProbe-build169-verify-log
+          path: /tmp/build169-verify.log
           if-no-files-found: ignore
       - name: Compile debug and release
         env:
@@ -73,13 +73,13 @@ jobs:
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.24-build166-debug
+          name: LabProbe-v0.10.27-build169-debug
           path: app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.24-build166-release-unsigned
+          name: LabProbe-v0.10.27-build169-release-unsigned
           path: app/build/outputs/apk/release/app-release-unsigned.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-build166-generated-sources
+          name: LabProbe-build169-generated-sources
           path: app/src/main/kotlin/com/labprobe/app
