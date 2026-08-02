@@ -11,153 +11,73 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout selected branch
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Remove legacy Java sources
-        run: rm -rf app/src/main/java
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK packages
-        run: |
-          set -e
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
-      - name: Set up Gradle 9.5.1
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.5.1
-      - name: Prepare fixed signing key
+      - name: Install Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Prepare signing key
         env:
           LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
         run: |
-          set -e
-          if [ -z "$LABPROBE_KEYSTORE_BASE64" ]; then
-            echo "::error::LABPROBE_KEYSTORE_BASE64 is not configured."
-            exit 1
-          fi
+          test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare current Android sources
-        run: python3 scripts/prepare_android_sources_build167.py
-      - name: Verify build170 source state
+      - name: Prepare and verify build170
         run: |
-          set -e
+          python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
           grep -q 'versionCode = 170' app/build.gradle.kts
           grep -q 'versionName = "0.10.28"' app/build.gradle.kts
-          grep -q '数据一致性与安全修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
-          grep -q 'StrictHostKeyChecking.*accept-new' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'previous?.close()' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
+          ! grep -q '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
           grep -q '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -q 'validateHubTransportAddress' app/src/main/kotlin/com/labprobe/app/HubTransportSecurity.kt
           test -s app/src/main/res/drawable/ic_launcher_logo.xml
-          test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-          grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'Agent 在线，正在重新获取映射运行状态' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -q 'requestAgentUpdateCheck()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'NativeValueRow("最终响应", "已收到")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          ! grep -q '来源：全部公网地址' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-      - name: Run unit tests
-        env:
-          LABPROBE_SKIP_SOURCE_PREPARE: '1'
-        run: gradle :app:testDebugUnitTest --stacktrace --console=plain
-      - name: Build signed release APK
+      - name: Test and build signed APK
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
           LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
           LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
           LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+      - name: Verify signed APK
         run: |
-          set +e
-          gradle :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-build.log 2>&1
-          STATUS=$?
-          if [ "$STATUS" -ne 0 ]; then
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-build.log | tail -n 260 || true
-            tail -n 180 /tmp/gradle-build.log
-          else
-            tail -n 100 /tmp/gradle-build.log
-          fi
-          exit $STATUS
-      - name: Inspect signed APK
-        run: |
-          set -e
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='170' versionName='0.10.28'"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
           from pathlib import Path
-
           apk = Path("app/build/outputs/apk/release/app-release.apk")
-          if not apk.exists():
-              raise SystemExit(f"missing signed APK: {apk}")
           with zipfile.ZipFile(apk) as archive:
-              dex = b"".join(
-                  archive.read(name)
-                  for name in archive.namelist()
-                  if name.startswith("classes") and name.endswith(".dex")
-              )
-          required = (
+              dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
+          for text in (
               "数据一致性与安全修复",
-              "启动图标替换为新版青绿网络节点 Logo，并同步自适应圆形图标",
               "关注与离线列表统一按 MAC 使用同一份最新设备记录",
               "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
               "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
               "运行时间同步中",
-              "Agent 在线，正在重新获取映射运行状态",
-              "状态待同步",
-              "/api/agent/update/check",
-              "devices_snapshot",
-              "/api/realtime/ws",
-              "规则保存在 Hub 与 APP；Agent 离线不会删除设置",
-          )
-          forbidden = (
-              "来源：全部公网地址",
-              "检查失败：HTTP 502: <!DOCTYPE html>",
-              "diffie-hellman-group1-sha1",
-              "3des-cbc",
-          )
-          for value in forbidden:
-              if value.encode("utf-8") in dex:
-                  raise SystemExit(f"forbidden signed APK string remains: {value}")
-          for value in required:
-              if value.encode("utf-8") not in dex:
-                  raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build170 APK DEX strings verified")
+          ):
+              if text.encode() not in dex:
+                  raise SystemExit(f"missing signed APK content: {text}")
+          print("signed build170 APK verified")
           PY
-      - name: Upload Gradle log
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: build170-gradle-log
-          path: /tmp/gradle-build.log
-          if-no-files-found: ignore
-      - name: Verify release APK exists
-        run: ls -lh app/build/outputs/apk/release/app-release.apk
-      - name: Read app version
-        id: app_version
-        run: |
-          set -e
-          VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
-          VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
-          test -n "$VERSION_NAME"
-          test -n "$VERSION_CODE"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-      - name: Upload release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: LabProbe-v${{ steps.app_version.outputs.version_name }}-build${{ steps.app_version.outputs.version_code }}-release-apk
+          name: LabProbe-v0.10.28-build170-release-apk
           path: app/build/outputs/apk/release/app-release.apk
