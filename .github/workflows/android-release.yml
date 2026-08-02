@@ -48,22 +48,33 @@ jobs:
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
       - name: Prepare current Android sources
         run: python3 scripts/prepare_android_sources_build167.py
-      - name: Verify build169 source state
+      - name: Verify build170 source state
         run: |
           set -e
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 169' app/build.gradle.kts
-          grep -q 'versionName = "0.10.27"' app/build.gradle.kts
-          grep -q '图标与终端状态修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'versionCode = 170' app/build.gradle.kts
+          grep -q 'versionName = "0.10.28"' app/build.gradle.kts
+          grep -q '数据一致性与安全修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
+          grep -q 'StrictHostKeyChecking.*accept-new' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'previous?.close()' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
+          grep -q 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
+          grep -q '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+          grep -q 'validateHubTransportAddress' app/src/main/kotlin/com/labprobe/app/HubTransportSecurity.kt
+          test -s app/src/main/res/drawable/ic_launcher_logo.xml
+          test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
           grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'val techBlue = Color(0xFF2D63D8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'Agent 在线，正在重新获取映射运行状态' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -q 'rule.syncState == "stale"' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -q 'requestAgentUpdateCheck()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'NativeValueRow("最终响应", "已收到")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -q 'DialogProperties(usePlatformDefaultWidth = false)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           ! grep -q '来源：全部公网地址' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+      - name: Run unit tests
+        env:
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: gradle :app:testDebugUnitTest --stacktrace --console=plain
       - name: Build signed release APK
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
@@ -99,14 +110,14 @@ jobs:
                   if name.startswith("classes") and name.endswith(".dex")
               )
           required = (
-              "图标与终端状态修复",
-              "启动图标移除背景发光圆环，保留原有青绿渐变与网络立方体",
-              "SSH 小卡片改为浅灰色",
-              "设备一级页面按返回键回到 APP 首页，不再直接退出到桌面",
-              "每日设备排行保留 Hub 返回的当天在线时长与流量数据",
+              "数据一致性与安全修复",
+              "启动图标替换为新版青绿网络节点 Logo，并同步自适应圆形图标",
+              "关注与离线列表统一按 MAC 使用同一份最新设备记录",
+              "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
+              "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
+              "运行时间同步中",
               "Agent 在线，正在重新获取映射运行状态",
               "状态待同步",
-              "更新源暂不可用，Hub 已保留上次版本信息",
               "/api/agent/update/check",
               "devices_snapshot",
               "/api/realtime/ws",
@@ -115,7 +126,8 @@ jobs:
           forbidden = (
               "来源：全部公网地址",
               "检查失败：HTTP 502: <!DOCTYPE html>",
-              "终端卡片与 NAT 参数样式优化",
+              "diffie-hellman-group1-sha1",
+              "3des-cbc",
           )
           for value in forbidden:
               if value.encode("utf-8") in dex:
@@ -123,13 +135,13 @@ jobs:
           for value in required:
               if value.encode("utf-8") not in dex:
                   raise SystemExit(f"required signed APK string missing: {value}")
-          print("signed build169 APK DEX strings verified")
+          print("signed build170 APK DEX strings verified")
           PY
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: router-build166-gradle-log
+          name: build170-gradle-log
           path: /tmp/gradle-build.log
           if-no-files-found: ignore
       - name: Verify release APK exists
