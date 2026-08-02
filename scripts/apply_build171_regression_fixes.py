@@ -64,24 +64,28 @@ def patch_main() -> None:
 def patch_device_merge() -> None:
     path = ROOT / "app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt"
     text = path.read_text(encoding="utf-8")
-    old = '    watched.forEach { if (it.mac.isNotBlank()) map[cleanMac(it.mac)] = it }'
-    new = '''    watched.forEach { device ->
+    old_loop = '    watched.forEach { if (it.mac.isNotBlank()) map[cleanMac(it.mac)] = it }'
+    new_loop = '''    watched.forEach { device ->
         if (device.mac.isBlank()) return@forEach
         val key = cleanMac(device.mac)
         val old = map[key]
-        if (old == null) {
-            map[key] = device
-        } else {
-            val merged = mergePreferFreshDevice(old, device)
-            map[key] = merged.copy(
-                followedOverride = old.followedOverride ?: merged.followedOverride,
-                wolEnabledOverride = old.wolEnabledOverride ?: merged.wolEnabledOverride,
-                remark = old.remark.ifBlank { merged.remark },
-                manualType = old.manualType.ifBlank { merged.manualType },
-            )
-        }
+        map[key] = if (old == null) device else mergePreferFreshDevice(old, device)
     }'''
-    text = replace_once(text, old, new, "authoritative duplicate device merge")
+    text = replace_once(text, old_loop, new_loop, "authoritative duplicate device merge")
+
+    old_config = '''        remark = fresh.remark.ifBlank { old.remark },
+        manualType = fresh.manualType.ifBlank { old.manualType },
+        wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride,
+        followedOverride = fresh.followedOverride ?: old.followedOverride,'''
+    new_config = '''        remark = old.remark.ifBlank { fresh.remark },
+        manualType = old.manualType.ifBlank { fresh.manualType },
+        wolEnabledOverride = old.wolEnabledOverride ?: fresh.wolEnabledOverride,
+        followedOverride = when {
+            old.followedOverride == true || fresh.followedOverride == true -> true
+            old.followedOverride == false || fresh.followedOverride == false -> false
+            else -> null
+        },'''
+    text = replace_once(text, old_config, new_config, "watched configuration precedence")
     path.write_text(text, encoding="utf-8")
 
 
