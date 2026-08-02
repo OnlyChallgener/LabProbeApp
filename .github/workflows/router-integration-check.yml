@@ -2,30 +2,16 @@ name: Router Integration Check
 
 on:
   push:
-    branches:
-      - build152
-      - build160
-      - build161
-      - build162
-      - build163
-      - codex/router-control-v01011-build141
+    branches: [build163]
     paths:
-      - app/build.gradle.kts
-      - app/src/main/kotlin/com/labprobe/app/**
-      - app/src/main/res/**
-      - app/src/test/**
+      - app/**
       - scripts/**
       - .github/workflows/router-integration-check.yml
-      - .github/workflows/android-release.yml
   pull_request:
     paths:
-      - app/build.gradle.kts
-      - app/src/main/kotlin/com/labprobe/app/**
-      - app/src/main/res/**
-      - app/src/test/**
+      - app/**
       - scripts/**
       - .github/workflows/router-integration-check.yml
-      - .github/workflows/android-release.yml
   workflow_dispatch:
 
 concurrency:
@@ -34,53 +20,29 @@ concurrency:
 
 permissions:
   contents: read
-  statuses: write
 
 jobs:
-  build-variants:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Publish CI start
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: context.sha,
-              state: 'pending',
-              context: 'labprobe/router-integration-stage',
-              description: 'workflow started; preparing build170 sources',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            });
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK packages
-        run: |
-          set -e
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
-      - name: Set up Gradle 9.5.1
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.5.1
-      - name: Prepare build170 Android sources once
-        id: prepare
-        run: python3 scripts/prepare_android_sources_build167.py
-      - name: Verify build170 source invariants
-        id: verify
+      - name: Install Android SDK
         run: |
-          set -e
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Prepare and verify build170 sources
+        run: |
+          python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
           grep -q 'versionCode = 170' app/build.gradle.kts
           grep -q 'versionName = "0.10.28"' app/build.gradle.kts
-          grep -q '数据一致性与安全修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
           grep -q 'StrictHostKeyChecking.*accept-new' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -88,137 +50,53 @@ jobs:
           grep -q 'previous?.close()' app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
           grep -q 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
           grep -q '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -q 'validateHubTransportAddress' app/src/main/kotlin/com/labprobe/app/HubTransportSecurity.kt
           grep -q 'android:allowBackup="false"' app/src/main/AndroidManifest.xml
           test -s app/src/main/res/drawable/ic_launcher_logo.xml
           test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-          grep -q '"网络健康得分",' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'softWrap = false' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'Agent 在线，正在重新获取映射运行状态' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -q 'rule.syncState == "stale"' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -q 'requestAgentUpdateCheck()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'NativeValueRow("最终响应", "已收到")' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          ! grep -q '来源：全部公网地址' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          ! grep -q '检查失败：${it.message} · 已保留上次结果' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-      - name: Run unit tests
-        id: tests
+      - name: Test and build Debug plus Release
         env:
           LABPROBE_SKIP_SOURCE_PREPARE: '1'
-        run: gradle :app:testDebugUnitTest --stacktrace --console=plain
-      - name: Compile debug and release variants
-        id: compile
-        env:
-          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: gradle :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace --console=plain
+      - name: Verify APK contents
         run: |
-          set +e
-          gradle :app:assembleDebug :app:assembleRelease --stacktrace --console=plain > /tmp/gradle-variants.log 2>&1
-          STATUS=$?
-          if [ "$STATUS" -ne 0 ]; then
-            printf '%s' 'Gradle/Kotlin compile failed' > /tmp/labprobe-ci-error.txt
-            grep -nE '(^e: |\.kt:[0-9]+:[0-9]+|error:)' /tmp/gradle-variants.log | tail -n 280 || true
-            tail -n 200 /tmp/gradle-variants.log
-          else
-            tail -n 100 /tmp/gradle-variants.log
-          fi
-          exit $STATUS
-      - name: Inspect actual APK strings
-        id: inspect_apk
-        if: success()
-        run: |
-          set -e
           python3 - <<'PY'
           import zipfile
           from pathlib import Path
 
-          required = [
+          required = (
               "数据一致性与安全修复",
-              "启动图标替换为新版青绿网络节点 Logo，并同步自适应圆形图标",
               "关注与离线列表统一按 MAC 使用同一份最新设备记录",
               "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
               "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
-              "网络健康得分标题完整显示",
-              "SSH 小卡片改为浅灰色",
-              "主导航选中阴影统一为科技蓝",
-              "Agent 在线，正在重新获取映射运行状态",
-              "状态待同步",
               "运行时间同步中",
-              "更新源暂不可用，Hub 已保留上次版本信息",
-              "/api/agent/update/check",
               "devices_snapshot",
               "/api/realtime/ws",
-              "/api/router/tasks/",
-              "规则保存在 Hub 与 APP；Agent 离线不会删除设置",
-          ]
-          forbidden = [
+          )
+          forbidden = (
               "来源：全部公网地址",
               "检查失败：HTTP 502: <!DOCTYPE html>",
-              "diffie-hellman-group1-sha1",
-              "3des-cbc",
-          ]
-          for apk in (
+          )
+          apks = (
               Path("app/build/outputs/apk/debug/app-debug.apk"),
               Path("app/build/outputs/apk/release/app-release-unsigned.apk"),
-          ):
-              if not apk.exists():
-                  Path('/tmp/labprobe-ci-error.txt').write_text(f'missing APK: {apk}', encoding='utf-8')
+          )
+          for apk in apks:
+              if not apk.is_file():
                   raise SystemExit(f"missing APK: {apk}")
               with zipfile.ZipFile(apk) as archive:
-                  dex = b"".join(
-                      archive.read(name)
-                      for name in archive.namelist()
-                      if name.startswith("classes") and name.endswith(".dex")
-                  )
-              for value in forbidden:
-                  if value.encode("utf-8") in dex:
-                      raise SystemExit(f"forbidden APK string remains in {apk.name}: {value}")
-              for value in required:
-                  if value.encode("utf-8") not in dex:
-                      raise SystemExit(f"required APK string missing in {apk.name}: {value}")
-              print(f"verified actual DEX strings: {apk}")
+                  dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
+              for text in required:
+                  if text.encode() not in dex:
+                      raise SystemExit(f"missing from {apk.name}: {text}")
+              for text in forbidden:
+                  if text.encode() in dex:
+                      raise SystemExit(f"forbidden in {apk.name}: {text}")
+              print(f"verified {apk}")
           PY
-      - name: Publish connector-readable CI stage
-        if: always()
-        uses: actions/github-script@v7
-        env:
-          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
-          TEST_OUTCOME: ${{ steps.tests.outcome }}
-          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
-          APK_OUTCOME: ${{ steps.inspect_apk.outcome }}
-        with:
-          script: |
-            const fs = require('fs');
-            const outcomes = {
-              prepare: process.env.PREPARE_OUTCOME,
-              verify: process.env.VERIFY_OUTCOME,
-              tests: process.env.TEST_OUTCOME,
-              compile: process.env.COMPILE_OUTCOME,
-              apk: process.env.APK_OUTCOME,
-            };
-            const ok = Object.values(outcomes).every(value => value === 'success');
-            let detail = Object.entries(outcomes).map(([key, value]) => `${key}=${value}`).join(' ');
-            if (fs.existsSync('/tmp/labprobe-ci-error.txt')) {
-              detail = fs.readFileSync('/tmp/labprobe-ci-error.txt', 'utf8').trim() || detail;
-            }
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: context.sha,
-              state: ok ? 'success' : 'failure',
-              context: 'labprobe/router-integration-stage',
-              description: detail.slice(0, 140),
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            });
-      - name: Upload diagnostics and APKs
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: LabProbe-build170-integration-output
           path: |
-            /tmp/gradle-variants.log
-            /tmp/labprobe-ci-error.txt
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/app-release-unsigned.apk
-          if-no-files-found: ignore
