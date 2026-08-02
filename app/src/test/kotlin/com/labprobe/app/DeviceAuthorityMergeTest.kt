@@ -48,6 +48,7 @@ class DeviceAuthorityMergeTest {
             lastSeenAt = "2026-08-02 15:29:39",
             todayUpload = "24.88M",
             todayDownload = "250.26M",
+            followed = false,
         )
 
         val merged = mergeSharedDeviceState(
@@ -66,8 +67,8 @@ class DeviceAuthorityMergeTest {
     @Test
     fun currentOnlineRecordOverridesOfflineArchiveAndKeepsFollowedFlag() {
         val watched = device(false, "2026-08-02 08:25:27", "2026-08-02 08:25:27", "9.51M", "85.14M", true)
-        val offline = device(false, "2026-08-02 15:29:39", "2026-08-02 15:29:39", "24.88M", "250.26M")
-        val online = device(true, "", "2026-08-02 19:10:00", "31.20M", "310.40M", ip = "192.168.5.23")
+        val offline = device(false, "2026-08-02 15:29:39", "2026-08-02 15:29:39", "24.88M", "250.26M", false)
+        val online = device(true, "", "2026-08-02 19:10:00", "31.20M", "310.40M", followed = false)
 
         val merged = mergeSharedDeviceState(listOf(watched, offline), listOf(online)).single()
 
