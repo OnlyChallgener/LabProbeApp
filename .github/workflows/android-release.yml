@@ -43,7 +43,8 @@ jobs:
           grep -q 'mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -q '"offline" -> shared.filterNot' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'map\[key\] = if (old == null) device else mergePreferFreshDevice(old, device)' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
+          grep -q 'val merged = mergePreferFreshDevice(old, device)' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
+          grep -q 'followedOverride = old.followedOverride ?: merged.followedOverride' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
           grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
           ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -q '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
