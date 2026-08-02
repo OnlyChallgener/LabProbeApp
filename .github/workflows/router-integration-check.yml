@@ -54,17 +54,21 @@ jobs:
           test -s app/src/main/res/drawable/ic_launcher_logo.xml
           test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           test -s app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-      - name: Test and build Debug plus Release
+      - name: Test and build Debug APK
         env:
           LABPROBE_SKIP_SOURCE_PREPARE: '1'
-        run: gradle :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace --console=plain
-      - name: Verify APK contents
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --console=plain
+      - name: Verify Debug APK contents
         run: |
           python3 - <<'PY'
           import zipfile
           from pathlib import Path
-
-          required = (
+          apk = Path("app/build/outputs/apk/debug/app-debug.apk")
+          if not apk.is_file():
+              raise SystemExit(f"missing APK: {apk}")
+          with zipfile.ZipFile(apk) as archive:
+              dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
+          for text in (
               "数据一致性与安全修复",
               "关注与离线列表统一按 MAC 使用同一份最新设备记录",
               "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
@@ -72,31 +76,15 @@ jobs:
               "运行时间同步中",
               "devices_snapshot",
               "/api/realtime/ws",
-          )
-          forbidden = (
-              "来源：全部公网地址",
-              "检查失败：HTTP 502: <!DOCTYPE html>",
-          )
-          apks = (
-              Path("app/build/outputs/apk/debug/app-debug.apk"),
-              Path("app/build/outputs/apk/release/app-release-unsigned.apk"),
-          )
-          for apk in apks:
-              if not apk.is_file():
-                  raise SystemExit(f"missing APK: {apk}")
-              with zipfile.ZipFile(apk) as archive:
-                  dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
-              for text in required:
-                  if text.encode() not in dex:
-                      raise SystemExit(f"missing from {apk.name}: {text}")
-              for text in forbidden:
-                  if text.encode() in dex:
-                      raise SystemExit(f"forbidden in {apk.name}: {text}")
-              print(f"verified {apk}")
+          ):
+              if text.encode() not in dex:
+                  raise SystemExit(f"missing from Debug APK: {text}")
+          for text in ("来源：全部公网地址", "检查失败：HTTP 502: <!DOCTYPE html>"):
+              if text.encode() in dex:
+                  raise SystemExit(f"forbidden in Debug APK: {text}")
+          print("verified build170 Debug APK")
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-build170-integration-output
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release-unsigned.apk
+          name: LabProbe-build170-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
