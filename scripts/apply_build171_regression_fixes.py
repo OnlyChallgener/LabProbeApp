@@ -69,7 +69,17 @@ def patch_device_merge() -> None:
         if (device.mac.isBlank()) return@forEach
         val key = cleanMac(device.mac)
         val old = map[key]
-        map[key] = if (old == null) device else mergePreferFreshDevice(old, device)
+        if (old == null) {
+            map[key] = device
+        } else {
+            val merged = mergePreferFreshDevice(old, device)
+            map[key] = merged.copy(
+                followedOverride = old.followedOverride ?: merged.followedOverride,
+                wolEnabledOverride = old.wolEnabledOverride ?: merged.wolEnabledOverride,
+                remark = old.remark.ifBlank { merged.remark },
+                manualType = old.manualType.ifBlank { merged.manualType },
+            )
+        }
     }'''
     text = replace_once(text, old, new, "authoritative duplicate device merge")
     path.write_text(text, encoding="utf-8")
