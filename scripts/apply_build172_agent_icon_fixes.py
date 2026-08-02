@@ -71,6 +71,17 @@ def patch_main() -> None:
         "build172 changelog items",
     )
 
+    text = replace_once(
+        text,
+        '''        val prefs = AppPrefs(this)
+        // Preload the shared router-control repository before any settings page''',
+        '''        val prefs = AppPrefs(this)
+        AgentUpdateCoordinator.bind(prefs)
+        AgentUpdateCoordinator.check(prefs, silent = true)
+        // Preload the shared router-control repository before any settings page''',
+        "application startup Relay monitoring",
+    )
+
     old_state = '''    var agentInfo by remember { mutableStateOf(storedAgentUpdateInfo(prefs.agentUpdateInfoJson)) }
     var agentMessage by remember { mutableStateOf(prefs.agentUpdateMessage.ifBlank { "等待检查 Rust Agent 版本" }) }
     var cleanupMessage by remember { mutableStateOf("可清理所有 Agent 备份和非必要临时日志") }
@@ -119,6 +130,7 @@ def verify() -> None:
         'versionCode = 172',
         'versionName = "0.10.30"',
         'Relay 更新与启动图标修复',
+        'AgentUpdateCoordinator.bind(prefs)',
         'AgentUpdateCoordinator.state.collectAsState()',
         'AgentUpdateCoordinator.check(prefs, silent = true)',
         'onClick = { AgentUpdateCoordinator.check(prefs) }',
