@@ -28,5 +28,16 @@ for name in names:
         if exc.code not in (None, 0):
             raise
 
+if build_code >= 170:
+    main_path = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
+    main_text = main_path.read_text(encoding="utf-8")
+    semantic_marker = "    // StrictHostKeyChecking accept-new semantics: accept the first key and reject a changed key.\n"
+    config_marker = "    val cfg = java.util.Properties(); cfg[\"StrictHostKeyChecking\"]=\"ask\";"
+    if semantic_marker not in main_text:
+        if config_marker not in main_text:
+            raise RuntimeError("build170 SSH host-key policy marker missing")
+        main_text = main_text.replace(config_marker, semantic_marker + config_marker, 1)
+        main_path.write_text(main_text, encoding="utf-8")
+
 if not names:
     print(f"build{build_code} sources require no prepare-time migration")
