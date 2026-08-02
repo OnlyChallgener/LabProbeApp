@@ -5,40 +5,52 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Subtle radar rings; foreground stays fully transparent outside the mark. -->
-    <path
-        android:pathData="M54,15 a39,39 0,1 0,0,78 a39,39 0,1 0,0,-78"
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#66FFFFFF"
-        android:strokeWidth="1.5"
-        android:strokeLineCap="round" />
-    <path
-        android:pathData="M54,28 a26,26 0,1 0,0,52 a26,26 0,1 0,0,-52"
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#4DFFFFFF"
-        android:strokeWidth="1.25"
-        android:strokeLineCap="round" />
-    <path
-        android:pathData="M54,38 a16,16 0,1 0,0,32 a16,16 0,1 0,0,-32"
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#2EFFFFFF"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round" />
+    <!--
+      Adaptive icon foregrounds are masked differently by each launcher.
+      Keep the complete mark inside the 66dp-ish safe zone and leave every
+      pixel outside the mark transparent; the gradient belongs to background.
+    -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.84"
+        android:scaleY="0.84">
 
-    <!-- Connected network/cube lines. -->
-    <path
-        android:pathData="M33,26 L78,28 M33,26 L28,60 M28,60 L53,78 M53,78 L78,61 M78,61 L78,28 M54,50 L78,28 M54,50 L53,78"
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#E8FFFFFF"
-        android:strokeWidth="5.2"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
+        <!-- Subtle radar rings. -->
+        <path
+            android:pathData="M54,15 a39,39 0,1 0,0,78 a39,39 0,1 0,0,-78"
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#66FFFFFF"
+            android:strokeWidth="1.5"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M54,28 a26,26 0,1 0,0,52 a26,26 0,1 0,0,-52"
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#4DFFFFFF"
+            android:strokeWidth="1.25"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M54,38 a16,16 0,1 0,0,32 a16,16 0,1 0,0,-32"
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#2EFFFFFF"
+            android:strokeWidth="1.1"
+            android:strokeLineCap="round" />
 
-    <!-- Nodes. -->
-    <path android:fillColor="#FFFFFFFF" android:pathData="M33,20.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M78,22.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M28,54.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M78,55.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M53,72.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M54,43.5 a6.5,6.5 0,1 0,0,13 a6.5,6.5 0,1 0,0,-13" />
+        <!-- Connected network/cube lines. -->
+        <path
+            android:pathData="M33,26 L78,28 M33,26 L28,60 M28,60 L53,78 M53,78 L78,61 M78,61 L78,28 M54,50 L78,28 M54,50 L53,78"
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#E8FFFFFF"
+            android:strokeWidth="5.2"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+
+        <!-- Nodes. -->
+        <path android:fillColor="#FFFFFFFF" android:pathData="M33,20.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M78,22.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M28,54.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M78,55.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M53,72.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M54,43.5 a6.5,6.5 0,1 0,0,13 a6.5,6.5 0,1 0,0,-13" />
+    </group>
 </vector>
