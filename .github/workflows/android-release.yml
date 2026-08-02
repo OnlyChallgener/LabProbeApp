@@ -35,15 +35,21 @@ jobs:
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
       - name: Prepare and verify build172
         run: |
+          python3 -m py_compile scripts/apply_build172_agent_icon_fixes.py
           python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
           grep -q 'versionCode = 172' app/build.gradle.kts
           grep -q 'versionName = "0.10.30"' app/build.gradle.kts
           grep -q 'Relay 更新与启动图标修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'AgentUpdateCoordinator.state.collectAsState()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'AgentUpdateCoordinator.check(prefs, silent = true)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'AgentUpdateCoordinator.state.collectAsState()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'var cleanupBusy by remember' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val agentBusy = agentUpdateUi.busy || cleanupBusy' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'onClick = { AgentUpdateCoordinator.update(prefs) }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'SupervisorJob() + Dispatchers.Main.immediate' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'STATUS_REFRESH_INTERVAL_MS = 15_000L' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'private var monitorJob: Job?' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
           grep -q 'repeat(120)' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
           grep -q 'agentVersionAtLeast' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
           grep -q '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -57,6 +63,8 @@ jobs:
           grep -q '<layer-list' app/src/main/res/drawable/ic_launcher_foreground.xml
           ! grep -q 'android:insetLeft' app/src/main/res/drawable/ic_launcher_foreground.xml
           ! grep -q 'M1179 556.339' app/src/main/res/drawable/ic_launcher_logo.xml
+          grep -q 'android:scaleX="0.84"' app/src/main/res/drawable/ic_launcher_logo.xml
+          grep -q 'M0,0H108V108H0Z' app/src/main/res/drawable/ic_launcher_background.xml
       - name: Test and build signed APK
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
@@ -78,12 +86,11 @@ jobs:
           apk = Path("app/build/outputs/apk/release/app-release.apk")
           with zipfile.ZipFile(apk) as archive:
               dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
-              resources = set(archive.namelist())
           for text in (
               "Relay 更新与启动图标修复",
               "启动图标拆分为全幅渐变背景和透明网络前景，清除四周脏边",
               "Relay 版本检查与更新任务移到应用级作用域，离开页面仍会继续",
-              "更新后持续等待 Agent 上报，当前版本会自动刷新且不再误报失败",
+              "更新后持续监测 Agent 心跳，版本号和最后上报时间自动刷新",
               "Relay 已更新到",
               "当前已是最新版本",
               "运行时间同步中",
