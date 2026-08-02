@@ -67,7 +67,7 @@ def patch_main() -> None:
         '                "启动图标加入自适应安全边距，顶部和两侧网络节点完整显示",',
         '                "启动图标拆分为全幅渐变背景和透明网络前景，清除四周脏边",\n'
         '                "Relay 版本检查与更新任务移到应用级作用域，离开页面仍会继续",\n'
-        '                "更新后持续等待 Agent 上报，当前版本会自动刷新且不再误报失败",',
+        '                "更新后持续监测 Agent 心跳，版本号和最后上报时间自动刷新",',
         "build172 changelog items",
     )
 
@@ -94,12 +94,24 @@ def patch_main() -> None:
     val agentMessage = agentUpdateUi.message
     var cleanupMessage by remember { mutableStateOf("可清理所有 Agent 备份和非必要临时日志") }
     var showCleanupConfirm by remember { mutableStateOf(false) }
-    val agentBusy = agentUpdateUi.busy
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(prefs.hub, prefs.token) {
-        AgentUpdateCoordinator.check(prefs, silent = true)
-    }'''
+    var cleanupBusy by remember { mutableStateOf(false) }
+    val agentBusy = agentUpdateUi.busy || cleanupBusy
+    val scope = rememberCoroutineScope()'''
     text = replace_once(text, old_state, new_state, "application-level Agent update state")
+
+    cleanup_start = text.find("    if (showCleanupConfirm) {")
+    cleanup_end = text.find("    Box(Modifier.fillMaxWidth().height(196.dp)", cleanup_start)
+    if cleanup_start < 0 or cleanup_end < 0:
+        raise RuntimeError("Agent cleanup dialog boundaries missing")
+    cleanup_section = text[cleanup_start:cleanup_end]
+    if "agentBusy = true" in cleanup_section:
+        if cleanup_section.count("agentBusy = true") != 1 or cleanup_section.count("agentBusy = false") != 1:
+            raise RuntimeError("unexpected cleanup busy assignments")
+        cleanup_section = cleanup_section.replace("agentBusy = true", "cleanupBusy = true", 1)
+        cleanup_section = cleanup_section.replace("agentBusy = false", "cleanupBusy = false", 1)
+        text = text[:cleanup_start] + cleanup_section + text[cleanup_end:]
+    elif "cleanupBusy = true" not in cleanup_section or "cleanupBusy = false" not in cleanup_section:
+        raise RuntimeError("cleanup busy state migration missing")
 
     start = text.find('        title = "Rust Agent 更新",')
     end = text.find('        OutlinedButton(\n            onClick = { showCleanupConfirm = true }', start)
@@ -110,12 +122,17 @@ def patch_main() -> None:
     section = replace_click_before_label(section, "立即更新", "AgentUpdateCoordinator.update(prefs)")
     text = text[:start] + section + text[end:]
 
+    update_section = text[start:text.find(
+        '        OutlinedButton(\n            onClick = { showCleanupConfirm = true }',
+        start,
+    )]
     forbidden = (
         "下发失败：${it.message}",
         "api.requestAgentUpdateCheck()",
         "api.requestAgentUpdate()",
+        "agentInfo = AgentUpdateInfo(",
+        "agentMessage = updateMessage",
     )
-    update_section = text[start:text.find('        OutlinedButton(\n            onClick = { showCleanupConfirm = true }', start)]
     leftovers = [value for value in forbidden if value in update_section]
     if leftovers:
         raise RuntimeError(f"old composition-bound Agent update logic remains: {leftovers}")
@@ -131,8 +148,12 @@ def verify() -> None:
         'versionName = "0.10.30"',
         'Relay 更新与启动图标修复',
         'AgentUpdateCoordinator.bind(prefs)',
-        'AgentUpdateCoordinator.state.collectAsState()',
         'AgentUpdateCoordinator.check(prefs, silent = true)',
+        'AgentUpdateCoordinator.state.collectAsState()',
+        'var cleanupBusy by remember',
+        'val agentBusy = agentUpdateUi.busy || cleanupBusy',
+        'cleanupBusy = true',
+        'cleanupBusy = false',
         'onClick = { AgentUpdateCoordinator.check(prefs) }',
         'onClick = { AgentUpdateCoordinator.update(prefs) }',
     )
