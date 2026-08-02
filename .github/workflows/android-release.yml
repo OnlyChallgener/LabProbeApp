@@ -33,18 +33,24 @@ jobs:
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare and verify build170
+      - name: Prepare and verify build171
         run: |
           python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 170' app/build.gradle.kts
-          grep -q 'versionName = "0.10.28"' app/build.gradle.kts
+          grep -q 'versionCode = 171' app/build.gradle.kts
+          grep -q 'versionName = "0.10.29"' app/build.gradle.kts
+          grep -q '图标与设备数据回归修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -q '"offline" -> shared.filterNot' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'map\[key\] = if (old == null) device else mergePreferFreshDevice(old, device)' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
           grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
           ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -q '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
           grep -q '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          test -s app/src/main/res/drawable/ic_launcher_logo.xml
+          grep -q '@drawable/ic_launcher_foreground' app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          grep -q 'android:insetLeft="20dp"' app/src/main/res/drawable/ic_launcher_foreground.xml
       - name: Test and build signed APK
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
@@ -58,7 +64,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='170' versionName='0.10.28'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='171' versionName='0.10.29'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
@@ -67,17 +73,18 @@ jobs:
           with zipfile.ZipFile(apk) as archive:
               dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
           for text in (
-              "数据一致性与安全修复",
-              "关注与离线列表统一按 MAC 使用同一份最新设备记录",
+              "图标与设备数据回归修复",
+              "启动图标加入自适应安全边距，顶部和两侧网络节点完整显示",
+              "离线列表保持独立权威数据，关注列表只引用在线或离线最新记录",
               "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
               "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
               "运行时间同步中",
           ):
               if text.encode() not in dex:
                   raise SystemExit(f"missing signed APK content: {text}")
-          print("signed build170 APK verified")
+          print("signed build171 APK verified")
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.28-build170-release-apk
+          name: LabProbe-v0.10.29-build171-release-apk
           path: app/build/outputs/apk/release/app-release.apk
