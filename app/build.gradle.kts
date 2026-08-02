@@ -30,8 +30,8 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 169
-        versionName = "0.10.27"
+        versionCode = 170
+        versionName = "0.10.28"
     }
 
     signingConfigs {
@@ -97,4 +97,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.mwiede:jsch:0.2.21")
+
+    testImplementation("junit:junit:4.13.2")
 }
