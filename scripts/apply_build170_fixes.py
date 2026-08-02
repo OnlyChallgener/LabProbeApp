@@ -121,8 +121,14 @@ def patch_main() -> None:
         "SSH known hosts",
     )
     old_cfg = '    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="no"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256"; cfg["PubkeyAcceptedAlgorithms"]="+ssh-rsa,rsa-sha2-256,rsa-sha2-512"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["cipher.c2s"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)'
-    new_cfg = '    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="accept-new"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256,ssh-rsa"; cfg["PubkeyAcceptedAlgorithms"]="rsa-sha2-256,rsa-sha2-512,ssh-rsa"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256"; cfg["cipher.s2c"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["cipher.c2s"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)'
+    new_cfg = '    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="ask"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256,ssh-rsa"; cfg["PubkeyAcceptedAlgorithms"]="rsa-sha2-256,rsa-sha2-512,ssh-rsa"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256"; cfg["cipher.s2c"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["cipher.c2s"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)'
     text = replace_once(text, old_cfg, new_cfg, "SSH secure algorithms")
+    text = replace_once(
+        text,
+        'override fun promptYesNo(message:String?)=true',
+        'override fun promptYesNo(message:String?) = message?.contains("HOST IDENTIFICATION HAS CHANGED", ignoreCase = true) != true',
+        "SSH changed-host rejection",
+    )
     if any(marker in text for marker in ("diffie-hellman-group1-sha1", "3des-cbc", "aes128-cbc", "hmac-sha1", 'StrictHostKeyChecking"]="no"')):
         raise RuntimeError("weak SSH compatibility algorithms remain")
 
