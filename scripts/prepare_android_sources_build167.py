@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the build167 migration only when preparing a pre-build168 checkout."""
+"""Apply legacy migrations and the current checked-in source corrections."""
 from pathlib import Path
 import re
 import runpy
@@ -16,10 +16,10 @@ if build_code < 167:
 elif build_code == 167:
     names = ("apply_build167_labrelay_sync.py",)
 else:
-    # Checked-in build168+ sources already include this migration. Replaying
-    # older textual patches against their newer layout is both unnecessary and
-    # unsafe, so a release build is deliberately a no-op here.
     names = ()
+
+if build_code >= 170:
+    names += ("apply_build170_fixes.py",)
 
 for name in names:
     try:
@@ -29,4 +29,4 @@ for name in names:
             raise
 
 if not names:
-    print(f"build{build_code} sources already include the build167 migration")
+    print(f"build{build_code} sources require no prepare-time migration")
