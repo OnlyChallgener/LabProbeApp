@@ -7,19 +7,19 @@
 
     <!-- Subtle radar rings; foreground stays fully transparent outside the mark. -->
     <path
-        android:pathData="M54,15 A39,39 0,1 1,53.99,15"
+        android:pathData="M54,15 a39,39 0,1 0,0,78 a39,39 0,1 0,0,-78"
         android:fillColor="@android:color/transparent"
         android:strokeColor="#66FFFFFF"
         android:strokeWidth="1.5"
         android:strokeLineCap="round" />
     <path
-        android:pathData="M54,28 A26,26 0,1 1,53.99,28"
+        android:pathData="M54,28 a26,26 0,1 0,0,52 a26,26 0,1 0,0,-52"
         android:fillColor="@android:color/transparent"
         android:strokeColor="#4DFFFFFF"
         android:strokeWidth="1.25"
         android:strokeLineCap="round" />
     <path
-        android:pathData="M54,38 A16,16 0,1 1,53.99,38"
+        android:pathData="M54,38 a16,16 0,1 0,0,32 a16,16 0,1 0,0,-32"
         android:fillColor="@android:color/transparent"
         android:strokeColor="#2EFFFFFF"
         android:strokeWidth="1.1"
@@ -35,10 +35,10 @@
         android:strokeLineJoin="round" />
 
     <!-- Nodes. -->
-    <path android:fillColor="#FFFFFFFF" android:pathData="M33,20.5 A5.5,5.5 0,1 1,32.99,20.5" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M78,22.5 A5.5,5.5 0,1 1,77.99,22.5" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M28,54.5 A5.5,5.5 0,1 1,27.99,54.5" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M78,55.5 A5.5,5.5 0,1 1,77.99,55.5" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M53,72.5 A5.5,5.5 0,1 1,52.99,72.5" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M54,43.5 A6.5,6.5 0,1 1,53.99,43.5" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M33,20.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M78,22.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M28,54.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M78,55.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M53,72.5 a5.5,5.5 0,1 0,0,11 a5.5,5.5 0,1 0,0,-11" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,43.5 a6.5,6.5 0,1 0,0,13 a6.5,6.5 0,1 0,0,-13" />
 </vector>
