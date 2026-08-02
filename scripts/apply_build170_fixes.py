@@ -105,54 +105,26 @@ def patch_main() -> None:
         'sshExec(ctx, host, port.toIntOrNull() ?: 22, user, password, command)',
         "SSH context call",
     )
-    signature_patterns = [
-        (
-            'suspend fun sshExec(host: String, port: Int, user: String, password: String, command: String): String = withContext(Dispatchers.IO) {',
-            'suspend fun sshExec(context: Context, host: String, port: Int, user: String, password: String, command: String): String = withContext(Dispatchers.IO) {',
-        ),
-        (
-            'suspend fun sshExec(host: String, port: Int, user: String, pass: String, command: String): String = withContext(Dispatchers.IO) {',
-            'suspend fun sshExec(context: Context, host: String, port: Int, user: String, pass: String, command: String): String = withContext(Dispatchers.IO) {',
-        ),
-    ]
-    if not any(new in text for _, new in signature_patterns):
-        for old, new in signature_patterns:
-            if old in text:
-                text = text.replace(old, new, 1)
-                break
-        else:
-            raise RuntimeError("SSH function signature pattern missing")
-
-    if 'ssh_known_hosts' not in text:
-        marker = '        val jsch = JSch()\n'
-        if marker not in text:
-            marker = '    val jsch = JSch()\n'
-        if marker not in text:
-            raise RuntimeError("JSch construction pattern missing")
-        indent = marker.split('val jsch')[0]
-        text = text.replace(
-            marker,
-            marker
-            + indent + 'val knownHosts = File(context.filesDir, "ssh_known_hosts").apply { if (!exists()) createNewFile() }\n'
-            + indent + 'jsch.setKnownHosts(knownHosts.absolutePath)\n',
-            1,
-        )
-    text = text.replace('setConfig("StrictHostKeyChecking", "no")', 'setConfig("StrictHostKeyChecking", "accept-new")')
-    text = text.replace('setConfig("StrictHostKeyChecking", "ask")', 'setConfig("StrictHostKeyChecking", "accept-new")')
-    weak_markers = (
-        "diffie-hellman-group1-sha1",
-        "3des-cbc",
-        "aes128-cbc",
-        "hmac-sha1",
-        "ssh-dss",
+    text = replace_once(
+        text,
+        'suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: String): String = withContext(Dispatchers.IO) {',
+        'suspend fun sshExec(context: Context, host: String, port: Int, user: String, pass: String, cmd: String): String = withContext(Dispatchers.IO) {',
+        "SSH function signature",
     )
-    text = "\n".join(
-        line
-        for line in text.splitlines()
-        if not ("setConfig" in line and any(marker in line for marker in weak_markers))
-    ) + "\n"
-    if 'StrictHostKeyChecking", "accept-new"' not in text:
-        raise RuntimeError("SSH strict host checking was not installed")
+    text = replace_once(
+        text,
+        '    val session = JSch().getSession(user, host, port); session.setPassword(pass)',
+        '    val jsch = JSch()\n'
+        '    val knownHosts = File(context.filesDir, "ssh_known_hosts").apply { if (!exists()) createNewFile() }\n'
+        '    jsch.setKnownHosts(knownHosts.absolutePath)\n'
+        '    val session = jsch.getSession(user, host, port); session.setPassword(pass)',
+        "SSH known hosts",
+    )
+    old_cfg = '    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="no"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256"; cfg["PubkeyAcceptedAlgorithms"]="+ssh-rsa,rsa-sha2-256,rsa-sha2-512"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["cipher.c2s"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)'
+    new_cfg = '    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="accept-new"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256,ssh-rsa"; cfg["PubkeyAcceptedAlgorithms"]="rsa-sha2-256,rsa-sha2-512,ssh-rsa"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256"; cfg["cipher.s2c"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["cipher.c2s"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)'
+    text = replace_once(text, old_cfg, new_cfg, "SSH secure algorithms")
+    if any(marker in text for marker in ("diffie-hellman-group1-sha1", "3des-cbc", "aes128-cbc", "hmac-sha1", 'StrictHostKeyChecking"]="no"')):
+        raise RuntimeError("weak SSH compatibility algorithms remain")
 
     path.write_text(text, encoding="utf-8")
 
