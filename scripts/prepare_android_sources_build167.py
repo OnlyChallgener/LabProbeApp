@@ -24,6 +24,8 @@ if build_code >= 170:
     names += ("apply_build170_fixes.py",)
 if build_code >= 171:
     names += ("apply_build171_regression_fixes.py",)
+if build_code >= 172:
+    names += ("apply_build172_agent_icon_fixes.py",)
 
 for name in names:
     try:
@@ -45,12 +47,15 @@ if build_code >= 170:
 
     verify_path = ROOT / "scripts/verify_build154_sources.py"
     verify_text = verify_path.read_text(encoding="utf-8")
-    expected_title = "图标与设备数据回归修复" if build_code >= 171 else "数据一致性与安全修复"
-    expected_print = (
-        "build171 offline authority and launcher safe-zone source state verified"
-        if build_code >= 171
-        else "build170 data consistency, security, and mapping source state verified"
-    )
+    if build_code >= 172:
+        expected_title = "Relay 更新与启动图标修复"
+        expected_print = "build172 Relay update coordinator and clean adaptive launcher source state verified"
+    elif build_code >= 171:
+        expected_title = "图标与设备数据回归修复"
+        expected_print = "build171 offline authority and launcher safe-zone source state verified"
+    else:
+        expected_title = "数据一致性与安全修复"
+        expected_print = "build170 data consistency, security, and mapping source state verified"
     replacements = {
         "require(GRADLE, 'versionCode = 169', 'versionName = \"0.10.27\"')":
             f"require(GRADLE, 'versionCode = {build_code}', 'versionName = \"{version_name}\"')",
