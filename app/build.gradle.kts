@@ -30,8 +30,8 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 170
-        versionName = "0.10.28"
+        versionCode = 171
+        versionName = "0.10.29"
     }
 
     signingConfigs {
