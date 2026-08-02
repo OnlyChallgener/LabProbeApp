@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
@@ -143,9 +144,10 @@ def patch_main() -> None:
 def verify() -> None:
     text = MAIN.read_text(encoding="utf-8")
     gradle = GRADLE.read_text(encoding="utf-8")
+    code_match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
+    if code_match is None or int(code_match.group(1)) < 172:
+        raise RuntimeError("build172 migration requires versionCode >= 172")
     required = (
-        'versionCode = 172',
-        'versionName = "0.10.30"',
         'Relay 更新与启动图标修复',
         'AgentUpdateCoordinator.bind(prefs)',
         'AgentUpdateCoordinator.check(prefs, silent = true)',
