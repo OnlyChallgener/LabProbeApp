@@ -10,7 +10,11 @@ import java.net.URI
  * access inside a home network.
  */
 fun validateHubTransportAddress(raw: String): String {
-    val normalized = normalizeHubAddressForDisplay(raw)
+    val trimmed = raw.trim().trimEnd('/')
+    val normalized = when {
+        trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+        else -> normalizeHubAddressForDisplay(trimmed)
+    }
     if (normalized.isBlank()) return normalized
     val uri = runCatching { URI(normalized) }.getOrElse { throw IllegalArgumentException("Hub 地址格式无效") }
     val scheme = uri.scheme?.lowercase().orEmpty()
