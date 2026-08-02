@@ -39,5 +39,24 @@ if build_code >= 170:
         main_text = main_text.replace(config_marker, semantic_marker + config_marker, 1)
         main_path.write_text(main_text, encoding="utf-8")
 
+    # The verifier has accumulated cross-version behavioral checks since build154.
+    # Keep those checks, but migrate its three release-specific markers in place.
+    verify_path = ROOT / "scripts/verify_build154_sources.py"
+    verify_text = verify_path.read_text(encoding="utf-8")
+    replacements = {
+        "require(GRADLE, 'versionCode = 169', 'versionName = \"0.10.27\"')":
+            "require(GRADLE, 'versionCode = 170', 'versionName = \"0.10.28\"')",
+        "        '图标与终端状态修复',": "        '数据一致性与安全修复',",
+        "print('build169 icon, offline-device, and navigation source state verified')":
+            "print('build170 data consistency, security, and mapping source state verified')",
+    }
+    for old, new in replacements.items():
+        if new in verify_text:
+            continue
+        if old not in verify_text:
+            raise RuntimeError(f"build170 verifier marker missing: {old}")
+        verify_text = verify_text.replace(old, new, 1)
+    verify_path.write_text(verify_text, encoding="utf-8")
+
 if not names:
     print(f"build{build_code} sources require no prepare-time migration")
