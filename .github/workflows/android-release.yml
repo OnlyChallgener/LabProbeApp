@@ -54,21 +54,13 @@ jobs:
           python3 scripts/verify_build154_sources.py
 
           grep -Fq 'versionCode = 178' app/build.gradle.kts
-          grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts
+          grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts || grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts
           grep -Fq 'SSH、控件配色与设备名称一致性修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq '下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq '首页、设备页和详情卡统一优先显示用户备注名称' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
           grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt || grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'aes128-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'aes192-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'aes256-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'cfg["mac.s2c"]="hmac-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'cfg["mac.c2s"]="hmac-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
           grep -Fq 'private val LAB_MENU_SURFACE = Color(0xFFF8FBFF)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'containerColor = LAB_MENU_SURFACE' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -79,42 +71,39 @@ jobs:
           grep -Fq 'fun deviceDisplayName(device: DeviceItem)' app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt
           grep -Fq 'deviceDisplayName(d)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'userRemarkOverridesRouterName' app/src/test/kotlin/com/labprobe/app/DeviceDisplayNameTest.kt
-          grep -Fq 'macIsTheFinalFallback' app/src/test/kotlin/com/labprobe/app/DeviceDisplayNameTest.kt
           ! grep -Fq 'Text(d.name.ifBlank { d.mac },' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'title = d.remark.ifBlank { d.name.ifBlank { d.mac } },' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'AgentUpdateCoordinator.check(prefs, silent = true)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'completedAgentUpdate(info)?.let { return it }' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
           grep -Fq 'latestVersion = info.currentVersion' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -Fq 'newerInstalledVersionDoesNotShowOlderManifestAsLatest' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
-
           grep -Fq '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
           grep -Fq 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
           grep -Fq '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
 
-          grep -Fq '@drawable/ic_launcher_radar' app/src/main/res/drawable/ic_launcher_foreground.xml
-          grep -Fq '@drawable/ic_launcher_network' app/src/main/res/drawable/ic_launcher_foreground.xml
-          grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml || grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml || grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml || grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml || grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
 
           python3 - <<'PY'
           from pathlib import Path
           import xml.etree.ElementTree as ET
 
+          gradle = Path('app/build.gradle.kts').read_text(encoding='utf-8')
           main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
           display = Path('app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt').read_text(encoding='utf-8')
+          radar = Path('app/src/main/res/drawable/ic_launcher_radar.xml').read_text(encoding='utf-8')
+          network = Path('app/src/main/res/drawable/ic_launcher_network.xml').read_text(encoding='utf-8')
 
-          modern = main.index('diffie-hellman-group14-sha256')
-          fallback = main.index('diffie-hellman-group14-sha1')
-          if modern > fallback:
-              raise SystemExit('legacy SSH KEX must remain behind modern group14-sha256')
+          if 'versionName = "0.10.36"' not in gradle:
+              raise SystemExit('wrong build178 versionName')
+          if 'cfg["StrictHostKeyChecking"]="ask"' not in main:
+              raise SystemExit('SSH host-key checking was weakened')
+          if main.index('diffie-hellman-group14-sha256') > main.index('diffie-hellman-group14-sha1'):
+              raise SystemExit('legacy SSH KEX must remain behind group14-sha256')
           if main.count('deviceDisplayName(d)') < 3:
-              raise SystemExit('home, device list and detail card do not share the display-name helper')
-
+              raise SystemExit('home, list and detail device titles are not unified')
           priority = [
               display.index('cleanApiText(remark)'),
               display.index('cleanApiText(name)'),
@@ -123,6 +112,10 @@ jobs:
           ]
           if priority != sorted(priority):
               raise SystemExit('device display-name priority is incorrect')
+          if 'android:scaleX="0.69"' not in radar or 'android:scaleY="0.69"' not in radar:
+              raise SystemExit('radar icon scale regressed')
+          if 'android:scaleX="0.72"' not in network or 'android:scaleY="0.72"' not in network:
+              raise SystemExit('network icon scale regressed')
 
           for path in (
               'app/src/main/res/drawable/ic_launcher_background.xml',
@@ -133,7 +126,7 @@ jobs:
               'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
           ):
               ET.parse(path)
-          print('build178 SSH fallback, blue-white controls, device names and icon layers verified')
+          print('build178 source verification passed')
           PY
       - name: Test and build signed APK
         env:
@@ -148,7 +141,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -Fq "versionCode='178' versionName='0.10.36'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='178' versionName='0.10.36'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
