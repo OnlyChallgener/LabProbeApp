@@ -83,7 +83,14 @@ object AgentUpdateCoordinator {
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Throwable) {
-                    publishError(prefs, friendlyAgentError(error.message, update = false))
+                    publishError(
+                        prefs,
+                        agentUpdateErrorMessage(
+                            raw = error.message,
+                            update = false,
+                            commandAccepted = false,
+                        ),
+                    )
                 }
             }
         }
@@ -99,15 +106,24 @@ object AgentUpdateCoordinator {
                     busy = true,
                     message = "正在向 Relay 下发更新…",
                 )
+                var commandAccepted = false
                 try {
                     val api = HubApi(prefs)
                     api.requestAgentUpdate()
+                    commandAccepted = true
                     val result = pollUpdate(api)
                     publish(prefs, result)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Throwable) {
-                    publishError(prefs, friendlyAgentError(error.message, update = true))
+                    publishError(
+                        prefs,
+                        agentUpdateErrorMessage(
+                            raw = error.message,
+                            update = true,
+                            commandAccepted = commandAccepted,
+                        ),
+                    )
                 }
             }
         }
@@ -159,19 +175,14 @@ object AgentUpdateCoordinator {
     private suspend fun pollUpdate(api: HubApi): AgentUpdateInfo {
         var info = api.getAgentUpdateStatus()
         repeat(120) {
+            completedAgentUpdate(info)?.let { return it }
             if (info.state.equals("failed", ignoreCase = true)) {
                 error(info.message.ifBlank { "Relay 更新任务失败" })
-            }
-            if (agentVersionAtLeast(info.currentVersion, info.latestVersion)) {
-                return info.copy(
-                    updateAvailable = false,
-                    state = "completed",
-                    message = "Relay 已更新到 ${info.currentVersion}",
-                )
             }
             delay(1_000L)
             info = api.getAgentUpdateStatus()
         }
+        completedAgentUpdate(info)?.let { return it }
         return info.copy(
             message = "更新指令已下发，正在等待 Relay 重新上报版本",
             state = if (info.state == "failed") "failed" else "waiting_report",
@@ -207,6 +218,15 @@ object AgentUpdateCoordinator {
         _state.value = _state.value.copy(message = message, busy = false)
         prefs.agentUpdateMessage = message
     }
+}
+
+internal fun completedAgentUpdate(info: AgentUpdateInfo): AgentUpdateInfo? {
+    if (!agentVersionAtLeast(info.currentVersion, info.latestVersion)) return null
+    return info.copy(
+        updateAvailable = false,
+        state = "completed",
+        message = "Relay 已更新到 ${info.currentVersion}",
+    )
 }
 
 internal fun agentVersionAtLeast(current: String, latest: String): Boolean {
@@ -256,7 +276,11 @@ private fun parseStoredAgentInfo(raw: String): AgentUpdateInfo? {
     }.getOrNull()
 }
 
-private fun friendlyAgentError(raw: String?, update: Boolean): String {
+internal fun agentUpdateErrorMessage(
+    raw: String?,
+    update: Boolean,
+    commandAccepted: Boolean,
+): String {
     val text = raw.orEmpty().trim()
     val lower = text.lowercase()
     val prefix = if (update) "更新下发失败" else "版本检查失败"
@@ -265,10 +289,10 @@ private fun friendlyAgentError(raw: String?, update: Boolean): String {
         "remembercoroutinescope" in lower || "left the composition" in lower ->
             "更新任务已转入后台继续执行"
         "timeout" in lower || "timed out" in lower ->
-            if (update) {
-                "更新指令已下发，等待 Relay 重新上报"
-            } else {
-                "版本检查超时，已保留上次结果"
+            when {
+                !update -> "版本检查超时，已保留上次结果"
+                commandAccepted -> "更新指令已下发，等待 Relay 重新上报"
+                else -> "更新请求超时，尚未确认 Hub 已接收指令"
             }
         "502" in lower || "<!doctype" in lower || "<html" in lower ->
             "更新源暂不可用，已保留上次版本信息"
