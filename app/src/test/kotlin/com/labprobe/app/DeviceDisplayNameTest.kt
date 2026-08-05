@@ -31,8 +31,8 @@ class DeviceDisplayNameTest {
     @Test
     fun macIsTheFinalFallback() {
         assertEquals(
-            "24:1A:E6:BB:16:D9",
-            deviceDisplayName("", "", "", "24:1a:e6:bb:16:d9")
+            "24:1a:e6:bb:16:d9",
+            deviceDisplayName("", "", "", "24:1A:E6:BB:16:D9")
         )
     }
 }
