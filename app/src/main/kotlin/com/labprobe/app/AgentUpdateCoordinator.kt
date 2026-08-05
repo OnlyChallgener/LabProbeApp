@@ -48,6 +48,7 @@ object AgentUpdateCoordinator {
         monitorJob?.cancel()
 
         val stored = parseStoredAgentInfo(prefs.agentUpdateInfoJson)
+            ?.let(::normalizeAgentVersionInfo)
         _state.value = AgentUpdateUiState(
             info = stored,
             message = prefs.agentUpdateMessage.ifBlank { "等待检查 Rust Agent 版本" },
@@ -183,23 +184,24 @@ object AgentUpdateCoordinator {
             info = api.getAgentUpdateStatus()
         }
         completedAgentUpdate(info)?.let { return it }
-        return info.copy(
+        return normalizeAgentVersionInfo(info).copy(
             message = "更新指令已下发，正在等待 Relay 重新上报版本",
             state = if (info.state == "failed") "failed" else "waiting_report",
         )
     }
 
     private fun normalizeSettledInfo(info: AgentUpdateInfo): AgentUpdateInfo {
-        return if (agentVersionAtLeast(info.currentVersion, info.latestVersion)) {
-            info.copy(
+        val normalized = normalizeAgentVersionInfo(info)
+        return if (agentVersionAtLeast(normalized.currentVersion, normalized.latestVersion)) {
+            normalized.copy(
                 updateAvailable = false,
-                message = "当前已是最新版本 ${info.currentVersion}",
-                state = if (info.state == "failed") "idle" else info.state,
+                message = "当前已是最新版本 ${normalized.currentVersion}",
+                state = if (normalized.state == "failed") "idle" else normalized.state,
             )
         } else {
-            info.copy(message = info.message.ifBlank {
-                if (info.updateAvailable) {
-                    "发现 Relay 新版本 ${info.latestVersion}"
+            normalized.copy(message = normalized.message.ifBlank {
+                if (normalized.updateAvailable) {
+                    "发现 Relay 新版本 ${normalized.latestVersion}"
                 } else {
                     "Relay 版本状态已刷新"
                 }
@@ -208,9 +210,10 @@ object AgentUpdateCoordinator {
     }
 
     private fun publish(prefs: AppPrefs, info: AgentUpdateInfo) {
-        val message = info.message.ifBlank { "Relay 版本状态已刷新" }
-        _state.value = AgentUpdateUiState(info = info, message = message, busy = false)
-        prefs.agentUpdateInfoJson = info.toCoordinatorJson()
+        val normalized = normalizeAgentVersionInfo(info)
+        val message = normalized.message.ifBlank { "Relay 版本状态已刷新" }
+        _state.value = AgentUpdateUiState(info = normalized, message = message, busy = false)
+        prefs.agentUpdateInfoJson = normalized.toCoordinatorJson()
         prefs.agentUpdateMessage = message
     }
 
@@ -220,12 +223,26 @@ object AgentUpdateCoordinator {
     }
 }
 
-internal fun completedAgentUpdate(info: AgentUpdateInfo): AgentUpdateInfo? {
-    if (!agentVersionAtLeast(info.currentVersion, info.latestVersion)) return null
+/**
+ * A stale release manifest must never make the UI advertise a downgrade.
+ * When the router reports a version equal to or newer than the manifest,
+ * the installed version is also the effective latest version for display.
+ */
+internal fun normalizeAgentVersionInfo(info: AgentUpdateInfo): AgentUpdateInfo {
+    if (!agentVersionAtLeast(info.currentVersion, info.latestVersion)) return info
     return info.copy(
+        latestVersion = info.currentVersion,
+        updateAvailable = false,
+    )
+}
+
+internal fun completedAgentUpdate(info: AgentUpdateInfo): AgentUpdateInfo? {
+    val normalized = normalizeAgentVersionInfo(info)
+    if (!agentVersionAtLeast(normalized.currentVersion, normalized.latestVersion)) return null
+    return normalized.copy(
         updateAvailable = false,
         state = "completed",
-        message = "Relay 已更新到 ${info.currentVersion}",
+        message = "Relay 已更新到 ${normalized.currentVersion}",
     )
 }
 
