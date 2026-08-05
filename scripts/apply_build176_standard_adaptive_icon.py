@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
@@ -45,9 +46,11 @@ def verify() -> None:
     network = NETWORK.read_text(encoding="utf-8")
     background = BACKGROUND.read_text(encoding="utf-8")
 
+    code_match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
+    if code_match is None or int(code_match.group(1)) < 176:
+        raise RuntimeError("build176 migration requires versionCode >= 176")
+
     required = (
-        (gradle, 'versionCode = 176'),
-        (gradle, 'versionName = "0.10.34"'),
         (main, '标准 Adaptive Icon 分层修复'),
         (main, '启动图标改为标准 Adaptive Icon 分层，渐变背景、雷达装饰和网络主体独立'),
         (main, '保留原图形与颜色，四周有可见底色且节点不再贴近桌面遮罩'),
