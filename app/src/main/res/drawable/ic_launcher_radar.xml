@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="2045"
+    android:viewportHeight="2044">
+
+    <!-- Decorative radar geometry from the original source artwork.
+         It is allowed closer to the adaptive mask than the primary network
+         mark, while still leaving visible gradient around every edge. -->
+    <group
+        android:pivotX="1022.5"
+        android:pivotY="1022"
+        android:scaleX="0.77"
+        android:scaleY="0.77">
+        <group
+            android:translateX="-1177"
+            android:translateY="-215">
+            <path
+                android:pathData="M1364 1237.5C1364 778.828 1735.83 407 2194.5 407 2653.17 407 3025 778.828 3025 1237.5 3025 1696.17 2653.17 2068 2194.5 2068 1735.83 2068 1364 1696.17 1364 1237.5ZM1434.14 1237.5C1434.14 1657.43 1774.57 1997.85 2194.5 1997.85 2614.43 1997.85 2954.86 1657.43 2954.86 1237.5 2954.86 817.568 2614.43 477.146 2194.5 477.146 1774.57 477.146 1434.14 817.568 1434.14 1237.5Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.415686"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2194.95 674C2409.08 674 2595.33 793.245 2690.83 968.902L2702.21 992.511 2680.33 998.621 2671.14 979.566C2579.44 810.882 2400.58 696.371 2194.95 696.371 1895.85 696.371 1653.39 938.643 1653.39 1237.5 1653.39 1536.36 1895.85 1778.63 2194.95 1778.63 2437.96 1778.63 2643.59 1618.69 2712.16 1398.42L2719.42 1370.21 2743 1368.31 2733.54 1405.07C2662.14 1634.45 2448.01 1801 2194.95 1801 1883.49 1801 1631 1548.71 1631 1237.5 1631 926.288 1883.49 674 2194.95 674Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.301961"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M1854 1240.5C1854 1050.79 2007.57 897 2197 897 2386.43 897 2540 1050.79 2540 1240.5 2540 1430.21 2386.43 1584 2197 1584 2007.57 1584 1854 1430.21 1854 1240.5ZM1874.46 1240.5C1874.46 1418.91 2018.87 1563.54 2197 1563.54 2375.13 1563.54 2519.54 1418.91 2519.54 1240.5 2519.54 1062.09 2375.13 917.463 2197 917.463 2018.87 917.463 1874.46 1062.09 1874.46 1240.5Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.168627"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2700.36 1028.11C2698.99 1014.17 2709.19 1001.77 2723.13 1000.41 2737.07 999.047 2749.47 1009.24 2750.83 1023.18 2752.19 1037.12 2741.99 1049.52 2728.06 1050.88 2714.12 1052.24 2701.72 1042.05 2700.36 1028.11Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.301961"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2707.91 1105.56C2706.55 1091.62 2716.75 1079.22 2730.69 1077.86 2744.63 1076.5 2757.03 1086.69 2758.39 1100.63 2759.75 1114.57 2749.55 1126.97 2735.62 1128.33 2721.68 1129.69 2709.27 1119.5 2707.91 1105.56Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.301961"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2715.47 1183.01C2714.11 1169.07 2724.31 1156.67 2738.25 1155.31 2752.19 1153.95 2764.59 1164.15 2765.95 1178.08 2767.31 1192.02 2757.11 1204.42 2743.17 1205.78 2729.24 1207.15 2716.83 1196.95 2715.47 1183.01Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.301961"
+                android:fillType="evenOdd" />
+        </group>
+    </group>
+</vector>
