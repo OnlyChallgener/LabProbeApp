@@ -28,6 +28,8 @@ if build_code >= 172:
     names += ("apply_build172_agent_icon_fixes.py",)
 if build_code >= 173:
     names += ("apply_build173_icon_fidelity_fix.py",)
+if build_code >= 174:
+    names += ("apply_build174_stability_fixes.py",)
 
 for name in names:
     try:
@@ -49,7 +51,10 @@ if build_code >= 170:
 
     verify_path = ROOT / "scripts/verify_build154_sources.py"
     verify_text = verify_path.read_text(encoding="utf-8")
-    if build_code >= 173:
+    if build_code >= 174:
+        expected_title = "图标显示与 Relay 更新稳定性修复"
+        expected_print = "build174 launcher visibility and Relay update stability verified"
+    elif build_code >= 173:
         expected_title = "原始启动图标细节还原"
         expected_print = "build173 original SVG launcher details and adaptive safe-zone source state verified"
     elif build_code >= 172:
