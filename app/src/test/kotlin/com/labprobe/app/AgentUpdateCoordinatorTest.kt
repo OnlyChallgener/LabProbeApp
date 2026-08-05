@@ -30,6 +30,24 @@ class AgentUpdateCoordinatorTest {
     }
 
     @Test
+    fun newerInstalledVersionDoesNotShowOlderManifestAsLatest() {
+        val normalized = normalizeAgentVersionInfo(
+            AgentUpdateInfo(
+                currentVersion = "0.2.15",
+                latestVersion = "0.2.14",
+                updateAvailable = true,
+                state = "idle",
+                message = "旧清单",
+                lastSeenAt = "2026-08-05 13:00:11",
+            ),
+        )
+
+        assertEquals("0.2.15", normalized.currentVersion)
+        assertEquals("0.2.15", normalized.latestVersion)
+        assertFalse(normalized.updateAvailable)
+    }
+
+    @Test
     fun reportedCurrentVersionOverridesStaleFailedTaskState() {
         val completed = completedAgentUpdate(
             AgentUpdateInfo(
