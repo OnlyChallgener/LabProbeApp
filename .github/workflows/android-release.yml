@@ -2,6 +2,11 @@ name: Android Release APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - build163
+    paths:
+      - '.github/workflows/android-release.yml'
 
 concurrency:
   group: android-release-${{ github.ref }}
@@ -12,6 +17,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-build174]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,39 +39,75 @@ jobs:
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare and verify build173
+      - name: Prepare and verify build174
         run: |
-          python3 -m py_compile scripts/apply_build172_agent_icon_fixes.py scripts/apply_build173_icon_fidelity_fix.py
+          python3 -m py_compile \
+            scripts/apply_build172_agent_icon_fixes.py \
+            scripts/apply_build173_icon_fidelity_fix.py \
+            scripts/apply_build174_stability_fixes.py
           python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
-          grep -q 'versionCode = 173' app/build.gradle.kts
-          grep -q 'versionName = "0.10.31"' app/build.gradle.kts
-          grep -q '原始启动图标细节还原' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '前景缩至 0.74 自适应安全区' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+
+          grep -q 'versionCode = 174' app/build.gradle.kts
+          grep -q 'versionName = "0.10.32"' app/build.gradle.kts
+          grep -q '图标显示与 Relay 更新稳定性修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '图标前景调整至 0.82，保留完整细节并提升桌面辨识度' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '区分更新请求超时和已下发后的状态轮询超时' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+
           grep -q 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'AgentUpdateCoordinator.check(prefs, silent = true)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'AgentUpdateCoordinator.state.collectAsState()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'var cleanupBusy by remember' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'val agentBusy = agentUpdateUi.busy || cleanupBusy' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'onClick = { AgentUpdateCoordinator.update(prefs) }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+
+          grep -q 'SupervisorJob() + Dispatchers.Main.immediate' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
           grep -q 'STATUS_REFRESH_INTERVAL_MS = 15_000L' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'private var monitorJob: Job?' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
           grep -q 'repeat(120)' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'agentVersionAtLeast' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'var commandAccepted = false' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'commandAccepted = true' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'completedAgentUpdate(info)?.let { return it }' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q '更新请求超时，尚未确认 Hub 已接收指令' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q '更新指令已下发，等待 Relay 重新上报' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -q 'reportedCurrentVersionOverridesStaleFailedTaskState' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
+          grep -q 'dispatchTimeoutDoesNotClaimCommandWasAccepted' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
+          grep -q 'pollingTimeoutKeepsAcceptedCommandMessage' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
+
           grep -q '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
+          ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -q '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
           grep -q '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+
           grep -q '@drawable/ic_launcher_background' app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           grep -q '@drawable/ic_launcher_background' app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
           grep -q '<layer-list' app/src/main/res/drawable/ic_launcher_foreground.xml
           ! grep -q 'android:insetLeft' app/src/main/res/drawable/ic_launcher_foreground.xml
           grep -q 'android:viewportWidth="2045"' app/src/main/res/drawable/ic_launcher_logo.xml
           grep -q 'android:viewportHeight="2044"' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'android:scaleX="0.74"' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'android:scaleY="0.74"' app/src/main/res/drawable/ic_launcher_logo.xml
+          grep -q 'android:scaleX="0.82"' app/src/main/res/drawable/ic_launcher_logo.xml
+          grep -q 'android:scaleY="0.82"' app/src/main/res/drawable/ic_launcher_logo.xml
           grep -q 'M1364 1237.5C1364 778.828' app/src/main/res/drawable/ic_launcher_logo.xml
           grep -q 'M2700.36 1028.11C2698.99 1014.17' app/src/main/res/drawable/ic_launcher_logo.xml
           grep -q 'M2715.47 1183.01C2714.11 1169.07' app/src/main/res/drawable/ic_launcher_logo.xml
-          ! grep -q 'android:scaleX="0.84"' app/src/main/res/drawable/ic_launcher_logo.xml
-          ! grep -q 'android:strokeWidth="5.2"' app/src/main/res/drawable/ic_launcher_logo.xml
+          ! grep -q 'android:scaleX="0.74"' app/src/main/res/drawable/ic_launcher_logo.xml
           grep -q 'M0,0H108V108H0Z' app/src/main/res/drawable/ic_launcher_background.xml
+
           python3 - <<'PY'
+          from pathlib import Path
           import xml.etree.ElementTree as ET
+
+          coordinator = Path('app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt').read_text(encoding='utf-8')
+          poll_start = coordinator.index('private suspend fun pollUpdate')
+          poll_end = coordinator.index('private fun normalizeSettledInfo', poll_start)
+          poll = coordinator[poll_start:poll_end]
+          if poll.index('completedAgentUpdate(info)?.let { return it }') > poll.index('if (info.state.equals("failed"'):
+              raise SystemExit('reported version must be checked before stale failed state')
+
           for path in (
               'app/src/main/res/drawable/ic_launcher_logo.xml',
               'app/src/main/res/drawable/ic_launcher_foreground.xml',
@@ -74,7 +116,7 @@ jobs:
               'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
           ):
               ET.parse(path)
-          print('launcher XML resources parsed')
+          print('build174 source order and launcher XML verified')
           PY
       - name: Test and build signed APK
         env:
@@ -89,28 +131,35 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='173' versionName='0.10.31'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='174' versionName='0.10.32'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
           from pathlib import Path
-          apk = Path("app/build/outputs/apk/release/app-release.apk")
+
+          apk = Path('app/build/outputs/apk/release/app-release.apk')
           with zipfile.ZipFile(apk) as archive:
-              dex = b"".join(archive.read(name) for name in archive.namelist() if name.startswith("classes") and name.endswith(".dex"))
+              dex = b''.join(
+                  archive.read(name)
+                  for name in archive.namelist()
+                  if name.startswith('classes') and name.endswith('.dex')
+              )
           for text in (
-              "原始启动图标细节还原",
-              "启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点",
-              "前景缩至 0.74 自适应安全区，圆形和圆角方形桌面不再裁切",
-              "Relay 版本检查与更新任务移到应用级作用域，离开页面仍会继续",
-              "更新后持续监测 Agent 心跳，版本号和最后上报时间自动刷新",
-              "Relay 已更新到",
-              "当前已是最新版本",
+              '图标显示与 Relay 更新稳定性修复',
+              '图标前景调整至 0.82，保留完整细节并提升桌面辨识度',
+              'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报',
+              '区分更新请求超时和已下发后的状态轮询超时',
+              '更新请求超时，尚未确认 Hub 已接收指令',
+              '更新指令已下发，等待 Relay 重新上报',
+              'Relay 已更新到',
+              '当前已是最新版本',
+              '运行时间同步中',
           ):
               if text.encode() not in dex:
-                  raise SystemExit(f"missing signed APK content: {text}")
-          print("signed build173 APK verified")
+                  raise SystemExit(f'missing signed APK content: {text}')
+          print('signed build174 APK verified')
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.31-build173-release-apk
+          name: LabProbe-v0.10.32-build174-release-apk
           path: app/build/outputs/apk/release/app-release.apk
