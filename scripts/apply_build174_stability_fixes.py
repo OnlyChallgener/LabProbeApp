@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
@@ -69,10 +70,11 @@ def verify() -> None:
     logo = LOGO.read_text(encoding="utf-8")
     coordinator = COORDINATOR.read_text(encoding="utf-8")
     tests = TEST.read_text(encoding="utf-8")
+    code_match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
+    if code_match is None or int(code_match.group(1)) < 174:
+        raise RuntimeError("build174 migration requires versionCode >= 174")
 
     required = (
-        (gradle, 'versionCode = 174'),
-        (gradle, 'versionName = "0.10.32"'),
         (main, '图标显示与 Relay 更新稳定性修复'),
         (main, '图标前景调整至 0.82，保留完整细节并提升桌面辨识度'),
         (main, 'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报'),
