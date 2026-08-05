@@ -6,13 +6,13 @@
     android:viewportHeight="2044">
 
     <!-- Decorative radar geometry from the original source artwork.
-         It is allowed closer to the adaptive mask than the primary network
-         mark, while still leaving visible gradient around every edge. -->
+         Keep it centered with generous visible gradient around the mark,
+         matching the supplied launcher reference instead of filling the mask. -->
     <group
         android:pivotX="1022.5"
         android:pivotY="1022"
-        android:scaleX="0.77"
-        android:scaleY="0.77">
+        android:scaleX="0.69"
+        android:scaleY="0.69">
         <group
             android:translateX="-1177"
             android:translateY="-215">
