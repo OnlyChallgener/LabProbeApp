@@ -1,5 +1,5 @@
 name: Android Release APK
-# build177 one-time release trigger; normal releases remain manually available.
+# build178 one-time release trigger; normal releases remain manually available.
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-build177]')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-build178]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare and verify build177
+      - name: Prepare and verify build178
         run: |
           python3 -m py_compile \
             scripts/apply_build172_agent_icon_fixes.py \
@@ -48,95 +48,81 @@ jobs:
             scripts/apply_build174_stability_fixes.py \
             scripts/apply_build175_icon_version_display_fix.py \
             scripts/apply_build176_standard_adaptive_icon.py \
-            scripts/apply_build177_centered_icon_spacing.py
+            scripts/apply_build177_centered_icon_spacing.py \
+            scripts/apply_build178_ssh_color_device_name_fixes.py
           python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
 
-          grep -q 'versionCode = 177' app/build.gradle.kts
-          grep -q 'versionName = "0.10.35"' app/build.gradle.kts
-          grep -q '启动图标中心比例修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '雷达装饰层缩至 0.69，中心图案四周保留更充足的渐变底色' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '节点与连线层缩至 0.72，保持原图形、颜色和完整路径不变' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '已安装版本高于旧更新清单时，最新版本不再倒退显示' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '区分更新请求超时和已下发后的状态轮询超时' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'versionCode = 178' app/build.gradle.kts
+          grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts
+          grep -Fq 'SSH、控件配色与设备名称一致性修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq '下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq '首页、设备页和详情卡统一优先显示用户备注名称' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
-          grep -q 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'AgentUpdateCoordinator.check(prefs, silent = true)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'AgentUpdateCoordinator.state.collectAsState()' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'var cleanupBusy by remember' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'val agentBusy = agentUpdateUi.busy || cleanupBusy' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'onClick = { AgentUpdateCoordinator.update(prefs) }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'aes128-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'aes192-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'aes256-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'cfg["mac.s2c"]="hmac-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'cfg["mac.c2s"]="hmac-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
-          grep -q 'SupervisorJob() + Dispatchers.Main.immediate' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'STATUS_REFRESH_INTERVAL_MS = 15_000L' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'private var monitorJob: Job?' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'repeat(120)' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'var commandAccepted = false' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'commandAccepted = true' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'completedAgentUpdate(info)?.let { return it }' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'internal fun normalizeAgentVersionInfo' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'latestVersion = info.currentVersion' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'val normalized = normalizeAgentVersionInfo(info)' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q '更新请求超时，尚未确认 Hub 已接收指令' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q '更新指令已下发，等待 Relay 重新上报' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -q 'newerInstalledVersionDoesNotShowOlderManifestAsLatest' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
-          grep -q 'reportedCurrentVersionOverridesStaleFailedTaskState' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
-          grep -q 'dispatchTimeoutDoesNotClaimCommandWasAccepted' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
-          grep -q 'pollingTimeoutKeepsAcceptedCommandMessage' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
+          grep -Fq 'private val LAB_MENU_SURFACE = Color(0xFFF8FBFF)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'containerColor = LAB_MENU_SURFACE' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'selectedContainerColor = Color(0xFFE8F1FF)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'selectedLabelColor = Color(0xFF2563EB)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'colors = natChipColors' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
-          grep -q '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
-          ! grep -q 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -q '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
-          grep -q '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+          grep -Fq 'fun deviceDisplayName(device: DeviceItem)' app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt
+          grep -Fq 'deviceDisplayName(d)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'userRemarkOverridesRouterName' app/src/test/kotlin/com/labprobe/app/DeviceDisplayNameTest.kt
+          grep -Fq 'macIsTheFinalFallback' app/src/test/kotlin/com/labprobe/app/DeviceDisplayNameTest.kt
+          ! grep -Fq 'Text(d.name.ifBlank { d.mac },' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'title = d.remark.ifBlank { d.name.ifBlank { d.mac } },' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
-          grep -q '@drawable/ic_launcher_background' app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          grep -q '@drawable/ic_launcher_background' app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-          grep -q '@drawable/ic_launcher_foreground' app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          grep -q '@drawable/ic_launcher_foreground' app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-          grep -q '@drawable/ic_launcher_radar' app/src/main/res/drawable/ic_launcher_foreground.xml
-          grep -q '@drawable/ic_launcher_network' app/src/main/res/drawable/ic_launcher_foreground.xml
-          ! grep -q '@drawable/ic_launcher_logo' app/src/main/res/drawable/ic_launcher_foreground.xml
-          grep -q 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -q 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -q 'M1364 1237.5C1364 778.828' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -q 'M2700.36 1028.11C2698.99 1014.17' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -q 'M2715.47 1183.01C2714.11 1169.07' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -q 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -q 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -q 'M2117.87 1136.12 2803.19 666.997' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -q 'M2753 685C2753 618.174' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -q 'M2058 1171C2058 1093.68' app/src/main/res/drawable/ic_launcher_network.xml
-          ! grep -q 'android:scaleX="0.77"' app/src/main/res/drawable/ic_launcher_radar.xml
-          ! grep -q 'android:scaleX="0.80"' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -q 'M0,0H108V108H0Z' app/src/main/res/drawable/ic_launcher_background.xml
-          grep -q '#FF087CAD' app/src/main/res/drawable/ic_launcher_background.xml
-          grep -q '#FF65DDD3' app/src/main/res/drawable/ic_launcher_background.xml
+          grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'AgentUpdateCoordinator.check(prefs, silent = true)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'completedAgentUpdate(info)?.let { return it }' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -Fq 'latestVersion = info.currentVersion' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
+          grep -Fq 'newerInstalledVersionDoesNotShowOlderManifestAsLatest' app/src/test/kotlin/com/labprobe/app/AgentUpdateCoordinatorTest.kt
+
+          grep -Fq '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
+          grep -Fq 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
+          grep -Fq '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+
+          grep -Fq '@drawable/ic_launcher_radar' app/src/main/res/drawable/ic_launcher_foreground.xml
+          grep -Fq '@drawable/ic_launcher_network' app/src/main/res/drawable/ic_launcher_foreground.xml
+          grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
 
           python3 - <<'PY'
           from pathlib import Path
           import xml.etree.ElementTree as ET
 
-          coordinator = Path('app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt').read_text(encoding='utf-8')
-          poll_start = coordinator.index('private suspend fun pollUpdate')
-          poll_end = coordinator.index('private fun normalizeSettledInfo', poll_start)
-          poll = coordinator[poll_start:poll_end]
-          if poll.index('completedAgentUpdate(info)?.let { return it }') > poll.index('if (info.state.equals("failed"'):
-              raise SystemExit('reported version must be checked before stale failed state')
+          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
+          display = Path('app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt').read_text(encoding='utf-8')
 
-          normalize_start = coordinator.index('internal fun normalizeAgentVersionInfo')
-          normalize_end = coordinator.index('internal fun completedAgentUpdate', normalize_start)
-          normalize = coordinator[normalize_start:normalize_end]
-          if 'latestVersion = info.currentVersion' not in normalize:
-              raise SystemExit('stale manifest must not display below installed version')
+          modern = main.index('diffie-hellman-group14-sha256')
+          fallback = main.index('diffie-hellman-group14-sha1')
+          if modern > fallback:
+              raise SystemExit('legacy SSH KEX must remain behind modern group14-sha256')
+          if main.count('deviceDisplayName(d)') < 3:
+              raise SystemExit('home, device list and detail card do not share the display-name helper')
 
-          foreground = Path('app/src/main/res/drawable/ic_launcher_foreground.xml').read_text(encoding='utf-8')
-          if '@drawable/ic_launcher_logo' in foreground:
-              raise SystemExit('single-layer launcher foreground unexpectedly restored')
-          if foreground.count('<item ') != 2:
-              raise SystemExit('adaptive foreground must contain exactly radar and network layers')
+          priority = [
+              display.index('cleanApiText(remark)'),
+              display.index('cleanApiText(name)'),
+              display.index('cleanApiText(hostName)'),
+              display.index('cleanMac(mac)'),
+          ]
+          if priority != sorted(priority):
+              raise SystemExit('device display-name priority is incorrect')
 
           for path in (
               'app/src/main/res/drawable/ic_launcher_background.xml',
@@ -147,7 +133,7 @@ jobs:
               'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
           ):
               ET.parse(path)
-          print('build177 centered icon spacing and Relay state verified')
+          print('build178 SSH fallback, blue-white controls, device names and icon layers verified')
           PY
       - name: Test and build signed APK
         env:
@@ -162,7 +148,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='177' versionName='0.10.35'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -Fq "versionCode='178' versionName='0.10.36'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
@@ -176,23 +162,21 @@ jobs:
                   if name.startswith('classes') and name.endswith('.dex')
               )
           for text in (
-              '启动图标中心比例修复',
-              '雷达装饰层缩至 0.69，中心图案四周保留更充足的渐变底色',
-              '节点与连线层缩至 0.72，保持原图形、颜色和完整路径不变',
+              'SSH、控件配色与设备名称一致性修复',
+              'SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法',
+              '下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色',
+              '首页、设备页和详情卡统一优先显示用户备注名称',
+              'diffie-hellman-group14-sha1',
               '已安装版本高于旧更新清单时，最新版本不再倒退显示',
-              'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报',
-              '区分更新请求超时和已下发后的状态轮询超时',
-              '更新请求超时，尚未确认 Hub 已接收指令',
-              '更新指令已下发，等待 Relay 重新上报',
-              'Relay 已更新到',
-              '当前已是最新版本',
               '运行时间同步中',
           ):
               if text.encode() not in dex:
                   raise SystemExit(f'missing signed APK content: {text}')
-          print('signed build177 APK verified')
+          if b'diffie-hellman-group1-sha1' in dex:
+              raise SystemExit('forbidden group1 SSH KEX found in signed APK')
+          print('signed build178 APK verified')
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.35-build177-release-apk
+          name: LabProbe-v0.10.36-build178-release-apk
           path: app/build/outputs/apk/release/app-release.apk
