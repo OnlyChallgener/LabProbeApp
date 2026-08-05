@@ -1,5 +1,5 @@
 name: Android Release APK
-# build176 one-time release trigger; normal releases remain manually available.
+# build176 retry after migration compatibility fix; normal releases remain manually available.
 
 on:
   workflow_dispatch:
