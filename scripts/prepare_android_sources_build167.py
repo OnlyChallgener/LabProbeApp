@@ -32,6 +32,8 @@ if build_code >= 174:
     names += ("apply_build174_stability_fixes.py",)
 if build_code >= 175:
     names += ("apply_build175_icon_version_display_fix.py",)
+if build_code >= 176:
+    names += ("apply_build176_standard_adaptive_icon.py",)
 
 for name in names:
     try:
@@ -53,7 +55,10 @@ if build_code >= 170:
 
     verify_path = ROOT / "scripts/verify_build154_sources.py"
     verify_text = verify_path.read_text(encoding="utf-8")
-    if build_code >= 175:
+    if build_code >= 176:
+        expected_title = "标准 Adaptive Icon 分层修复"
+        expected_print = "build176 standard adaptive icon layers verified"
+    elif build_code >= 175:
         expected_title = "图标留白与 Relay 版本显示修复"
         expected_print = "build175 balanced launcher margin and Relay version display verified"
     elif build_code >= 174:
