@@ -1,5 +1,5 @@
 name: Android Release APK
-# build178 one-time release trigger; normal releases remain manually available.
+# build178 retry after aligning the MAC fallback test with canonical lowercase formatting.
 
 on:
   workflow_dispatch:
