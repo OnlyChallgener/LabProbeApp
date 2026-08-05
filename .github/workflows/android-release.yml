@@ -1,4 +1,5 @@
 name: Android Release APK
+# build174 one-time release trigger; normal releases remain manually available.
 
 on:
   workflow_dispatch:
