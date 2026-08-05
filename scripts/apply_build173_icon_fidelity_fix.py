@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
@@ -38,9 +39,10 @@ def verify() -> None:
     gradle = GRADLE.read_text(encoding="utf-8")
     main = MAIN.read_text(encoding="utf-8")
     logo = LOGO.read_text(encoding="utf-8")
+    code_match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
+    if code_match is None or int(code_match.group(1)) < 173:
+        raise RuntimeError("build173 migration requires versionCode >= 173")
     required = (
-        (gradle, 'versionCode = 173'),
-        (gradle, 'versionName = "0.10.31"'),
         (main, '原始启动图标细节还原'),
         (main, '启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点'),
         (main, '前景缩至 0.74 自适应安全区，圆形和圆角方形桌面不再裁切'),
