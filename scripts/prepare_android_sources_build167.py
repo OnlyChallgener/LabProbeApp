@@ -36,6 +36,8 @@ if build_code >= 176:
     names += ("apply_build176_standard_adaptive_icon.py",)
 if build_code >= 177:
     names += ("apply_build177_centered_icon_spacing.py",)
+if build_code >= 178:
+    names += ("apply_build178_ssh_color_device_name_fixes.py",)
 
 for name in names:
     try:
@@ -57,7 +59,10 @@ if build_code >= 170:
 
     verify_path = ROOT / "scripts/verify_build154_sources.py"
     verify_text = verify_path.read_text(encoding="utf-8")
-    if build_code >= 177:
+    if build_code >= 178:
+        expected_title = "SSH、控件配色与设备名称一致性修复"
+        expected_print = "build178 SSH compatibility, blue-white controls, and device names verified"
+    elif build_code >= 177:
         expected_title = "启动图标中心比例修复"
         expected_print = "build177 centered launcher spacing verified"
     elif build_code >= 176:
