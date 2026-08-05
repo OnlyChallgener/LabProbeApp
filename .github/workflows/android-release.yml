@@ -1,5 +1,5 @@
 name: Android Release APK
-# build175 one-time release trigger; normal releases remain manually available.
+# build176 one-time release trigger; normal releases remain manually available.
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-build175]')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-build176]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,20 +40,22 @@ jobs:
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare and verify build175
+      - name: Prepare and verify build176
         run: |
           python3 -m py_compile \
             scripts/apply_build172_agent_icon_fixes.py \
             scripts/apply_build173_icon_fidelity_fix.py \
             scripts/apply_build174_stability_fixes.py \
-            scripts/apply_build175_icon_version_display_fix.py
+            scripts/apply_build175_icon_version_display_fix.py \
+            scripts/apply_build176_standard_adaptive_icon.py
           python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
 
-          grep -q 'versionCode = 175' app/build.gradle.kts
-          grep -q 'versionName = "0.10.33"' app/build.gradle.kts
-          grep -q '图标留白与 Relay 版本显示修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -q '图标前景调整至 0.78，四周保留适度底色且主体不显空' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q 'versionCode = 176' app/build.gradle.kts
+          grep -q 'versionName = "0.10.34"' app/build.gradle.kts
+          grep -q '标准 Adaptive Icon 分层修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '启动图标改为标准 Adaptive Icon 分层，渐变背景、雷达装饰和网络主体独立' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -q '保留原图形与颜色，四周有可见底色且节点不再贴近桌面遮罩' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '已安装版本高于旧更新清单时，最新版本不再倒退显示' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q 'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -q '区分更新请求超时和已下发后的状态轮询超时' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -91,18 +93,24 @@ jobs:
 
           grep -q '@drawable/ic_launcher_background' app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           grep -q '@drawable/ic_launcher_background' app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-          grep -q '<layer-list' app/src/main/res/drawable/ic_launcher_foreground.xml
-          ! grep -q 'android:insetLeft' app/src/main/res/drawable/ic_launcher_foreground.xml
-          grep -q 'android:viewportWidth="2045"' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'android:viewportHeight="2044"' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'android:scaleX="0.78"' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'android:scaleY="0.78"' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'M1364 1237.5C1364 778.828' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'M2700.36 1028.11C2698.99 1014.17' app/src/main/res/drawable/ic_launcher_logo.xml
-          grep -q 'M2715.47 1183.01C2714.11 1169.07' app/src/main/res/drawable/ic_launcher_logo.xml
-          ! grep -q 'android:scaleX="0.82"' app/src/main/res/drawable/ic_launcher_logo.xml
-          ! grep -q 'android:scaleX="0.74"' app/src/main/res/drawable/ic_launcher_logo.xml
+          grep -q '@drawable/ic_launcher_foreground' app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          grep -q '@drawable/ic_launcher_foreground' app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          grep -q '@drawable/ic_launcher_radar' app/src/main/res/drawable/ic_launcher_foreground.xml
+          grep -q '@drawable/ic_launcher_network' app/src/main/res/drawable/ic_launcher_foreground.xml
+          ! grep -q '@drawable/ic_launcher_logo' app/src/main/res/drawable/ic_launcher_foreground.xml
+          grep -q 'android:scaleX="0.77"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -q 'android:scaleY="0.77"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -q 'M1364 1237.5C1364 778.828' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -q 'M2700.36 1028.11C2698.99 1014.17' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -q 'M2715.47 1183.01C2714.11 1169.07' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -q 'android:scaleX="0.80"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -q 'android:scaleY="0.80"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -q 'M2117.87 1136.12 2803.19 666.997' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -q 'M2753 685C2753 618.174' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -q 'M2058 1171C2058 1093.68' app/src/main/res/drawable/ic_launcher_network.xml
           grep -q 'M0,0H108V108H0Z' app/src/main/res/drawable/ic_launcher_background.xml
+          grep -q '#FF087CAD' app/src/main/res/drawable/ic_launcher_background.xml
+          grep -q '#FF65DDD3' app/src/main/res/drawable/ic_launcher_background.xml
 
           python3 - <<'PY'
           from pathlib import Path
@@ -121,15 +129,22 @@ jobs:
           if 'latestVersion = info.currentVersion' not in normalize:
               raise SystemExit('stale manifest must not display below installed version')
 
+          foreground = Path('app/src/main/res/drawable/ic_launcher_foreground.xml').read_text(encoding='utf-8')
+          if '@drawable/ic_launcher_logo' in foreground:
+              raise SystemExit('single-layer launcher foreground unexpectedly restored')
+          if foreground.count('<item ') != 2:
+              raise SystemExit('adaptive foreground must contain exactly radar and network layers')
+
           for path in (
-              'app/src/main/res/drawable/ic_launcher_logo.xml',
-              'app/src/main/res/drawable/ic_launcher_foreground.xml',
               'app/src/main/res/drawable/ic_launcher_background.xml',
+              'app/src/main/res/drawable/ic_launcher_foreground.xml',
+              'app/src/main/res/drawable/ic_launcher_radar.xml',
+              'app/src/main/res/drawable/ic_launcher_network.xml',
               'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml',
               'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
           ):
               ET.parse(path)
-          print('build175 version normalization and launcher XML verified')
+          print('build176 adaptive icon layers and Relay state verified')
           PY
       - name: Test and build signed APK
         env:
@@ -144,7 +159,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='175' versionName='0.10.33'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='176' versionName='0.10.34'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
@@ -152,14 +167,16 @@ jobs:
 
           apk = Path('app/build/outputs/apk/release/app-release.apk')
           with zipfile.ZipFile(apk) as archive:
+              names = archive.namelist()
               dex = b''.join(
                   archive.read(name)
-                  for name in archive.namelist()
+                  for name in names
                   if name.startswith('classes') and name.endswith('.dex')
               )
           for text in (
-              '图标留白与 Relay 版本显示修复',
-              '图标前景调整至 0.78，四周保留适度底色且主体不显空',
+              '标准 Adaptive Icon 分层修复',
+              '启动图标改为标准 Adaptive Icon 分层，渐变背景、雷达装饰和网络主体独立',
+              '保留原图形与颜色，四周有可见底色且节点不再贴近桌面遮罩',
               '已安装版本高于旧更新清单时，最新版本不再倒退显示',
               'Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报',
               '区分更新请求超时和已下发后的状态轮询超时',
@@ -171,9 +188,9 @@ jobs:
           ):
               if text.encode() not in dex:
                   raise SystemExit(f'missing signed APK content: {text}')
-          print('signed build175 APK verified')
+          print('signed build176 APK verified')
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.33-build175-release-apk
+          name: LabProbe-v0.10.34-build176-release-apk
           path: app/build/outputs/apk/release/app-release.apk
