@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="2045"
+    android:viewportHeight="2044">
+
+    <!-- Primary network mark from the original source artwork.
+         It is composed independently from the decorative radar layer so the
+         nodes remain readable without pushing the outer ring against the mask. -->
+    <group
+        android:pivotX="1022.5"
+        android:pivotY="1022"
+        android:scaleX="0.80"
+        android:scaleY="0.80">
+        <group
+            android:translateX="-1177"
+            android:translateY="-215">
+            <path
+                android:pathData="M1814.54 608.564 2873.7 645.55 2871.04 721.86 1811.88 684.873Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.85098" />
+            <path
+                android:pathData="M1608.9 1426.77 1714.89 604.195 1798.39 614.953 1692.4 1437.53Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.85098" />
+            <path
+                android:pathData="M1616.89 1362.6 2247.63 1674.41 2210.32 1749.88 1579.58 1438.07Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.85098" />
+            <path
+                android:pathData="M2162.41 1676.88 2780.28 1340.27 2820.55 1414.19 2202.69 1750.8Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.85098" />
+            <path
+                android:pathData="M2718.28 1408.62 2828.86 713.754 2912 726.984 2801.42 1421.85Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.85098" />
+            <path
+                android:pathData="M2156,1162H2240V1750H2156Z"
+                android:fillColor="#FFFFFF"
+                android:fillAlpha="0.85098" />
+            <path
+                android:pathData="M2117.87 1136.12 2803.19 666.997 2880.88 780.485 2195.55 1249.61Z"
+                android:fillColor="#FFFFFF" />
+            <path
+                android:pathData="M1630 645C1630 578.173 1683.95 524 1750.5 524 1817.05 524 1871 578.173 1871 645 1871 711.826 1817.05 766 1750.5 766 1683.95 766 1630 711.826 1630 645Z"
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M1530 1419C1530 1352.17 1584.17 1298 1651 1298 1717.83 1298 1772 1352.17 1772 1419 1772 1485.83 1717.83 1540 1651 1540 1584.17 1540 1530 1485.83 1530 1419Z"
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2079 1705C2079 1638.17 2133.17 1584 2200 1584 2266.83 1584 2321 1638.17 2321 1705 2321 1771.83 2266.83 1826 2200 1826 2133.17 1826 2079 1771.83 2079 1705Z"
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2645 1402C2645 1335.17 2699.17 1281 2766 1281 2832.83 1281 2887 1335.17 2887 1402 2887 1468.83 2832.83 1523 2766 1523 2699.17 1523 2645 1468.83 2645 1402Z"
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2753 685C2753 618.174 2807.17 564 2874 564 2940.83 564 2995 618.174 2995 685 2995 751.827 2940.83 806 2874 806 2807.17 806 2753 751.827 2753 685Z"
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd" />
+            <path
+                android:pathData="M2058 1171C2058 1093.68 2120.68 1031 2198 1031 2275.32 1031 2338 1093.68 2338 1171 2338 1248.32 2275.32 1311 2198 1311 2120.68 1311 2058 1248.32 2058 1171Z"
+                android:fillColor="#FFFFFF"
+                android:fillType="evenOdd" />
+        </group>
+    </group>
+</vector>
