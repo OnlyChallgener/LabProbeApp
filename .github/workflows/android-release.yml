@@ -1,5 +1,5 @@
 name: Android Release APK
-# build178 retry after aligning the MAC fallback test with canonical lowercase formatting.
+# build178 retry after excluding dependency capability strings from the app-policy check.
 
 on:
   workflow_dispatch:
@@ -54,10 +54,10 @@ jobs:
           python3 scripts/verify_build154_sources.py
 
           grep -Fq 'versionCode = 178' app/build.gradle.kts
-          grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts || grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts
+          grep -Fq 'versionName = "0.10.36"' app/build.gradle.kts
           grep -Fq 'SSH、控件配色与设备名称一致性修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt || grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'aes128-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -81,10 +81,10 @@ jobs:
           grep -Fq 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
           grep -Fq '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
 
-          grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml || grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml || grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml || grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml || grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
+          grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
+          grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
 
           python3 - <<'PY'
           from pathlib import Path
@@ -159,14 +159,24 @@ jobs:
               'SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法',
               '下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色',
               '首页、设备页和详情卡统一优先显示用户备注名称',
-              'diffie-hellman-group14-sha1',
               '已安装版本高于旧更新清单时，最新版本不再倒退显示',
               '运行时间同步中',
           ):
               if text.encode() not in dex:
                   raise SystemExit(f'missing signed APK content: {text}')
-          if b'diffie-hellman-group1-sha1' in dex:
-              raise SystemExit('forbidden group1 SSH KEX found in signed APK')
+
+          configured_kex = (
+              'curve25519-sha256@libssh.org,curve25519-sha256,'
+              'ecdh-sha2-nistp256,diffie-hellman-group14-sha256,'
+              'diffie-hellman-group14-sha1'
+          )
+          if configured_kex.encode() not in dex:
+              raise SystemExit('configured SSH KEX policy missing from signed APK')
+
+          # JSch's own classes contain names of optional algorithms such as
+          # group1-sha1 even when the APP never enables them. Therefore the
+          # prohibition is verified against MainActivity source above, while
+          # the signed APK is checked for the exact configured KEX policy.
           print('signed build178 APK verified')
           PY
       - uses: actions/upload-artifact@v4
