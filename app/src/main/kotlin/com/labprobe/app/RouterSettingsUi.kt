@@ -139,7 +139,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
         RouterSettingsSection("远程访问") {
             RouterSettingsTile(
                 title = "DDNS",
-                subtitle = "LabProbe DDNS · 路由器原生 DDNS · 证书提醒",
+                subtitle = "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
                 icon = Icons.Rounded.CloudSync,
                 color = SettingsCyan,
                 enabled = capabilities.ddns || capabilities.configured
