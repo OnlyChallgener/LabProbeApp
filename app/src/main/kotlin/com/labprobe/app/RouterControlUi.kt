@@ -689,8 +689,8 @@ fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactSegment("LabProbe DDNS", area == 0, Modifier.weight(1f)) { area = 0 }
                 CompactSegment("路由器原生 DDNS", area == 1, Modifier.weight(1f)) { area = 1 }
+                CompactSegment("证书监控", area == 2, Modifier.weight(1f)) { area = 2 }
             }
-            CompactSegment("证书监控", area == 2, Modifier.fillMaxWidth()) { area = 2 }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (area) {
                     0 -> LabProbeDdnsSection(prefs)
@@ -747,6 +747,8 @@ private fun labProbeSourceLabel(source: String): String {
     val value = source.trim()
     if (value.isBlank()) return "来源未知"
     return when {
+        value.startsWith("egress-http:") -> "公网出口 ${value.removePrefix("egress-http:")}"
+        value.startsWith("route-src:") -> "路由出口 ${value.removePrefix("route-src:")}"
         value.startsWith("default-route:") -> "默认出口 ${value.removePrefix("default-route:")}"
         value.startsWith("delegated-lan:") -> "委派前缀 ${value.removePrefix("delegated-lan:")}"
         value.startsWith("generic:") -> "通用接口 ${value.removePrefix("generic:")}"
@@ -776,6 +778,19 @@ private fun labProbeCredentialFields(provider: String): List<Pair<String, String
 }
 
 private fun labProbeCredentialIsSecret(key: String): Boolean = key.lowercase(Locale.ROOT) !in setOf("zone", "zoneid", "username")
+
+private fun labProbeHasPublicAddress(value: String, state: String): Boolean =
+    value.isNotBlank() && state.equals("public", ignoreCase = true)
+
+private fun labProbeCanUpdate(record: LabProbeDdnsRecord, address: LabProbeDdnsAddress, busy: Boolean): Boolean {
+    if (!record.enabled || busy) return false
+    val ipv4 = record.detectedIpv4.ifBlank { address.detectedIpv4 }
+    val ipv6 = record.detectedIpv6.ifBlank { address.detectedIpv6 }
+    val ipv4State = record.ipv4State.ifBlank { address.ipv4State }
+    val ipv6State = record.ipv6State.ifBlank { address.ipv6State }
+    return (record.recordTypes.contains("A") && labProbeHasPublicAddress(ipv4, ipv4State)) ||
+        (record.recordTypes.contains("AAAA") && labProbeHasPublicAddress(ipv6, ipv6State))
+}
 
 @Composable
 private fun LabProbeDdnsSection(prefs: AppPrefs) {
@@ -961,6 +976,7 @@ private fun LabProbeDdnsDetailPage(
     onUpdateNow: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
+    val canUpdate = labProbeCanUpdate(record, address, busy)
     BackHandler(onBack = onBack)
     Scaffold(containerColor = RouterPage, topBar = {
         Surface(color = Color.White, shadowElevation = 1.dp) {
@@ -1013,7 +1029,7 @@ private fun LabProbeDdnsDetailPage(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
-                Button(onClick = onUpdateNow, enabled = !busy && record.enabled, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+                Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
             }
         }
     }
@@ -1063,7 +1079,7 @@ private fun LabProbeDdnsEditorPage(
     val existingEdit = normalized.id.isNotBlank() && normalized.credentialsConfigured
     val providerChanged = normalized.id.isNotBlank() && normalized.provider != record.provider
     BackHandler(onBack = onBack)
-    RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS 记录" else "编辑 LabProbe DDNS 记录", "凭据不会回显；留空保持原凭据", onBack) {
+    RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS" else "编辑 LabProbe DDNS", "凭据不会回显；留空保持原凭据", onBack) {
         CompactChoice("服务商", labProbeProviderLabel(record.provider), providerOptions) { selected ->
             val id = providerIds.getOrNull(providerOptions.indexOf(selected)) ?: record.provider
             record = record.copy(provider = id)
@@ -1179,6 +1195,9 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
 
 @Composable
 private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelete:()->Unit){
+    // whole card must never turn red
+    // Editing, switching and the overflow menu are separate hit targets.  The
+    // overflow icon must never bubble into the card's edit action.
     val accent=RouterCyan
     val warning=record.status.contains("error",true)||record.status.contains("fail",true)
     val domainText=record.domain.ifBlank{"未命名 DDNS 记录"}
