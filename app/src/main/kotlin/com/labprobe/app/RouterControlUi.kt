@@ -684,28 +684,23 @@ private fun FirewallEditorPage(initial: FirewallRule, onBack: () -> Unit, onSave
 @Composable
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var area by rememberSaveable { mutableIntStateOf(0) }
-    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, "LabProbe DDNS · 路由器原生 DDNS · 证书") }) { padding ->
+    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, "LabProbe DDNS · 路由器原生 DDNS · 证书监控") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactSegment("LabProbe DDNS", area == 0, Modifier.weight(1f)) { area = 0 }
                 CompactSegment("路由器原生 DDNS", area == 1, Modifier.weight(1f)) { area = 1 }
             }
+            CompactSegment("证书监控", area == 2, Modifier.fillMaxWidth()) { area = 2 }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (area == 0) LabProbeDdnsSection(prefs) else RouterNativeDdnsSection(prefs)
+                when (area) {
+                    0 -> LabProbeDdnsSection(prefs)
+                    1 -> DdnsRecordsSection(prefs)
+                    else -> CertificateExpirySection(prefs)
+                }
                 Spacer(Modifier.height(12.dp))
             }
         }
     }
-}
-
-@Composable
-private fun RouterNativeDdnsSection(prefs: AppPrefs) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        CompactSegment("DDNS记录", tab == 0, Modifier.weight(1f)) { tab = 0 }
-        CompactSegment("证书监控", tab == 1, Modifier.weight(1f)) { tab = 1 }
-    }
-    if (tab == 0) DdnsRecordsSection(prefs) else CertificateExpirySection(prefs)
 }
 
 private val labProbeProviderIds = listOf("alidns", "dnspod", "cloudflare", "dynv6", "duckdns", "desec", "dynu", "ipv64")
@@ -772,12 +767,12 @@ private fun labProbeTimeText(epoch: Long): String {
 }
 
 private fun labProbeCredentialFields(provider: String): List<Pair<String, String>> = when (provider.lowercase(Locale.ROOT)) {
-    "alidns" -> listOf("zone" to "Zone / Domain", "AccessKeyId" to "AccessKey ID", "AccessKeySecret" to "AccessKey Secret")
-    "dnspod" -> listOf("zone" to "Domain", "SecretId" to "Secret ID", "SecretKey" to "Secret Key")
-    "cloudflare" -> listOf("zoneId" to "Zone ID", "apiToken" to "API Token")
-    "dynv6", "duckdns", "desec", "ipv64" -> listOf("token" to "Token")
-    "dynu" -> listOf("username" to "Username", "password" to "Password")
-    else -> listOf("token" to "Token")
+    "alidns" -> listOf("zone" to "域名区域（Zone / Domain）", "AccessKeyId" to "访问密钥 ID（AccessKey ID）", "AccessKeySecret" to "访问密钥（AccessKey Secret）")
+    "dnspod" -> listOf("zone" to "域名区域（Domain）", "SecretId" to "密钥 ID（Secret ID）", "SecretKey" to "密钥（Secret Key）")
+    "cloudflare" -> listOf("zoneId" to "区域 ID（Zone ID）", "apiToken" to "API 令牌（API Token）")
+    "dynv6", "duckdns", "desec", "ipv64" -> listOf("token" to "令牌（Token）")
+    "dynu" -> listOf("username" to "用户名", "password" to "密码")
+    else -> listOf("token" to "令牌（Token）")
 }
 
 private fun labProbeCredentialIsSecret(key: String): Boolean = key.lowercase(Locale.ROOT) !in setOf("zone", "zoneid", "username")
@@ -1068,13 +1063,13 @@ private fun LabProbeDdnsEditorPage(
     val existingEdit = normalized.id.isNotBlank() && normalized.credentialsConfigured
     val providerChanged = normalized.id.isNotBlank() && normalized.provider != record.provider
     BackHandler(onBack = onBack)
-    RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS" else "编辑 LabProbe DDNS", "凭据不会回显；留空保持原凭据", onBack) {
-        CompactChoice("Provider", labProbeProviderLabel(record.provider), providerOptions) { selected ->
+    RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS 记录" else "编辑 LabProbe DDNS 记录", "凭据不会回显；留空保持原凭据", onBack) {
+        CompactChoice("服务商", labProbeProviderLabel(record.provider), providerOptions) { selected ->
             val id = providerIds.getOrNull(providerOptions.indexOf(selected)) ?: record.provider
             record = record.copy(provider = id)
             credentialValues = emptyMap()
         }
-        CompactField("Hostname", record.hostname, "例如 home.example.com") { record = record.copy(hostname = it.take(253)) }
+        CompactField("域名", record.hostname, "例如 home.example.com") { record = record.copy(hostname = it.take(253)) }
         Text("记录类型", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             CompactSegment("IPv4 / A", record.recordTypes.contains("A"), Modifier.weight(1f)) {
@@ -1086,7 +1081,7 @@ private fun LabProbeDdnsEditorPage(
                 if (next.isNotEmpty()) record = record.copy(recordTypes = next)
             }
         }
-        Text("Provider 凭据", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        Text("服务商凭据", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
         if (existingEdit && !hasEnteredCredential && !providerChanged) CompactMessage("已配置凭据；以下字段留空即可保持原凭据", RouterCyan)
         requiredFields.forEach { (key, label) ->
             val value = credentialValues[key].orEmpty()
@@ -1107,9 +1102,9 @@ private fun LabProbeDdnsEditorPage(
         Button(onClick = {
             val entered = credentialValues.filterValues { it.isNotBlank() }
             error = when {
-                record.hostname.isBlank() -> "请填写 Hostname"
+                record.hostname.isBlank() -> "请填写域名"
                 record.recordTypes.isEmpty() -> "至少选择一种记录类型"
-                normalized.id.isBlank() && requiredFields.any { entered[it.first].isNullOrBlank() } -> "请完整填写 Provider 凭据"
+                normalized.id.isBlank() && requiredFields.any { entered[it.first].isNullOrBlank() } -> "请完整填写服务商凭据"
                 normalized.id.isNotBlank() && (providerChanged || hasEnteredCredential) && requiredFields.any { entered[it.first].isNullOrBlank() } -> "更新凭据时请完整填写全部字段；全部留空则保持原凭据"
                 else -> ""
             }
@@ -1184,9 +1179,6 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
 
 @Composable
 private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelete:()->Unit){
-    // whole card must never turn red
-    // Editing, switching and the overflow menu are separate hit targets.  The
-    // overflow icon must never bubble into the card's edit action.
     val accent=RouterCyan
     val warning=record.status.contains("error",true)||record.status.contains("fail",true)
     val domainText=record.domain.ifBlank{"未命名 DDNS 记录"}
