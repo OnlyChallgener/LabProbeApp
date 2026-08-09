@@ -184,6 +184,27 @@ class RouterControlApi(private val prefs: AppPrefs) {
     suspend fun deleteDdns(serviceId: String): List<DdnsRecord> =
         parseDdnsList(send("/api/router/ddns/$serviceId", "DELETE").optJSONObject("data") ?: JSONObject())
 
+    /** LabProbe-owned DDNS API. Kept separate from the router-native DDNS model above. */
+    suspend fun labProbeDdns(force: Boolean = false): LabProbeDdnsSnapshot =
+        parseLabProbeDdns(get("/api/ddns${if (force) "?force=1" else ""}"))
+
+    suspend fun labProbeDdnsProviders(): List<LabProbeDdnsProvider> =
+        parseLabProbeDdnsProviders(get("/api/ddns/providers"))
+
+    suspend fun addLabProbeDdns(record: LabProbeDdnsRecord, credentials: Map<String, String>): LabProbeDdnsSnapshot =
+        parseLabProbeDdns(send("/api/ddns", "POST", record.toJson(credentials)))
+
+    suspend fun updateLabProbeDdns(record: LabProbeDdnsRecord, credentials: Map<String, String>): LabProbeDdnsSnapshot =
+        parseLabProbeDdns(send("/api/ddns/${record.id}", "PUT", record.toJson(credentials)))
+
+    suspend fun deleteLabProbeDdns(recordId: String): LabProbeDdnsSnapshot =
+        parseLabProbeDdns(send("/api/ddns/$recordId", "DELETE"))
+
+    suspend fun updateLabProbeDdnsNow(recordId: String): JSONObject =
+        send("/api/ddns/$recordId/update", "POST", JSONObject().put("force", true))
+
+    suspend fun refreshLabProbeDdnsAddress(): Long = hubApi.requestRouterDashboardRefresh()
+
     suspend fun diagnostic(): RouterDiagnostic =
         parseDiagnostic(get("/api/router/diagnostic").optJSONObject("data") ?: JSONObject())
 
@@ -409,6 +430,138 @@ internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
                 status = o.ddnsText("status", "state", "message", "msg"),
                 ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
                 passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password")
+            )
+        }
+    }
+}
+
+data class LabProbeDdnsProvider(
+    val id: String = "",
+    val supportsA: Boolean = true,
+    val supportsAAAA: Boolean = true,
+)
+
+data class LabProbeDdnsAddress(
+    val detectedIpv4: String = "",
+    val detectedIpv6: String = "",
+    val ipv4State: String = "unavailable",
+    val ipv6State: String = "unavailable",
+    val ipv4Source: String = "",
+    val ipv6Source: String = "",
+    val detectedAt: Long = 0L,
+)
+
+data class LabProbeDdnsSnapshot(
+    val records: List<LabProbeDdnsRecord> = emptyList(),
+    val address: LabProbeDdnsAddress = LabProbeDdnsAddress(),
+    val providers: List<LabProbeDdnsProvider> = emptyList(),
+)
+
+data class LabProbeDdnsRecord(
+    val id: String = "",
+    val provider: String = "",
+    val hostname: String = "",
+    val recordTypes: List<String> = listOf("A", "AAAA"),
+    val ttl: Int = 300,
+    val enabled: Boolean = true,
+    val detectedIpv4: String = "",
+    val detectedIpv6: String = "",
+    val ipv4State: String = "unavailable",
+    val ipv6State: String = "unavailable",
+    val ipv4Source: String = "",
+    val ipv6Source: String = "",
+    val publishedIpv4: String = "",
+    val publishedIpv6: String = "",
+    val status: String = "waiting",
+    val lastDetectedAt: Long = 0L,
+    val lastUpdatedAt: Long = 0L,
+    val lastError: String = "",
+    val credentialsConfigured: Boolean = false,
+) {
+    fun toJson(credentials: Map<String, String> = emptyMap()): JSONObject = JSONObject().apply {
+        put("provider", provider.trim())
+        put("hostname", hostname.trim())
+        put("recordTypes", JSONArray(recordTypes.distinct().filter { it == "A" || it == "AAAA" }))
+        put("ttl", ttl.coerceIn(60, 86400))
+        put("enabled", enabled)
+        if (credentials.isNotEmpty()) {
+            put("credentials", JSONObject().apply {
+                credentials.forEach { (key, value) -> if (value.isNotBlank()) put(key, value) }
+            })
+        }
+    }
+}
+
+internal fun parseLabProbeDdns(root: JSONObject): LabProbeDdnsSnapshot {
+    val addressObject = root.optJSONObject("address") ?: JSONObject()
+    val address = LabProbeDdnsAddress(
+        detectedIpv4 = addressObject.ddnsText("detectedIpv4"),
+        detectedIpv6 = addressObject.ddnsText("detectedIpv6"),
+        ipv4State = labProbeIpv4State(addressObject.ddnsText("ipv4State")),
+        ipv6State = labProbeIpv6State(addressObject.ddnsText("ipv6State")),
+        ipv4Source = addressObject.ddnsText("ipv4Source"),
+        ipv6Source = addressObject.ddnsText("ipv6Source"),
+        detectedAt = addressObject.optLong("detectedAt", 0L),
+    )
+    val recordsArray = root.optJSONArray("records")
+        ?: root.optJSONObject("record")?.let { JSONArray().put(it) }
+        ?: JSONArray()
+    val records = recordsArray.let { array ->
+        (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let { item ->
+                val recordTypes = item.optJSONArray("recordTypes")?.let { types ->
+                    (0 until types.length()).map { types.optString(it).uppercase(Locale.ROOT) }.filter { it == "A" || it == "AAAA" }
+                }.orEmpty().ifEmpty { listOf("A", "AAAA") }
+                LabProbeDdnsRecord(
+                    id = item.ddnsText("id", "recordId"),
+                    provider = item.ddnsText("provider"),
+                    hostname = item.ddnsText("hostname", "domain"),
+                    recordTypes = recordTypes,
+                    ttl = item.optInt("ttl", 300),
+                    enabled = item.ddnsFlag(true, "enabled", "enable"),
+                    detectedIpv4 = item.ddnsText("detectedIpv4").ifBlank { address.detectedIpv4 },
+                    detectedIpv6 = item.ddnsText("detectedIpv6").ifBlank { address.detectedIpv6 },
+                    ipv4State = labProbeIpv4State(item.ddnsText("ipv4State").ifBlank { address.ipv4State }),
+                    ipv6State = labProbeIpv6State(item.ddnsText("ipv6State").ifBlank { address.ipv6State }),
+                    ipv4Source = item.ddnsText("ipv4Source").ifBlank { address.ipv4Source },
+                    ipv6Source = item.ddnsText("ipv6Source").ifBlank { address.ipv6Source },
+                    publishedIpv4 = item.ddnsText("publishedIpv4"),
+                    publishedIpv6 = item.ddnsText("publishedIpv6"),
+                    status = labProbeFlowStatus(item.ddnsText("status")),
+                    lastDetectedAt = item.optLong("lastDetectedAt", 0L),
+                    lastUpdatedAt = item.optLong("lastUpdatedAt", 0L),
+                    lastError = item.ddnsText("lastError"),
+                    credentialsConfigured = item.ddnsFlag(false, "credentialsConfigured"),
+                )
+            }
+        }
+    }
+    return LabProbeDdnsSnapshot(records = records, address = address, providers = parseLabProbeDdnsProviders(root))
+}
+
+private fun labProbeFlowStatus(value: String): String = when (value.lowercase(Locale.ROOT)) {
+    "disabled", "waiting", "detected", "updating", "published", "error" -> value.lowercase(Locale.ROOT)
+    else -> "waiting"
+}
+
+private fun labProbeIpv4State(value: String): String = when (value.lowercase(Locale.ROOT)) {
+    "public", "cgnat", "unavailable", "ambiguous" -> value.lowercase(Locale.ROOT)
+    else -> "unavailable"
+}
+
+private fun labProbeIpv6State(value: String): String = when (value.lowercase(Locale.ROOT)) {
+    "public", "unavailable", "ambiguous" -> value.lowercase(Locale.ROOT)
+    else -> "unavailable"
+}
+
+private fun parseLabProbeDdnsProviders(root: JSONObject): List<LabProbeDdnsProvider> {
+    val array = root.optJSONArray("providers") ?: JSONArray()
+    return (0 until array.length()).mapNotNull { index ->
+        array.optJSONObject(index)?.let { item ->
+            LabProbeDdnsProvider(
+                id = item.ddnsText("id", "provider"),
+                supportsA = item.optBoolean("supportsA", true),
+                supportsAAAA = item.optBoolean("supportsAAAA", true),
             )
         }
     }

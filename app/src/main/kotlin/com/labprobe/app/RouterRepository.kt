@@ -48,6 +48,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private val lastReconnectRefreshAt = AtomicLong(0L)
     private val preloadMutex = Mutex()
     private val mutationMutex = Mutex()
+    private val labProbeMutationMutex = Mutex()
     private val inFlightMutex = Mutex()
     private val inFlight = mutableMapOf<String, Deferred<Any?>>()
     private val generations = ConcurrentHashMap<String, AtomicLong>()
@@ -70,6 +71,9 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         )
     )
     val ddns: StateFlow<RouterResource<List<DdnsRecord>>> = _ddns.asStateFlow()
+
+    private val _labProbeDdns = MutableStateFlow(RouterResource<LabProbeDdnsSnapshot>())
+    val labProbeDdns: StateFlow<RouterResource<LabProbeDdnsSnapshot>> = _labProbeDdns.asStateFlow()
 
     private val _upnp = MutableStateFlow(
         RouterResource(value = RouterSlowDataCache.upnpState, updatedAt = RouterSlowDataCache.upnpAt)
@@ -295,6 +299,31 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
             .onFailure { failure -> if (sequence(key).get() == seq) _ddns.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "DDNS 同步失败"), generation = seq) }
     }
 
+    suspend fun refreshLabProbeDdns(force: Boolean = false) {
+        val key = "labProbeDdns"
+        val old = _labProbeDdns.value
+        if (old.mutating && !force) return
+        val seq = sequence(key).incrementAndGet()
+        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.SETTINGS_TTL_MS)) return
+        _labProbeDdns.value = old.copy(refreshing = true, error = "", generation = seq)
+        runCatching { coalesced(key) { api.labProbeDdns(force) } }
+            .onSuccess { latest ->
+                if (sequence(key).get() != seq) return@onSuccess
+                _labProbeDdns.value = RouterResource(latest, System.currentTimeMillis(), generation = seq)
+            }
+            .onFailure { failure ->
+                if (sequence(key).get() == seq) {
+                    _labProbeDdns.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "LabProbe DDNS 同步失败"), generation = seq)
+                }
+            }
+    }
+
+    suspend fun refreshLabProbeDdnsAddress(): Result<Unit> = executeCommand {
+        api.refreshLabProbeDdnsAddress()
+        delay(250L)
+        refreshLabProbeDdns(force = true)
+    }.map { Unit }
+
     private fun applyDdnsRead(seq: Long, latest: List<DdnsRecord>) {
         if (sequence("ddns").get() != seq) return
         val now = System.currentTimeMillis()
@@ -411,6 +440,49 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
             .onFailure { failure ->
                 if (sequence(key).get() == seq) {
                     _ddns.value = old.copy(mutating = false, error = message(failure, "DDNS 设置失败"), generation = seq)
+                }
+            }
+    }
+
+    suspend fun addLabProbeDdns(record: LabProbeDdnsRecord, credentials: Map<String, String>): Result<LabProbeDdnsSnapshot> =
+        mutateLabProbe { api.addLabProbeDdns(record, credentials); api.labProbeDdns(true) }
+
+    suspend fun updateLabProbeDdns(record: LabProbeDdnsRecord, credentials: Map<String, String>): Result<LabProbeDdnsSnapshot> =
+        mutateLabProbe { api.updateLabProbeDdns(record, credentials); api.labProbeDdns(true) }
+
+    suspend fun deleteLabProbeDdns(recordId: String): Result<LabProbeDdnsSnapshot> =
+        mutateLabProbe { api.deleteLabProbeDdns(recordId); api.labProbeDdns(true) }
+
+    suspend fun updateLabProbeDdnsNow(recordId: String): Result<Unit> = labProbeMutationMutex.withLock {
+        val key = "labProbeDdns"
+        val seq = sequence(key).incrementAndGet()
+        val old = _labProbeDdns.value
+        _labProbeDdns.value = old.copy(mutating = true, error = "", generation = seq)
+        val result = executeCommand { api.updateLabProbeDdnsNow(recordId) }
+        if (result.isSuccess) {
+            refreshLabProbeDdns(force = true)
+            Result.success(Unit)
+        } else {
+            val failure = result.exceptionOrNull()
+            if (sequence(key).get() == seq) {
+                _labProbeDdns.value = old.copy(mutating = false, error = message(failure ?: RuntimeException(), "LabProbe DDNS 更新失败"), generation = seq)
+            }
+            Result.failure<Unit>(failure ?: RuntimeException("LabProbe DDNS 更新失败"))
+        }
+    }
+
+    private suspend fun mutateLabProbe(block: suspend () -> LabProbeDdnsSnapshot): Result<LabProbeDdnsSnapshot> = labProbeMutationMutex.withLock {
+        val key = "labProbeDdns"
+        val seq = sequence(key).incrementAndGet()
+        val old = _labProbeDdns.value
+        _labProbeDdns.value = old.copy(mutating = true, error = "", generation = seq)
+        executeCommand { block() }
+            .onSuccess { latest ->
+                if (sequence(key).get() == seq) _labProbeDdns.value = RouterResource(latest, System.currentTimeMillis(), generation = seq)
+            }
+            .onFailure { failure ->
+                if (sequence(key).get() == seq) {
+                    _labProbeDdns.value = old.copy(mutating = false, error = message(failure, "LabProbe DDNS 设置失败"), generation = seq)
                 }
             }
     }

@@ -683,17 +683,439 @@ private fun FirewallEditorPage(initial: FirewallRule, onBack: () -> Unit, onSave
 
 @Composable
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS 与证书", onBack, "动态域名 · 到期提醒") }) { padding ->
+    var area by rememberSaveable { mutableIntStateOf(0) }
+    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, "LabProbe DDNS · 路由器原生 DDNS · 证书") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                CompactSegment("DDNS记录", tab == 0, Modifier.weight(1f)) { tab = 0 }
-                CompactSegment("证书监控", tab == 1, Modifier.weight(1f)) { tab = 1 }
+                CompactSegment("LabProbe DDNS", area == 0, Modifier.weight(1f)) { area = 0 }
+                CompactSegment("路由器原生 DDNS", area == 1, Modifier.weight(1f)) { area = 1 }
             }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (tab == 0) DdnsRecordsSection(prefs) else CertificateExpirySection(prefs)
+                if (area == 0) LabProbeDdnsSection(prefs) else RouterNativeDdnsSection(prefs)
                 Spacer(Modifier.height(12.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun RouterNativeDdnsSection(prefs: AppPrefs) {
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        CompactSegment("DDNS记录", tab == 0, Modifier.weight(1f)) { tab = 0 }
+        CompactSegment("证书监控", tab == 1, Modifier.weight(1f)) { tab = 1 }
+    }
+    if (tab == 0) DdnsRecordsSection(prefs) else CertificateExpirySection(prefs)
+}
+
+private val labProbeProviderIds = listOf("alidns", "dnspod", "cloudflare", "dynv6", "duckdns", "desec", "dynu", "ipv64")
+
+private fun labProbeProviderLabel(id: String): String = when (id.lowercase(Locale.ROOT)) {
+    "alidns" -> "AliDNS"
+    "dnspod" -> "DNSPod"
+    "cloudflare" -> "Cloudflare"
+    "dynv6" -> "dynv6"
+    "duckdns" -> "DuckDNS"
+    "desec" -> "deSEC"
+    "dynu" -> "Dynu"
+    "ipv64" -> "IPv64"
+    else -> id
+}
+
+private fun labProbeStatusLabel(status: String): String = when (status.lowercase(Locale.ROOT)) {
+    "disabled" -> "已停用"
+    "waiting" -> "等待地址"
+    "detected" -> "检测到新地址"
+    "updating" -> "正在更新"
+    "published" -> "正常"
+    "error" -> "更新失败"
+    else -> status.ifBlank { "等待地址" }
+}
+
+private fun labProbeStatusColor(status: String): Color = when (status.lowercase(Locale.ROOT)) {
+    "published" -> RouterGreen
+    "error" -> RouterRed
+    "updating", "detected" -> RouterBlue
+    "disabled" -> RouterMuted
+    else -> RouterAmber
+}
+
+private fun labProbeAddressStateLabel(state: String): String = when (state.lowercase(Locale.ROOT)) {
+    "public" -> "公网"
+    "cgnat" -> "CGNAT"
+    "ambiguous" -> "待确认"
+    "unavailable" -> "不可用"
+    else -> state.ifBlank { "未知" }
+}
+
+private fun labProbeSourceLabel(source: String): String {
+    val value = source.trim()
+    if (value.isBlank()) return "来源未知"
+    return when {
+        value.startsWith("default-route:") -> "默认出口 ${value.removePrefix("default-route:")}"
+        value.startsWith("delegated-lan:") -> "委派前缀 ${value.removePrefix("delegated-lan:")}"
+        value.startsWith("generic:") -> "通用接口 ${value.removePrefix("generic:")}"
+        else -> value
+    }
+}
+
+private fun labProbeTimeText(epoch: Long): String {
+    if (epoch <= 0L) return "未记录"
+    val seconds = (System.currentTimeMillis() / 1000L - epoch).coerceAtLeast(0L)
+    return when {
+        seconds < 10L -> "刚刚"
+        seconds < 60L -> "${seconds}秒前"
+        seconds < 3600L -> "${seconds / 60L}分钟前"
+        seconds < 86_400L -> "${seconds / 3600L}小时前"
+        else -> "${seconds / 86_400L}天前"
+    }
+}
+
+private fun labProbeCredentialFields(provider: String): List<Pair<String, String>> = when (provider.lowercase(Locale.ROOT)) {
+    "alidns" -> listOf("zone" to "Zone / Domain", "AccessKeyId" to "AccessKey ID", "AccessKeySecret" to "AccessKey Secret")
+    "dnspod" -> listOf("zone" to "Domain", "SecretId" to "Secret ID", "SecretKey" to "Secret Key")
+    "cloudflare" -> listOf("zoneId" to "Zone ID", "apiToken" to "API Token")
+    "dynv6", "duckdns", "desec", "ipv64" -> listOf("token" to "Token")
+    "dynu" -> listOf("username" to "Username", "password" to "Password")
+    else -> listOf("token" to "Token")
+}
+
+private fun labProbeCredentialIsSecret(key: String): Boolean = key.lowercase(Locale.ROOT) !in setOf("zone", "zoneid", "username")
+
+@Composable
+private fun LabProbeDdnsSection(prefs: AppPrefs) {
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val resource by repository.labProbeDdns.collectAsState()
+    val snapshot = resource.value
+    val rows = snapshot?.records.orEmpty()
+    val scope = repository.commandScope
+    var actionError by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<LabProbeDdnsRecord?>(null) }
+    var detailId by remember { mutableStateOf<String?>(null) }
+    var deleteTarget by remember { mutableStateOf<LabProbeDdnsRecord?>(null) }
+
+    LaunchedEffect(repository) { repository.refreshLabProbeDdns(false) }
+    CompactToolbar(
+        title = "LabProbe DDNS",
+        subtitle = "独立于路由器原生 DDNS",
+        loading = resource.refreshing,
+        onRefresh = { scope.launch { repository.refreshLabProbeDdns(true) } },
+        onAdd = { adding = true },
+    )
+    val error = actionError.ifBlank { resource.error }
+    if (error.isNotBlank()) CompactMessage(error, RouterRed)
+    if (resource.mutating) CompactMessage("DDNS 设置正在后台应用，页面可以安全退出", RouterBlue)
+    if (snapshot == null && resource.refreshing) LoadingBlock()
+    if (snapshot != null && rows.isEmpty()) {
+        CompactEmpty("还没有 DDNS 记录", "添加后可自动跟随公网 IPv4 / IPv6 地址变化", RouterGlyph.Ddns) { adding = true }
+    }
+    rows.forEach { record ->
+        LabProbeDdnsCard(record, onClick = { detailId = record.id }, onToggle = {
+            scope.launch {
+                repository.updateLabProbeDdns(record.copy(enabled = !record.enabled), emptyMap())
+                    .onSuccess { actionError = "" }
+                    .onFailure { actionError = it.message.orEmpty() }
+            }
+        }, onDelete = { deleteTarget = record })
+    }
+
+    if (adding || editing != null) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { adding = false; editing = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(Modifier.fillMaxSize(), color = RouterPage) {
+                LabProbeDdnsEditorPage(
+                    initial = editing ?: LabProbeDdnsRecord(provider = "cloudflare"),
+                    providers = snapshot?.providers.orEmpty(),
+                    externalError = actionError,
+                    onBack = { adding = false; editing = null },
+                ) { record, credentials ->
+                    scope.launch {
+                        val result = if (editing == null) {
+                            repository.addLabProbeDdns(record, credentials)
+                        } else {
+                            repository.updateLabProbeDdns(record, credentials)
+                        }
+                        result.onSuccess {
+                            adding = false
+                            editing = null
+                            actionError = ""
+                        }.onFailure { actionError = it.message.orEmpty() }
+                    }
+                }
+            }
+        }
+    }
+
+    detailId?.let { id ->
+        val record = rows.firstOrNull { it.id == id }
+        if (record != null) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { detailId = null },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(Modifier.fillMaxSize(), color = RouterPage) {
+                    LabProbeDdnsDetailPage(
+                        record = record,
+                        address = snapshot?.address ?: LabProbeDdnsAddress(),
+                        busy = resource.mutating,
+                        externalError = actionError,
+                        onBack = { detailId = null },
+                        onEdit = { editing = record; detailId = null },
+                        onToggle = {
+                            scope.launch {
+                                repository.updateLabProbeDdns(record.copy(enabled = !record.enabled), emptyMap())
+                                    .onFailure { actionError = it.message.orEmpty() }
+                            }
+                        },
+                        onDelete = { deleteTarget = record; detailId = null },
+                        onRefreshAddress = {
+                            scope.launch {
+                                val result = repository.refreshLabProbeDdnsAddress()
+                                if (result.isSuccess) {
+                                    actionError = ""
+                                    repository.refreshLabProbeDdns(true)
+                                } else {
+                                    actionError = result.exceptionOrNull()?.message.orEmpty()
+                                }
+                            }
+                        },
+                        onUpdateNow = {
+                            scope.launch {
+                                repository.updateLabProbeDdnsNow(record.id)
+                                    .onSuccess { actionError = "" }
+                                    .onFailure { actionError = it.message.orEmpty() }
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    deleteTarget?.let { target ->
+        ConfirmDialog("删除 LabProbe DDNS", "确认删除 ${target.hostname}？该操作不会修改路由器原生 DDNS。", "删除", {
+            scope.launch {
+                repository.deleteLabProbeDdns(target.id)
+                    .onSuccess { deleteTarget = null; actionError = "" }
+                    .onFailure { actionError = it.message.orEmpty() }
+            }
+        }) { deleteTarget = null }
+    }
+}
+
+@Composable
+private fun LabProbeDdnsCard(
+    record: LabProbeDdnsRecord,
+    onClick: () -> Unit,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menu by remember(record.id) { mutableStateOf(false) }
+    val accent = labProbeStatusColor(record.status)
+    val detectedSummary = buildList {
+        if (record.recordTypes.contains("A")) add("A ${record.detectedIpv4.ifBlank { "—" }}")
+        if (record.recordTypes.contains("AAAA")) add("AAAA ${record.detectedIpv6.ifBlank { "—" }}")
+    }.joinToString(" · ").ifBlank { "—" }
+    val publishedSummary = buildList {
+        if (record.recordTypes.contains("A")) add("A ${record.publishedIpv4.ifBlank { "—" }}")
+        if (record.recordTypes.contains("AAAA")) add("AAAA ${record.publishedIpv6.ifBlank { "—" }}")
+    }.joinToString(" · ").ifBlank { "—" }
+    PremiumCard(accent, Modifier.clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(30.dp))
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(record.hostname.ifBlank { "未命名 DDNS 记录" }, fontSize = 12.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${labProbeProviderLabel(record.provider)} · ${record.recordTypes.joinToString(" / ")}", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TinyBadge(labProbeStatusLabel(record.status), accent)
+                    Text(if (record.enabled) "已启用" else "已停用", fontSize = 9.2.sp, color = if (record.enabled) RouterGreen else RouterMuted, fontWeight = FontWeight.Bold)
+                }
+            }
+            Switch(checked = record.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.76f), colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
+            Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(17.dp), tint = RouterMuted) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("查看详情", fontSize = 11.5.sp) }, onClick = { menu = false; onClick() })
+                    DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 39.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("检测 $detectedSummary", fontSize = 9.1.sp, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("发布 $publishedSummary", fontSize = 9.1.sp, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
+        Text("最后检测 ${labProbeTimeText(record.lastDetectedAt)} · 最后更新 ${labProbeTimeText(record.lastUpdatedAt)}", Modifier.padding(start = 39.dp), fontSize = 9.2.sp, color = RouterMuted)
+    }
+}
+
+@Composable
+private fun LabProbeDdnsDetailPage(
+    record: LabProbeDdnsRecord,
+    address: LabProbeDdnsAddress,
+    busy: Boolean,
+    externalError: String,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+    onRefreshAddress: () -> Unit,
+    onUpdateNow: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    BackHandler(onBack = onBack)
+    Scaffold(containerColor = RouterPage, topBar = {
+        Surface(color = Color.White, shadowElevation = 1.dp) {
+            Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.ArrowBack, null, Modifier.size(20.dp), tint = RouterInk) }
+                Column(Modifier.weight(1f)) {
+                    Text("DDNS 详情", fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+                    Text(labProbeProviderLabel(record.provider), fontSize = 9.2.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+                }
+                Box {
+                    IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(20.dp), tint = RouterMuted) }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp) }, onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", fontSize = 11.5.sp) }, onClick = { menu = false; onToggle() })
+                        DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                    }
+                }
+            }
+        }
+    }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 13.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PremiumCard(labProbeStatusColor(record.status)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(31.dp))
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(record.hostname, fontSize = 14.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (record.enabled) "已启用 · ${record.recordTypes.joinToString(" / ")}" else "已停用", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
+                    }
+                    TinyBadge(labProbeStatusLabel(record.status), labProbeStatusColor(record.status))
+                }
+            }
+            if (externalError.isNotBlank()) CompactMessage(externalError, RouterRed)
+            Text("DNS 记录", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+            if (record.recordTypes.contains("A")) LabProbeDdnsAddressCard("A / IPv4", record.publishedIpv4, record.detectedIpv4, record.ipv4State, record.ipv4Source.ifBlank { address.ipv4Source })
+            if (record.recordTypes.contains("AAAA")) LabProbeDdnsAddressCard("AAAA / IPv6", record.publishedIpv6, record.detectedIpv6, record.ipv6State, record.ipv6Source.ifBlank { address.ipv6Source })
+            Text("检测地址", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+            PremiumCard(RouterCyan) {
+                if (record.recordTypes.contains("A")) {
+                    LabProbeDetectedRow("IPv4", record.detectedIpv4.ifBlank { address.detectedIpv4 }, record.ipv4State.ifBlank { address.ipv4State }, record.ipv4Source.ifBlank { address.ipv4Source })
+                }
+                if (record.recordTypes.contains("AAAA")) {
+                    LabProbeDetectedRow("IPv6", record.detectedIpv6.ifBlank { address.detectedIpv6 }, record.ipv6State.ifBlank { address.ipv6State }, record.ipv6Source.ifBlank { address.ipv6Source })
+                }
+            }
+            PremiumCard(RouterMuted) {
+                Text("最后检测：${labProbeTimeText(record.lastDetectedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
+                Text("最后更新：${labProbeTimeText(record.lastUpdatedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
+                if (record.lastError.isNotBlank()) Text(record.lastError, fontSize = 10.sp, color = RouterRed, fontWeight = FontWeight.SemiBold)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+                Button(onClick = onUpdateNow, enabled = !busy && record.enabled, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LabProbeDdnsAddressCard(title: String, published: String, detected: String, state: String, source: String) {
+    PremiumCard(if (published.isNotBlank()) RouterGreen else RouterAmber) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.weight(1f))
+            TinyBadge(if (published.isNotBlank()) "已发布" else if (detected.isNotBlank()) "待发布" else "无地址", if (published.isNotBlank()) RouterGreen else RouterAmber)
+        }
+        Text(published.ifBlank { detected.ifBlank { "未检测到地址" } }, fontSize = 13.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (published.isNotBlank() && detected.isNotBlank() && published != detected) Text("检测到新地址：$detected", fontSize = 9.5.sp, color = RouterBlue, fontWeight = FontWeight.Bold)
+        Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.5.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun LabProbeDetectedRow(label: String, value: String, state: String, source: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.width(54.dp))
+        Column(Modifier.weight(1f)) {
+            Text(value.ifBlank { "未检测到" }, fontSize = 10.7.sp, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.2.sp, color = RouterMuted)
+        }
+    }
+}
+
+@Composable
+private fun LabProbeDdnsEditorPage(
+    initial: LabProbeDdnsRecord,
+    providers: List<LabProbeDdnsProvider>,
+    externalError: String,
+    onBack: () -> Unit,
+    onSave: (LabProbeDdnsRecord, Map<String, String>) -> Unit,
+) {
+    val normalized = remember(initial) { initial.copy(provider = initial.provider.ifBlank { "cloudflare" }, recordTypes = initial.recordTypes.ifEmpty { listOf("A", "AAAA") }) }
+    var record by remember(normalized) { mutableStateOf(normalized) }
+    var credentialValues by remember(normalized.id, normalized.provider) { mutableStateOf(emptyMap<String, String>()) }
+    var showSecret by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val providerIds = remember(providers) { providers.map { it.id }.filter { it.isNotBlank() }.ifEmpty { labProbeProviderIds } }
+    val providerOptions = providerIds.map(::labProbeProviderLabel)
+    val requiredFields = labProbeCredentialFields(record.provider)
+    val hasEnteredCredential = credentialValues.values.any { it.isNotBlank() }
+    val existingEdit = normalized.id.isNotBlank() && normalized.credentialsConfigured
+    val providerChanged = normalized.id.isNotBlank() && normalized.provider != record.provider
+    BackHandler(onBack = onBack)
+    RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS" else "编辑 LabProbe DDNS", "凭据不会回显；留空保持原凭据", onBack) {
+        CompactChoice("Provider", labProbeProviderLabel(record.provider), providerOptions) { selected ->
+            val id = providerIds.getOrNull(providerOptions.indexOf(selected)) ?: record.provider
+            record = record.copy(provider = id)
+            credentialValues = emptyMap()
+        }
+        CompactField("Hostname", record.hostname, "例如 home.example.com") { record = record.copy(hostname = it.take(253)) }
+        Text("记录类型", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            CompactSegment("IPv4 / A", record.recordTypes.contains("A"), Modifier.weight(1f)) {
+                val next = if (record.recordTypes.contains("A")) record.recordTypes - "A" else record.recordTypes + "A"
+                if (next.isNotEmpty()) record = record.copy(recordTypes = next)
+            }
+            CompactSegment("IPv6 / AAAA", record.recordTypes.contains("AAAA"), Modifier.weight(1f)) {
+                val next = if (record.recordTypes.contains("AAAA")) record.recordTypes - "AAAA" else record.recordTypes + "AAAA"
+                if (next.isNotEmpty()) record = record.copy(recordTypes = next)
+            }
+        }
+        Text("Provider 凭据", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        if (existingEdit && !hasEnteredCredential && !providerChanged) CompactMessage("已配置凭据；以下字段留空即可保持原凭据", RouterCyan)
+        requiredFields.forEach { (key, label) ->
+            val value = credentialValues[key].orEmpty()
+            val hint = if (existingEdit && !providerChanged) "已配置，留空保持不变" else label
+            if (labProbeCredentialIsSecret(key)) {
+                CompactPasswordField(label, value, hint, showSecret, { showSecret = !showSecret }) { next -> credentialValues = credentialValues + (key to next.take(512)) }
+            } else {
+                CompactField(label, value, hint) { next -> credentialValues = credentialValues + (key to next.take(256)) }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("启用", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+            Spacer(Modifier.weight(1f))
+            Switch(checked = record.enabled, onCheckedChange = { record = record.copy(enabled = it) }, colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
+        }
+        val visibleError = error.ifBlank { externalError }
+        if (visibleError.isNotBlank()) CompactMessage(visibleError, RouterRed)
+        Button(onClick = {
+            val entered = credentialValues.filterValues { it.isNotBlank() }
+            error = when {
+                record.hostname.isBlank() -> "请填写 Hostname"
+                record.recordTypes.isEmpty() -> "至少选择一种记录类型"
+                normalized.id.isBlank() && requiredFields.any { entered[it.first].isNullOrBlank() } -> "请完整填写 Provider 凭据"
+                normalized.id.isNotBlank() && (providerChanged || hasEnteredCredential) && requiredFields.any { entered[it.first].isNullOrBlank() } -> "更新凭据时请完整填写全部字段；全部留空则保持原凭据"
+                else -> ""
+            }
+            if (error.isBlank()) onSave(record, entered)
+        }, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) {
+            Text("保存并同步", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
         }
     }
 }
