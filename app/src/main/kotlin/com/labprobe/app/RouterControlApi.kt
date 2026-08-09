@@ -399,6 +399,11 @@ private fun JSONObject.ddnsText(vararg keys:String):String{
     return ""
 }
 
+private fun JSONObject.ddnsValueMap(key: String): Map<String, String> {
+    val values = optJSONObject(key) ?: return emptyMap()
+    return values.keys().asSequence().filter { it == "CNAME" || it == "TXT" }.associateWith { values.ddnsText(it) }
+}
+
 private fun JSONObject.ddnsFlag(default:Boolean,vararg keys:String):Boolean{
     for(key in keys){
         if(!has(key)||isNull(key))continue
@@ -439,7 +444,14 @@ data class LabProbeDdnsProvider(
     val id: String = "",
     val supportsA: Boolean = true,
     val supportsAAAA: Boolean = true,
-)
+    val recordTypes: List<String> = listOf("A", "AAAA"),
+) {
+    fun supports(recordType: String): Boolean = when (recordType.uppercase(Locale.ROOT)) {
+        "A" -> supportsA && recordTypes.contains("A")
+        "AAAA" -> supportsAAAA && recordTypes.contains("AAAA")
+        else -> recordTypes.contains(recordType.uppercase(Locale.ROOT))
+    }
+}
 
 data class LabProbeDdnsAddress(
     val detectedIpv4: String = "",
@@ -472,6 +484,8 @@ data class LabProbeDdnsRecord(
     val ipv6Source: String = "",
     val publishedIpv4: String = "",
     val publishedIpv6: String = "",
+    val recordValues: Map<String, String> = emptyMap(),
+    val publishedValues: Map<String, String> = emptyMap(),
     val status: String = "waiting",
     val lastDetectedAt: Long = 0L,
     val lastUpdatedAt: Long = 0L,
@@ -481,15 +495,52 @@ data class LabProbeDdnsRecord(
     fun toJson(credentials: Map<String, String> = emptyMap()): JSONObject = JSONObject().apply {
         put("provider", provider.trim())
         put("hostname", hostname.trim())
-        put("recordTypes", JSONArray(recordTypes.distinct().filter { it == "A" || it == "AAAA" }))
+        put("recordTypes", JSONArray(normalizeLabProbeRecordTypes(recordTypes)))
         put("ttl", ttl.coerceIn(60, 86400))
         put("enabled", enabled)
+        val values = JSONObject()
+        normalizeLabProbeRecordTypes(recordTypes).filter { it == "CNAME" || it == "TXT" }.forEach { type ->
+            recordValues[type]?.let { value ->
+                val normalized = if (type == "CNAME") value.trim().trimEnd('.') else value
+                normalized.takeIf { it.isNotBlank() }?.let { values.put(type, it) }
+            }
+        }
+        if (values.length() > 0) put("recordValues", values)
         if (credentials.isNotEmpty()) {
             put("credentials", JSONObject().apply {
                 credentials.forEach { (key, value) -> if (value.isNotBlank()) put(key, value) }
             })
         }
     }
+}
+
+internal fun normalizeLabProbeRecordTypes(values: List<String>): List<String> {
+    val normalized = values.map { it.trim().uppercase(Locale.ROOT) }.filter { it in setOf("A", "AAAA", "CNAME", "TXT") }.distinct()
+    return if ("CNAME" in normalized) listOf("CNAME") else normalized.ifEmpty { listOf("A", "AAAA") }
+}
+
+private fun normalizeLabProbeProviderRecordTypes(values: List<String>): List<String> {
+    val normalized = values.map { it.trim().uppercase(Locale.ROOT) }.filter { it in setOf("A", "AAAA", "CNAME", "TXT") }.distinct()
+    return normalized.ifEmpty { listOf("A", "AAAA") }
+}
+
+internal fun labProbeCnameTargetIsValid(hostname: String, target: String): Boolean {
+    val owner = hostname.trim().trimEnd('.').lowercase(Locale.ROOT)
+    val value = target.trim().trimEnd('.').lowercase(Locale.ROOT)
+    if (value.isBlank() || owner.isBlank() || value == owner || value.contains("://") || value.contains('/') || value.any(Char::isWhitespace)) return false
+    val labels = value.split('.')
+    return labels.size >= 2 && labels.all { label ->
+        label.isNotEmpty() && label.length <= 63 && label.first().isLetterOrDigit() && label.last().isLetterOrDigit() && label.all { it.isLetterOrDigit() || it == '-' }
+    }
+}
+
+internal fun labProbeRecordValidationError(record: LabProbeDdnsRecord, provider: LabProbeDdnsProvider? = null): String? {
+    val types = normalizeLabProbeRecordTypes(record.recordTypes)
+    if ("CNAME" in types && types.size > 1) return "CNAME 不能与其他记录类型共存"
+    if (provider != null && types.any { !provider.supports(it) }) return "当前服务商不支持所选记录类型"
+    if ("CNAME" in types && !labProbeCnameTargetIsValid(record.hostname, record.recordValues["CNAME"].orEmpty())) return "请填写有效的 CNAME 目标域名"
+    if ("TXT" in types && record.recordValues["TXT"].orEmpty().isBlank()) return "请填写 TXT 内容"
+    return null
 }
 
 internal fun parseLabProbeDdns(root: JSONObject): LabProbeDdnsSnapshot {
@@ -510,8 +561,8 @@ internal fun parseLabProbeDdns(root: JSONObject): LabProbeDdnsSnapshot {
         (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { item ->
                 val recordTypes = item.optJSONArray("recordTypes")?.let { types ->
-                    (0 until types.length()).map { types.optString(it).uppercase(Locale.ROOT) }.filter { it == "A" || it == "AAAA" }
-                }.orEmpty().ifEmpty { listOf("A", "AAAA") }
+                    (0 until types.length()).map { types.optString(it) }
+                }?.let(::normalizeLabProbeRecordTypes) ?: listOf("A", "AAAA")
                 LabProbeDdnsRecord(
                     id = item.ddnsText("id", "recordId"),
                     provider = item.ddnsText("provider"),
@@ -527,6 +578,8 @@ internal fun parseLabProbeDdns(root: JSONObject): LabProbeDdnsSnapshot {
                     ipv6Source = item.ddnsText("ipv6Source").ifBlank { address.ipv6Source },
                     publishedIpv4 = item.ddnsText("publishedIpv4"),
                     publishedIpv6 = item.ddnsText("publishedIpv6"),
+                    recordValues = item.ddnsValueMap("recordValues"),
+                    publishedValues = item.ddnsValueMap("publishedValues"),
                     status = labProbeFlowStatus(item.ddnsText("status")),
                     lastDetectedAt = item.optLong("lastDetectedAt", 0L),
                     lastUpdatedAt = item.optLong("lastUpdatedAt", 0L),
@@ -562,6 +615,9 @@ private fun parseLabProbeDdnsProviders(root: JSONObject): List<LabProbeDdnsProvi
                 id = item.ddnsText("id", "provider"),
                 supportsA = item.optBoolean("supportsA", true),
                 supportsAAAA = item.optBoolean("supportsAAAA", true),
+                recordTypes = item.optJSONArray("recordTypes")?.let { types ->
+                    normalizeLabProbeProviderRecordTypes((0 until types.length()).map { types.optString(it) })
+                } ?: listOf("A", "AAAA"),
             )
         }
     }

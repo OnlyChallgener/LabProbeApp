@@ -782,14 +782,26 @@ private fun labProbeCredentialIsSecret(key: String): Boolean = key.lowercase(Loc
 private fun labProbeHasPublicAddress(value: String, state: String): Boolean =
     value.isNotBlank() && state.equals("public", ignoreCase = true)
 
+private fun labProbeDirectValueIsValid(record: LabProbeDdnsRecord, recordType: String): Boolean = when (recordType) {
+    "CNAME" -> labProbeCnameTargetIsValid(record.hostname, record.recordValues[recordType].orEmpty())
+    "TXT" -> record.recordValues[recordType].orEmpty().isNotBlank()
+    else -> false
+}
+
 private fun labProbeCanUpdate(record: LabProbeDdnsRecord, address: LabProbeDdnsAddress, busy: Boolean): Boolean {
     if (!record.enabled || busy) return false
     val ipv4 = record.detectedIpv4.ifBlank { address.detectedIpv4 }
     val ipv6 = record.detectedIpv6.ifBlank { address.detectedIpv6 }
     val ipv4State = record.ipv4State.ifBlank { address.ipv4State }
     val ipv6State = record.ipv6State.ifBlank { address.ipv6State }
-    return (record.recordTypes.contains("A") && labProbeHasPublicAddress(ipv4, ipv4State)) ||
-        (record.recordTypes.contains("AAAA") && labProbeHasPublicAddress(ipv6, ipv6State))
+    return record.recordTypes.any { type ->
+        when (type) {
+            "A" -> labProbeHasPublicAddress(ipv4, ipv4State)
+            "AAAA" -> labProbeHasPublicAddress(ipv6, ipv6State)
+            "CNAME", "TXT" -> labProbeDirectValueIsValid(record, type)
+            else -> false
+        }
+    }
 }
 
 @Composable
@@ -928,10 +940,14 @@ private fun LabProbeDdnsCard(
     val detectedSummary = buildList {
         if (record.recordTypes.contains("A")) add("A ${record.detectedIpv4.ifBlank { "—" }}")
         if (record.recordTypes.contains("AAAA")) add("AAAA ${record.detectedIpv6.ifBlank { "—" }}")
+        if (record.recordTypes.contains("CNAME")) add("CNAME ${record.recordValues["CNAME"].orEmpty().ifBlank { "—" }}")
+        if (record.recordTypes.contains("TXT")) add("TXT ${record.recordValues["TXT"].orEmpty().ifBlank { "—" }}")
     }.joinToString(" · ").ifBlank { "—" }
     val publishedSummary = buildList {
         if (record.recordTypes.contains("A")) add("A ${record.publishedIpv4.ifBlank { "—" }}")
         if (record.recordTypes.contains("AAAA")) add("AAAA ${record.publishedIpv6.ifBlank { "—" }}")
+        if (record.recordTypes.contains("CNAME")) add("CNAME ${record.publishedValues["CNAME"].orEmpty().ifBlank { "—" }}")
+        if (record.recordTypes.contains("TXT")) add("TXT ${record.publishedValues["TXT"].orEmpty().ifBlank { "—" }}")
     }.joinToString(" · ").ifBlank { "—" }
     PremiumCard(accent, Modifier.clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1013,13 +1029,17 @@ private fun LabProbeDdnsDetailPage(
             Text("DNS 记录", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
             if (record.recordTypes.contains("A")) LabProbeDdnsAddressCard("A / IPv4", record.publishedIpv4, record.detectedIpv4, record.ipv4State, record.ipv4Source.ifBlank { address.ipv4Source })
             if (record.recordTypes.contains("AAAA")) LabProbeDdnsAddressCard("AAAA / IPv6", record.publishedIpv6, record.detectedIpv6, record.ipv6State, record.ipv6Source.ifBlank { address.ipv6Source })
-            Text("检测地址", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
-            PremiumCard(RouterCyan) {
-                if (record.recordTypes.contains("A")) {
-                    LabProbeDetectedRow("IPv4", record.detectedIpv4.ifBlank { address.detectedIpv4 }, record.ipv4State.ifBlank { address.ipv4State }, record.ipv4Source.ifBlank { address.ipv4Source })
-                }
-                if (record.recordTypes.contains("AAAA")) {
-                    LabProbeDetectedRow("IPv6", record.detectedIpv6.ifBlank { address.detectedIpv6 }, record.ipv6State.ifBlank { address.ipv6State }, record.ipv6Source.ifBlank { address.ipv6Source })
+            if (record.recordTypes.contains("CNAME")) LabProbeDdnsValueCard("CNAME", "CNAME 目标", record.recordValues["CNAME"].orEmpty(), record.publishedValues["CNAME"].orEmpty())
+            if (record.recordTypes.contains("TXT")) LabProbeDdnsValueCard("TXT", "TXT 内容", record.recordValues["TXT"].orEmpty(), record.publishedValues["TXT"].orEmpty())
+            if (record.recordTypes.any { it == "A" || it == "AAAA" }) {
+                Text("检测地址", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+                PremiumCard(RouterCyan) {
+                    if (record.recordTypes.contains("A")) {
+                        LabProbeDetectedRow("IPv4", record.detectedIpv4.ifBlank { address.detectedIpv4 }, record.ipv4State.ifBlank { address.ipv4State }, record.ipv4Source.ifBlank { address.ipv4Source })
+                    }
+                    if (record.recordTypes.contains("AAAA")) {
+                        LabProbeDetectedRow("IPv6", record.detectedIpv6.ifBlank { address.detectedIpv6 }, record.ipv6State.ifBlank { address.ipv6State }, record.ipv6Source.ifBlank { address.ipv6Source })
+                    }
                 }
             }
             PremiumCard(RouterMuted) {
@@ -1027,9 +1047,13 @@ private fun LabProbeDdnsDetailPage(
                 Text("最后更新：${labProbeTimeText(record.lastUpdatedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
                 if (record.lastError.isNotBlank()) Text(record.lastError, fontSize = 10.sp, color = RouterRed, fontWeight = FontWeight.SemiBold)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
-                Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+            if (record.recordTypes.any { it == "A" || it == "AAAA" }) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+                    Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+                }
+            } else {
+                Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
             }
         }
     }
@@ -1045,6 +1069,18 @@ private fun LabProbeDdnsAddressCard(title: String, published: String, detected: 
         Text(published.ifBlank { detected.ifBlank { "未检测到地址" } }, fontSize = 13.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (published.isNotBlank() && detected.isNotBlank() && published != detected) Text("检测到新地址：$detected", fontSize = 9.5.sp, color = RouterBlue, fontWeight = FontWeight.Bold)
         Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.5.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun LabProbeDdnsValueCard(type: String, label: String, value: String, published: String) {
+    PremiumCard(if (published.isNotBlank()) RouterGreen else RouterAmber) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("记录类型：$type", fontSize = 11.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.weight(1f))
+            TinyBadge(if (published.isNotBlank()) "已发布" else "待发布", if (published.isNotBlank()) RouterGreen else RouterAmber)
+        }
+        Text("$label：${value.ifBlank { "未填写" }}", fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = if (type == "TXT") 4 else 2, overflow = TextOverflow.Ellipsis)
+        Text("已发布：${published.ifBlank { "未发布" }}", fontSize = 9.8.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold, maxLines = if (type == "TXT") 4 else 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1067,13 +1103,16 @@ private fun LabProbeDdnsEditorPage(
     onBack: () -> Unit,
     onSave: (LabProbeDdnsRecord, Map<String, String>) -> Unit,
 ) {
-    val normalized = remember(initial) { initial.copy(provider = initial.provider.ifBlank { "cloudflare" }, recordTypes = initial.recordTypes.ifEmpty { listOf("A", "AAAA") }) }
+    val normalized = remember(initial) { initial.copy(provider = initial.provider.ifBlank { "cloudflare" }, recordTypes = normalizeLabProbeRecordTypes(initial.recordTypes)) }
     var record by remember(normalized) { mutableStateOf(normalized) }
     var credentialValues by remember(normalized.id, normalized.provider) { mutableStateOf(emptyMap<String, String>()) }
     var showSecret by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val providerIds = remember(providers) { providers.map { it.id }.filter { it.isNotBlank() }.ifEmpty { labProbeProviderIds } }
     val providerOptions = providerIds.map(::labProbeProviderLabel)
+    val providerSpec = providers.firstOrNull { it.id.equals(record.provider, ignoreCase = true) }
+    val supportedTypes = providerSpec?.recordTypes?.toSet() ?: setOf("A", "AAAA")
+    val validationProvider = providerSpec ?: LabProbeDdnsProvider(id = record.provider, recordTypes = supportedTypes.toList())
     val requiredFields = labProbeCredentialFields(record.provider)
     val hasEnteredCredential = credentialValues.values.any { it.isNotBlank() }
     val existingEdit = normalized.id.isNotBlank() && normalized.credentialsConfigured
@@ -1082,19 +1121,42 @@ private fun LabProbeDdnsEditorPage(
     RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS" else "编辑 LabProbe DDNS", "凭据不会回显；留空保持原凭据", onBack) {
         CompactChoice("服务商", labProbeProviderLabel(record.provider), providerOptions) { selected ->
             val id = providerIds.getOrNull(providerOptions.indexOf(selected)) ?: record.provider
-            record = record.copy(provider = id)
+            val nextSpec = providers.firstOrNull { it.id.equals(id, ignoreCase = true) }
+            val nextSupported = nextSpec?.recordTypes?.toSet() ?: setOf("A", "AAAA")
+            val nextTypes = normalizeLabProbeRecordTypes(record.recordTypes.filter { it in nextSupported })
+            record = record.copy(provider = id, recordTypes = nextTypes)
             credentialValues = emptyMap()
         }
         CompactField("域名", record.hostname, "例如 home.example.com") { record = record.copy(hostname = it.take(253)) }
         Text("记录类型", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            CompactSegment("IPv4 / A", record.recordTypes.contains("A"), Modifier.weight(1f)) {
-                val next = if (record.recordTypes.contains("A")) record.recordTypes - "A" else record.recordTypes + "A"
-                if (next.isNotEmpty()) record = record.copy(recordTypes = next)
+            CompactSegment("IPv4 / A", record.recordTypes.contains("A"), Modifier.weight(1f), enabled = "A" in supportedTypes) {
+                val next = if (record.recordTypes.contains("A")) record.recordTypes - "A" else record.recordTypes.filterNot { it == "CNAME" } + "A"
+                if (next.isNotEmpty()) record = record.copy(recordTypes = normalizeLabProbeRecordTypes(next))
             }
-            CompactSegment("IPv6 / AAAA", record.recordTypes.contains("AAAA"), Modifier.weight(1f)) {
-                val next = if (record.recordTypes.contains("AAAA")) record.recordTypes - "AAAA" else record.recordTypes + "AAAA"
-                if (next.isNotEmpty()) record = record.copy(recordTypes = next)
+            CompactSegment("IPv6 / AAAA", record.recordTypes.contains("AAAA"), Modifier.weight(1f), enabled = "AAAA" in supportedTypes) {
+                val next = if (record.recordTypes.contains("AAAA")) record.recordTypes - "AAAA" else record.recordTypes.filterNot { it == "CNAME" } + "AAAA"
+                if (next.isNotEmpty()) record = record.copy(recordTypes = normalizeLabProbeRecordTypes(next))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            CompactSegment("CNAME", record.recordTypes.contains("CNAME"), Modifier.weight(1f), enabled = "CNAME" in supportedTypes) {
+                val next = if (record.recordTypes.contains("CNAME")) listOf("A") else listOf("CNAME")
+                record = record.copy(recordTypes = normalizeLabProbeRecordTypes(next))
+            }
+            CompactSegment("TXT", record.recordTypes.contains("TXT"), Modifier.weight(1f), enabled = "TXT" in supportedTypes) {
+                val next = if (record.recordTypes.contains("TXT")) record.recordTypes - "TXT" else record.recordTypes.filterNot { it == "CNAME" } + "TXT"
+                if (next.isNotEmpty()) record = record.copy(recordTypes = normalizeLabProbeRecordTypes(next))
+            }
+        }
+        if (record.recordTypes.contains("CNAME")) {
+            CompactField("CNAME 目标", record.recordValues["CNAME"].orEmpty(), "例如 target.example.com") { next ->
+                record = record.copy(recordValues = record.recordValues + ("CNAME" to next.trimEnd('.').take(253)))
+            }
+        }
+        if (record.recordTypes.contains("TXT")) {
+            CompactMultilineField("TXT 内容", record.recordValues["TXT"].orEmpty(), "例如 ACME 验证文本") { next ->
+                record = record.copy(recordValues = record.recordValues + ("TXT" to next.take(2048)))
             }
         }
         Text("服务商凭据", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
@@ -1120,6 +1182,7 @@ private fun LabProbeDdnsEditorPage(
             error = when {
                 record.hostname.isBlank() -> "请填写域名"
                 record.recordTypes.isEmpty() -> "至少选择一种记录类型"
+                labProbeRecordValidationError(record, validationProvider) != null -> labProbeRecordValidationError(record, validationProvider).orEmpty()
                 normalized.id.isBlank() && requiredFields.any { entered[it.first].isNullOrBlank() } -> "请完整填写服务商凭据"
                 normalized.id.isNotBlank() && (providerChanged || hasEnteredCredential) && requiredFields.any { entered[it.first].isNullOrBlank() } -> "更新凭据时请完整填写全部字段；全部留空则保持原凭据"
                 else -> ""
@@ -1407,6 +1470,25 @@ private fun CompactField(label:String,value:String,hint:String,modifier:Modifier
 }
 
 @Composable
+private fun CompactMultilineField(label:String,value:String,hint:String,onChange:(String)->Unit){
+    Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
+        Text(label,fontSize=9.7.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
+        Surface(Modifier.fillMaxWidth().heightIn(min=76.dp,max=132.dp),shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
+            BasicTextField(
+                value=value,
+                onValueChange=onChange,
+                modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=10.dp),
+                minLines=3,
+                maxLines=8,
+                textStyle=TextStyle(fontSize=12.2.sp,lineHeight=17.sp,fontWeight=FontWeight.SemiBold,color=RouterInk),
+                cursorBrush=SolidColor(RouterBlue),
+                decorationBox={inner->Box{if(value.isEmpty())Text(hint,fontSize=11.2.sp,lineHeight=15.sp,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f));inner()}}
+            )
+        }
+    }
+}
+
+@Composable
 private fun CompactPasswordField(label:String,value:String,hint:String,visible:Boolean,onToggle:()->Unit,onChange:(String)->Unit){
     Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
         Text(label,fontSize=9.7.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
@@ -1440,8 +1522,13 @@ private fun CompactChoice(label:String,value:String,options:List<String>,modifie
 }
 
 @Composable
-private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier=Modifier,onClick:()->Unit){
-    Surface(onClick=onClick,modifier=modifier.height(33.dp),shape=RoundedCornerShape(11.dp),color=if(selected)RouterBlue else RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,if(selected)RouterBlue else RouterBorder)){Box(contentAlignment=Alignment.Center){Text(text,fontSize=10.5.sp,fontWeight=FontWeight.Black,color=if(selected)Color.White else RouterMuted)}}
+private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier=Modifier,onClick:()->Unit) {
+    CompactSegment(text, selected, modifier, true, onClick)
+}
+
+@Composable
+private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier,enabled:Boolean,onClick:()->Unit){
+    Surface(onClick=onClick, enabled=enabled, modifier=modifier.height(33.dp), shape=RoundedCornerShape(11.dp), color=if(selected)RouterBlue else RouterField, border=androidx.compose.foundation.BorderStroke(1.dp,if(selected)RouterBlue else RouterBorder)){Box(contentAlignment=Alignment.Center){Text(text,fontSize=10.5.sp,fontWeight=FontWeight.Black,color=if(selected)Color.White else RouterMuted)}}
 }
 
 @Composable
