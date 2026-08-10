@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -735,6 +736,12 @@ private fun labProbeStatusColor(status: String): Color = when (status.lowercase(
     else -> RouterAmber
 }
 
+internal fun labProbeDdnsMenuLabels(enabled: Boolean): List<String> = listOf(
+    "编辑",
+    if (enabled) "停用" else "启用",
+    "删除",
+)
+
 private fun labProbeAddressStateLabel(state: String): String = when (state.lowercase(Locale.ROOT)) {
     "public" -> "公网"
     "cgnat" -> "CGNAT"
@@ -833,7 +840,7 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
         CompactEmpty("还没有 DDNS 记录", "添加后可自动跟随公网 IPv4 / IPv6 地址变化", RouterGlyph.Ddns) { adding = true }
     }
     rows.forEach { record ->
-        LabProbeDdnsCard(record, onClick = { detailId = record.id }, onToggle = {
+        LabProbeDdnsCard(record, onClick = { detailId = record.id }, onEdit = { editing = record }, onToggle = {
             scope.launch {
                 repository.updateLabProbeDdns(record.copy(enabled = !record.enabled), emptyMap())
                     .onSuccess { actionError = "" }
@@ -932,10 +939,12 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
 private fun LabProbeDdnsCard(
     record: LabProbeDdnsRecord,
     onClick: () -> Unit,
+    onEdit: () -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var menu by remember(record.id) { mutableStateOf(false) }
+    val menuLabels = labProbeDdnsMenuLabels(record.enabled)
     val accent = labProbeStatusColor(record.status)
     val detectedSummary = buildList {
         if (record.recordTypes.contains("A")) add("A ${record.detectedIpv4.ifBlank { "—" }}")
@@ -964,9 +973,17 @@ private fun LabProbeDdnsCard(
             Switch(checked = record.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.76f), colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(17.dp), tint = RouterMuted) }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("查看详情", fontSize = 11.5.sp) }, onClick = { menu = false; onClick() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                DropdownMenu(
+                    expanded = menu,
+                    onDismissRequest = { menu = false },
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = Color.White,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 8.dp,
+                ) {
+                    DropdownMenuItem(text = { Text(menuLabels[0], fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text(menuLabels[1], fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onToggle() })
+                    DropdownMenuItem(text = { Text(menuLabels[2], fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -1004,9 +1021,16 @@ private fun LabProbeDdnsDetailPage(
                 }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(20.dp), tint = RouterMuted) }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", fontSize = 11.5.sp) }, onClick = { menu = false; onToggle() })
+                    DropdownMenu(
+                        expanded = menu,
+                        onDismissRequest = { menu = false },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = Color.White,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 8.dp,
+                    ) {
+                        DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onToggle() })
                         DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
                     }
                 }
@@ -1019,7 +1043,7 @@ private fun LabProbeDdnsDetailPage(
                     RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(31.dp))
                     Spacer(Modifier.width(9.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(record.hostname, fontSize = 14.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        LabProbeCopyableValue(record.hostname, "未命名 DDNS 记录", textSize = 14.sp)
                         Text(if (record.enabled) "已启用 · ${record.recordTypes.joinToString(" / ")}" else "已停用", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
                     }
                     TinyBadge(labProbeStatusLabel(record.status), labProbeStatusColor(record.status))
@@ -1066,8 +1090,11 @@ private fun LabProbeDdnsAddressCard(title: String, published: String, detected: 
             Text(title, fontSize = 11.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.weight(1f))
             TinyBadge(if (published.isNotBlank()) "已发布" else if (detected.isNotBlank()) "待发布" else "无地址", if (published.isNotBlank()) RouterGreen else RouterAmber)
         }
-        Text(published.ifBlank { detected.ifBlank { "未检测到地址" } }, fontSize = 13.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (published.isNotBlank() && detected.isNotBlank() && published != detected) Text("检测到新地址：$detected", fontSize = 9.5.sp, color = RouterBlue, fontWeight = FontWeight.Bold)
+        LabProbeCopyableValue(published.ifBlank { detected }, "未检测到地址", textSize = 13.sp)
+        if (published.isNotBlank() && detected.isNotBlank() && published != detected) {
+            Text("检测到新地址", fontSize = 9.5.sp, color = RouterBlue, fontWeight = FontWeight.Bold)
+            LabProbeCopyableValue(detected, "未检测到地址", textSize = 11.5.sp, textColor = RouterBlue)
+        }
         Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.5.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
     }
 }
@@ -1079,8 +1106,40 @@ private fun LabProbeDdnsValueCard(type: String, label: String, value: String, pu
             Text("记录类型：$type", fontSize = 11.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.weight(1f))
             TinyBadge(if (published.isNotBlank()) "已发布" else "待发布", if (published.isNotBlank()) RouterGreen else RouterAmber)
         }
-        Text("$label：${value.ifBlank { "未填写" }}", fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = if (type == "TXT") 4 else 2, overflow = TextOverflow.Ellipsis)
-        Text("已发布：${published.ifBlank { "未发布" }}", fontSize = 9.8.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold, maxLines = if (type == "TXT") 4 else 2, overflow = TextOverflow.Ellipsis)
+        Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        LabProbeCopyableValue(value, "未填写", textSize = 12.5.sp)
+        Text("已发布", fontSize = 9.8.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+        LabProbeCopyableValue(published, "未发布", textSize = 10.8.sp, textColor = RouterMuted, textWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun LabProbeCopyableValue(
+    value: String,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    textSize: androidx.compose.ui.unit.TextUnit = 12.5.sp,
+    textColor: Color = RouterInk,
+    textWeight: FontWeight = FontWeight.Black,
+) {
+    val context = LocalContext.current
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        SelectionContainer(Modifier.weight(1f)) {
+            Text(
+                value.ifBlank { placeholder },
+                fontSize = textSize,
+                fontWeight = textWeight,
+                color = textColor,
+                lineHeight = (textSize.value * 1.35f).sp,
+            )
+        }
+        IconButton(
+            onClick = { copy(context, value) },
+            enabled = value.isNotBlank(),
+            modifier = Modifier.size(30.dp),
+        ) {
+            Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(16.dp), tint = if (value.isNotBlank()) RouterBlue else RouterMuted.copy(alpha = .45f))
+        }
     }
 }
 
@@ -1089,7 +1148,7 @@ private fun LabProbeDetectedRow(label: String, value: String, state: String, sou
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.width(54.dp))
         Column(Modifier.weight(1f)) {
-            Text(value.ifBlank { "未检测到" }, fontSize = 10.7.sp, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LabProbeCopyableValue(value, "未检测到", textSize = 10.7.sp, textWeight = FontWeight.Bold)
             Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.2.sp, color = RouterMuted)
         }
     }
@@ -1286,9 +1345,16 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
                 IconButton(onClick={menu=true},modifier=Modifier.size(28.dp)){
                     Icon(Icons.Rounded.MoreVert,"更多操作",Modifier.size(16.dp),tint=RouterMuted)
                 }
-                DropdownMenu(expanded=menu,onDismissRequest={menu=false}){
-                    DropdownMenuItem(text={Text("编辑",fontSize=11.5.sp)},onClick={menu=false;onEdit()})
-                    DropdownMenuItem(text={Text("删除",fontSize=11.5.sp,color=RouterRed)},onClick={menu=false;onDelete()})
+                DropdownMenu(
+                    expanded = menu,
+                    onDismissRequest = { menu = false },
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = Color.White,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 8.dp,
+                ) {
+                    DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
