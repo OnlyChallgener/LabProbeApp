@@ -71,6 +71,10 @@ data class FavoriteShortcut(
     val type: String = "manual",
     val mappingId: String? = null,
     val ddnsRecordId: String? = null,
+    val deviceId: String? = null,
+    val localEndpoint: String = "",
+    val remoteEndpoint: String = "",
+    val serviceType: String = "",
 )
 
 private fun normalizeFavoriteType(value: String?): String =
@@ -97,6 +101,10 @@ internal fun parseFavoriteShortcutsJson(raw: String): List<FavoriteShortcut> {
             type = normalizeFavoriteType(item.optString("type", "manual")),
             mappingId = if (item.has("mappingId") && !item.isNull("mappingId")) optionalFavoriteId(item.optString("mappingId")) else null,
             ddnsRecordId = if (item.has("ddnsRecordId") && !item.isNull("ddnsRecordId")) optionalFavoriteId(item.optString("ddnsRecordId")) else null,
+            deviceId = if (item.has("deviceId") && !item.isNull("deviceId")) optionalFavoriteId(item.optString("deviceId")) else null,
+            localEndpoint = item.optString("localEndpoint").trim(),
+            remoteEndpoint = item.optString("remoteEndpoint").trim(),
+            serviceType = item.optString("serviceType").trim(),
         )
     }.sortedBy { it.order }
 }
@@ -116,6 +124,10 @@ internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): Stri
             .put("type", normalizeFavoriteType(item.type))
         optionalFavoriteId(item.mappingId)?.let { json.put("mappingId", it) }
         optionalFavoriteId(item.ddnsRecordId)?.let { json.put("ddnsRecordId", it) }
+        optionalFavoriteId(item.deviceId)?.let { json.put("deviceId", it) }
+        item.localEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("localEndpoint", it) }
+        item.remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("remoteEndpoint", it) }
+        item.serviceType.trim().takeIf { it.isNotBlank() }?.let { json.put("serviceType", it) }
         array.put(json)
     }
     return array.toString()
@@ -131,6 +143,84 @@ internal fun resolveFavoriteMapping(favorite: FavoriteShortcut, rules: List<Port
     val id = optionalFavoriteId(favorite.mappingId)
     if (id == null) return FavoriteMappingResolution(rule = null, missing = true)
     return FavoriteMappingResolution(rule = rules.firstOrNull { it.id == id }, missing = rules.none { it.id == id })
+}
+
+private fun favoriteServiceType(rule: PortMapRule): String = when (rule.targetPort) {
+    22 -> "SSH"
+    80 -> "HTTP"
+    443 -> "HTTPS"
+    3389 -> "RDP"
+    else -> "TCP"
+}
+
+private fun favoriteLocalEndpoint(rule: PortMapRule): String = when {
+    rule.mode == "6to4" && rule.targetIpv4.isNotBlank() -> "http://${rule.targetIpv4}:${rule.targetPort}"
+    rule.mode == "6to6" && rule.targetMode == "ipv6_full" && rule.targetIpv6.isNotBlank() ->
+        "http://[${rule.targetIpv6.trim().removePrefix("[").removeSuffix("]")}]:${rule.targetPort}"
+    else -> ""
+}
+
+private fun favoriteRemoteEndpoint(rule: PortMapRule): String =
+    rule.listenPort.takeIf { it in 1..65535 }?.let { "tcp://[::]:$it" }.orEmpty()
+
+/** Builds the lightweight favorite payload for an existing mapping rule. */
+internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0): FavoriteShortcut {
+    val serviceType = favoriteServiceType(rule)
+    return FavoriteShortcut(
+        id = "mapping-${rule.id}",
+        title = rule.name.ifBlank { "IPv6 映射 ${rule.listenPort}" },
+        description = "$serviceType · IPv6 远程",
+        iconType = "builtin",
+        iconValue = "server",
+        lanUrl = favoriteLocalEndpoint(rule),
+        wanUrl = "",
+        order = order,
+        type = "mapping",
+        mappingId = rule.id,
+        deviceId = optionalFavoriteId(rule.targetMac),
+        localEndpoint = favoriteLocalEndpoint(rule),
+        remoteEndpoint = favoriteRemoteEndpoint(rule),
+        serviceType = serviceType,
+    )
+}
+
+internal fun upsertMappingFavorite(prefs: AppPrefs, rule: PortMapRule): FavoriteShortcut {
+    val current = prefs.favoriteShortcuts().toMutableList()
+    val index = current.indexOfFirst { it.mappingId == rule.id }
+    val generated = favoriteFromPortMapRule(rule, if (index >= 0) current[index].order else current.size)
+    val saved = if (index >= 0) {
+        val old = current[index]
+        old.copy(
+            type = "mapping",
+            mappingId = rule.id,
+            deviceId = generated.deviceId,
+            localEndpoint = generated.localEndpoint,
+            remoteEndpoint = generated.remoteEndpoint,
+            serviceType = generated.serviceType,
+            lanUrl = old.lanUrl.ifBlank { generated.lanUrl },
+            wanUrl = old.wanUrl.ifBlank { generated.wanUrl },
+        ).also { current[index] = it }
+    } else {
+        current += generated
+        generated
+    }
+    prefs.saveFavoriteShortcuts(current.mapIndexed { order, item -> item.copy(order = order) })
+    return saved
+}
+
+internal fun favoriteServiceStatus(favorite: FavoriteShortcut, mode: String, mapping: FavoriteMappingResolution? = null): String {
+    if (mapping?.missing == true) return "当前不可达"
+    if (mapping?.rule?.enabled == false) return "当前不可达"
+    val endpoint = if (mode == "wan") {
+        favorite.remoteEndpoint.ifBlank { favorite.wanUrl }
+    } else {
+        favorite.localEndpoint.ifBlank { favorite.lanUrl }
+    }
+    return when {
+        mode == "wan" && endpoint.isNotBlank() -> "IPv6远程"
+        mode != "wan" && endpoint.isNotBlank() -> "内网直连"
+        else -> "当前不可达"
+    }
 }
 
 private fun validFavoriteHostname(raw: String): String? {
@@ -182,6 +272,10 @@ private data class FavoriteDraft(
     val type: String = "manual",
     val mappingId: String? = null,
     val ddnsRecordId: String? = null,
+    val deviceId: String? = null,
+    val localEndpoint: String = "",
+    val remoteEndpoint: String = "",
+    val serviceType: String = "",
 )
 
 private val favoriteImageClient = OkHttpClient.Builder()
@@ -301,6 +395,11 @@ private fun FavoriteShortcut.openUrl(mode: String): String = when (mode) {
     else -> lanUrl.ifBlank { wanUrl }
 }
 
+private fun FavoriteShortcut.addressForCopy(mode: String): String = when (mode) {
+    "wan" -> remoteEndpoint.ifBlank { wanUrl }.ifBlank { lanUrl }
+    else -> localEndpoint.ifBlank { lanUrl }.ifBlank { wanUrl }
+}
+
 private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: String) {
     val target = normalizeFavoriteUrl(shortcut.openUrl(mode))
     if (target.isBlank()) return
@@ -312,6 +411,7 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
 @Composable
 fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenDns: () -> Unit, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit, onBeforeOpenShortcut: () -> Unit = {}) {
     val context = LocalContext.current
+    val mappingRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs).rules }
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
     var shortcuts by remember { mutableStateOf(prefs.favoriteShortcuts()) }
@@ -332,7 +432,8 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
         val keyword = query.trim()
         if (keyword.isBlank()) shortcuts else shortcuts.filter {
             it.title.contains(keyword, true) || it.description.contains(keyword, true) ||
-                it.lanUrl.contains(keyword, true) || it.wanUrl.contains(keyword, true)
+                it.serviceType.contains(keyword, true) || it.localEndpoint.contains(keyword, true) ||
+                it.remoteEndpoint.contains(keyword, true) || it.lanUrl.contains(keyword, true) || it.wanUrl.contains(keyword, true)
         }
     }
 
@@ -401,9 +502,14 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                         shortcut = shortcut,
                         mode = mode,
                         columns = columns,
+                        mapping = resolveFavoriteMapping(shortcut, mappingRules),
                         dragEnabled = query.isBlank(),
                         onOpen = { onBeforeOpenShortcut(); openFavorite(context, shortcut, mode) },
                         onEdit = { editing = shortcut },
+                        onCopyAddress = { copy(context, shortcut.addressForCopy(mode)) },
+                        onViewMapping = {
+                            if (resolveFavoriteMapping(shortcut, mappingRules).missing) toast(context, "关联映射不存在") else onOpenPortMapping()
+                        },
                         onDelete = { persist(shortcuts.filterNot { it.id == shortcut.id }) },
                         onMoveBy = { delta ->
                             val from = shortcuts.indexOfFirst { it.id == shortcut.id }
@@ -459,9 +565,12 @@ private fun FavoriteShortcutCard(
     shortcut: FavoriteShortcut,
     mode: String,
     columns: Int,
+    mapping: FavoriteMappingResolution,
     dragEnabled: Boolean,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
+    onCopyAddress: () -> Unit,
+    onViewMapping: () -> Unit,
     onDelete: () -> Unit,
     onMoveBy: (Int) -> Unit
 ) {
@@ -507,7 +616,12 @@ private fun FavoriteShortcutCard(
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(shortcut.description.ifBlank { if (mode == "lan") "内网快捷入口" else "外网快捷入口" }, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(shortcut.serviceType.ifBlank { shortcut.description.ifBlank { "网页入口" } }, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(favoriteServiceStatus(shortcut, mode, mapping), fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = when (favoriteServiceStatus(shortcut, mode, mapping)) {
+                    "当前不可达" -> LabV2.Red
+                    "内网直连" -> LabV2.Green
+                    else -> LabV2.Primary
+                }, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) {
@@ -515,9 +629,18 @@ private fun FavoriteShortcutCard(
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp), containerColor = LabV2.Field) {
                     DropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("复制地址", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(17.dp)) }, onClick = { menu = false; onCopyAddress() })
+                    if (shortcut.mappingId != null) {
+                        DropdownMenuItem(text = { Text("查看关联映射", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.SwapHoriz, null, Modifier.size(17.dp)) }, onClick = { menu = false; onViewMapping() })
+                    }
                     DropdownMenuItem(text = { Text("删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(17.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
                 }
             }
+        }
+        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 7.dp).height(34.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)) {
+            Icon(Icons.Rounded.OpenInNew, null, Modifier.size(15.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("打开", fontSize = 11.sp, fontWeight = FontWeight.Black)
         }
     }
 }
@@ -590,6 +713,10 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
                     type = it.type,
                     mappingId = it.mappingId,
                     ddnsRecordId = it.ddnsRecordId,
+                    deviceId = it.deviceId,
+                    localEndpoint = it.localEndpoint,
+                    remoteEndpoint = it.remoteEndpoint,
+                    serviceType = it.serviceType,
                 )
             }
                 ?: FavoriteDraft()
@@ -624,6 +751,13 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
         }
         Row(Modifier.fillMaxWidth()) {
             FavoriteInlineField("外网地址", draft.wanUrl, { draft = draft.copy(wanUrl = it) }, "example.com/be72", Modifier.weight(1f), uri = true)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FavoriteInlineField("服务类型", draft.serviceType, { draft = draft.copy(serviceType = it) }, "例如：HTTPS", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FavoriteInlineField("本地入口", draft.localEndpoint, { draft = draft.copy(localEndpoint = it) }, "可选", Modifier.weight(1f), uri = true)
+            FavoriteInlineField("远程入口", draft.remoteEndpoint, { draft = draft.copy(remoteEndpoint = it) }, "可选", Modifier.weight(1f), uri = true)
         }
         if (webhookManaged) {
             Text("可在自动生成的端口后添加 /be72；后续同步会保留该后缀。", Modifier.padding(start = 53.dp), fontSize = 9.5.sp, color = LabV2.Primary)
@@ -673,7 +807,7 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
                     val wan = normalizeFavoriteUrl(draft.wanUrl)
                     error = when {
                         draft.title.trim().isBlank() -> "请填写名称"
-                        lan.isBlank() && wan.isBlank() -> "内网地址和外网地址不能同时为空"
+                        lan.isBlank() && wan.isBlank() && draft.localEndpoint.trim().isBlank() && draft.remoteEndpoint.trim().isBlank() -> "请至少填写一个访问入口"
                         draft.iconType == "local" && draft.iconValue.isBlank() -> "请选择本地图标"
                         draft.iconType == "url" && draft.iconValue.isBlank() -> "请填写图片网址"
                         else -> ""
@@ -692,6 +826,10 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
                                 type = normalizeFavoriteType(draft.type),
                                 mappingId = draft.mappingId,
                                 ddnsRecordId = draft.ddnsRecordId,
+                                deviceId = draft.deviceId,
+                                localEndpoint = draft.localEndpoint.trim(),
+                                remoteEndpoint = draft.remoteEndpoint.trim(),
+                                serviceType = draft.serviceType.trim(),
                             )
                         )
                     }
@@ -699,7 +837,7 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
                 modifier = Modifier.weight(1f).height(46.dp),
                 shape = LabV2.ButtonShape,
                 enabled = draft.title.trim().isNotBlank() &&
-                    (draft.lanUrl.trim().isNotBlank() || draft.wanUrl.trim().isNotBlank()) &&
+                    (draft.lanUrl.trim().isNotBlank() || draft.wanUrl.trim().isNotBlank() || draft.localEndpoint.trim().isNotBlank() || draft.remoteEndpoint.trim().isNotBlank()) &&
                     !(draft.iconType in setOf("local", "url") && draft.iconValue.trim().isBlank())
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }

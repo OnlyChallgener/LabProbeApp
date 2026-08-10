@@ -513,6 +513,10 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             api = api,
             onDismiss = { selectedId = null },
             onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
+            onAddFavorite = {
+                upsertMappingFavorite(prefs, selected)
+                toast(context, "已加入收藏")
+            },
             onToggle = {
                 val action = if (selected.shouldStop) "stop" else "start"
                 markSyncing(selected, action)
@@ -1249,6 +1253,7 @@ private fun PortMapDetailPage(
     api: PortMapApi,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
+    onAddFavorite: () -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1311,13 +1316,20 @@ private fun PortMapDetailPage(
                 }
             }
 
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onAddFavorite, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortBlue)) {
+                Icon(Icons.Rounded.Bookmark, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("加入收藏", fontWeight = FontWeight.Black)
+            }
             Button(onClick = onToggle, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.shouldStop) PortRed else PortBlue)) {
                 Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
                 Spacer(Modifier.width(5.dp))
                 Text(if (rule.shouldStop) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
             }
-            Spacer(Modifier.width(8.dp))
+        }
+        Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.weight(1f))
             OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.height(48.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed)) {
                 Icon(Icons.Rounded.Delete, null)
             }

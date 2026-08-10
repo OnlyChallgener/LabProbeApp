@@ -28,6 +28,10 @@ class FavoriteLinkModelTest {
         assertEquals("manual", favorite.type)
         assertNull(favorite.mappingId)
         assertNull(favorite.ddnsRecordId)
+        assertNull(favorite.deviceId)
+        assertEquals("", favorite.localEndpoint)
+        assertEquals("", favorite.remoteEndpoint)
+        assertEquals("", favorite.serviceType)
         assertEquals(4, favorite.order)
     }
 
@@ -66,13 +70,46 @@ class FavoriteLinkModelTest {
             type = "mapping",
             mappingId = "map-1",
             ddnsRecordId = "ddns-1",
+            deviceId = "aa:bb:cc:dd:ee:ff",
+            localEndpoint = "http://192.168.5.46:443",
+            remoteEndpoint = "tcp://[::]:20000",
+            serviceType = "HTTPS",
         )
 
         val after = parseFavoriteShortcutsJson(serializeFavoriteShortcutsJson(listOf(before))).single()
         assertEquals("mapping", after.type)
         assertEquals("map-1", after.mappingId)
         assertEquals("ddns-1", after.ddnsRecordId)
+        assertEquals("aa:bb:cc:dd:ee:ff", after.deviceId)
+        assertEquals(before.localEndpoint, after.localEndpoint)
+        assertEquals(before.remoteEndpoint, after.remoteEndpoint)
+        assertEquals("HTTPS", after.serviceType)
         assertEquals(before.wanUrl, after.wanUrl)
+    }
+
+    @Test
+    fun mappingRuleBuildsServiceFavoriteWithoutDuplicatingRuleFields() {
+        val favorite = favoriteFromPortMapRule(sampleRule("map-1"))
+        assertEquals("mapping-map-1", favorite.id)
+        assertEquals("mapping", favorite.type)
+        assertEquals("map-1", favorite.mappingId)
+        assertEquals("aa:bb:cc:dd:ee:ff", favorite.deviceId)
+        assertEquals("HTTPS", favorite.serviceType)
+        assertEquals("http://192.168.5.46:443", favorite.localEndpoint)
+        assertEquals("tcp://[::]:20000", favorite.remoteEndpoint)
+        assertEquals(favorite.localEndpoint, favorite.lanUrl)
+    }
+
+    @Test
+    fun serviceStatusUsesEndpointAndMissingMappingIsUnreachable() {
+        val favorite = sampleFavorite(mappingId = "map-1").copy(
+            localEndpoint = "http://192.168.5.46:443",
+            remoteEndpoint = "tcp://[::]:20000",
+            serviceType = "HTTPS",
+        )
+        assertEquals("内网直连", favoriteServiceStatus(favorite, "lan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+        assertEquals("IPv6远程", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+        assertEquals("当前不可达", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, emptyList())))
     }
 
     @Test
