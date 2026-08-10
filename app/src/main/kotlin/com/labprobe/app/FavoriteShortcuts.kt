@@ -53,6 +53,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.URI
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -66,26 +67,19 @@ data class FavoriteShortcut(
     val iconValue: String,
     val lanUrl: String,
     val wanUrl: String,
-    val order: Int
+    val order: Int,
+    val type: String = "manual",
+    val mappingId: String? = null,
+    val ddnsRecordId: String? = null,
 )
 
-private data class FavoriteDraft(
-    val id: String = UUID.randomUUID().toString(),
-    val title: String = "",
-    val description: String = "",
-    val iconType: String = "builtin",
-    val iconValue: String = "web",
-    val lanUrl: String = "",
-    val wanUrl: String = ""
-)
+private fun normalizeFavoriteType(value: String?): String =
+    if (value?.trim()?.equals("mapping", ignoreCase = true) == true) "mapping" else "manual"
 
-private val favoriteImageClient = OkHttpClient.Builder()
-    .connectTimeout(4, TimeUnit.SECONDS)
-    .readTimeout(6, TimeUnit.SECONDS)
-    .build()
+private fun optionalFavoriteId(value: String?): String? = value?.trim()?.takeIf { it.isNotBlank() }
 
-fun AppPrefs.favoriteShortcuts(): List<FavoriteShortcut> {
-    val array = runCatching { JSONArray(favoriteShortcutsJson) }.getOrElse { JSONArray() }
+internal fun parseFavoriteShortcutsJson(raw: String): List<FavoriteShortcut> {
+    val array = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
     return (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
         val id = item.optString("id").trim()
@@ -99,27 +93,108 @@ fun AppPrefs.favoriteShortcuts(): List<FavoriteShortcut> {
             iconValue = item.optString("iconValue", "web").trim().ifBlank { "web" },
             lanUrl = item.optString("lanUrl").trim(),
             wanUrl = item.optString("wanUrl").trim(),
-            order = item.optInt("order", index)
+            order = item.optInt("order", index),
+            type = normalizeFavoriteType(item.optString("type", "manual")),
+            mappingId = if (item.has("mappingId") && !item.isNull("mappingId")) optionalFavoriteId(item.optString("mappingId")) else null,
+            ddnsRecordId = if (item.has("ddnsRecordId") && !item.isNull("ddnsRecordId")) optionalFavoriteId(item.optString("ddnsRecordId")) else null,
         )
     }.sortedBy { it.order }
 }
 
-fun AppPrefs.saveFavoriteShortcuts(items: List<FavoriteShortcut>) {
+internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): String {
     val array = JSONArray()
     items.forEachIndexed { index, item ->
-        array.put(
-            JSONObject()
-                .put("id", item.id)
-                .put("title", item.title)
-                .put("description", item.description)
-                .put("iconType", item.iconType)
-                .put("iconValue", item.iconValue)
-                .put("lanUrl", item.lanUrl)
-                .put("wanUrl", item.wanUrl)
-                .put("order", index)
-        )
+        val json = JSONObject()
+            .put("id", item.id)
+            .put("title", item.title)
+            .put("description", item.description)
+            .put("iconType", item.iconType)
+            .put("iconValue", item.iconValue)
+            .put("lanUrl", item.lanUrl)
+            .put("wanUrl", item.wanUrl)
+            .put("order", index)
+            .put("type", normalizeFavoriteType(item.type))
+        optionalFavoriteId(item.mappingId)?.let { json.put("mappingId", it) }
+        optionalFavoriteId(item.ddnsRecordId)?.let { json.put("ddnsRecordId", it) }
+        array.put(json)
     }
-    favoriteShortcutsJson = array.toString()
+    return array.toString()
+}
+
+data class FavoriteMappingResolution(
+    val rule: PortMapRule?,
+    val missing: Boolean,
+)
+
+internal fun resolveFavoriteMapping(favorite: FavoriteShortcut, rules: List<PortMapRule>): FavoriteMappingResolution {
+    if (normalizeFavoriteType(favorite.type) != "mapping") return FavoriteMappingResolution(rule = null, missing = false)
+    val id = optionalFavoriteId(favorite.mappingId)
+    if (id == null) return FavoriteMappingResolution(rule = null, missing = true)
+    return FavoriteMappingResolution(rule = rules.firstOrNull { it.id == id }, missing = rules.none { it.id == id })
+}
+
+private fun validFavoriteHostname(raw: String): String? {
+    val value = raw.trim().trimEnd('.')
+    if (value.isBlank() || value.length > 253 || value.any { it.isWhitespace() || it in "/@?#[]:" }) return null
+    val labels = value.split('.')
+    if (labels.any { label ->
+            label.isBlank() || label.length > 63 || label.first() == '-' || label.last() == '-' ||
+                label.any { ch -> !(ch.isLetterOrDigit() || ch == '-') }
+        }) return null
+    return value
+}
+
+private fun replaceFavoriteUrlHost(rawUrl: String, hostname: String): String? {
+    val source = runCatching { URI(normalizeFavoriteUrl(rawUrl)) }.getOrNull() ?: return null
+    if (source.scheme.isNullOrBlank() || source.rawAuthority.isNullOrBlank()) return null
+    val authority = buildString {
+        source.rawUserInfo?.let { append(it).append('@') }
+        if (hostname.contains(':') && !hostname.startsWith('[')) append('[').append(hostname).append(']') else append(hostname)
+        if (source.port >= 0) append(':').append(source.port)
+    }
+    return buildString {
+        append(source.scheme).append("://").append(authority)
+        source.rawPath?.let { append(it) }
+        source.rawQuery?.let { append('?').append(it) }
+        source.rawFragment?.let { append('#').append(it) }
+    }
+}
+
+/**
+ * Resolves only the host portion of a linked DDNS favorite. Network/DNS checks
+ * intentionally do not happen here; callers can use wanUrl unchanged on any
+ * missing or invalid association.
+ */
+internal fun resolveFavoriteRemoteUrl(favorite: FavoriteShortcut, snapshot: LabProbeDdnsSnapshot?): String {
+    val recordId = optionalFavoriteId(favorite.ddnsRecordId) ?: return favorite.wanUrl
+    val hostname = snapshot?.records?.firstOrNull { it.id == recordId }?.hostname?.let(::validFavoriteHostname) ?: return favorite.wanUrl
+    return replaceFavoriteUrlHost(favorite.wanUrl, hostname) ?: favorite.wanUrl
+}
+
+private data class FavoriteDraft(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String = "",
+    val description: String = "",
+    val iconType: String = "builtin",
+    val iconValue: String = "web",
+    val lanUrl: String = "",
+    val wanUrl: String = "",
+    val type: String = "manual",
+    val mappingId: String? = null,
+    val ddnsRecordId: String? = null,
+)
+
+private val favoriteImageClient = OkHttpClient.Builder()
+    .connectTimeout(4, TimeUnit.SECONDS)
+    .readTimeout(6, TimeUnit.SECONDS)
+    .build()
+
+fun AppPrefs.favoriteShortcuts(): List<FavoriteShortcut> {
+    return parseFavoriteShortcutsJson(favoriteShortcutsJson)
+}
+
+fun AppPrefs.saveFavoriteShortcuts(items: List<FavoriteShortcut>) {
+    favoriteShortcutsJson = serializeFavoriteShortcutsJson(items)
 }
 
 fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
@@ -503,7 +578,20 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
     val scope = rememberCoroutineScope()
     var draft by remember(existing?.id) {
         mutableStateOf(
-            existing?.let { FavoriteDraft(it.id, it.title, it.description, it.iconType, it.iconValue, it.lanUrl, it.wanUrl) }
+            existing?.let {
+                FavoriteDraft(
+                    id = it.id,
+                    title = it.title,
+                    description = it.description,
+                    iconType = it.iconType,
+                    iconValue = it.iconValue,
+                    lanUrl = it.lanUrl,
+                    wanUrl = it.wanUrl,
+                    type = it.type,
+                    mappingId = it.mappingId,
+                    ddnsRecordId = it.ddnsRecordId,
+                )
+            }
                 ?: FavoriteDraft()
         )
     }
@@ -591,7 +679,21 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
                         else -> ""
                     }
                     if (error.isBlank()) {
-                        onSave(FavoriteShortcut(draft.id, draft.title.trim(), draft.description.trim(), draft.iconType, draft.iconValue.trim(), lan, wan, existing?.order ?: 0))
+                        onSave(
+                            FavoriteShortcut(
+                                id = draft.id,
+                                title = draft.title.trim(),
+                                description = draft.description.trim(),
+                                iconType = draft.iconType,
+                                iconValue = draft.iconValue.trim(),
+                                lanUrl = lan,
+                                wanUrl = wan,
+                                order = existing?.order ?: 0,
+                                type = normalizeFavoriteType(draft.type),
+                                mappingId = draft.mappingId,
+                                ddnsRecordId = draft.ddnsRecordId,
+                            )
+                        )
                     }
                 },
                 modifier = Modifier.weight(1f).height(46.dp),
