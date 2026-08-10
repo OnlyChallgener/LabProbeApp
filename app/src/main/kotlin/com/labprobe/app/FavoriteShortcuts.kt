@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -644,10 +645,26 @@ private fun CompactHeaderAction(icon: ImageVector, description: String, onClick:
 
 @Composable
 private fun FavoriteModeButton(icon: ImageVector, description: String, selected: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = if (selected) LabV2.Primary else Color.Transparent) {
-        Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(10.dp), color = if (selected) LabV2.Primary else Color.Transparent) {
+        Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
             Icon(icon, description, Modifier.size(20.dp), tint = if (selected) Color.White else LabV2.InkMuted)
         }
+    }
+}
+
+@Composable
+private fun FavoriteListCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = modifier,
+        shape = LabV2.CompactCardShape,
+        color = Color.White,
+        border = BorderStroke(1.dp, LabV2.Border)
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            content = content
+        )
     }
 }
 
@@ -685,7 +702,7 @@ private fun FavoriteShortcutCard(
         dragY = 0f
     }
 
-    CompactListCard(
+    FavoriteListCard(
         Modifier
             .fillMaxWidth()
             .offset { IntOffset(if (dragging) dragX.roundToInt() else 0, if (dragging) dragY.roundToInt() else 0) }
@@ -704,13 +721,13 @@ private fun FavoriteShortcutCard(
             .combinedClickable(onClick = onOpen, onLongClick = {})
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            FavoriteIcon(shortcut.iconType, shortcut.iconValue, 44)
+            FavoriteIcon(shortcut.iconType, shortcut.iconValue, 38)
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(shortcut.serviceType.ifBlank { shortcut.description.ifBlank { "网页入口" } }, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(shortcut.serviceType.ifBlank { shortcut.description.ifBlank { "网页入口" } }, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val status = accessReport?.let(::favoriteAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping)
-                Text(status, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = when {
+                Text(status, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium, color = when {
                     status == "内网" -> LabV2.Green
                     status == "外网" -> LabV2.Primary
                     else -> LabV2.Red
@@ -720,7 +737,7 @@ private fun FavoriteShortcutCard(
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) {
                     Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(18.dp), tint = LabV2.InkMuted)
                 }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp), containerColor = LabV2.Field) {
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(12.dp), containerColor = Color.White) {
                     DropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)) }, onClick = { menu = false; onEdit() })
                     DropdownMenuItem(text = { Text("复制地址", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(17.dp)) }, onClick = { menu = false; onCopyAddress() })
                     if (shortcut.mappingId != null) {
@@ -730,17 +747,17 @@ private fun FavoriteShortcutCard(
                 }
             }
         }
-        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 7.dp).height(34.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)) {
+        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(30.dp), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary.copy(alpha = .10f), contentColor = LabV2.Primary), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
             Icon(Icons.Rounded.OpenInNew, null, Modifier.size(15.dp))
             Spacer(Modifier.width(5.dp))
-            Text("打开", fontSize = 11.sp, fontWeight = FontWeight.Black)
+            Text("打开", fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
 @Composable
 private fun FavoriteEmptyState(hasSearch: Boolean, onAction: () -> Unit) {
-    CompactListCard(Modifier.fillMaxWidth()) {
+    FavoriteListCard(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(vertical = 22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
             LabV2ToolIcon(if (hasSearch) Icons.Rounded.SearchOff else Icons.Rounded.Bookmarks, LabV2.Primary, size = 48)
             Text(if (hasSearch) "没有匹配的收藏" else "还没有收藏", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)

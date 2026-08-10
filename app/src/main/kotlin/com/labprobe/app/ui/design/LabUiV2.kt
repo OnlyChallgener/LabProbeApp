@@ -370,8 +370,11 @@ fun LabV2ToolIcon(
     icon: ImageVector,
     accent: Color,
     modifier: Modifier = Modifier,
-    size: Int = 46
+    size: Int = 46,
+    muted: Boolean = false
 ) {
+    val startAlpha = if (muted) .09f else .16f
+    val endAlpha = if (muted) .04f else .07f
     Box(
         modifier
             .size(size.dp)
@@ -379,8 +382,8 @@ fun LabV2ToolIcon(
             .background(
                 Brush.linearGradient(
                     listOf(
-                        accent.copy(alpha = .16f),
-                        accent.copy(alpha = .07f)
+                        accent.copy(alpha = startAlpha),
+                        accent.copy(alpha = endAlpha)
                     )
                 )
             )
