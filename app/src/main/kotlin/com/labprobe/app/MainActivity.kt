@@ -168,6 +168,12 @@ private const val DEFAULT_DNS1 = "223.5.5.5"
 private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
+// 首页专用视觉 token：保持页面渐变，但让卡片层级使用纯白、轻边框和较小圆角。
+private val HomeCardShape = RoundedCornerShape(20.dp)
+private val HomeSmallCardShape = RoundedCornerShape(18.dp)
+private val HomeInnerShape = RoundedCornerShape(14.dp)
+private val HomeCardBorder = Color(0xFFE7EDF4)
+
 object AppVersion {
     val NAME: String get() = BuildConfig.VERSION_NAME
     val CODE: Int get() = BuildConfig.VERSION_CODE
@@ -2140,11 +2146,11 @@ fun DetailShell(
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
     val techBlue = Color(0xFF2D63D8)
     Surface(
-        color = Color.White.copy(alpha = 0.92f),
-        shape = RoundedCornerShape(32.dp),
+        color = Color.White,
+        shape = HomeCardShape,
         tonalElevation = 0.dp,
-        shadowElevation = 1.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.76f)),
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -2154,13 +2160,13 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
         ) {
             titles.forEachIndexed { i, t ->
                 val active = i == selected
-                val itemShape = RoundedCornerShape(24.dp)
+                val itemShape = HomeInnerShape
                 val itemModifier = Modifier
                     .height(40.dp)
                     .weight(1f)
                     .then(
                         if (active) Modifier.shadow(
-                            elevation = 5.dp,
+                            elevation = 2.dp,
                             shape = itemShape,
                             clip = false,
                             ambientColor = techBlue.copy(alpha = .18f),
@@ -3072,16 +3078,16 @@ fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () ->
 fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -> Unit, onAuto: (String) -> Unit) {
     Box {
         Surface(
-            shape = RoundedCornerShape(28.dp),
-            color = Color.White.copy(alpha = 0.94f),
-            shadowElevation = 4.dp,
+            shape = HomeCardShape,
+            color = Color.White,
+            shadowElevation = 2.dp,
             tonalElevation = 0.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+            border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp))
+                        .clip(RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp))
                         .clickable(enabled = !loading) { onRefresh() }
                         .padding(start = 13.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -3107,7 +3113,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                 )
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp))
+                        .clip(RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp))
                         .padding(start = 8.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -3166,13 +3172,13 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                     )
                 )
             )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1)
                     Spacer(Modifier.width(8.dp))
                     VersionBadge(hasUpdate = hasPendingUpdate) { if (hasPendingUpdate) onUpdateClick() else showVersion = true }
                 }
@@ -3391,9 +3397,9 @@ fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: I
 @Composable
 fun OneUiSegmentBar() {
     Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = Color.White.copy(alpha = 0.58f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.75f)),
+        shape = HomeCardShape,
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
         shadowElevation = 0.dp,
         tonalElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
@@ -3406,8 +3412,8 @@ fun OneUiSegmentBar() {
                     Modifier
                         .height(40.dp)
                         .weight(1f)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(if (selected) Color.White else Color.Transparent),
+                        .clip(HomeInnerShape)
+                        .background(if (selected) Color(0xFFF7FAFD) else Color.Transparent),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(icon, null, tint = if (selected) Color(0xFF0F172A) else Color(0xFF64748B), modifier = Modifier.size(20.dp))
@@ -3421,15 +3427,16 @@ fun OneUiSegmentBar() {
 fun HealthCard(
     modifier: Modifier = Modifier,
     verticalPadding: Dp = 15.dp,
+    shape: androidx.compose.ui.graphics.Shape = HomeCardShape,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth().shadow(5.dp, RoundedCornerShape(30.dp), clip = false),
-        shape = RoundedCornerShape(30.dp),
+        modifier = modifier.fillMaxWidth().shadow(2.dp, shape, clip = false),
+        shape = shape,
         color = Color.White,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .88f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
     }
@@ -3441,27 +3448,27 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
-        initialValue = .30f,
-        targetValue = .62f,
+        initialValue = .12f,
+        targetValue = .25f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowAlpha"
     )
     val scoreGlowScale by scorePulse.animateFloat(
-        initialValue = .96f,
-        targetValue = 1.23f,
+        initialValue = .98f,
+        targetValue = 1.10f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
-    val shape = RoundedCornerShape(30.dp)
+    val shape = HomeCardShape
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(5.dp, shape, clip = false),
+        modifier = Modifier.fillMaxWidth().shadow(2.dp, shape, clip = false),
         shape = shape,
-        color = Color(0xFFFEFFFF),
+        color = Color.White,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .86f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(132.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
@@ -3472,8 +3479,8 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                                 Brush.radialGradient(
                                     0.00f to Color.Transparent,
                                     0.50f to Color.Transparent,
-                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .28f),
-                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha),
+                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .18f),
+                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha * .42f),
                                     1.00f to Color.Transparent
                                 )
                             )
@@ -3486,16 +3493,16 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Text(
                             "网络健康得分",
                             Modifier.weight(1f),
-                            fontSize = 15.sp,
+                            fontSize = 16.sp,
                             lineHeight = 18.sp,
-                            fontWeight = FontWeight.Black,
+                            fontWeight = FontWeight.SemiBold,
                             color = LabV2.Ink,
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Clip
                         )
                         Spacer(Modifier.width(5.dp))
-                        Surface(shape = RoundedCornerShape(99.dp), color = scoreColor.copy(alpha = .10f)) {
+                        Surface(shape = HomeInnerShape, color = scoreColor.copy(alpha = .10f)) {
                             Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
                                 Text(scoreLabel, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
@@ -4029,16 +4036,16 @@ fun WolDetailScreen(state: AppState, onBack: () -> Unit) = DetailShell("WOL", "�
 
 @Composable
 private fun HealthStatePill(icon: ImageVector, label: String, value: String, color: Color, trailing: ImageVector, onClick: (() -> Unit)? = null) {
-    val pillShape = RoundedCornerShape(16.dp)
+    val pillShape = HomeInnerShape
     val modifier = if (onClick == null) Modifier else Modifier.clip(pillShape).clickable { onClick() }
-    Surface(modifier = modifier, shape = pillShape, color = Color(0xFFF8FAFD), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border.copy(alpha = .72f))) {
+    Surface(modifier = modifier, shape = pillShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(28.dp).clip(CircleShape).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, Modifier.size(16.dp), tint = color)
             }
             Spacer(Modifier.width(7.dp))
-            Text("$label：", fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
-            Text(value, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$label：", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
+            Text(value, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(trailing, null, Modifier.size(16.dp), tint = color.copy(alpha = if (trailing == Icons.Rounded.ChevronRight) .42f else 1f))
         }
     }
@@ -4046,15 +4053,15 @@ private fun HealthStatePill(icon: ImageVector, label: String, value: String, col
 
 @Composable
 private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+    Surface(onClick = onClick, modifier = modifier, shape = HomeInnerShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f))) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(34.dp).clip(CircleShape).background(Color.White.copy(alpha = .88f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, Modifier.size(19.dp), tint = color)
             }
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(label, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1)
-                Text(value, fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(label, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
+                Text(value, fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -4064,7 +4071,7 @@ private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, 
 fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(8.dp)) {
-            val stroke = if (size > 100.dp) 10.dp.toPx() else 9.dp.toPx()
+            val stroke = if (size > 100.dp) 8.dp.toPx() else 7.dp.toPx()
             drawArc(
                 color = Color(0xFFE2EAF3),
                 startAngle = 135f,
@@ -4082,7 +4089,7 @@ fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(score.toString(), fontSize = if (size > 100.dp) 42.sp else 35.sp, lineHeight = if (size > 100.dp) 42.sp else 35.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = if (size > 100.dp) 10.5.sp else 9.5.sp, fontWeight = FontWeight.Black, color = if (score >= 85) LabV2.Green else LabV2.InkMuted)
+            Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = if (size > 100.dp) 10.5.sp else 9.5.sp, fontWeight = FontWeight.SemiBold, color = if (score >= 85) LabV2.Green else LabV2.InkMuted)
         }
     }
 }
@@ -4117,7 +4124,7 @@ fun WeeklyMiniBars(score: Int) {
 
 @Composable
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(18.dp), color = color.copy(alpha = .10f), tonalElevation = 0.dp, shadowElevation = 0.dp) {
+    Surface(modifier = modifier, shape = HomeInnerShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
             Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(value, fontSize = 12.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -4136,22 +4143,22 @@ fun HealthMiniCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null
 ) {
-    val shape = RoundedCornerShape(30.dp)
+    val shape = HomeSmallCardShape
     val cardModifier = if (onClick != null) modifier.clip(shape).clickable(onClick = onClick) else modifier
-    HealthCard(cardModifier, verticalPadding = 11.dp) {
+    HealthCard(cardModifier, verticalPadding = 11.dp, shape = shape) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
+                Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1)
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(value, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 30.sp)
                     Spacer(Modifier.width(3.dp))
                     Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), modifier = Modifier.padding(bottom = 4.dp))
                 }
-                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF788493), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -4161,17 +4168,17 @@ fun HealthMiniCard(
 fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color, onIconClick: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val iconModifier = if (onIconClick != null) {
-            Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f)).clickable { onIconClick() }
+            Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f)).clickable { onIconClick() }
         } else {
-            Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = .12f))
+            Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f))
         }
         Box(iconModifier, contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF788493), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -4187,44 +4194,66 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
     val real = cleanApiText(realValue)
     val display = cleanApiText(displayValue)
     if (real.isBlank() && display.isBlank()) return
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(86.dp), color = LabV2.InkMuted, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable(enabled = real.isNotBlank()) { copy(ctx, real) }, verticalAlignment = Alignment.CenterVertically) {
-            Text(display.ifBlank { real }, color = accent, fontWeight = FontWeight.Black, fontSize = 13.2.sp, maxLines = 1)
+    val shown = display.ifBlank { real }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, Modifier.width(82.dp).padding(top = 4.dp), color = LabV2.InkMuted, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.weight(1f).padding(end = 3.dp)) {
+            SelectionContainer {
+                Text(
+                    shown,
+                    color = accent,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif,
+                    fontSize = 12.8.sp,
+                    lineHeight = 16.sp,
+                    maxLines = Int.MAX_VALUE,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip
+                )
+            }
+        }
+        IconButton(
+            onClick = { copy(ctx, real) },
+            enabled = real.isNotBlank(),
+            modifier = Modifier.size(28.dp)
+        ) {
+            Icon(Icons.Rounded.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp), tint = LabV2.Primary)
         }
     }
 }
 
 @Composable
 fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
-    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
-        Spacer(Modifier.height(13.dp))
-        HealthDataRowDisplay("NAS IPv4", nas?.optString("exitIpv4"), maskAddressForUi(nas?.optString("exitIpv4"), privacyMode))
-        Spacer(Modifier.height(9.dp))
         val nasIpv6 = safeNasIpv6ForUi(nas, router)
-        HealthDataRowDisplay("NAS IPv6", nasIpv6, maskAddressForUi(nasIpv6, privacyMode))
         val wan6Rows = routerWan6Rows(router)
-        wan6Rows.forEach { (label, value) ->
-            Spacer(Modifier.height(9.dp))
-            HealthDataRowDisplay(if (wan6Rows.size <= 1) "路由 WAN6" else label, value, maskAddressForUi(value, privacyMode))
+        val addressRows = buildList {
+            nas?.optString("exitIpv4")?.let { add("NAS IPv4" to it) }
+            add("NAS IPv6" to nasIpv6)
+            wan6Rows.forEach { (label, value) -> add((if (wan6Rows.size <= 1) "路由 WAN6" else label) to value) }
+        }.filter { it.second.isNotBlank() }
+        Spacer(Modifier.height(9.dp))
+        addressRows.forEachIndexed { index, (label, value) ->
+            if (index > 0) HorizontalDivider(color = HomeCardBorder, modifier = Modifier.padding(vertical = 7.dp))
+            HealthDataRowDisplay(label, value, maskAddressForUi(value, privacyMode))
         }
     }
 }
 
 @Composable
 fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
-    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
                     .size(36.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF7C3AED).copy(alpha = .12f))
+                    .clip(HomeInnerShape)
+                    .background(LabV2.Cyan.copy(alpha = .12f))
                     .clickable { onTogglePrivacy() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(if (privacyMode) Icons.Rounded.VisibilityOff else Icons.Rounded.VpnKey, null, tint = Color(0xFF7C3AED), modifier = Modifier.size(19.dp))
+                Icon(if (privacyMode) Icons.Rounded.VisibilityOff else Icons.Rounded.VpnKey, null, tint = LabV2.Cyan, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -4252,7 +4281,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 @Composable
 fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
     val visibleDevices = remember(state.devices) { followedDeviceList(state.devices).take(4) }
-    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
         if (visibleDevices.isEmpty()) {
@@ -4384,9 +4413,9 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
 
     val syncLabel = if (snapshot.source.startsWith("已同步")) "实时同步" else "本地缓存"
     val syncColor = if (syncLabel == "实时同步") Color(0xFF16A34A) else Color(0xFF64748B)
-    HealthCard(Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }, verticalPadding = 12.dp) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }, verticalPadding = 10.dp) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF2563EB).copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(36.dp).clip(HomeInnerShape).background(Color(0xFF2563EB).copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.CalendarMonth, null, tint = Color(0xFF2563EB), modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(10.dp))
@@ -4402,7 +4431,7 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HealthStatusBadge("设备上线", "${snapshot.up} 次", Color(0xFF16A34A), Modifier.weight(1f))
             HealthStatusBadge("设备下线", "${snapshot.down} 次", Color(0xFFEF4444), Modifier.weight(1f))
-            HealthStatusBadge("VPN-STUN", "${snapshot.vpn} 次", Color(0xFF7C3AED), Modifier.weight(1f))
+            HealthStatusBadge("VPN-STUN", "${snapshot.vpn} 次", LabV2.Cyan, Modifier.weight(1f))
         }
         Spacer(Modifier.height(7.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

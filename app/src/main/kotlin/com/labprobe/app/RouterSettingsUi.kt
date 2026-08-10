@@ -13,7 +13,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -53,30 +52,29 @@ private fun routerSettingsStatusMessage(status: RouterHubStatus): String = when 
 
 @Composable
 fun RouterSettingsHomeCard(onClick: () -> Unit) {
-    val shape = RoundedCornerShape(30.dp)
+    val shape = RoundedCornerShape(20.dp)
     Surface(
         modifier = Modifier.fillMaxWidth().clip(shape).clickable(onClick = onClick),
         shape = shape,
         color = Color.White,
-        border = BorderStroke(1.dp, SettingsBlue.copy(alpha = .13f)),
-        shadowElevation = 3.dp
+        border = BorderStroke(1.dp, Color(0xFFE7EDF4)),
+        shadowElevation = 2.dp
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(Brush.horizontalGradient(listOf(SettingsBlue.copy(alpha = .075f), Color.White, SettingsCyan.copy(alpha = .035f))))
-                .padding(horizontal = 16.dp, vertical = 15.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.size(52.dp).background(SettingsBlue.copy(alpha = .11f), RoundedCornerShape(18.dp)),
+                Modifier.size(48.dp).background(SettingsBlue.copy(alpha = .11f), RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Rounded.Router, null, Modifier.size(29.dp), tint = SettingsBlue)
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("路由设置", fontSize = 16.sp, fontWeight = FontWeight.Black, color = SettingsInk)
+                Text("路由设置", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = SettingsInk)
                 Text(
                     "防火墙 · NAT诊断 · DDNS · Beta升级",
                     fontSize = 10.5.sp,
