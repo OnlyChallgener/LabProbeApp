@@ -76,6 +76,7 @@ object PortMappingRuleStore {
         .put("targetIpv6Suffix", rule.targetIpv6Suffix)
         .put("targetMac", rule.targetMac)
         .put("targetPort", rule.targetPort)
+        .apply { rule.serviceType.trim().takeIf { it.isNotBlank() }?.let { put("serviceType", it) } }
         .put("preferCurrentPrefix", rule.preferCurrentPrefix)
         .put("leaseSeconds", rule.leaseSeconds)
         .put("maxConnections", rule.maxConnections)
@@ -105,6 +106,7 @@ object PortMappingRuleStore {
             targetIpv6Suffix = cleanApiText(root.optString("targetIpv6Suffix")),
             targetMac = cleanMac(root.optString("targetMac")),
             targetPort = root.optInt("targetPort"),
+            serviceType = cleanApiText(root.optString("serviceType")),
             preferCurrentPrefix = root.optBoolean("preferCurrentPrefix", true),
             expiresAt = expiresAt,
             leaseSeconds = root.optLong("leaseSeconds", 0L).coerceAtLeast(0L),

@@ -1,6 +1,6 @@
 # LabProbe App
 
-极客网探 Android 客户端，Kotlin + Jetpack Compose。当前开发版为 `v0.10.37 build179`。
+极客网探 Android 客户端，Kotlin + Jetpack Compose。当前开发版为 `v0.10.38 build180`。
 
 第三方首次部署请直接查看：[Hub 与 LabRelay 简明安装](THIRD_PARTY_INSTALL.md)。Hub 使用 `APP_TOKEN` 与 `HOOK_TOKEN`：APP 只填写 `APP_TOKEN`，LabRelay 只填写 `HOOK_TOKEN`。
 
@@ -56,14 +56,14 @@ GitHub Actions 会生成 Release APK。固定签名仍使用仓库既有 Secrets
 cd D:\Github\labprobe-hub
 python scripts\build_update_bundle.py `
   --app-apk D:\Release\app-release.apk `
-  --app-version-name 0.10.37 `
-  --app-version-code 179 `
+  --app-version-name 0.10.38 `
+  --app-version-code 180 `
   --agent-arm64 D:\Release\labrelay-linux-arm64 `
-  --agent-version 0.2.19 `
+  --agent-version 0.2.20 `
   --output D:\Release\update-bundle
 ```
 
 需要上传到更新仓的 APP 文件：
 
 - `app/update.json`
-- `app/LabProbeApp-v0.10.37.apk`
+- `app/LabProbeApp-v0.10.38.apk`

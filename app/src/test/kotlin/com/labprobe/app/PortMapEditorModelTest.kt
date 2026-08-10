@@ -30,7 +30,7 @@ class PortMapEditorModelTest {
     }
 
     @Test
-    fun templateIsNotPersistedAsAnAdditionalRuleField() {
+    fun selectedServiceTypeIsPersistedWithoutTemplateField() {
         val json = applyPortMapServiceTemplate(
             PortMapDraft.new("20001").copy(name = "NAS HTTPS"),
             PORT_MAP_SERVICE_TEMPLATES.first { it.label == "HTTPS" }
@@ -38,7 +38,7 @@ class PortMapEditorModelTest {
         assertEquals("NAS HTTPS", json.getString("name"))
         assertEquals(443, json.getInt("targetPort"))
         assertFalse(json.has("serviceTemplate"))
-        assertFalse(json.has("serviceType"))
+        assertEquals("HTTPS", json.getString("serviceType"))
     }
 
     @Test

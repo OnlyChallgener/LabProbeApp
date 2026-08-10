@@ -88,6 +88,7 @@ data class PortMapRule(
     val targetIpv6Suffix: String,
     val targetMac: String,
     val targetPort: Int,
+    val serviceType: String = "",
     val preferCurrentPrefix: Boolean,
     val expiresAt: Long?,
     val leaseSeconds: Long,
@@ -155,6 +156,7 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
         targetIpv6Suffix = cleanApiText(o.optString("targetIpv6Suffix")),
         targetMac = cleanMac(o.optString("targetMac")),
         targetPort = o.optInt("targetPort"),
+        serviceType = cleanApiText(o.optString("serviceType")),
         preferCurrentPrefix = o.optBoolean("preferCurrentPrefix", true),
         expiresAt = nullableEpoch(o, "expiresAt"),
         leaseSeconds = o.optLong("leaseSeconds", 0L).coerceAtLeast(0L),
@@ -277,6 +279,7 @@ data class PortMapDraft(
     val targetIpv6Suffix: String = "",
     val targetMac: String = "",
     val targetPort: String = "443",
+    val serviceType: String = "",
     val duration: String = "永久",
     val originalExpiresAt: Long? = null,
     val leaseSeconds: Long = 0L,
@@ -309,6 +312,7 @@ data class PortMapDraft(
             put("targetIpv6Suffix", targetIpv6Suffix.trim())
             put("targetMac", cleanMac(targetMac))
             put("targetPort", targetPort.toIntOrNull() ?: 0)
+            serviceType.trim().takeIf { it.isNotBlank() }?.let { put("serviceType", it) }
             put("preferCurrentPrefix", true)
             if (expires == null) put("expiresAt", JSONObject.NULL) else put("expiresAt", expires)
             put("leaseSeconds", selectedLease)
@@ -336,6 +340,7 @@ data class PortMapDraft(
             targetIpv6Suffix = rule.targetIpv6Suffix,
             targetMac = rule.targetMac,
             targetPort = rule.targetPort.toString(),
+            serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) },
             duration = if (rule.expiresAt == null) "永久" else "保持原有效期",
             originalExpiresAt = rule.expiresAt,
             leaseSeconds = rule.leaseSeconds,
@@ -347,25 +352,38 @@ data class PortMapDraft(
 
 internal data class PortMapServiceTemplate(
     val label: String,
+    val serviceType: String,
     val targetPort: Int?
 )
 
 internal val PORT_MAP_SERVICE_TEMPLATES = listOf(
-    PortMapServiceTemplate("HTTPS", 443),
-    PortMapServiceTemplate("HTTP", 80),
-    PortMapServiceTemplate("SSH", 22),
-    PortMapServiceTemplate("RDP", 3389),
-    PortMapServiceTemplate("Telnet", 23),
-    PortMapServiceTemplate("自定义 TCP", null)
+    PortMapServiceTemplate("HTTPS", "HTTPS", 443),
+    PortMapServiceTemplate("HTTP", "HTTP", 80),
+    PortMapServiceTemplate("SSH", "SSH", 22),
+    PortMapServiceTemplate("RDP", "RDP", 3389),
+    PortMapServiceTemplate("Telnet", "Telnet", 23),
+    PortMapServiceTemplate("自定义 TCP", "TCP", null)
 )
+
+internal fun defaultPortMapServiceType(targetPort: Int): String = when (targetPort) {
+    22 -> "SSH"
+    80 -> "HTTP"
+    443 -> "HTTPS"
+    3389 -> "RDP"
+    23 -> "Telnet"
+    else -> "TCP"
+}
 
 internal fun applyPortMapServiceTemplate(
     draft: PortMapDraft,
     template: PortMapServiceTemplate
 ): PortMapDraft = if (draft.id.isBlank()) {
-    draft.copy(targetPort = template.targetPort?.toString().orEmpty())
+    draft.copy(
+        serviceType = template.serviceType,
+        targetPort = template.targetPort?.toString().orEmpty()
+    )
 } else {
-    draft
+    draft.copy(serviceType = template.serviceType)
 }
 
 internal fun portMapDraftForSave(draft: PortMapDraft): PortMapDraft = if (draft.id.isBlank()) {
@@ -396,6 +414,9 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
+    val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val ddnsResource by routerRepository.labProbeDdns.collectAsState()
+    val ddnsSnapshot = ddnsResource.value
     val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
     val liveAgent by presenceStore.state.collectAsState()
     val persistentRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs) }
@@ -421,6 +442,8 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var filter by remember { mutableStateOf("全部") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
+
+    LaunchedEffect(routerRepository) { routerRepository.refreshLabProbeDdns(false) }
 
     fun commitRulesLocally(next: List<PortMapRule>, revision: Long = rulesRevision, updatedAt: String = rulesUpdatedAt, sourceRevision: Long = snapshotRevision) {
         rules = next
@@ -508,11 +531,12 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     if (selected != null) {
         BackHandler { selectedId = null }
-        val linkedFavorite = prefs.favoriteShortcuts().firstOrNull { it.mappingId == selected.id }
+        val linkedFavorite = prefs.favoriteShortcuts().firstOrNull { it.id == "mapping-${selected.id}" }
+            ?: prefs.favoriteShortcuts().firstOrNull { it.mappingId == selected.id }
         PortMapDetailPage(
             rule = selected,
             api = api,
-            remoteEndpoint = linkedFavorite?.remoteEndpoint?.ifBlank { linkedFavorite.wanUrl }.orEmpty(),
+            remoteEndpoint = linkedFavorite?.let { resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules) }.orEmpty(),
             onDismiss = { selectedId = null },
             onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
             onAddFavorite = {
@@ -709,7 +733,7 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
                     Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = status.color, fontSize = 10.3.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black)
                 }
             }
-            Text("TCP · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+            Text("${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
             Text("→ ${rule.targetText}", fontSize = 11.2.sp, lineHeight = 13.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
             if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
                 Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -785,7 +809,9 @@ private fun PortMapEditorSheet(
     var draft by remember(initial) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
     var showDevicePicker by remember { mutableStateOf(false) }
-    var selectedTemplateLabel by remember(initial.id) { mutableStateOf<String?>(null) }
+    var selectedTemplateLabel by remember(initial.id, initial.serviceType) {
+        mutableStateOf(PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.serviceType == initial.serviceType }?.label)
+    }
     var advancedExpanded by remember(initial.id) { mutableStateOf(false) }
     val isNew = draft.id.isBlank()
     val selectedDevice = remember(draft.targetMac, devices) {
@@ -817,26 +843,22 @@ private fun PortMapEditorSheet(
                     fieldError("service").takeIf { it.isNotBlank() }?.let {
                         Text(it, color = PortRed, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     }
-                    if (isNew) {
-                        Text("快速模板仅用于填写建议，不会写入规则字段。", fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            PORT_MAP_SERVICE_TEMPLATES.forEach { template ->
-                                val selected = selectedTemplateLabel == template.label
-                                Surface(
-                                    modifier = Modifier.clickable {
-                                        selectedTemplateLabel = template.label
-                                        draft = applyPortMapServiceTemplate(draft, template)
-                                    },
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (selected) LabV2.Primary.copy(alpha = .10f) else LabV2.Field,
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .45f) else LabV2.BorderStrong.copy(alpha = .75f))
-                                ) {
-                                    Text(template.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (selected) LabV2.Primary else LabV2.Ink, fontSize = 10.8.sp, fontWeight = FontWeight.Black)
-                                }
+                    Text("选择服务类型后会保存；新建时可同时填写建议端口。", fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        PORT_MAP_SERVICE_TEMPLATES.forEach { template ->
+                            val selected = selectedTemplateLabel == template.label || (selectedTemplateLabel == null && draft.serviceType == template.serviceType)
+                            Surface(
+                                modifier = Modifier.clickable {
+                                    selectedTemplateLabel = template.label
+                                    draft = applyPortMapServiceTemplate(draft, template)
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (selected) LabV2.Primary.copy(alpha = .10f) else LabV2.Field,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .45f) else LabV2.BorderStrong.copy(alpha = .75f))
+                            ) {
+                                Text(template.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (selected) LabV2.Primary else LabV2.Ink, fontSize = 10.8.sp, fontWeight = FontWeight.Black)
                             }
                         }
-                    } else {
-                        Text("编辑时保留现有服务名称和目标端口，不自动套用模板。", fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
@@ -1262,6 +1284,7 @@ private fun PortMapDetailPage(
 ) {
     var history by remember(rule.id) { mutableStateOf<List<PortMapHistoryPoint>>(emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var actionMenu by remember { mutableStateOf(false) }
     var testingRemote by remember(rule.id, remoteEndpoint) { mutableStateOf(false) }
     var remoteTest by remember(rule.id, remoteEndpoint) { mutableStateOf<ServiceAccessReport?>(null) }
     val scope = rememberCoroutineScope()
@@ -1271,13 +1294,36 @@ private fun PortMapDetailPage(
             delay(10_000)
         }
     }
-    DetailShell(rule.name, "TCP · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
+    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = RoundedCornerShape(99.dp), color = portMapStatus(rule).color.copy(alpha = .10f)) {
                     Text(portMapStatus(rule).text, Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = portMapStatus(rule).color, fontSize = 10.sp, fontWeight = FontWeight.Black)
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("编辑") }
+                Box {
+                    IconButton(onClick = { actionMenu = true }, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(19.dp), tint = LabV2.InkMuted)
+                    }
+                    DropdownMenu(
+                        expanded = actionMenu,
+                        onDismissRequest = { actionMenu = false },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = Color.White,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 8.dp,
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("编辑", color = LabV2.Ink, fontWeight = FontWeight.SemiBold) },
+                            leadingIcon = { Icon(Icons.Rounded.Edit, null, tint = LabV2.Primary) },
+                            onClick = { actionMenu = false; onEdit() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("删除", color = PortRed, fontWeight = FontWeight.SemiBold) },
+                            leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = PortRed) },
+                            onClick = { actionMenu = false; confirmDelete = true },
+                        )
+                    }
+                }
             }
 
             LabV2Card(compact = true) {
@@ -1334,7 +1380,7 @@ private fun PortMapDetailPage(
                     onClick = {
                         scope.launch {
                             testingRemote = true
-                            remoteTest = testServiceRemoteEndpoint(remoteEndpoint, ServiceAddressFamily.Ipv6)
+                            remoteTest = testServiceRemoteEndpoint(remoteEndpoint, ServiceAddressFamily.Any)
                             testingRemote = false
                         }
                     },
@@ -1354,7 +1400,11 @@ private fun PortMapDetailPage(
                 }
                 remoteTest?.let { report ->
                     PortMapDetailLine("DNS", report.dns, if (report.dns == "正常") PortGreen else PortRed)
-                    PortMapDetailLine("IPv6", report.ipv6, if (report.ipv6 == "可用") PortGreen else PortRed)
+                    PortMapDetailLine("IPv6", report.ipv6, when (report.ipv6) {
+                        "可用" -> PortGreen
+                        "—" -> PortSlate
+                        else -> PortRed
+                    })
                     PortMapDetailLine("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed)
                     if (report.https != "—") PortMapDetailLine("HTTPS", report.https, if (report.https == "正常") PortGreen else PortRed)
                     report.latencyMs?.let { PortMapDetailLine("延迟", "${it} ms", PortBlue) }
@@ -1372,12 +1422,6 @@ private fun PortMapDetailPage(
                 Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
                 Spacer(Modifier.width(5.dp))
                 Text(if (rule.shouldStop) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
-            }
-        }
-        Row(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.height(48.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed)) {
-                Icon(Icons.Rounded.Delete, null)
             }
         }
         Spacer(Modifier.height(2.dp))

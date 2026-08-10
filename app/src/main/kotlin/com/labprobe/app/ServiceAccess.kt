@@ -180,13 +180,32 @@ internal suspend fun probeServiceEndpoint(
     )
 }
 
-internal suspend fun chooseServiceAccess(localEndpoint: String, remoteEndpoint: String): ServiceAccessDecision {
+internal suspend fun chooseServiceAccess(
+    localEndpoint: String,
+    remoteEndpoint: String,
+    mode: String = "auto",
+): ServiceAccessDecision {
+    if (mode == "lan") {
+        val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
+        return if (local?.reachable == true) {
+            ServiceAccessDecision(localEndpoint.trim(), local.copy(path = "内网直连"))
+        } else {
+            ServiceAccessDecision(null, (local ?: ServiceAccessReport(false, reason = "未配置内网地址")).copy(reason = local?.reason.orEmpty().ifBlank { "服务不可达" }))
+        }
+    }
+    if (mode == "wan") {
+        val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, ServiceAddressFamily.Any) }
+        return if (remote?.reachable == true) {
+            ServiceAccessDecision(remoteEndpoint.trim(), remote.copy(path = "外网访问"))
+        } else {
+            ServiceAccessDecision(null, (remote ?: ServiceAccessReport(false, reason = "未配置外网地址")).copy(reason = remote?.reason.orEmpty().ifBlank { "服务不可达" }))
+        }
+    }
+
     val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
     if (local?.reachable == true) return ServiceAccessDecision(localEndpoint.trim(), local.copy(path = "内网直连"))
-
     val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
     if (remote?.reachable == true) return ServiceAccessDecision(remoteEndpoint.trim(), remote.copy(path = "外网访问"))
-
     val failure = remote ?: local ?: ServiceAccessReport(false, reason = "当前不可达")
     return ServiceAccessDecision(null, failure.copy(reason = failure.reason.ifBlank { "服务不可达" }))
 }
