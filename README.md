@@ -1,9 +1,8 @@
 # LabProbe App
 
-极客网探 Android 客户端，Kotlin + Jetpack Compose。当前开发版为 `v0.10.10 build140`。
+极客网探 Android 客户端，Kotlin + Jetpack Compose。当前开发版为 `v0.10.37 build179`。
 
 第三方首次部署请直接查看：[Hub 与 LabRelay 简明安装](THIRD_PARTY_INSTALL.md)。Hub 使用 `APP_TOKEN` 与 `HOOK_TOKEN`：APP 只填写 `APP_TOKEN`，LabRelay 只填写 `HOOK_TOKEN`。
-
 
 ## 数据连接
 
@@ -17,7 +16,6 @@ APP 保持现有页面、卡片、排序和跳转逻辑，数据连接采用“�
 - Hub 旧版本不支持同步接口时，自动回退原状态、设备和事件接口。
 
 Hub 连接监督与数据刷新分离：已连接时刷新只同步数据；断开后显示断开状态，并自动尝试重连 5 次，失败后提示手动测试或刷新。
-
 
 ## Token 配置
 
@@ -40,7 +38,6 @@ APP 保留原入口、弹窗、忽略更新、下载目录和安装流程。
 - `sha256`、`sizeBytes`、`fallbackUrl` 向后兼容，可缺省
 - 存在 `sha256` 时下载完成后必须校验，通过后才允许安装
 
-
 ## 构建
 
 本地构建命令：
@@ -51,7 +48,6 @@ gradle :app:assembleRelease --stacktrace
 
 GitHub Actions 会生成 Release APK。固定签名仍使用仓库既有 Secrets/签名配置。
 
-
 ## 发版文件
 
 发版时使用 Hub 仓库的 `scripts/build_update_bundle.py` 生成统一更新包：
@@ -60,14 +56,14 @@ GitHub Actions 会生成 Release APK。固定签名仍使用仓库既有 Secrets
 cd D:\Github\labprobe-hub
 python scripts\build_update_bundle.py `
   --app-apk D:\Release\app-release.apk `
-  --app-version-name 0.10.10 `
-  --app-version-code 133 `
+  --app-version-name 0.10.37 `
+  --app-version-code 179 `
   --agent-arm64 D:\Release\labrelay-linux-arm64 `
-  --agent-version 0.2.2 `
+  --agent-version 0.2.19 `
   --output D:\Release\update-bundle
 ```
 
 需要上传到更新仓的 APP 文件：
 
 - `app/update.json`
-- `app/LabProbeApp-v0.10.10.apk`
+- `app/LabProbeApp-v0.10.37.apk`
