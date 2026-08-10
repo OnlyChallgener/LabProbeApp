@@ -291,7 +291,6 @@ internal fun resolveFavoriteRemoteEndpoint(
 
 internal fun resolveFavoriteRemoteUrl(favorite: FavoriteShortcut, snapshot: LabProbeDdnsSnapshot?): String =
     resolveFavoriteRemoteEndpoint(favorite.copy(remoteEndpoint = favorite.wanUrl), snapshot)
-}
 
 private data class FavoriteDraft(
     val id: String = UUID.randomUUID().toString(),

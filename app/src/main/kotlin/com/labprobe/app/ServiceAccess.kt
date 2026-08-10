@@ -54,17 +54,21 @@ private val serviceHttpClient = OkHttpClient.Builder()
     .callTimeout(SERVICE_ACCESS_TIMEOUT_MS + 150L, TimeUnit.MILLISECONDS)
     .build()
 
-private val ipv6OnlyDns = Dns { hostname ->
-    val addresses = InetAddress.getAllByName(hostname).filterIsInstance<Inet6Address>()
-    if (addresses.isEmpty()) throw UnknownHostException("no AAAA record")
-    addresses
+private val ipv6OnlyDns = object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val addresses = InetAddress.getAllByName(hostname).filterIsInstance<Inet6Address>()
+        if (addresses.isEmpty()) throw UnknownHostException("no AAAA record")
+        return addresses
+    }
 }
 
 private val ipv6HttpClient = serviceHttpClient.newBuilder().dns(ipv6OnlyDns).build()
-private val ipv4OnlyDns = Dns { hostname ->
-    val addresses = InetAddress.getAllByName(hostname).filterIsInstance<Inet4Address>()
-    if (addresses.isEmpty()) throw UnknownHostException("no A record")
-    addresses
+private val ipv4OnlyDns = object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val addresses = InetAddress.getAllByName(hostname).filterIsInstance<Inet4Address>()
+        if (addresses.isEmpty()) throw UnknownHostException("no A record")
+        return addresses
+    }
 }
 private val ipv4HttpClient = serviceHttpClient.newBuilder().dns(ipv4OnlyDns).build()
 
