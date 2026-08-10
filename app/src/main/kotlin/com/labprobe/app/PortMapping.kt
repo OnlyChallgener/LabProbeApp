@@ -508,9 +508,11 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     if (selected != null) {
         BackHandler { selectedId = null }
+        val linkedFavorite = prefs.favoriteShortcuts().firstOrNull { it.mappingId == selected.id }
         PortMapDetailPage(
             rule = selected,
             api = api,
+            remoteEndpoint = linkedFavorite?.remoteEndpoint?.ifBlank { linkedFavorite.wanUrl }.orEmpty(),
             onDismiss = { selectedId = null },
             onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
             onAddFavorite = {
@@ -1251,6 +1253,7 @@ private fun PortMapDevicePickerDialog(
 private fun PortMapDetailPage(
     rule: PortMapRule,
     api: PortMapApi,
+    remoteEndpoint: String,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onAddFavorite: () -> Unit,
@@ -1259,6 +1262,9 @@ private fun PortMapDetailPage(
 ) {
     var history by remember(rule.id) { mutableStateOf<List<PortMapHistoryPoint>>(emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var testingRemote by remember(rule.id, remoteEndpoint) { mutableStateOf(false) }
+    var remoteTest by remember(rule.id, remoteEndpoint) { mutableStateOf<ServiceAccessReport?>(null) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(rule.id) {
         while (true) {
             runCatching { api.history(rule.id, 60) }.onSuccess { history = it }
@@ -1313,6 +1319,46 @@ private fun PortMapDetailPage(
                         Text("最近错误", color = PortRed, fontWeight = FontWeight.Black, fontSize = 11.5.sp)
                         Text(portMapErrorText(rule.runtime.lastError), color = PortRed, fontSize = 10.8.sp, lineHeight = 13.sp)
                     }
+                }
+            }
+
+            LabV2Card(compact = true) {
+                Text("远程访问诊断", fontSize = 12.sp, fontWeight = FontWeight.Black)
+                Text(
+                    if (remoteEndpoint.isBlank()) "请先在关联收藏中填写可访问的远程入口。" else "由当前手机直接检测远程入口，不经过 Hub。",
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    color = LabV2.InkMuted,
+                )
+                Button(
+                    onClick = {
+                        scope.launch {
+                            testingRemote = true
+                            remoteTest = testServiceRemoteEndpoint(remoteEndpoint)
+                            testingRemote = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                    enabled = !testingRemote && remoteEndpoint.isNotBlank(),
+                    shape = LabV2.ButtonShape,
+                ) {
+                    if (testingRemote) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(Modifier.width(6.dp))
+                        Text("正在测试", fontWeight = FontWeight.Black)
+                    } else {
+                        Icon(Icons.Rounded.Speed, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("测试远程访问", fontWeight = FontWeight.Black)
+                    }
+                }
+                remoteTest?.let { report ->
+                    PortMapDetailLine("DNS", report.dns, if (report.dns == "正常") PortGreen else PortRed)
+                    PortMapDetailLine("IPv6", report.ipv6, if (report.ipv6 == "可用") PortGreen else PortRed)
+                    PortMapDetailLine("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed)
+                    if (report.https != "—") PortMapDetailLine("HTTPS", report.https, if (report.https == "正常") PortGreen else PortRed)
+                    report.latencyMs?.let { PortMapDetailLine("延迟", "${it} ms", PortBlue) }
+                    if (report.reason.isNotBlank()) PortMapDetailLine("结果", report.reason, PortRed)
                 }
             }
 

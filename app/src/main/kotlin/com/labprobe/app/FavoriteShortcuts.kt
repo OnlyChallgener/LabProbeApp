@@ -408,15 +408,23 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
     }.onFailure { toast(context, "无法打开该地址") }
 }
 
+private fun openFavoriteEndpoint(context: Context, endpoint: String) {
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(endpoint)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure { toast(context, "未找到可打开该服务的应用") }
+}
+
 @Composable
 fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenDns: () -> Unit, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit, onBeforeOpenShortcut: () -> Unit = {}) {
     val context = LocalContext.current
     val mappingRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs).rules }
+    val scope = rememberCoroutineScope()
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
     var shortcuts by remember { mutableStateOf(prefs.favoriteShortcuts()) }
     var editing by remember { mutableStateOf<FavoriteShortcut?>(null) }
     var adding by remember { mutableStateOf(false) }
+    val accessReports = remember { mutableStateMapOf<String, ServiceAccessReport>() }
 
     LaunchedEffect(syncVersion) {
         if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
@@ -503,8 +511,24 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                         mode = mode,
                         columns = columns,
                         mapping = resolveFavoriteMapping(shortcut, mappingRules),
+                        accessReport = accessReports[shortcut.id],
                         dragEnabled = query.isBlank(),
-                        onOpen = { onBeforeOpenShortcut(); openFavorite(context, shortcut, mode) },
+                        onOpen = {
+                            onBeforeOpenShortcut()
+                            if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank()) {
+                                openFavorite(context, shortcut, mode)
+                            } else {
+                                scope.launch {
+                                    val decision = chooseServiceAccess(
+                                        localEndpoint = shortcut.localEndpoint.ifBlank { shortcut.lanUrl },
+                                        remoteEndpoint = shortcut.remoteEndpoint.ifBlank { shortcut.wanUrl },
+                                    )
+                                    accessReports[shortcut.id] = decision.report
+                                    decision.endpoint?.let { openFavoriteEndpoint(context, it) }
+                                        ?: toast(context, decision.report.reason.ifBlank { "服务不可达" })
+                                }
+                            }
+                        },
                         onEdit = { editing = shortcut },
                         onCopyAddress = { copy(context, shortcut.addressForCopy(mode)) },
                         onViewMapping = {
@@ -566,6 +590,7 @@ private fun FavoriteShortcutCard(
     mode: String,
     columns: Int,
     mapping: FavoriteMappingResolution,
+    accessReport: ServiceAccessReport?,
     dragEnabled: Boolean,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
@@ -617,10 +642,11 @@ private fun FavoriteShortcutCard(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(shortcut.serviceType.ifBlank { shortcut.description.ifBlank { "网页入口" } }, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(favoriteServiceStatus(shortcut, mode, mapping), fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = when (favoriteServiceStatus(shortcut, mode, mapping)) {
-                    "当前不可达" -> LabV2.Red
-                    "内网直连" -> LabV2.Green
-                    else -> LabV2.Primary
+                val status = accessReport?.let(::serviceAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping)
+                Text(status, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = when {
+                    status.startsWith("内网直连") -> LabV2.Green
+                    status.startsWith("IPv6远程") -> LabV2.Primary
+                    else -> LabV2.Red
                 }, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
