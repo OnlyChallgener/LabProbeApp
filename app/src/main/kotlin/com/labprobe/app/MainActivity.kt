@@ -3119,7 +3119,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                 ) {
                     Icon(Icons.Rounded.WifiTethering, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
                     Spacer(Modifier.width(3.dp))
-                    Text("实时", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB), maxLines = 1)
+                    Text("实时", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2563EB), maxLines = 1)
                 }
             }
         }
@@ -3448,14 +3448,14 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
-        initialValue = .12f,
-        targetValue = .25f,
+        initialValue = .15f,
+        targetValue = .30f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowAlpha"
     )
     val scoreGlowScale by scorePulse.animateFloat(
-        initialValue = .98f,
-        targetValue = 1.10f,
+        initialValue = .99f,
+        targetValue = 1.14f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
@@ -3479,8 +3479,8 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                                 Brush.radialGradient(
                                     0.00f to Color.Transparent,
                                     0.50f to Color.Transparent,
-                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .18f),
-                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha * .42f),
+                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .20f),
+                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha * .46f),
                                     1.00f to Color.Transparent
                                 )
                             )
@@ -3505,7 +3505,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Surface(shape = HomeInnerShape, color = scoreColor.copy(alpha = .10f)) {
                             Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
-                                Text(scoreLabel, fontSize = 9.5.sp, fontWeight = FontWeight.Black, color = scoreColor)
+                                Text(scoreLabel, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = scoreColor)
                             }
                         }
                     }
@@ -4071,7 +4071,7 @@ private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, 
 fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(8.dp)) {
-            val stroke = if (size > 100.dp) 8.dp.toPx() else 7.dp.toPx()
+            val stroke = if (size > 100.dp) 9.dp.toPx() else 8.dp.toPx()
             drawArc(
                 color = Color(0xFFE2EAF3),
                 startAngle = 135f,
@@ -4088,7 +4088,7 @@ fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(score.toString(), fontSize = if (size > 100.dp) 42.sp else 35.sp, lineHeight = if (size > 100.dp) 42.sp else 35.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text(score.toString(), fontSize = if (size > 100.dp) 42.sp else 35.sp, lineHeight = if (size > 100.dp) 42.sp else 35.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
             Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = if (size > 100.dp) 10.5.sp else 9.5.sp, fontWeight = FontWeight.SemiBold, color = if (score >= 85) LabV2.Green else LabV2.InkMuted)
         }
     }
@@ -4124,10 +4124,10 @@ fun WeeklyMiniBars(score: Int) {
 
 @Composable
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, shape = HomeInnerShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Surface(modifier = modifier.heightIn(min = 42.dp, max = 46.dp), shape = RoundedCornerShape(16.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 5.dp)) {
+            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -4154,7 +4154,7 @@ fun HealthMiniCard(
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1)
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), lineHeight = 30.sp)
+                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), lineHeight = 30.sp)
                     Spacer(Modifier.width(3.dp))
                     Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), modifier = Modifier.padding(bottom = 4.dp))
                 }
@@ -4257,8 +4257,8 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(13.dp))
@@ -4301,9 +4301,9 @@ fun HealthDeviceLine(d: DeviceItem) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
-            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
                     cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
@@ -4315,10 +4315,10 @@ fun HealthDeviceLine(d: DeviceItem) {
                     cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { "最后信号 ${if (it.endsWith("dBm")) it else it + "dBm"}" }
                 ).joinToString(" · ")
             }
-            if (third.isNotBlank()) Text(third, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (third.isNotBlank()) Text(third, fontSize = 10.8.sp, fontWeight = FontWeight.Medium, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .10f), tonalElevation = 0.dp) {
-            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black)
+            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -4420,11 +4420,11 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("今日概览", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color(0xFF0F172A), maxLines = 1)
-                Text("设备、VPN 与 DDNS 今日变化", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
+                Text("今日概览", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1)
+                Text("设备、VPN 与 DDNS 今日变化", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1)
             }
             Surface(shape = RoundedCornerShape(99.dp), color = syncColor.copy(alpha = .10f)) {
-                Text(syncLabel, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.2.sp, lineHeight = 10.sp, fontWeight = FontWeight.Black, color = syncColor)
+                Text(syncLabel, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.2.sp, lineHeight = 10.sp, fontWeight = FontWeight.SemiBold, color = syncColor)
             }
         }
         Spacer(Modifier.height(9.dp))
@@ -4504,7 +4504,7 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
                 Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.OpenWith, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
                     Spacer(Modifier.width(5.dp))
-                    Text("拖动排序", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF2563EB))
+                    Text("拖动排序", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2563EB))
                 }
             }
         }
