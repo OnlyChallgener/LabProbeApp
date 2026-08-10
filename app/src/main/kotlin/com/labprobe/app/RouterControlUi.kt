@@ -789,6 +789,14 @@ private fun labProbeCredentialIsSecret(key: String): Boolean = key.lowercase(Loc
 private fun labProbeHasPublicAddress(value: String, state: String): Boolean =
     value.isNotBlank() && state.equals("public", ignoreCase = true)
 
+private const val LABPROBE_DDNS_STALE_SECONDS = 180L
+
+private fun labProbeDetectionIsFresh(record: LabProbeDdnsRecord, address: LabProbeDdnsAddress): Boolean {
+    val detectedAt = record.lastDetectedAt.takeIf { it > 0L } ?: address.detectedAt
+    val ageSeconds = System.currentTimeMillis() / 1000L - detectedAt
+    return detectedAt > 0L && ageSeconds in -30L..LABPROBE_DDNS_STALE_SECONDS
+}
+
 private fun labProbeDirectValueIsValid(record: LabProbeDdnsRecord, recordType: String): Boolean = when (recordType) {
     "CNAME" -> labProbeCnameTargetIsValid(record.hostname, record.recordValues[recordType].orEmpty())
     "TXT" -> record.recordValues[recordType].orEmpty().isNotBlank()
@@ -803,8 +811,8 @@ private fun labProbeCanUpdate(record: LabProbeDdnsRecord, address: LabProbeDdnsA
     val ipv6State = record.ipv6State.ifBlank { address.ipv6State }
     return record.recordTypes.any { type ->
         when (type) {
-            "A" -> labProbeHasPublicAddress(ipv4, ipv4State)
-            "AAAA" -> labProbeHasPublicAddress(ipv6, ipv6State)
+            "A" -> labProbeDetectionIsFresh(record, address) && labProbeHasPublicAddress(ipv4, ipv4State)
+            "AAAA" -> labProbeDetectionIsFresh(record, address) && labProbeHasPublicAddress(ipv6, ipv6State)
             "CNAME", "TXT" -> labProbeDirectValueIsValid(record, type)
             else -> false
         }
@@ -1069,6 +1077,9 @@ private fun LabProbeDdnsDetailPage(
             PremiumCard(RouterMuted) {
                 Text("最后检测：${labProbeTimeText(record.lastDetectedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
                 Text("最后更新：${labProbeTimeText(record.lastUpdatedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
+                if (record.recordTypes.any { it == "A" || it == "AAAA" } && !labProbeDetectionIsFresh(record, address)) {
+                    Text("检测结果已过期，请先刷新检测地址", fontSize = 10.sp, color = RouterAmber, fontWeight = FontWeight.Bold)
+                }
                 if (record.lastError.isNotBlank()) Text(record.lastError, fontSize = 10.sp, color = RouterRed, fontWeight = FontWeight.SemiBold)
             }
             if (record.recordTypes.any { it == "A" || it == "AAAA" }) {

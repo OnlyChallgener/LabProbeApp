@@ -95,8 +95,8 @@ class FavoriteLinkModelTest {
         assertEquals("map-1", favorite.mappingId)
         assertEquals("aa:bb:cc:dd:ee:ff", favorite.deviceId)
         assertEquals("HTTPS", favorite.serviceType)
-        assertEquals("http://192.168.5.46:443", favorite.localEndpoint)
-        assertEquals("tcp://[::]:20000", favorite.remoteEndpoint)
+        assertEquals("https://192.168.5.46:443", favorite.localEndpoint)
+        assertEquals("", favorite.remoteEndpoint)
         assertEquals(favorite.localEndpoint, favorite.lanUrl)
     }
 
@@ -104,11 +104,11 @@ class FavoriteLinkModelTest {
     fun serviceStatusUsesEndpointAndMissingMappingIsUnreachable() {
         val favorite = sampleFavorite(mappingId = "map-1").copy(
             localEndpoint = "http://192.168.5.46:443",
-            remoteEndpoint = "tcp://[::]:20000",
+            remoteEndpoint = "https://remote.example.com:20000",
             serviceType = "HTTPS",
         )
-        assertEquals("内网直连", favoriteServiceStatus(favorite, "lan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
-        assertEquals("IPv6远程", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+        assertEquals("内网", favoriteServiceStatus(favorite, "lan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+        assertEquals("外网", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
         assertEquals("当前不可达", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, emptyList())))
     }
 
@@ -140,6 +140,36 @@ class FavoriteLinkModelTest {
         assertEquals(
             "https://new.example.com:20000/test?a=1#fragment",
             resolveFavoriteRemoteUrl(favorite, snapshot)
+        )
+    }
+
+    @Test
+    fun remoteEndpointUsesDdnsHostWithoutChangingTheExternalAddressFamily() {
+        val favorite = sampleFavorite(ddnsRecordId = "ddns-1").copy(
+            remoteEndpoint = "https://198.51.100.9:20000/test?a=1"
+        )
+        val snapshot = LabProbeDdnsSnapshot(
+            records = listOf(LabProbeDdnsRecord(id = "ddns-1", hostname = "new.example.com"))
+        )
+        assertEquals(
+            "https://new.example.com:20000/test?a=1",
+            resolveFavoriteRemoteEndpoint(favorite, snapshot)
+        )
+    }
+
+    @Test
+    fun linkedMappingBuildsItsRemoteEndpointFromTheCurrentDdnsHostname() {
+        val favorite = sampleFavorite(mappingId = "map-1", ddnsRecordId = "ddns-1").copy(
+            serviceType = "HTTPS",
+            remoteEndpoint = "",
+            wanUrl = "",
+        )
+        val snapshot = LabProbeDdnsSnapshot(
+            records = listOf(LabProbeDdnsRecord(id = "ddns-1", hostname = "home.example.com"))
+        )
+        assertEquals(
+            "https://home.example.com:20000",
+            resolveFavoriteRemoteEndpoint(favorite, snapshot, listOf(sampleRule("map-1")))
         )
     }
 

@@ -1334,7 +1334,7 @@ private fun PortMapDetailPage(
                     onClick = {
                         scope.launch {
                             testingRemote = true
-                            remoteTest = testServiceRemoteEndpoint(remoteEndpoint)
+                            remoteTest = testServiceRemoteEndpoint(remoteEndpoint, ServiceAddressFamily.Ipv6)
                             testingRemote = false
                         }
                     },

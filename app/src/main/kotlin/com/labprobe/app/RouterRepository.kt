@@ -319,9 +319,19 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     }
 
     suspend fun refreshLabProbeDdnsAddress(): Result<Unit> = executeCommand {
+        val before = _labProbeDdns.value.value?.address?.detectedAt ?: 0L
         api.refreshLabProbeDdnsAddress()
-        delay(250L)
-        refreshLabProbeDdns(force = true)
+        var observed = false
+        for (attempt in 0 until 8) {
+            delay(1_000L)
+            val latest = api.labProbeDdns(true)
+            _labProbeDdns.value = RouterResource(latest, System.currentTimeMillis())
+            if (latest.address.detectedAt > before || latest.records.any { it.lastDetectedAt > before }) {
+                observed = true
+                break
+            }
+        }
+        if (!observed) throw IllegalStateException("已请求刷新，正在等待 Relay 上报新的检测结果")
     }.map { Unit }
 
     private fun applyDdnsRead(seq: Long, latest: List<DdnsRecord>) {
@@ -460,8 +470,16 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         _labProbeDdns.value = old.copy(mutating = true, error = "", generation = seq)
         val result = executeCommand { api.updateLabProbeDdnsNow(recordId) }
         if (result.isSuccess) {
+            val response = result.getOrThrow()
+            // Refresh even on a Provider error: Hub has persisted the redacted
+            // record-level status and lastError, which is more useful than a
+            // generic router-control failure.
             refreshLabProbeDdns(force = true)
-            Result.success(Unit)
+            if (response.optBoolean("ok", false)) {
+                Result.success(Unit)
+            } else {
+                Result.failure(IllegalStateException(api.labProbeUpdateError(response)))
+            }
         } else {
             val failure = result.exceptionOrNull()
             if (sequence(key).get() == seq) {

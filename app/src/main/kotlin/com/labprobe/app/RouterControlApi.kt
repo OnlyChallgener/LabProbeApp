@@ -200,8 +200,25 @@ class RouterControlApi(private val prefs: AppPrefs) {
     suspend fun deleteLabProbeDdns(recordId: String): LabProbeDdnsSnapshot =
         parseLabProbeDdns(send("/api/ddns/$recordId", "DELETE"))
 
-    suspend fun updateLabProbeDdnsNow(recordId: String): JSONObject =
-        send("/api/ddns/$recordId/update", "POST", JSONObject().put("force", true))
+    /** Provider failures are valid DDNS results, not router-control failures. */
+    suspend fun updateLabProbeDdnsNow(recordId: String): JSONObject = withContext(Dispatchers.IO) {
+        hubApi.requestJson("/api/ddns/$recordId/update", "POST", JSONObject().put("force", true))
+    }
+
+    internal fun labProbeUpdateError(root: JSONObject): String {
+        val results = root.optJSONObject("results")
+        if (results != null) {
+            val keys = results.keys()
+            while (keys.hasNext()) {
+                val item = results.optJSONObject(keys.next()) ?: continue
+                if (!item.optBoolean("success", false)) {
+                    item.optString("errorMessage").trim().takeIf { it.isNotBlank() }?.let { return it }
+                    item.optString("errorCode").trim().takeIf { it.isNotBlank() }?.let { return it }
+                }
+            }
+        }
+        return root.optString("message").trim().ifBlank { root.optString("error").trim() }.ifBlank { "DDNS 更新失败" }
+    }
 
     suspend fun refreshLabProbeDdnsAddress(): Long = hubApi.requestRouterDashboardRefresh()
 

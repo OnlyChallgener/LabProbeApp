@@ -7,6 +7,7 @@ import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.Inet6Address
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NoRouteToHostException
@@ -41,6 +42,9 @@ internal data class ServiceEndpoint(
     val port: Int,
 )
 
+/** Internal probe constraint. Favorites deliberately present only 内网 / 外网. */
+internal enum class ServiceAddressFamily { Any, Ipv4, Ipv6 }
+
 private const val SERVICE_ACCESS_TIMEOUT_MS = 550L
 
 private val serviceHttpClient = OkHttpClient.Builder()
@@ -57,6 +61,12 @@ private val ipv6OnlyDns = Dns { hostname ->
 }
 
 private val ipv6HttpClient = serviceHttpClient.newBuilder().dns(ipv6OnlyDns).build()
+private val ipv4OnlyDns = Dns { hostname ->
+    val addresses = InetAddress.getAllByName(hostname).filterIsInstance<Inet4Address>()
+    if (addresses.isEmpty()) throw UnknownHostException("no A record")
+    addresses
+}
+private val ipv4HttpClient = serviceHttpClient.newBuilder().dns(ipv4OnlyDns).build()
 
 internal fun parseServiceEndpoint(raw: String): ServiceEndpoint? {
     val value = raw.trim()
@@ -90,37 +100,52 @@ private fun isIpv6Unavailable(error: Throwable?): Boolean = generateSequence(err
             ))
 }
 
-private fun failureReason(error: Throwable?, remoteIpv6: Boolean, https: Boolean): String = when {
+private fun failureReason(error: Throwable?, family: ServiceAddressFamily, https: Boolean): String = when {
     error is SSLException -> "HTTPS 证书校验失败"
-    remoteIpv6 && isIpv6Unavailable(error) -> "当前网络无法使用 IPv6 远程访问"
+    family == ServiceAddressFamily.Ipv6 && isIpv6Unavailable(error) -> "当前网络无法使用 IPv6 远程访问"
     https -> "HTTPS 服务不可达"
     else -> "服务不可达"
 }
 
-internal suspend fun probeServiceEndpoint(raw: String, requireIpv6: Boolean): ServiceAccessReport {
+internal suspend fun probeServiceEndpoint(
+    raw: String,
+    family: ServiceAddressFamily = ServiceAddressFamily.Any,
+): ServiceAccessReport {
     val endpoint = parseServiceEndpoint(raw)
-        ?: return ServiceAccessReport(false, dns = "失败", ipv6 = if (requireIpv6) "不可用" else "—", tcp = "不可达", reason = "地址格式无效")
+        ?: return ServiceAccessReport(false, dns = "失败", ipv6 = if (family == ServiceAddressFamily.Ipv6) "不可用" else "—", tcp = "不可达", reason = "地址格式无效")
     if (isWildcardEndpoint(endpoint.host)) {
-        return ServiceAccessReport(false, dns = "未配置", ipv6 = if (requireIpv6) "不可用" else "—", tcp = "未测试", reason = "未配置可测试的远程入口")
+        return ServiceAccessReport(false, dns = "未配置", ipv6 = if (family == ServiceAddressFamily.Ipv6) "不可用" else "—", tcp = "未测试", reason = "未配置可测试的远程入口")
     }
     val started = System.nanoTime()
     val addresses = withTimeoutOrNull(SERVICE_ACCESS_TIMEOUT_MS) { resolveEndpoint(endpoint.host) }.orEmpty()
-    val candidates = if (requireIpv6) addresses.filterIsInstance<Inet6Address>() else addresses
+    val candidates = when (family) {
+        ServiceAddressFamily.Any -> addresses
+        ServiceAddressFamily.Ipv4 -> addresses.filterIsInstance<Inet4Address>()
+        ServiceAddressFamily.Ipv6 -> addresses.filterIsInstance<Inet6Address>()
+    }
     if (candidates.isEmpty()) {
         return ServiceAccessReport(
             reachable = false,
-            dns = if (requireIpv6) "无 AAAA" else "失败",
-            ipv6 = if (requireIpv6) "不可用" else "—",
+            dns = when (family) {
+                ServiceAddressFamily.Ipv6 -> "无 AAAA"
+                ServiceAddressFamily.Ipv4 -> "无 A"
+                ServiceAddressFamily.Any -> "失败"
+            },
+            ipv6 = if (family == ServiceAddressFamily.Ipv6) "不可用" else "—",
             tcp = "不可达",
             https = if (endpoint.scheme == "https") "未测试" else "—",
-            reason = if (requireIpv6) "当前网络无法使用 IPv6 远程访问" else "服务不可达",
+            reason = if (family == ServiceAddressFamily.Ipv6) "当前网络无法使用 IPv6 远程访问" else "服务不可达",
         )
     }
 
     val result = withContext(Dispatchers.IO) {
         if (endpoint.scheme == "http" || endpoint.scheme == "https") {
             runCatching {
-                val client = if (requireIpv6) ipv6HttpClient else serviceHttpClient
+                val client = when (family) {
+                    ServiceAddressFamily.Ipv4 -> ipv4HttpClient
+                    ServiceAddressFamily.Ipv6 -> ipv6HttpClient
+                    ServiceAddressFamily.Any -> serviceHttpClient
+                }
                 client.newCall(Request.Builder().url(endpoint.raw).head().build()).execute().use { Unit }
             }
         } else {
@@ -134,11 +159,11 @@ internal suspend fun probeServiceEndpoint(raw: String, requireIpv6: Boolean): Se
         }
     }
     val elapsed = max(1L, (System.nanoTime() - started) / 1_000_000L)
-    val reason = result.exceptionOrNull()?.let { failureReason(it, requireIpv6, endpoint.scheme == "https") }.orEmpty()
+    val reason = result.exceptionOrNull()?.let { failureReason(it, family, endpoint.scheme == "https") }.orEmpty()
     return ServiceAccessReport(
         reachable = result.isSuccess,
         dns = "正常",
-        ipv6 = if (requireIpv6) "可用" else "—",
+        ipv6 = if (family == ServiceAddressFamily.Ipv6) "可用" else "—",
         tcp = if (result.isSuccess) "可达" else "不可达",
         https = when {
             endpoint.scheme != "https" -> "—"
@@ -152,20 +177,23 @@ internal suspend fun probeServiceEndpoint(raw: String, requireIpv6: Boolean): Se
 }
 
 internal suspend fun chooseServiceAccess(localEndpoint: String, remoteEndpoint: String): ServiceAccessDecision {
-    val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, requireIpv6 = false) }
+    val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
     if (local?.reachable == true) return ServiceAccessDecision(localEndpoint.trim(), local.copy(path = "内网直连"))
 
-    val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, requireIpv6 = true) }
-    if (remote?.reachable == true) return ServiceAccessDecision(remoteEndpoint.trim(), remote.copy(path = "IPv6远程"))
+    val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
+    if (remote?.reachable == true) return ServiceAccessDecision(remoteEndpoint.trim(), remote.copy(path = "外网访问"))
 
     val failure = remote ?: local ?: ServiceAccessReport(false, reason = "当前不可达")
     return ServiceAccessDecision(null, failure.copy(reason = failure.reason.ifBlank { "服务不可达" }))
 }
 
-internal suspend fun testServiceRemoteEndpoint(remoteEndpoint: String): ServiceAccessReport {
+internal suspend fun testServiceRemoteEndpoint(
+    remoteEndpoint: String,
+    family: ServiceAddressFamily = ServiceAddressFamily.Any,
+): ServiceAccessReport {
     val value = remoteEndpoint.trim()
     if (value.isBlank()) return ServiceAccessReport(false, dns = "未配置", ipv6 = "不可用", tcp = "未测试", https = "未测试", reason = "未配置可测试的远程入口")
-    return probeServiceEndpoint(value, requireIpv6 = true)
+    return probeServiceEndpoint(value, family)
 }
 
 internal fun serviceAccessStatus(report: ServiceAccessReport): String = when {

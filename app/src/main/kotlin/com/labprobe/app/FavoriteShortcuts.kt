@@ -153,15 +153,23 @@ private fun favoriteServiceType(rule: PortMapRule): String = when (rule.targetPo
     else -> "TCP"
 }
 
-private fun favoriteLocalEndpoint(rule: PortMapRule): String = when {
-    rule.mode == "6to4" && rule.targetIpv4.isNotBlank() -> "http://${rule.targetIpv4}:${rule.targetPort}"
-    rule.mode == "6to6" && rule.targetMode == "ipv6_full" && rule.targetIpv6.isNotBlank() ->
-        "http://[${rule.targetIpv6.trim().removePrefix("[").removeSuffix("]")}]:${rule.targetPort}"
-    else -> ""
+private fun favoriteServiceScheme(serviceType: String): String = when (serviceType) {
+    "HTTPS" -> "https"
+    "HTTP" -> "http"
+    "SSH" -> "ssh"
+    "RDP" -> "rdp"
+    "Telnet" -> "telnet"
+    else -> "tcp"
 }
 
-private fun favoriteRemoteEndpoint(rule: PortMapRule): String =
-    rule.listenPort.takeIf { it in 1..65535 }?.let { "tcp://[::]:$it" }.orEmpty()
+private fun favoriteServiceScheme(rule: PortMapRule): String = favoriteServiceScheme(favoriteServiceType(rule))
+
+private fun favoriteLocalEndpoint(rule: PortMapRule): String = when {
+    rule.mode == "6to4" && rule.targetIpv4.isNotBlank() -> "${favoriteServiceScheme(rule)}://${rule.targetIpv4}:${rule.targetPort}"
+    rule.mode == "6to6" && rule.targetMode == "ipv6_full" && rule.targetIpv6.isNotBlank() ->
+        "${favoriteServiceScheme(rule)}://[${rule.targetIpv6.trim().removePrefix("[").removeSuffix("]")}]:${rule.targetPort}"
+    else -> ""
+}
 
 /** Builds the lightweight favorite payload for an existing mapping rule. */
 internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0): FavoriteShortcut {
@@ -169,7 +177,7 @@ internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0): Favorit
     return FavoriteShortcut(
         id = "mapping-${rule.id}",
         title = rule.name.ifBlank { "IPv6 映射 ${rule.listenPort}" },
-        description = "$serviceType · IPv6 远程",
+        description = "$serviceType 服务",
         iconType = "builtin",
         iconValue = "server",
         lanUrl = favoriteLocalEndpoint(rule),
@@ -179,7 +187,9 @@ internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0): Favorit
         mappingId = rule.id,
         deviceId = optionalFavoriteId(rule.targetMac),
         localEndpoint = favoriteLocalEndpoint(rule),
-        remoteEndpoint = favoriteRemoteEndpoint(rule),
+        // [::] is a listener wildcard, never a remote client address. A linked
+        // DDNS hostname or explicit external endpoint is required before opening.
+        remoteEndpoint = "",
         serviceType = serviceType,
     )
 }
@@ -195,7 +205,7 @@ internal fun upsertMappingFavorite(prefs: AppPrefs, rule: PortMapRule): Favorite
             mappingId = rule.id,
             deviceId = generated.deviceId,
             localEndpoint = generated.localEndpoint,
-            remoteEndpoint = generated.remoteEndpoint,
+            remoteEndpoint = old.remoteEndpoint.ifBlank { generated.remoteEndpoint },
             serviceType = generated.serviceType,
             lanUrl = old.lanUrl.ifBlank { generated.lanUrl },
             wanUrl = old.wanUrl.ifBlank { generated.wanUrl },
@@ -217,10 +227,17 @@ internal fun favoriteServiceStatus(favorite: FavoriteShortcut, mode: String, map
         favorite.localEndpoint.ifBlank { favorite.lanUrl }
     }
     return when {
-        mode == "wan" && endpoint.isNotBlank() -> "IPv6远程"
-        mode != "wan" && endpoint.isNotBlank() -> "内网直连"
+        mode == "wan" && (endpoint.isNotBlank() || (favorite.ddnsRecordId != null && mapping?.rule?.listenPort?.let { it in 1..65535 } == true)) -> "外网"
+        mode != "wan" && endpoint.isNotBlank() -> "内网"
         else -> "当前不可达"
     }
+}
+
+private fun favoriteAccessStatus(report: ServiceAccessReport): String = when {
+    !report.reachable -> "当前不可达"
+    report.path == "内网直连" -> "内网"
+    report.path == "外网访问" -> "外网"
+    else -> "当前不可达"
 }
 
 private fun validFavoriteHostname(raw: String): String? {
@@ -255,10 +272,25 @@ private fun replaceFavoriteUrlHost(rawUrl: String, hostname: String): String? {
  * intentionally do not happen here; callers can use wanUrl unchanged on any
  * missing or invalid association.
  */
-internal fun resolveFavoriteRemoteUrl(favorite: FavoriteShortcut, snapshot: LabProbeDdnsSnapshot?): String {
-    val recordId = optionalFavoriteId(favorite.ddnsRecordId) ?: return favorite.wanUrl
-    val hostname = snapshot?.records?.firstOrNull { it.id == recordId }?.hostname?.let(::validFavoriteHostname) ?: return favorite.wanUrl
-    return replaceFavoriteUrlHost(favorite.wanUrl, hostname) ?: favorite.wanUrl
+internal fun resolveFavoriteRemoteEndpoint(
+    favorite: FavoriteShortcut,
+    snapshot: LabProbeDdnsSnapshot?,
+    mappingRules: List<PortMapRule> = emptyList(),
+): String {
+    val raw = favorite.remoteEndpoint.ifBlank { favorite.wanUrl }
+    val recordId = optionalFavoriteId(favorite.ddnsRecordId) ?: return raw
+    val hostname = snapshot?.records?.firstOrNull { it.id == recordId }?.hostname?.let(::validFavoriteHostname) ?: return raw
+    if (raw.isBlank()) {
+        val rule = resolveFavoriteMapping(favorite, mappingRules).rule ?: return raw
+        if (rule.listenPort !in 1..65535) return raw
+        val type = favorite.serviceType.ifBlank { favoriteServiceType(rule) }
+        return URI(favoriteServiceScheme(type), null, hostname, rule.listenPort, null, null, null).toString()
+    }
+    return replaceFavoriteUrlHost(raw, hostname) ?: raw
+}
+
+internal fun resolveFavoriteRemoteUrl(favorite: FavoriteShortcut, snapshot: LabProbeDdnsSnapshot?): String =
+    resolveFavoriteRemoteEndpoint(favorite.copy(remoteEndpoint = favorite.wanUrl), snapshot)
 }
 
 private data class FavoriteDraft(
@@ -417,7 +449,10 @@ private fun openFavoriteEndpoint(context: Context, endpoint: String) {
 @Composable
 fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenDns: () -> Unit, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit, onBeforeOpenShortcut: () -> Unit = {}) {
     val context = LocalContext.current
-    val mappingRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs).rules }
+    var mappingRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
+    val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val ddnsResource by routerRepository.labProbeDdns.collectAsState()
+    val ddnsSnapshot = ddnsResource.value
     val scope = rememberCoroutineScope()
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -426,8 +461,10 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
     var adding by remember { mutableStateOf(false) }
     val accessReports = remember { mutableStateMapOf<String, ServiceAccessReport>() }
 
+    LaunchedEffect(routerRepository) { routerRepository.refreshLabProbeDdns(false) }
     LaunchedEffect(syncVersion) {
         if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
+        mappingRules = PortMappingRuleStore.load(context, prefs).rules
     }
 
     fun persist(items: List<FavoriteShortcut>) {
@@ -515,13 +552,15 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                         dragEnabled = query.isBlank(),
                         onOpen = {
                             onBeforeOpenShortcut()
-                            if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank()) {
+                            mappingRules = PortMappingRuleStore.load(context, prefs).rules
+                            if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank() && shortcut.ddnsRecordId == null) {
                                 openFavorite(context, shortcut, mode)
                             } else {
                                 scope.launch {
+                                    val remoteEndpoint = resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules)
                                     val decision = chooseServiceAccess(
                                         localEndpoint = shortcut.localEndpoint.ifBlank { shortcut.lanUrl },
-                                        remoteEndpoint = shortcut.remoteEndpoint.ifBlank { shortcut.wanUrl },
+                                        remoteEndpoint = remoteEndpoint,
                                     )
                                     accessReports[shortcut.id] = decision.report
                                     decision.endpoint?.let { openFavoriteEndpoint(context, it) }
@@ -555,6 +594,7 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
     if (adding || editing != null) {
         FavoriteEditorSheet(
             existing = editing,
+            ddnsRecords = ddnsSnapshot?.records.orEmpty(),
             onDismiss = { adding = false; editing = null },
             onSave = { saved ->
                 val oldIndex = shortcuts.indexOfFirst { it.id == saved.id }
@@ -642,10 +682,10 @@ private fun FavoriteShortcutCard(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(shortcut.serviceType.ifBlank { shortcut.description.ifBlank { "网页入口" } }, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val status = accessReport?.let(::serviceAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping)
+                val status = accessReport?.let(::favoriteAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping)
                 Text(status, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = when {
-                    status.startsWith("内网直连") -> LabV2.Green
-                    status.startsWith("IPv6远程") -> LabV2.Primary
+                    status == "内网" -> LabV2.Green
+                    status == "外网" -> LabV2.Primary
                     else -> LabV2.Red
                 }, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -722,7 +762,12 @@ private fun favoriteBuiltinIcon(value: String): Pair<ImageVector, Color> = when 
 }
 
 @Composable
-private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Unit, onSave: (FavoriteShortcut) -> Unit) {
+private fun FavoriteEditorSheet(
+    existing: FavoriteShortcut?,
+    ddnsRecords: List<LabProbeDdnsRecord>,
+    onDismiss: () -> Unit,
+    onSave: (FavoriteShortcut) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var draft by remember(existing?.id) {
@@ -749,6 +794,7 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
         )
     }
     var error by remember { mutableStateOf("") }
+    var ddnsMenu by remember { mutableStateOf(false) }
     val webhookManaged = existing?.id?.startsWith("webhook-") == true
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -784,6 +830,39 @@ private fun FavoriteEditorSheet(existing: FavoriteShortcut?, onDismiss: () -> Un
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FavoriteInlineField("本地入口", draft.localEndpoint, { draft = draft.copy(localEndpoint = it) }, "可选", Modifier.weight(1f), uri = true)
             FavoriteInlineField("远程入口", draft.remoteEndpoint, { draft = draft.copy(remoteEndpoint = it) }, "可选", Modifier.weight(1f), uri = true)
+        }
+        if (ddnsRecords.any { it.hostname.isNotBlank() }) {
+            val selectedDdns = ddnsRecords.firstOrNull { it.id == draft.ddnsRecordId }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("关联 DDNS", modifier = Modifier.width(52.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { ddnsMenu = true },
+                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        shape = LabV2.ButtonShape,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Ink),
+                    ) {
+                        Text(selectedDdns?.hostname ?: "不关联", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                        Icon(Icons.Rounded.ArrowDropDown, null, tint = LabV2.Primary)
+                    }
+                    DropdownMenu(
+                        expanded = ddnsMenu,
+                        onDismissRequest = { ddnsMenu = false },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = Color.White,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 8.dp,
+                    ) {
+                        DropdownMenuItem(text = { Text("不关联", color = LabV2.Ink) }, onClick = { draft = draft.copy(ddnsRecordId = null); ddnsMenu = false })
+                        ddnsRecords.filter { it.hostname.isNotBlank() }.forEach { record ->
+                            DropdownMenuItem(
+                                text = { Text(record.hostname, color = LabV2.Ink) },
+                                onClick = { draft = draft.copy(ddnsRecordId = record.id); ddnsMenu = false },
+                            )
+                        }
+                    }
+                }
+            }
         }
         if (webhookManaged) {
             Text("可在自动生成的端口后添加 /be72；后续同步会保留该后缀。", Modifier.padding(start = 53.dp), fontSize = 9.5.sp, color = LabV2.Primary)
