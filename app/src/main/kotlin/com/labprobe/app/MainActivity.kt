@@ -196,7 +196,7 @@ object AppVersion {
         )
 }
 
-private val LabTypography: Typography = run {
+private val LabMaterialTypography: Typography = run {
     val t = Typography()
     Typography(
         displayLarge = t.displayLarge.copy(fontFamily = FontFamily.SansSerif),
@@ -1909,7 +1909,7 @@ fun LabProbeApp(prefs: AppPrefs) {
         error = LabV2.Red
     )
 
-    MaterialTheme(colorScheme = light, typography = LabTypography) {
+    MaterialTheme(colorScheme = light, typography = LabMaterialTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "events", "favorites")
         val navTitles = listOf("首页", "设备", "工具", "记录", "收藏")
         val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
