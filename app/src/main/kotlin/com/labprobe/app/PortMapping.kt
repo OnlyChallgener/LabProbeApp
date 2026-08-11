@@ -212,7 +212,7 @@ class PortMapApi(private val prefs: AppPrefs) {
         val rows = (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::parsePortMapRule) }
         val agent = PortMapAgentInfo(
             online = root.optBoolean("agentOnline", false),
-            router = cleanApiText(root.optString("router", "router")),
+            router = cleanApiText(root.optString("router", "Router")),
             lastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
             portMin = range.optInt("min", 20000),
             portMax = range.optInt("max", 20020),
@@ -495,7 +495,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         mutableLongStateOf(PortMappingMemoryCache.snapshotRevision)
     }
     var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
-    var agent by remember { mutableStateOf(PortMappingMemoryCache.agent ?: PortMapAgentInfo(false, "router", "", 20000, 20020)) }
+    var agent by remember { mutableStateOf(PortMappingMemoryCache.agent ?: PortMapAgentInfo(false, "Router", "", 20000, 20020)) }
     var canonicalDevicesLoaded by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(PortMappingMemoryCache.agent == null && initialRules.isEmpty()) }
     var refreshInFlight by remember { mutableStateOf(false) }
@@ -667,6 +667,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true) {
+        Spacer(Modifier.height(8.dp))
         PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -777,7 +778,8 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(agent.router.ifBlank { "路由器" }, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.CardTitle.fontSize, color = LabV2.Ink)
+                val routerName = agent.router.ifBlank { "Router" }.let { if (it.equals("router", ignoreCase = true)) "Router" else it }
+                Text(routerName, style = LabTypography.CardTitle.copy(color = LabV2.Ink))
                 val versions = listOfNotNull(
                     agent.hubVersion.takeIf { it.isNotBlank() }?.let { "Hub $it" },
                     agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" }

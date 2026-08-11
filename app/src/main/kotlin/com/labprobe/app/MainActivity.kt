@@ -196,26 +196,23 @@ object AppVersion {
         )
 }
 
-private val LabMaterialTypography: Typography = run {
-    val t = Typography()
-    Typography(
-        displayLarge = t.displayLarge.copy(fontFamily = FontFamily.SansSerif),
-        displayMedium = t.displayMedium.copy(fontFamily = FontFamily.SansSerif),
-        displaySmall = t.displaySmall.copy(fontFamily = FontFamily.SansSerif),
-        headlineLarge = t.headlineLarge.copy(fontFamily = FontFamily.SansSerif),
-        headlineMedium = t.headlineMedium.copy(fontFamily = FontFamily.SansSerif),
-        headlineSmall = t.headlineSmall.copy(fontFamily = FontFamily.SansSerif),
-        titleLarge = t.titleLarge.copy(fontFamily = FontFamily.SansSerif),
-        titleMedium = t.titleMedium.copy(fontFamily = FontFamily.SansSerif),
-        titleSmall = t.titleSmall.copy(fontFamily = FontFamily.SansSerif),
-        bodyLarge = t.bodyLarge.copy(fontFamily = FontFamily.SansSerif),
-        bodyMedium = t.bodyMedium.copy(fontFamily = FontFamily.SansSerif),
-        bodySmall = t.bodySmall.copy(fontFamily = FontFamily.SansSerif),
-        labelLarge = t.labelLarge.copy(fontFamily = FontFamily.SansSerif),
-        labelMedium = t.labelMedium.copy(fontFamily = FontFamily.SansSerif),
-        labelSmall = t.labelSmall.copy(fontFamily = FontFamily.SansSerif)
-    )
-}
+private val LabMaterialTypography: Typography = Typography(
+    displayLarge = LabTypography.Metric.copy(fontSize = 48.sp, lineHeight = 52.sp),
+    displayMedium = LabTypography.Metric,
+    displaySmall = LabTypography.CompactMetric,
+    headlineLarge = LabTypography.AppTitle,
+    headlineMedium = LabTypography.PageTitle,
+    headlineSmall = LabTypography.CardTitle,
+    titleLarge = LabTypography.PageTitle,
+    titleMedium = LabTypography.CardTitle,
+    titleSmall = LabTypography.SectionTitle,
+    bodyLarge = LabTypography.Body,
+    bodyMedium = LabTypography.Body,
+    bodySmall = LabTypography.Supporting,
+    labelLarge = LabTypography.Button,
+    labelMedium = LabTypography.Supporting,
+    labelSmall = LabTypography.Caption
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -4117,7 +4114,7 @@ private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, 
 fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(8.dp)) {
-            val stroke = if (size > 100.dp) 10.dp.toPx() else 9.dp.toPx()
+            val stroke = if (size > 100.dp) 12.dp.toPx() else 11.dp.toPx()
             drawArc(
                 color = Color(0xFFE2EAF3),
                 startAngle = 135f,
@@ -4246,44 +4243,41 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
     val display = cleanApiText(displayValue)
     if (real.isBlank() && display.isBlank()) return
     val shown = display.ifBlank { real }
-    val mayWrap = shown.length > 22 || shown.contains('\n')
-    Row(Modifier.fillMaxWidth(), verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically) {
+    val mayWrap = shown.length > 22 || shown.contains('
+')
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable(enabled = real.isNotBlank()) { copy(ctx, real) }
+            .padding(vertical = 3.dp),
+        verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically
+    ) {
         Text(
             label,
-            Modifier.width(82.dp).then(if (mayWrap) Modifier.padding(top = 4.dp) else Modifier),
-            color = LabV2.InkMuted,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = LabTypography.Value.fontSize,
+            Modifier.width(94.dp).then(if (mayWrap) Modifier.padding(top = 2.dp) else Modifier),
+            style = LabTypography.Value.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Box(Modifier.weight(1f).padding(end = 3.dp)) {
-            SelectionContainer {
-                Text(
-                    shown,
-                    style = LabTypography.ValueStrong.copy(
-                        color = accent,
-                        fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif
-                    ),
-                    maxLines = Int.MAX_VALUE,
-                    softWrap = true,
-                    overflow = TextOverflow.Clip
-                )
-            }
-        }
-        IconButton(
-            onClick = { copy(ctx, real) },
-            enabled = real.isNotBlank(),
-            modifier = Modifier.size(28.dp)
-        ) {
-            Icon(Icons.Rounded.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp), tint = LabV2.Primary)
-        }
+        Text(
+            shown,
+            modifier = Modifier.weight(1f),
+            style = LabTypography.ValueStrong.copy(
+                color = accent,
+                fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif
+            ),
+            maxLines = 2,
+            softWrap = true,
+            overflow = TextOverflow.Clip
+        )
     }
 }
 
 @Composable
 fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
-    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {
+    HealthCard(Modifier.clip(HomeCardShape)) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
         val nasIpv6 = safeNasIpv6ForUi(nas, router)
         val wan6Rows = routerWan6Rows(router)
@@ -4302,7 +4296,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
 
 @Composable
 fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
-    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {
+    HealthCard(Modifier.clip(HomeCardShape)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -4316,7 +4310,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = LabV2.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -9737,12 +9731,12 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("DNS", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
+                Text("DNS", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
                 CompactTextField(dns, { dns = it }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))
-                Surface(Modifier.fillMaxWidth().height(42.dp), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f))) {
+                Text("同步", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
+                Surface(Modifier.fillMaxWidth().height(LabV2.FieldHeight), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f))) {
                     Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
                         Spacer(Modifier.width(6.dp))
@@ -9752,7 +9746,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                             is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
                             HubRealtimeState.Disabled -> "实时未连接"
                         }
-                        Text(syncLabel, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                        Text(syncLabel, style = LabTypography.FieldValue.copy(color = LabV2.Ink))
                     }
                 }
             }

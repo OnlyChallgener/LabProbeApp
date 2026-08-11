@@ -794,8 +794,19 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                                         transportProtocol = linkedRule?.transportProtocol?.ifBlank { "TCP" } ?: "TCP",
                                     )
                                     accessReports[shortcut.id] = decision.report
-                                    decision.endpoint?.let { openFavoriteEndpoint(context, it) }
-                                        ?: toast(context, decision.report.reason.ifBlank { "服务不可达" })
+                                    decision.endpoint?.let { openFavoriteEndpoint(context, it) } ?: run {
+                                val fallbackEndpoint = if (mode == "wan") remoteEndpoint else resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices)
+                                if (serviceType.equals("HTTP", true) || serviceType.equals("HTTPS", true)) {
+                                    if (fallbackEndpoint.isNotBlank()) {
+                                        toast(context, decision.report.reason.ifBlank { "快速检测未确认，继续在浏览器尝试" })
+                                        openFavoriteEndpoint(context, fallbackEndpoint)
+                                    } else {
+                                        toast(context, decision.report.reason.ifBlank { "未配置可打开地址" })
+                                    }
+                                } else {
+                                    toast(context, decision.report.reason.ifBlank { "服务不可达" })
+                                }
+                            }
                                 }
                             }
                         },

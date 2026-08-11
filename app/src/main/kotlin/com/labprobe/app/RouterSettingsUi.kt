@@ -57,7 +57,7 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
         shape = shape,
         color = Color.White,
         border = BorderStroke(1.dp, Color(0xFFE7EDF4)),
-        shadowElevation = 2.dp
+        shadowElevation = 1.dp
     ) {
         Row(
             Modifier
@@ -118,8 +118,8 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
             RouterSettingsTile(
                 title = "映射与 UPnP",
                 subtitle = "IPv6 映射、原生端口映射与 UPnP",
-                icon = Icons.Rounded.AccountTree,
-                glyph = RouterGlyph.Mapping,
+                icon = Icons.Rounded.CompareArrows,
+                glyph = null,
                 color = SettingsBlue,
                 enabled = capabilities.nativePortMapping || capabilities.upnp
             ) { onOpen("tool_portmap") }
@@ -192,11 +192,14 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
         shape = LabCoreSurface.CompactShape,
         color = Color.White,
         border = BorderStroke(1.dp, SettingsBorder),
-        shadowElevation = 2.dp
+        shadowElevation = 1.dp
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).background(accent.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(21.dp))
+                Box(Modifier.size(23.dp)) {
+          Icon(Icons.Rounded.Bolt, null, Modifier.align(Alignment.CenterStart).size(16.dp), tint = accent)
+          Icon(Icons.Rounded.Bolt, null, Modifier.align(Alignment.CenterEnd).size(16.dp), tint = accent)
+      }
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -232,7 +235,7 @@ private fun RouterSettingsTile(
         shape = LabCoreSurface.CompactShape,
         color = Color.White,
         border = BorderStroke(1.dp, SettingsBorder),
-        shadowElevation = 2.dp
+        shadowElevation = 1.dp
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).background(actualColor.copy(alpha = .10f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {

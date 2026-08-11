@@ -51,7 +51,7 @@ internal data class ServiceEndpoint(
 /** Internal probe constraint. Favorites deliberately present only 内网 / 外网. */
 internal enum class ServiceAddressFamily { Any, Ipv4, Ipv6 }
 
-private const val SERVICE_ACCESS_TIMEOUT_MS = 550L
+private const val SERVICE_ACCESS_TIMEOUT_MS = 800L
 
 private val serviceHttpClient = OkHttpClient.Builder()
     .connectTimeout(SERVICE_ACCESS_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -176,8 +176,17 @@ internal suspend fun probeServiceEndpoint(
         return probeUdpServiceEndpoint(endpoint, candidates, effectiveFamily, serviceType, started)
     }
 
+    val browserScheme = endpoint.scheme == "http" || endpoint.scheme == "https"
+    val tcpReachableBeforeHttp = if (browserScheme) withContext(Dispatchers.IO) {
+        candidates.any { address ->
+            runCatching {
+                Socket().use { it.connect(InetSocketAddress(address, endpoint.port), SERVICE_ACCESS_TIMEOUT_MS.toInt()) }
+            }.isSuccess
+        }
+    } else false
+
     val result = withContext(Dispatchers.IO) {
-        if (endpoint.scheme == "http" || endpoint.scheme == "https") {
+        if (browserScheme) {
             runCatching {
                 val client = when (effectiveFamily) {
                     ServiceAddressFamily.Ipv4 -> ipv4HttpClient
@@ -199,9 +208,12 @@ internal suspend fun probeServiceEndpoint(
     val elapsed = max(1L, (System.nanoTime() - started) / 1_000_000L)
     val certificateWarning = endpoint.scheme == "https" && isCertificateFailure(result.exceptionOrNull())
     val tlsHandshakeFailure = endpoint.scheme == "https" && isTlsHandshakeFailure(result.exceptionOrNull())
-    val reachable = result.isSuccess || certificateWarning
+    val reachable = result.isSuccess || certificateWarning || (browserScheme && tcpReachableBeforeHttp)
     val reason = when {
         certificateWarning -> "服务可访问 · 证书校验异常"
+        endpoint.scheme == "https" && tcpReachableBeforeHttp && tlsHandshakeFailure -> "TCP 可达 · HTTPS 握手失败，可继续用浏览器尝试"
+        endpoint.scheme == "https" && tcpReachableBeforeHttp && result.isFailure -> "TCP 可达 · HTTPS 检测未确认，可继续用浏览器尝试"
+        endpoint.scheme == "http" && tcpReachableBeforeHttp && result.isFailure -> "TCP 可达 · HTTP 检测未确认，可继续用浏览器尝试"
         else -> result.exceptionOrNull()?.let { failureReason(it, effectiveFamily, endpoint.scheme == "https") }.orEmpty()
     }
     return ServiceAccessReport(

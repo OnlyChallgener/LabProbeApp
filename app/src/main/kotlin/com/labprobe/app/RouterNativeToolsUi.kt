@@ -51,7 +51,7 @@ private object RouterNativeMemoryCache {
     var natResult: RouterNatResult? = null
 }
 
-private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 7.dp): Modifier =
+private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 2.dp): Modifier =
     shadow(
         elevation = elevation,
         shape = shape,
@@ -159,7 +159,7 @@ private fun NativeSelector(
     Box(modifier) {
         OutlinedButton(
             onClick = { onExpandedChange(true) },
-            modifier = Modifier.fillMaxWidth().height(58.dp).nativeCardShadow(shape, 5.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(shape, 1.dp),
             shape = shape,
             colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
             border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
@@ -179,7 +179,7 @@ private fun NativeSelector(
             shape = RoundedCornerShape(24.dp),
             containerColor = Color.White,
             tonalElevation = 0.dp,
-            shadowElevation = 10.dp
+            shadowElevation = 4.dp
         ) {
             options.forEach { (key, title) ->
                 DropdownMenuItem(
@@ -500,10 +500,10 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(Modifier.weight(1.65f)) {
+                Box(Modifier.weight(1.35f)) {
                     OutlinedButton(
                         onClick = { serverMenu = true },
-                        modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(serverShape, 5.dp),
+                        modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(serverShape, 1.dp),
                         shape = serverShape,
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
                         border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f))
@@ -524,7 +524,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         shape = RoundedCornerShape(24.dp),
                         containerColor = Color.White,
                         tonalElevation = 0.dp,
-                        shadowElevation = 11.dp
+                        shadowElevation = 4.dp
                     ) {
                         servers.forEach { host ->
                             DropdownMenuItem(
@@ -539,7 +539,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 NativeCompactPortField(
                     value = portText,
                     onValueChange = { portText = it },
-                    modifier = Modifier.weight(.75f)
+                    modifier = Modifier.weight(.85f)
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -550,7 +550,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     expanded = modeMenu,
                     onExpandedChange = { modeMenu = it },
                     onSelect = { mode = it },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1.35f)
                 )
                 NativeSelector(
                     label = "WAN 类型",
@@ -559,7 +559,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     expanded = interfaceMenu,
                     onExpandedChange = { interfaceMenu = it },
                     onSelect = { interfaceName = it },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(.85f)
                 )
             }
             Row(
@@ -585,7 +585,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                     },
                     enabled = !running,
-                    modifier = Modifier.fillMaxWidth().height(44.dp).nativeCardShadow(RoundedCornerShape(14.dp), 7.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp).nativeCardShadow(RoundedCornerShape(14.dp), 2.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = NativeBlue,
@@ -783,7 +783,7 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Button(
                 onClick = { tasks.startBeta() },
                 enabled = !task.active,
-                modifier = Modifier.fillMaxWidth().height(42.dp).nativeCardShadow(RoundedCornerShape(14.dp), 7.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp).nativeCardShadow(RoundedCornerShape(14.dp), 2.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = NativeCyan,

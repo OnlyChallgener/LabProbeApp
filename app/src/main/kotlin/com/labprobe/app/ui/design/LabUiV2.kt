@@ -134,66 +134,78 @@ object LabTypography {
     val PageTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 20.sp,
-        lineHeight = 25.sp,
+        lineHeight = 26.sp,
         fontWeight = FontWeight.Bold,
         color = LabV2.Ink
     )
     val CardTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 15.sp,
-        lineHeight = 20.sp,
-        fontWeight = FontWeight.SemiBold,
+        fontSize = 16.sp,
+        lineHeight = 21.sp,
+        fontWeight = FontWeight.Bold,
         color = LabV2.Ink
     )
     val SectionTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 13.sp,
-        lineHeight = 18.sp,
+        fontSize = 14.sp,
+        lineHeight = 19.sp,
         fontWeight = FontWeight.SemiBold,
         color = LabV2.Ink
     )
     val Body = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 12.sp,
-        lineHeight = 17.sp,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.Ink
     )
     val Value = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
+        fontSize = 13.5.sp,
+        lineHeight = 18.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.Ink
     )
     val ValueStrong = Value.copy(fontWeight = FontWeight.SemiBold)
     val Supporting = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        fontSize = 11.5.sp,
+        lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.InkMuted
     )
     val Caption = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 10.sp,
+        fontSize = 10.5.sp,
         lineHeight = 14.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.InkMuted
     )
     val Micro = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 10.sp,
-        lineHeight = 13.sp,
+        fontSize = 10.5.sp,
+        lineHeight = 14.sp,
         fontWeight = FontWeight.SemiBold,
         color = LabV2.InkMuted
     )
-    val Button = Value.copy(fontWeight = FontWeight.SemiBold, color = Color.Unspecified)
-    val CompactButton = Supporting.copy(fontWeight = FontWeight.SemiBold, color = Color.Unspecified)
-    val FieldLabel = Supporting
-    val FieldValue = Value
+    val Button = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = Color.Unspecified
+    )
+    val CompactButton = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = Color.Unspecified
+    )
+    val FieldLabel = Supporting.copy(fontWeight = FontWeight.SemiBold)
+    val FieldValue = Value.copy(fontWeight = FontWeight.SemiBold)
     val Placeholder = Supporting.copy(fontWeight = FontWeight.Normal, color = LabV2.InkFaint)
-    val Log = Supporting.copy(lineHeight = 15.sp)
+    val Log = Supporting.copy(lineHeight = 16.sp)
     val Metric = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 40.sp,
@@ -201,15 +213,8 @@ object LabTypography {
         fontWeight = FontWeight.Bold,
         color = LabV2.Ink
     )
-
-    val CompactMetric = Metric.copy(
-        fontSize = 32.sp,
-        lineHeight = 36.sp
-    )
-    val HomeMiniMetric = Metric.copy(
-        fontSize = 26.sp,
-        lineHeight = 30.sp
-    )
+    val CompactMetric = Metric.copy(fontSize = 32.sp, lineHeight = 36.sp)
+    val HomeMiniMetric = Metric.copy(fontSize = 28.sp, lineHeight = 32.sp)
 }
 
 fun Modifier.labV2PageBackground(): Modifier = background(
@@ -300,7 +305,7 @@ fun CompactPageHeader(
                 style = titleStyle ?: TextStyle(
                     fontSize = if (compactTitle) 19.sp else 21.sp,
                     lineHeight = if (compactTitle) 22.sp else 24.sp,
-                    fontWeight = FontWeight.Black,
+                    fontWeight = FontWeight.Bold,
                     color = LabV2.Ink
                 ),
                 maxLines = if (titleStyle == null) 1 else 2,
@@ -412,11 +417,11 @@ fun CompactDropdown(
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(18.dp),
             containerColor = LabV2.Field,
-            shadowElevation = 10.dp
+            shadowElevation = 4.dp
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(option, fontSize = 12.5.sp, fontWeight = if (option == value) FontWeight.Black else FontWeight.SemiBold) },
+                    text = { Text(option, fontSize = 12.5.sp, fontWeight = if (option == value) FontWeight.Bold else FontWeight.SemiBold) },
                     onClick = { expanded = false; onSelect(option) }
                 )
             }
@@ -474,7 +479,7 @@ fun CompactBottomSheet(
 ) {
     LabBottomSheet(onDismiss = onDismiss, scrollable = scrollable) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Rounded.Close, null, Modifier.size(19.dp), tint = LabV2.InkMuted)
             }
@@ -510,7 +515,7 @@ fun LabV2SectionHeader(
             Text(
                 title,
                 fontSize = 15.5.sp,
-                fontWeight = FontWeight.Black,
+                fontWeight = FontWeight.Bold,
                 color = LabV2.Ink,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -613,7 +618,7 @@ fun LabV2BottomNav(
                     Text(
                         title,
                         fontSize = 9.8.sp,
-                        fontWeight = if (active) FontWeight.Black else FontWeight.SemiBold,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                         color = tint,
                         maxLines = 1
                     )
@@ -633,7 +638,7 @@ fun LabV2SegmentedControl(
     textStyle: TextStyle? = null
 ) {
     val resolvedTextStyle = textStyle
-        ?: TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+        ?: TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(17.dp),
@@ -693,7 +698,7 @@ fun LabV2Metric(
                 value,
                 fontSize = valueSize,
                 color = accent,
-                fontWeight = FontWeight.Black,
+                fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Clip
