@@ -1,0 +1,129 @@
+name: One-off build181 final compile
+
+on:
+  push:
+    branches:
+      - release/build180
+    paths:
+      - .github/workflows/oneoff-build181-build-final.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/build180
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Materialize and verify source state
+        shell: bash
+        run: |
+          set -e
+          git config user.name "OpenAI UI Fix"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/prepare_android_sources_build167.py
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          main=Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
+          port=Path('app/src/main/kotlin/com/labprobe/app/PortMapping.kt').read_text(encoding='utf-8')
+          control=Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt').read_text(encoding='utf-8')
+          settings=Path('app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt').read_text(encoding='utf-8')
+          native=Path('app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt').read_text(encoding='utf-8')
+          access=Path('app/src/main/kotlin/com/labprobe/app/ServiceAccess.kt').read_text(encoding='utf-8')
+          fav=Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
+          ui=Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
+          required=[
+              ('.clickable(enabled = real.isNotBlank()) { copy(ctx, real) }' in main,'home row copy'),
+              ('val stroke = if (size > 100.dp) 12.dp.toPx() else 11.dp.toPx()' in main,'health gauge'),
+              ('showHeader: Boolean = true' in main,'DetailShell embedded support'),
+              ('embedded: Boolean = false' in port and 'showHeader = !embedded' in port,'mapping embedded mode'),
+              ('offset(y = (-62).dp)' not in control,'remove clipping hack'),
+              ('Color(0xFFE8F1FF)' in control,'rounded blue tabs'),
+              ('icon = Icons.Rounded.CompareArrows' in settings,'mapping icon'),
+              (settings.count('Icons.Rounded.Bolt') >= 2,'dual bolt icon'),
+              ('Box(Modifier.weight(1.35f))' in native and native.count('modifier = Modifier.weight(.85f)') >= 2,'STUN columns'),
+              ('tcpReachableBeforeHttp' in access and '可继续用浏览器尝试' in access,'HTTPS probe'),
+              ('快速检测未确认，继续在浏览器尝试' in fav,'browser fallback'),
+          ]
+          row=main[main.index('fun HealthDataRowDisplay'):main.index('@Composable\nfun HealthExitCard')]
+          required.append(('ContentCopy' not in row and 'IconButton(' not in row,'no trailing copy icon'))
+          exit_card=main[main.index('fun HealthExitCard'):main.index('@Composable\nfun HealthVpnCard')]
+          vpn_card=main[main.index('fun HealthVpnCard'):main.index('@Composable\nfun HealthDevicesCard')]
+          required.append(('HealthCard(Modifier.clip(HomeCardShape).clickable' not in exit_card,'exit card no jump'))
+          required.append(('HealthCard(Modifier.clip(HomeCardShape).clickable' not in vpn_card,'vpn card no jump'))
+          card=ui[ui.index('val CardTitle = TextStyle('):ui.index('val SectionTitle = TextStyle(')]
+          required.append(('fontSize = 16.sp' in card and 'fontWeight = FontWeight.Bold' in card,'CardTitle stronger'))
+          failed=[name for ok,name in required if not ok]
+          if failed: raise SystemExit('UI regression: '+', '.join(failed))
+          print('requested UI/access markers preserved')
+          PY
+          git add app scripts
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: materialize build181 release source state"
+          fi
+          python3 scripts/prepare_android_sources_build167.py
+          git diff --exit-code
+          python3 scripts/verify_build154_sources.py
+
+      - name: Compile and test with failure capture
+        shell: bash
+        env:
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: |
+          set +e
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --console=plain >/tmp/build181.log 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            cp /tmp/build181.log /tmp/build181-full.log
+            git reset --hard origin/release/build180
+            {
+              echo "build_rc=$RC"
+              echo "build_log_tail:"
+              tail -n 220 /tmp/build181-full.log
+            } > .build181-build-result.txt
+            git add .build181-build-result.txt
+            git commit -m "chore: record build181 compile failure"
+            git pull --rebase origin release/build180
+            git push origin HEAD:release/build180
+            exit 0
+          fi
+          echo "build181 debug unit tests and assembleDebug passed"
+
+      - name: Clean temporary files and publish validated source state
+        shell: bash
+        run: |
+          rm -f .build181-validation.txt .build181-prepare.diff .build181-materialize-check.txt .build181-verify-check.txt .build181-build-result.txt
+          git rm -f .github/workflows/oneoff-build181-validate.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-diagnose.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-prepdiff.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-materialize.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-materialize-check.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-finalize.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-verifycheck.yml 2>/dev/null || true
+          git rm -f .github/workflows/oneoff-build181-build-final.yml
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: clean build181 one-off validation files"
+          fi
+          git pull --rebase origin release/build180
+          git push origin HEAD:release/build180
