@@ -257,7 +257,7 @@ class FavoriteLinkModelTest {
             wanUrl = "https://legacy.example.com:20000/keep",
         )
         assertEquals("", resolveFavoriteRemoteEndpoint(favorite, LabProbeDdnsSnapshot(), listOf(sampleRule("map-1"))))
-        assertEquals("褰撳墠涓嶅彲杈?", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+        assertEquals("当前不可达", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
     }
 
     @Test
