@@ -1,0 +1,30 @@
+name: Inspect build185 UI targets
+on:
+  push:
+    branches: [release/build180]
+    paths: ['.github/workflows/inspect-build185.yml']
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print UI target contexts
+        shell: bash
+        run: |
+          set -e
+          for term in '出口与路由' '终端在线' 'VPN / STUN 地址' 'STUN 类型' 'STUN 服务器' '当前版本' '可用版本' 'connection closed' '立即校准' '开启隐私模式' '开始检测'; do
+            echo "===== $term ====="
+            grep -R -n -F "$term" app/src/main/kotlin app/src/main/res || true
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          terms=['出口与路由','终端在线','STUN 类型','当前版本','立即校准','开启隐私模式']
+          for p in Path('app/src/main/kotlin').rglob('*.kt'):
+              lines=p.read_text(encoding='utf-8').splitlines()
+              for i,line in enumerate(lines):
+                  if any(t in line for t in terms):
+                      print(f'\n--- {p}:{i+1} ---')
+                      for j in range(max(0,i-18),min(len(lines),i+30)):
+                          print(f'{j+1:05d}: {lines[j]}')
+          PY
