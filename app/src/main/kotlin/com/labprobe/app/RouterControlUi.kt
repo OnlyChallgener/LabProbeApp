@@ -169,7 +169,7 @@ fun RouterFeatureRail(
     }
 }
 
-internal enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port, Connection, Beta }
+enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port, Connection, Beta }
 
 @Composable
 private fun RouterFeatureCard(title: String, status: String, accent: Color, glyph: RouterGlyph, onClick: () -> Unit) {
