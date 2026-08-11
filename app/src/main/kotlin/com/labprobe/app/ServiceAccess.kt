@@ -104,6 +104,9 @@ private fun isIpv6Unavailable(error: Throwable?): Boolean = generateSequence(err
             ))
 }
 
+private fun isCertificateFailure(error: Throwable?): Boolean =
+    generateSequence(error) { it.cause }.any { it is SSLException }
+
 private fun failureReason(error: Throwable?, family: ServiceAddressFamily, https: Boolean): String = when {
     error is SSLException -> "HTTPS 证书校验失败"
     family == ServiceAddressFamily.Ipv6 && isIpv6Unavailable(error) -> "当前网络无法使用 IPv6 远程访问"
@@ -127,25 +130,32 @@ internal suspend fun probeServiceEndpoint(
         ServiceAddressFamily.Ipv4 -> addresses.filterIsInstance<Inet4Address>()
         ServiceAddressFamily.Ipv6 -> addresses.filterIsInstance<Inet6Address>()
     }
+    val effectiveFamily = when {
+        family != ServiceAddressFamily.Any -> family
+        endpoint.host.contains(':') -> ServiceAddressFamily.Ipv6
+        candidates.isNotEmpty() && candidates.all { it is Inet6Address } -> ServiceAddressFamily.Ipv6
+        candidates.isNotEmpty() && candidates.all { it is Inet4Address } -> ServiceAddressFamily.Ipv4
+        else -> ServiceAddressFamily.Any
+    }
     if (candidates.isEmpty()) {
         return ServiceAccessReport(
             reachable = false,
-            dns = when (family) {
+            dns = when (effectiveFamily) {
                 ServiceAddressFamily.Ipv6 -> "无 AAAA"
                 ServiceAddressFamily.Ipv4 -> "无 A"
                 ServiceAddressFamily.Any -> "失败"
             },
-            ipv6 = if (family == ServiceAddressFamily.Ipv6) "不可用" else "—",
+            ipv6 = if (effectiveFamily == ServiceAddressFamily.Ipv6) "不可用" else "—",
             tcp = "不可达",
             https = if (endpoint.scheme == "https") "未测试" else "—",
-            reason = if (family == ServiceAddressFamily.Ipv6) "当前网络无法使用 IPv6 远程访问" else "服务不可达",
+            reason = if (effectiveFamily == ServiceAddressFamily.Ipv6) "当前网络无法使用 IPv6 远程访问" else "服务不可达",
         )
     }
 
     val result = withContext(Dispatchers.IO) {
         if (endpoint.scheme == "http" || endpoint.scheme == "https") {
             runCatching {
-                val client = when (family) {
+                val client = when (effectiveFamily) {
                     ServiceAddressFamily.Ipv4 -> ipv4HttpClient
                     ServiceAddressFamily.Ipv6 -> ipv6HttpClient
                     ServiceAddressFamily.Any -> serviceHttpClient
@@ -163,16 +173,21 @@ internal suspend fun probeServiceEndpoint(
         }
     }
     val elapsed = max(1L, (System.nanoTime() - started) / 1_000_000L)
-    val reason = result.exceptionOrNull()?.let { failureReason(it, family, endpoint.scheme == "https") }.orEmpty()
+    val certificateWarning = endpoint.scheme == "https" && isCertificateFailure(result.exceptionOrNull())
+    val reachable = result.isSuccess || certificateWarning
+    val reason = when {
+        certificateWarning -> "服务可访问 · 证书校验异常"
+        else -> result.exceptionOrNull()?.let { failureReason(it, effectiveFamily, endpoint.scheme == "https") }.orEmpty()
+    }
     return ServiceAccessReport(
-        reachable = result.isSuccess,
+        reachable = reachable,
         dns = "正常",
-        ipv6 = if (family == ServiceAddressFamily.Ipv6) "可用" else "—",
-        tcp = if (result.isSuccess) "可达" else "不可达",
+        ipv6 = if (effectiveFamily == ServiceAddressFamily.Ipv6) "可用" else "—",
+        tcp = if (reachable) "可达" else "不可达",
         https = when {
             endpoint.scheme != "https" -> "—"
+            certificateWarning -> "证书警告"
             result.isSuccess -> "正常"
-            reason == "HTTPS 证书校验失败" -> "证书错误"
             else -> "失败"
         },
         latencyMs = elapsed,

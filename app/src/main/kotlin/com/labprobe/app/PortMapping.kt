@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -417,6 +418,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val ddnsSnapshot = ddnsResource.value
+    val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
     val liveAgent by presenceStore.state.collectAsState()
     val persistentRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs) }
@@ -443,7 +445,23 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
 
-    LaunchedEffect(routerRepository) { routerRepository.refreshLabProbeDdns(false) }
+    LaunchedEffect(routerRepository) {
+        routerRepository.refreshLabProbeDdns(false)
+        routerRepository.refreshDdns(false)
+    }
+    LaunchedEffect(ddnsResource.updatedAt, nativeDdnsResource.updatedAt, rulesRevision) {
+        if (rules.isNotEmpty()) {
+            rules.forEach {
+                syncExistingMappingFavorite(
+                    prefs,
+                    it,
+                    devices,
+                    ddnsSnapshot,
+                    nativeDdnsResource.value.orEmpty(),
+                )
+            }
+        }
+    }
 
     fun commitRulesLocally(next: List<PortMapRule>, revision: Long = rulesRevision, updatedAt: String = rulesUpdatedAt, sourceRevision: Long = snapshotRevision) {
         rules = next
@@ -482,8 +500,17 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             agent = newAgent
             PortMappingMemoryCache.agent = newAgent
             presenceStore.acceptHttp(newAgent)
-            if (devices.isEmpty()) devices = runCatching { deviceApi.getDevices(true) }.getOrDefault(devices)
+            if (devices.isEmpty()) devices = runCatching { deviceApi.getDevices(false) }.getOrDefault(devices)
             PortMappingMemoryCache.devices = devices
+            if (mayAccept) snapshot.rules.forEach {
+                syncExistingMappingFavorite(
+                    prefs,
+                    it,
+                    devices,
+                    ddnsSnapshot,
+                    nativeDdnsResource.value.orEmpty(),
+                )
+            }
             message = if (!mayAccept && snapshot.rules.isEmpty() && rules.isNotEmpty()) {
                 "Hub 本次未返回规则，已保留 APP 中的映射设置"
             } else ""
@@ -536,11 +563,17 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         PortMapDetailPage(
             rule = selected,
             api = api,
-            remoteEndpoint = linkedFavorite?.let { resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules) }.orEmpty(),
+            remoteEndpoint = linkedFavorite?.let { resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules, nativeDdnsResource.value.orEmpty()) }.orEmpty(),
             onDismiss = { selectedId = null },
             onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
             onAddFavorite = {
-                upsertMappingFavorite(prefs, selected)
+                upsertMappingFavorite(
+                    prefs,
+                    selected,
+                    devices,
+                    ddnsSnapshot,
+                    nativeDdnsResource.value.orEmpty(),
+                )
                 toast(context, "已加入收藏")
             },
             onToggle = {
@@ -631,6 +664,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             initial = editDraft!!,
             devices = devices,
             portRange = agent.portMin..agent.portMax,
+            refreshDevices = { deviceApi.getDevices(false) },
             onDismiss = { editDraft = null },
             onSave = { draft ->
                 val saveDraft = portMapDraftForSave(draft)
@@ -642,6 +676,13 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             rules.map { if (it.id == saved.id) saved else it }
                         } else rules + saved
                         commitRulesLocally(next)
+                        syncExistingMappingFavorite(
+                            prefs,
+                            saved,
+                            devices,
+                            ddnsSnapshot,
+                            nativeDdnsResource.value.orEmpty(),
+                        )
                         editDraft = null
                         refresh(true)
                     }.onFailure { message = it.message ?: "保存失败" }
@@ -803,6 +844,7 @@ private fun PortMapEditorSheet(
     initial: PortMapDraft,
     devices: List<DeviceItem>,
     portRange: IntRange,
+    refreshDevices: (suspend () -> List<DeviceItem>)? = null,
     onDismiss: () -> Unit,
     onSave: (PortMapDraft) -> Unit
 ) {
@@ -814,8 +856,10 @@ private fun PortMapEditorSheet(
     }
     var advancedExpanded by remember(initial.id) { mutableStateOf(false) }
     val isNew = draft.id.isBlank()
-    val selectedDevice = remember(draft.targetMac, devices) {
-        devices.firstOrNull { cleanMac(it.mac).equals(cleanMac(draft.targetMac), ignoreCase = true) }
+    var selectedDeviceSnapshot by remember(initial.id) { mutableStateOf<DeviceItem?>(null) }
+    val selectedDevice = remember(draft.targetMac, devices, selectedDeviceSnapshot) {
+        selectedDeviceSnapshot?.takeIf { cleanMac(it.mac).equals(cleanMac(draft.targetMac), ignoreCase = true) }
+            ?: devices.firstOrNull { cleanMac(it.mac).equals(cleanMac(draft.targetMac), ignoreCase = true) }
     }
     fun fieldError(field: String): String = error.takeIf { it.isNotBlank() && portMapValidationField(it) == field }.orEmpty()
     fun submit() {
@@ -868,6 +912,7 @@ private fun PortMapEditorSheet(
                         device = selectedDevice,
                         mode = draft.mode,
                         targetMode = draft.targetMode,
+                        selectedIpv6 = draft.targetIpv6,
                         fallbackMac = draft.targetMac,
                         onClick = { showDevicePicker = true }
                     )
@@ -985,8 +1030,10 @@ private fun PortMapEditorSheet(
             mode = draft.mode,
             targetMode = draft.targetMode,
             selectedMac = draft.targetMac,
+            refreshDevices = refreshDevices,
             onDismiss = { showDevicePicker = false },
             onPick = { device ->
+                selectedDeviceSnapshot = device
                 val bestIpv6 = device.pickIpv6().best.orEmpty()
                 draft = draft.copy(
                     targetMac = device.mac,
@@ -1136,13 +1183,14 @@ private fun PortMapSelectedDevice(
     device: DeviceItem?,
     mode: String,
     targetMode: String,
+    selectedIpv6: String,
     fallbackMac: String,
     onClick: () -> Unit
 ) {
     val address = when {
         device == null -> ""
         mode == "6to4" -> cleanApiText(device.ip)
-        else -> device.pickIpv6().best.orEmpty()
+        else -> selectedIpv6.ifBlank { device.pickIpv6().best.orEmpty() }
     }
     val profile = device?.let(::inferDeviceProfile)
     Surface(
@@ -1193,30 +1241,58 @@ private fun PortMapDevicePickerDialog(
     mode: String,
     targetMode: String,
     selectedMac: String,
+    refreshDevices: (suspend () -> List<DeviceItem>)? = null,
     onDismiss: () -> Unit,
     onPick: (DeviceItem) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    val rows = remember(devices, mode, query) {
-        devices.filter { d ->
-            val address = if (mode == "6to4") cleanApiText(d.ip) else d.pickIpv6().best.orEmpty()
-            val text = "${d.remark} ${d.name} ${d.hostName} ${d.mac} $address".lowercase(Locale.getDefault())
-            address.isNotBlank() && (query.isBlank() || text.contains(query.lowercase(Locale.getDefault())))
+    var currentDevices by remember { mutableStateOf(devices) }
+    var refreshing by remember { mutableStateOf(false) }
+    var expandedMac by remember { mutableStateOf<String?>(null) }
+    val refreshScope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        refreshDevices?.let { loader ->
+            refreshing = true
+            try {
+                currentDevices = loader()
+            } catch (_: Throwable) {
+                // Keep the last canonical snapshot when a refresh fails.
+            }
+            refreshing = false
         }
     }
-    val unavailable = remember(devices, mode) {
-        if (mode == "6to6") devices.filter { it.pickIpv6().best.isNullOrBlank() } else emptyList()
+    fun ipv6Candidates(device: DeviceItem): List<String> {
+        val merged = mergeIpv6Candidates(
+            device.ipv6Candidates,
+            device.ipv6.map { Ipv6AddressCandidate(it) },
+        )
+        val eligible = merged.filter { candidate ->
+            val state = candidate.state.lowercase(Locale.ROOT)
+            !isInvalidIpv6(candidate.address) &&
+                !isSuspectedTemporaryIpv6(candidate.address, candidate.source) &&
+                !state.contains("temporary") && !state.contains("deprecated") &&
+                !state.contains("tentative")
+        }.map { it.address }
+        val recommended = device.pickIpv6().best?.takeIf { it in eligible }
+        return listOfNotNull(recommended) + eligible.filterNot { it == recommended }
+    }
+    val rows = remember(currentDevices, mode, query) {
+        currentDevices.filter { d ->
+            val addresses = if (mode == "6to4") listOf(cleanApiText(d.ip)) else ipv6Candidates(d)
+            val text = "${d.remark} ${d.name} ${d.hostName} ${d.mac} ${addresses.joinToString(" ")}".lowercase(Locale.getDefault())
+            query.isBlank() || text.contains(query.lowercase(Locale.getDefault()))
+        }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.84f),
+            modifier = Modifier.fillMaxWidth(.94f).wrapContentHeight().heightIn(min = 260.dp, max = 680.dp),
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFFFAFCFF),
             border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border),
             shadowElevation = 12.dp
         ) {
-            Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("选择目标设备", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
@@ -1227,21 +1303,62 @@ private fun PortMapDevicePickerDialog(
                             color = LabV2.InkMuted
                         )
                     }
+                    IconButton(
+                        onClick = {
+                            refreshDevices?.let { loader ->
+                                refreshScope.launch {
+                                    refreshing = true
+                                    try {
+                                        currentDevices = loader()
+                                    } catch (_: Throwable) {
+                                        // Keep the last canonical snapshot when a refresh fails.
+                                    }
+                                    refreshing = false
+                                }
+                            }
+                        },
+                        enabled = !refreshing && refreshDevices != null,
+                    ) { Icon(Icons.Rounded.Refresh, "刷新设备", tint = LabV2.Primary) }
                     IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, null) }
                 }
                 PortMapV2Field("搜索", query, "设备名称 / IPv6 / MAC") { query = it }
                 if (rows.isEmpty()) {
-                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(if (mode == "6to6") "没有获取到可用 IPv6 的匹配设备" else "没有匹配设备", color = LabV2.InkMuted, fontSize = 12.sp)
+                    Box(Modifier.fillMaxWidth().heightIn(min = 160.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.DevicesOther, null, tint = LabV2.InkMuted, modifier = Modifier.size(30.dp))
+                            Text(if (mode == "6to6") "没有可用 IPv6 设备，请刷新后重试" else "没有匹配设备", color = LabV2.InkMuted, fontSize = 12.sp)
+                            if (refreshDevices != null) {
+                                TextButton(
+                                    onClick = {
+                                        refreshDevices?.let { loader ->
+                                            refreshScope.launch {
+                                                refreshing = true
+                                                try {
+                                                    currentDevices = loader()
+                                                } catch (_: Throwable) {
+                                                    // Keep the last canonical snapshot when a refresh fails.
+                                                }
+                                                refreshing = false
+                                            }
+                                        }
+                                    },
+                                    enabled = !refreshing,
+                                ) { Text("刷新设备", color = LabV2.Primary, fontWeight = FontWeight.Bold) }
+                            }
+                        }
                     }
                 } else {
-                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyColumn(Modifier.heightIn(max = 500.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(rows, key = { cleanMac(it.mac).ifBlank { it.name + it.ip } }) { device ->
-                            val address = if (mode == "6to4") cleanApiText(device.ip) else device.pickIpv6().best.orEmpty()
+                            val addresses = if (mode == "6to4") listOf(cleanApiText(device.ip)).filter { it.isNotBlank() } else ipv6Candidates(device)
+                            val recommended = addresses.firstOrNull().orEmpty()
                             val profile = inferDeviceProfile(device)
                             val selected = cleanMac(device.mac).equals(cleanMac(selectedMac), ignoreCase = true)
+                            val expanded = expandedMac == cleanMac(device.mac)
                             Surface(
-                                modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
+                                modifier = Modifier.fillMaxWidth().clickable(enabled = recommended.isNotBlank()) {
+                                    onPick(if (mode == "6to6") device.copy(ipv6 = listOf(recommended), ipv6Candidates = listOf(Ipv6AddressCandidate(recommended, primary = true))) else device)
+                                },
                                 shape = RoundedCornerShape(18.dp),
                                 color = if (selected) LabV2.Primary.copy(alpha = .07f) else Color.White,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .22f) else LabV2.Border),
@@ -1252,18 +1369,36 @@ private fun PortMapDevicePickerDialog(
                                     Spacer(Modifier.width(10.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(address, fontSize = 9.7.sp, fontWeight = FontWeight.SemiBold, color = if (mode == "6to6") PortBlue else LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        val extra = "${if (device.online) "在线" else "离线"} · " + if (mode == "6to6" && targetMode == "ipv6_suffix") "后缀 ${ipv6Suffix64(address)} · ${device.mac}" else device.mac
+                                        Text(
+                                            if (recommended.isBlank()) "暂无可用 IPv6" else recommended,
+                                            fontSize = 9.7.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (recommended.isBlank()) LabV2.InkMuted else if (mode == "6to6") PortBlue else LabV2.InkMuted,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        val extra = "${if (device.online) "在线" else "离线"} · " + if (mode == "6to6" && targetMode == "ipv6_suffix" && recommended.isNotBlank()) "后缀 ${ipv6Suffix64(recommended)} · ${device.mac}" else device.mac
                                         Text(extra, fontSize = 9.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (addresses.size > 1) {
+                                        IconButton(onClick = { expandedMac = if (expanded) null else cleanMac(device.mac) }, modifier = Modifier.size(30.dp)) {
+                                            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, "选择 IPv6", tint = LabV2.Primary)
+                                        }
                                     }
                                     if (selected) Icon(Icons.Rounded.CheckCircle, null, tint = LabV2.Primary, modifier = Modifier.size(20.dp))
                                 }
                             }
+                            if (expanded && addresses.size > 1) {
+                                Column(Modifier.padding(start = 48.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    addresses.drop(1).forEach { address ->
+                                        TextButton(onClick = { onPick(device.copy(ipv6 = listOf(address), ipv6Candidates = listOf(Ipv6AddressCandidate(address, primary = true)))) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                                            Text(address, color = PortBlue, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                }
-                if (unavailable.isNotEmpty()) {
-                    Text("另有 ${unavailable.size} 台设备尚未获取可用 IPv6，已自动隐藏。", fontSize = 9.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                 }
             }
         }
@@ -1284,7 +1419,6 @@ private fun PortMapDetailPage(
 ) {
     var history by remember(rule.id) { mutableStateOf<List<PortMapHistoryPoint>>(emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
-    var actionMenu by remember { mutableStateOf(false) }
     var testingRemote by remember(rule.id, remoteEndpoint) { mutableStateOf(false) }
     var remoteTest by remember(rule.id, remoteEndpoint) { mutableStateOf<ServiceAccessReport?>(null) }
     val scope = rememberCoroutineScope()
@@ -1295,43 +1429,12 @@ private fun PortMapDetailPage(
         }
     }
     DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(99.dp), color = portMapStatus(rule).color.copy(alpha = .10f)) {
-                    Text(portMapStatus(rule).text, Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = portMapStatus(rule).color, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                }
-                Spacer(Modifier.weight(1f))
-                Box {
-                    IconButton(onClick = { actionMenu = true }, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(19.dp), tint = LabV2.InkMuted)
-                    }
-                    DropdownMenu(
-                        expanded = actionMenu,
-                        onDismissRequest = { actionMenu = false },
-                        shape = RoundedCornerShape(16.dp),
-                        containerColor = Color.White,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 8.dp,
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("编辑", color = LabV2.Ink, fontWeight = FontWeight.SemiBold) },
-                            leadingIcon = { Icon(Icons.Rounded.Edit, null, tint = LabV2.Primary) },
-                            onClick = { actionMenu = false; onEdit() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("删除", color = PortRed, fontWeight = FontWeight.SemiBold) },
-                            leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = PortRed) },
-                            onClick = { actionMenu = false; confirmDelete = true },
-                        )
-                    }
-                }
-            }
-
             LabV2Card(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
-                PortMapDetailLine("监听", "[::]:${rule.listenPort}")
-                PortMapDetailLine("配置目标", rule.targetText)
-                if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue)
+                PortMapDetailLine("监听", "[::]:${rule.listenPort}", copyable = true)
+                PortMapDetailLine("配置目标", rule.targetText, copyable = true)
+                if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue, copyable = true)
                 PortMapDetailLine("运行时间", formatPortDuration(portMapRunningDuration(rule)))
                 PortMapDetailLine("剩余时间", portMapRemainingText(rule))
                 PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久")
@@ -1406,9 +1509,17 @@ private fun PortMapDetailPage(
                         else -> PortRed
                     })
                     PortMapDetailLine("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed)
-                    if (report.https != "—") PortMapDetailLine("HTTPS", report.https, if (report.https == "正常") PortGreen else PortRed)
+                    if (report.https != "—") PortMapDetailLine("HTTPS", report.https, when (report.https) {
+                        "正常" -> PortGreen
+                        "证书警告" -> Color(0xFFF59E0B)
+                        else -> PortRed
+                    })
                     report.latencyMs?.let { PortMapDetailLine("延迟", "${it} ms", PortBlue) }
-                    if (report.reason.isNotBlank()) PortMapDetailLine("结果", report.reason, PortRed)
+                    if (report.reason.isNotBlank()) PortMapDetailLine(
+                        "结果",
+                        report.reason,
+                        if (report.reason.contains("证书")) Color(0xFFF59E0B) else if (report.reachable) PortGreen else PortRed
+                    )
                 }
             }
 
@@ -1422,6 +1533,24 @@ private fun PortMapDetailPage(
                 Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
                 Spacer(Modifier.width(5.dp))
                 Text(if (rule.shouldStop) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) {
+                Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("编辑", fontWeight = FontWeight.Black)
+            }
+            OutlinedButton(
+                onClick = { confirmDelete = true },
+                modifier = Modifier.weight(1f).height(46.dp),
+                shape = LabV2.ButtonShape,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed),
+                border = androidx.compose.foundation.BorderStroke(1.dp, PortRed.copy(alpha = .55f)),
+            ) {
+                Icon(Icons.Rounded.Delete, null, Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("删除", fontWeight = FontWeight.Black)
             }
         }
         Spacer(Modifier.height(2.dp))
@@ -1439,10 +1568,20 @@ private fun PortMapDetailPage(
 }
 
 @Composable
-private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink) {
+private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink, copyable: Boolean = false) {
+    val context = LocalContext.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = 10.8.sp, lineHeight = 14.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Bold)
-        Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Clip)
+        if (copyable && value.isNotBlank()) {
+            SelectionContainer(Modifier.weight(1f)) {
+                Text(value, Modifier.fillMaxWidth(), fontSize = 12.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, softWrap = true)
+            }
+            IconButton(onClick = { copy(context, value) }, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(15.dp), tint = PortBlue)
+            }
+        } else {
+            Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Clip)
+        }
     }
 }
 

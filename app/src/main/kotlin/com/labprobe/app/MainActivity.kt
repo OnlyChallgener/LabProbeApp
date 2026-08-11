@@ -3495,7 +3495,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                             Modifier.weight(1f),
                             fontSize = 16.sp,
                             lineHeight = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             color = LabV2.Ink,
                             maxLines = 1,
                             softWrap = false,
@@ -4124,10 +4124,10 @@ fun WeeklyMiniBars(score: Int) {
 
 @Composable
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.heightIn(min = 42.dp, max = 46.dp), shape = RoundedCornerShape(16.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 5.dp)) {
-            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Surface(modifier = modifier.heightIn(min = 54.dp), shape = RoundedCornerShape(15.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -4177,7 +4177,7 @@ fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, acce
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF788493), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -4195,8 +4195,17 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
     val display = cleanApiText(displayValue)
     if (real.isBlank() && display.isBlank()) return
     val shown = display.ifBlank { real }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(82.dp).padding(top = 4.dp), color = LabV2.InkMuted, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val mayWrap = shown.length > 22 || shown.contains('\n')
+    Row(Modifier.fillMaxWidth(), verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically) {
+        Text(
+            label,
+            Modifier.width(82.dp).then(if (mayWrap) Modifier.padding(top = 4.dp) else Modifier),
+            color = LabV2.InkMuted,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
         Box(Modifier.weight(1f).padding(end = 3.dp)) {
             SelectionContainer {
                 Text(
@@ -4257,7 +4266,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -4420,7 +4429,7 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("今日概览", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1)
+                Text("今日概览", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1)
                 Text("设备、VPN 与 DDNS 今日变化", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1)
             }
             Surface(shape = RoundedCornerShape(99.dp), color = syncColor.copy(alpha = .10f)) {
@@ -9093,13 +9102,14 @@ fun EventCompactCard(e: EventItem, knownDevices: List<DeviceItem>, openedSwipeId
                             }
                         )
                     }
-                    .shadow(0.dp, RoundedCornerShape(0.dp), clip = false)
+                    .shadow(0.dp, RoundedCornerShape(14.dp), clip = false)
                     .combinedClickable(
                         onClick = { targetOffsetPx = 0f; onSwipeClose() },
                         onLongClick = { targetOffsetPx = 0f; onSwipeClose(); showSelection = true }
                     ),
-                shape = RoundedCornerShape(0.dp),
-                color = Color.White
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White,
+                border = BorderStroke(1.dp, LabV2.Border.copy(alpha = .72f))
             ) {
                 Column {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

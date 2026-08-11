@@ -101,6 +101,36 @@ class FavoriteLinkModelTest {
     }
 
     @Test
+    fun suffixMappingUsesTheSelectedFullIpv6SnapshotForLocalEndpoint() {
+        val rule = sampleRule("map-6").copy(
+            mode = "6to6",
+            targetMode = "ipv6_suffix",
+            targetIpv4 = "",
+            targetIpv6 = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe",
+            targetIpv6Suffix = "::a9e5:169d:a7c8:9bfe",
+        )
+        assertEquals(
+            "https://[2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe]:443",
+            favoriteFromPortMapRule(rule).localEndpoint,
+        )
+    }
+
+    @Test
+    fun suffixMappingCanUseCanonicalDeviceFallbackWhenSnapshotIsMissing() {
+        val rule = sampleRule("map-6").copy(
+            mode = "6to6",
+            targetMode = "ipv6_suffix",
+            targetIpv4 = "",
+            targetIpv6 = "",
+            targetIpv6Suffix = "::a9e5:169d:a7c8:9bfe",
+        )
+        assertEquals(
+            "https://[2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe]:443",
+            favoriteFromPortMapRule(rule, fallbackIpv6 = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe").localEndpoint,
+        )
+    }
+
+    @Test
     fun serviceStatusUsesEndpointAndMissingMappingIsUnreachable() {
         val favorite = sampleFavorite(mappingId = "map-1").copy(
             localEndpoint = "http://192.168.5.46:443",
@@ -155,6 +185,31 @@ class FavoriteLinkModelTest {
             "https://new.example.com:20000/test?a=1",
             resolveFavoriteRemoteEndpoint(favorite, snapshot)
         )
+    }
+
+    @Test
+    fun wildcardListenerIsNotExposedAsRemoteFavoriteEndpoint() {
+        val favorite = sampleFavorite(ddnsRecordId = "missing").copy(remoteEndpoint = "tcp://[::]:20000", wanUrl = "")
+        assertEquals("", resolveFavoriteRemoteEndpoint(favorite, LabProbeDdnsSnapshot()))
+    }
+
+    @Test
+    fun routerDdnsAssociationResolvesItsConfiguredHostname() {
+        val favorite = sampleFavorite(ddnsRecordId = "router:svc-1").copy(
+            remoteEndpoint = "https://old.example.com:20000/path",
+        )
+        val native = listOf(DdnsRecord(serviceId = "svc-1", domain = "router.example.com"))
+        assertEquals(
+            "https://router.example.com:20000/path",
+            resolveFavoriteRemoteEndpoint(favorite, LabProbeDdnsSnapshot(), nativeDdnsRecords = native),
+        )
+    }
+
+    @Test
+    fun serviceCopyUsesHostAndPortForNonWebProtocols() {
+        assertEquals("example.com:22", favoriteAddressForCopy("ssh://example.com:22", "SSH"))
+        assertEquals("[2409:8a50::10]:22", favoriteAddressForCopy("ssh://[2409:8a50::10]:22", "SSH"))
+        assertEquals("https://example.com:9443/path", favoriteAddressForCopy("https://example.com:9443/path", "HTTPS"))
     }
 
     @Test
