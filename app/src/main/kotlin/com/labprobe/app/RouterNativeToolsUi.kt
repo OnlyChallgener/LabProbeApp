@@ -56,8 +56,8 @@ private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: andr
         elevation = elevation,
         shape = shape,
         clip = false,
-        ambientColor = Color(0x12142033),
-        spotColor = Color(0x1A142033)
+        ambientColor = LabV2.ShadowAmbient,
+        spotColor = LabV2.ShadowSpot
     )
 
 private fun natTypeZh(value: String): String = when (value.trim().lowercase()) {
@@ -409,6 +409,7 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
         value = resource.value?.size?.toString() ?: "--",
         unit = "条",
         icon = Icons.Rounded.CloudSync,
+        glyph = RouterGlyph.Ddns,
         accent = NativeCyan,
         subtitle = when {
             resource.value == null -> "后台预加载中"

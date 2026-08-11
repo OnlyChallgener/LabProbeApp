@@ -76,6 +76,9 @@ object LabV2 {
     val Ink = Color(0xFF142033)
     val InkMuted = Color(0xFF6B778A)
     val InkFaint = Color(0xFF95A1B3)
+    // Shared neutral elevation: no blue, white, or feature-colored shadows.
+    val ShadowAmbient = Color(0x0F142033)
+    val ShadowSpot = Color(0x17142033)
 
     val BackgroundTop = Color(0xFFEAF3FF)
     val BackgroundMid = Color(0xFFF2F7FD)
@@ -203,6 +206,10 @@ object LabTypography {
         fontSize = 32.sp,
         lineHeight = 36.sp
     )
+    val HomeMiniMetric = Metric.copy(
+        fontSize = 26.sp,
+        lineHeight = 30.sp
+    )
 }
 
 fun Modifier.labV2PageBackground(): Modifier = background(
@@ -224,7 +231,7 @@ fun LabV2Card(
     Box(
         modifier
             .fillMaxWidth()
-            .shadow(4.dp, shape, clip = false, ambientColor = Color(0x1A4B6C91), spotColor = Color(0x164B6C91))
+            .shadow(4.dp, shape, clip = false, ambientColor = LabV2.ShadowAmbient, spotColor = LabV2.ShadowSpot)
             .clip(shape)
             .background(Brush.linearGradient(listOf(LabV2.CardTop, LabV2.CardBottom)))
             .border(1.dp, Color.White.copy(alpha = .92f), shape)

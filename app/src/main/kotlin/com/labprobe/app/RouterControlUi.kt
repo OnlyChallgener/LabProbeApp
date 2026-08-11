@@ -223,20 +223,14 @@ internal fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifie
                 drawCircle(color, w * .032f, Offset(w * .80f, h * .58f))
             }
             RouterGlyph.Ddns -> {
-                // Domain resolution: one hostname node resolving to several network nodes.
+                // Domain resolution: a compact globe instead of a cloud/node cluster.
                 val center = Offset(w * .50f, h * .50f)
-                val top = Offset(w * .50f, h * .22f)
-                val left = Offset(w * .24f, h * .67f)
-                val right = Offset(w * .76f, h * .67f)
-                drawCircle(color.copy(alpha = .09f), w * .40f, center)
-                drawCircle(color, w * .34f, center, style = stroke)
-                drawLine(color, center, top, stroke.width, StrokeCap.Round)
-                drawLine(color, center, left, stroke.width, StrokeCap.Round)
-                drawLine(color, center, right, stroke.width, StrokeCap.Round)
-                drawCircle(color, w * .055f, center)
-                drawCircle(color, w * .055f, top)
-                drawCircle(color, w * .055f, left)
-                drawCircle(color, w * .055f, right)
+                val globe = w * .32f
+                drawCircle(color.copy(alpha = .10f), globe, center)
+                drawCircle(color, globe, center, style = stroke)
+                drawArc(color, 90f, 180f, false, Offset(w * .32f, h * .18f), Size(w * .36f, h * .64f), style = stroke)
+                drawArc(color, 270f, 180f, false, Offset(w * .32f, h * .18f), Size(w * .36f, h * .64f), style = stroke)
+                drawLine(color, Offset(w * .20f, h * .50f), Offset(w * .80f, h * .50f), stroke.width, StrokeCap.Round)
             }
             RouterGlyph.Firewall -> {
                 val shield = Path().apply {

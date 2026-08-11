@@ -1517,6 +1517,7 @@ private fun PortMapDetailPage(
         }
     }
     DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss, unifiedTypography = true) {
+            Spacer(Modifier.height(6.dp))
             LabCoreCard(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
@@ -1737,9 +1738,9 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
             val bottom = 21.dp.toPx()
             val plotWidth = size.width - left - right
             val plotHeight = size.height - top - bottom
-            val axisColor = Color(0xFF94A3B8).copy(alpha = .72f)
+            val axisColor = Color(0xFF94A3B8)
             val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.rgb(100, 116, 139)
+                color = android.graphics.Color.rgb(148, 163, 184)
                 textSize = LabTypography.Caption.fontSize.toPx()
             }
 

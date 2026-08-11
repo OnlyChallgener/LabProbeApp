@@ -2184,8 +2184,8 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
                             elevation = 2.dp,
                             shape = itemShape,
                             clip = false,
-                            ambientColor = techBlue.copy(alpha = .18f),
-                            spotColor = techBlue.copy(alpha = .28f)
+                            ambientColor = LabV2.ShadowAmbient,
+                            spotColor = LabV2.ShadowSpot
                         ) else Modifier
                     )
                 Surface(
@@ -3464,7 +3464,13 @@ fun HealthCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth().shadow(2.dp, shape, clip = false),
+        modifier = modifier.fillMaxWidth().shadow(
+            2.dp,
+            shape,
+            clip = false,
+            ambientColor = LabV2.ShadowAmbient,
+            spotColor = LabV2.ShadowSpot,
+        ),
         shape = shape,
         color = Color.White,
         tonalElevation = 0.dp,
@@ -3494,7 +3500,13 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     )
     val shape = HomeCardShape
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(2.dp, shape, clip = false),
+        modifier = Modifier.fillMaxWidth().shadow(
+            2.dp,
+            shape,
+            clip = false,
+            ambientColor = LabV2.ShadowAmbient,
+            spotColor = LabV2.ShadowSpot,
+        ),
         shape = shape,
         color = Color.White,
         tonalElevation = 0.dp,
@@ -4172,6 +4184,7 @@ fun HealthMiniCard(
     value: String,
     unit: String,
     icon: ImageVector,
+    glyph: RouterGlyph? = null,
     accent: Color,
     subtitle: String,
     modifier: Modifier = Modifier,
@@ -4182,13 +4195,17 @@ fun HealthMiniCard(
     HealthCard(cardModifier, verticalPadding = 11.dp, shape = shape) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
+                if (glyph != null) {
+                    RouterGlyphIcon(glyph, accent, Modifier.size(19.dp))
+                } else {
+                    Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
+                }
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(value, style = LabTypography.CompactMetric)
+                    Text(value, style = LabTypography.HomeMiniMetric)
                     Spacer(Modifier.width(3.dp))
                     Text(unit, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, modifier = Modifier.padding(bottom = 4.dp))
                 }
