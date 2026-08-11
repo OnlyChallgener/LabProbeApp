@@ -3560,8 +3560,8 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                             Modifier.weight(1f),
                             fontSize = LabTypography.CardTitle.fontSize,
                             lineHeight = LabTypography.CardTitle.lineHeight,
-                            fontWeight = FontWeight.SemiBold,
-                            color = LabV2.Ink,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF0B1320),
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Clip
@@ -4142,7 +4142,7 @@ fun HealthMiniCard(
     val cardModifier = if (onClick != null) modifier.clip(shape).clickable(onClick = onClick) else modifier
     HealthCard(cardModifier, verticalPadding = 11.dp, shape = shape) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f)).clip(HomeInnerShape).background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f)))), contentAlignment = Alignment.Center) {
                 if (glyph != null) {
                     RouterGlyphIcon(glyph, accent, Modifier.size(19.dp))
                 } else {
@@ -4151,7 +4151,7 @@ fun HealthMiniCard(
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
+                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.Bold, color = Color(0xFF0B1320), maxLines = 1)
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(value, style = LabTypography.HomeMiniMetric)
                     Spacer(Modifier.width(3.dp))
@@ -4167,16 +4167,16 @@ fun HealthMiniCard(
 fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color, onIconClick: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val iconModifier = if (onIconClick != null) {
-            Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f)).clickable { onIconClick() }
+            Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f)).clip(HomeInnerShape).background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f)))).clickable { onIconClick() }
         } else {
-            Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .12f))
+            Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f)).clip(HomeInnerShape).background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f))))
         }
         Box(iconModifier, contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
+            Text(title, style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 2, overflow = TextOverflow.Clip)
             if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -4252,7 +4252,8 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
                 Modifier
                     .size(36.dp)
                     .clip(HomeInnerShape)
-                    .background(LabV2.Cyan.copy(alpha = .12f))
+                    .shadow(5.dp, HomeInnerShape, clip = false, ambientColor = LabV2.Cyan.copy(alpha = .14f), spotColor = LabV2.Cyan.copy(alpha = .20f))
+                    .background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), LabV2.Cyan.copy(alpha = .22f), LabV2.Cyan.copy(alpha = .07f))))
                     .clickable { onTogglePrivacy() },
                 contentAlignment = Alignment.Center
             ) {
@@ -4260,7 +4261,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = LabV2.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }

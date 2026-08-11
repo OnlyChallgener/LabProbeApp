@@ -144,7 +144,7 @@ object LabTypography {
         fontFamily = FontFamily.Default,
         fontSize = 15.sp,
         lineHeight = 20.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
         letterSpacing = (-0.08).sp,
         color = LabV2.Ink
     )
@@ -507,8 +507,9 @@ fun LabV2SectionHeader(
                 Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(accent.copy(alpha = .10f))
-                    .border(1.dp, accent.copy(alpha = .08f), RoundedCornerShape(14.dp)),
+                    .shadow(5.dp, RoundedCornerShape(14.dp), clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f))
+                    .background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f))))
+                    .border(1.dp, Color.White.copy(alpha = .90f), RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp))

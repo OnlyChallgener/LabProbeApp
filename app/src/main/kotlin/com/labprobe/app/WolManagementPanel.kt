@@ -72,8 +72,8 @@ fun WolManagementPanel(state: AppState) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         CompactListCard {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF8B5CF6).copy(alpha = .11f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Power, null, Modifier.size(19.dp), tint = Color(0xFF8B5CF6))
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(14.dp)).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), LabV2.Cyan.copy(alpha = .22f), LabV2.Cyan.copy(alpha = .07f)))), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Power, null, Modifier.size(19.dp), tint = LabV2.Cyan)
                 }
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -83,7 +83,7 @@ fun WolManagementPanel(state: AppState) {
                 Button(
                     onClick = { showAdd = true },
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
                 ) {
                     Icon(Icons.Rounded.Add, null, Modifier.size(15.dp))

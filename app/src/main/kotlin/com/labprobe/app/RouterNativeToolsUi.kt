@@ -174,7 +174,7 @@ private fun NativeSelector(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                 Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(3.dp))
-                Text(value, fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, color = NativeInk, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(value, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
         }
@@ -512,14 +512,15 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(serverShape, 1.dp),
                         shape = serverShape,
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f))
+                        border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
+                        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp)
                     ) {
                         Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                             Text("STUN 服务器", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
                             Spacer(Modifier.height(3.dp))
-                            Text(server, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 2, overflow = TextOverflow.Clip)
+                            Text(server, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
                     }
@@ -675,8 +676,9 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                     natFilteringBehaviorZh(item.filteringBehavior)
                                 ).filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
                             } else natTypeZh(item.natType),
-                            fontSize = LabTypography.Supporting.fontSize,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = LabTypography.Value.fontSize,
+                            lineHeight = LabTypography.Value.lineHeight,
+                            fontWeight = FontWeight.Bold,
                             color = NativeInk,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -828,11 +830,11 @@ private fun NativeCard(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun NativeTitle(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(34.dp).background(color.copy(alpha = .10f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(34.dp).shadow(5.dp, RoundedCornerShape(12.dp), clip = false, ambientColor = color.copy(alpha = .14f), spotColor = color.copy(alpha = .20f)).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), color.copy(alpha = .22f), color.copy(alpha = .07f))), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
             Icon(icon, null, Modifier.size(19.dp), tint = color)
         }
         Spacer(Modifier.width(9.dp))
-        Text(title, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = NativeInk)
+        Text(title, style = LabTypography.CardTitle.copy(color = NativeInk, fontWeight = FontWeight.ExtraBold))
     }
 }
 
@@ -865,7 +867,7 @@ private fun NativeValueRow(label: String, value: String, stacked: Boolean = fals
     } else {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
             Text(label, Modifier.width(78.dp), style = LabTypography.Supporting.copy(color = NativeMuted))
-            Text(value, Modifier.weight(1f), style = LabTypography.Value.copy(color = NativeInk), maxLines = 3, overflow = TextOverflow.Clip)
+            Text(value, Modifier.weight(1f), style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.SemiBold), maxLines = 3, overflow = TextOverflow.Clip)
         }
     }
 }
