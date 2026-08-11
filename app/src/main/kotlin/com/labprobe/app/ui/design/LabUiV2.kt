@@ -218,7 +218,7 @@ object LabTypography {
         color = LabV2.Ink
     )
     val CompactMetric = Metric.copy(fontSize = 32.sp, lineHeight = 36.sp)
-    val HomeMiniMetric = Metric.copy(fontSize = 28.sp, lineHeight = 32.sp)
+    val HomeMiniMetric = Metric.copy(fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.Bold)
 }
 
 fun Modifier.labV2PageBackground(): Modifier = background(

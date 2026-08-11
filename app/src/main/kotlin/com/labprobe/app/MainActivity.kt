@@ -3530,12 +3530,12 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
         shape = shape,
         color = Color.White,
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
+        shadowElevation = 1.dp,
+        border = null
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(132.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(124.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
                             .size(184.dp)
