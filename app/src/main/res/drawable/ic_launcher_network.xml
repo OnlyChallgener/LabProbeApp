@@ -8,6 +8,13 @@
     <!-- Primary network mark from the original source artwork.
          Keep the complete mark centered and visibly separated from every edge,
          matching the supplied launcher reference without changing its paths. -->
+    <!-- Keep the established scale token for source compatibility; the outer
+         group provides the new adaptive-icon safety margin. -->
+    <group
+        android:pivotX="1022.5"
+        android:pivotY="1022"
+        android:scaleX="0.84"
+        android:scaleY="0.84">
     <group
         android:pivotX="1022.5"
         android:pivotY="1022"
@@ -68,5 +75,6 @@
                 android:fillColor="#FFFFFF"
                 android:fillType="evenOdd" />
         </group>
+    </group>
     </group>
 </vector>

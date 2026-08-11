@@ -8,6 +8,13 @@
     <!-- Decorative radar geometry from the original source artwork.
          Keep it centered with generous visible gradient around the mark,
          matching the supplied launcher reference instead of filling the mask. -->
+    <!-- Keep the established scale token for source compatibility; the outer
+         group provides the new adaptive-icon safety margin. -->
+    <group
+        android:pivotX="1022.5"
+        android:pivotY="1022"
+        android:scaleX="0.84"
+        android:scaleY="0.84">
     <group
         android:pivotX="1022.5"
         android:pivotY="1022"
@@ -47,5 +54,6 @@
                 android:fillAlpha="0.301961"
                 android:fillType="evenOdd" />
         </group>
+    </group>
     </group>
 </vector>
