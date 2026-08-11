@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build185 signed release pipeline.
+# v0.10.42 / build186 signed release pipeline.
 
 on:
   workflow_dispatch:
@@ -45,13 +45,13 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build185 source
+      - name: Verify v0.10.42 build186 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 185' app/build.gradle.kts
+          grep -Fq 'versionCode = 186' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
-          # Security / stability fixes retained from the previous release line.
+          # Security / stability fixes retained.
           grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -61,38 +61,29 @@ jobs:
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Previous UI/interaction fixes must remain intact.
-          grep -Fq 'Text("WOL 设备", fontSize = 14.5.sp' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
-          grep -Fq 'Modifier.size(124.dp).clickable { onNavigate("health_score") }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'border = null' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'modifier = Modifier.width(64.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'One shared bidirectional mapping symbol across settings, IPv6 mapping and native port mapping.' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -Fq 'Shared double-lightning symbol for router-control health everywhere.' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -Fq 'RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(23.dp))' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
-          grep -Fq 'Modifier.weight(1f).height(LabV2.FieldHeight)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'routerDdnsRecord(value, nativeDdnsRecords)?.let(::routerDdnsHostname)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-
-          # build185 typography / M3 Expressive polish.
+          # Previous UI fixes retained.
           grep -Fq 'HomeMiniMetric = Metric.copy(fontSize = 22.sp, lineHeight = 25.sp, fontWeight = FontWeight.ExtraBold)' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
           grep -Fq 'fontFamily = FontFamily.Default' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
           ! grep -Fq 'FontFamily.SansSerif' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          grep -Fq 'val Purple = Cyan' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
           ! grep -Fq 'Color(0xFF7C3AED)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'Material 3 Expressive × One UI' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
-          # build185 exact UI fixes from the latest screenshots.
           grep -Fq 'if (index > 0) Spacer(Modifier.height(5.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'HorizontalDivider(color = HomeCardBorder, modifier = Modifier.padding(vertical = 7.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'leadingIcon = Icons.Rounded.Tune' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -Fq 'NativeFirmwareVersionRow(info.current.ifBlank { "--" })' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq 'containerColor=RouterCyan,contentColor=Color.White,disabledContainerColor=RouterCyan.copy(alpha=.62f)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -Fq 'Text(uiMessageZh(text)' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
-          grep -Fq 'Text(uiMessageZh(text)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -Fq '"connection closed" in lower' app/src/main/kotlin/com/labprobe/app/UiMessageZh.kt
-          grep -Fq '次尝试' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+
+          # build186 screenshot fixes.
+          grep -Fq '#FF94F1E8' app/src/main/res/drawable/ic_launcher_background.xml
+          grep -Fq '#FF168BAE' app/src/main/res/drawable/ic_launcher_background.xml
+          grep -Fq 'fontWeight = FontWeight.ExtraBold' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          grep -Fq 'Color(0xFF0B1320)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          ! grep -Fq 'Color(0xFF8B5CF6)' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
+          grep -Fq 'ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
+          grep -Fq 'contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -Fq 'LabTypography.CardTitle.copy(color = NativeInk, fontWeight = FontWeight.ExtraBold)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -Fq 'fontSize = LabTypography.Value.fontSize' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
 
           git diff --check
-          echo 'v0.10.42 build185 source verification passed'
+          echo 'v0.10.42 build186 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -111,14 +102,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='185' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='186' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build185 APK verified'
+          echo 'signed v0.10.42 build186 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build185-release-apk
+          name: LabProbe-v0.10.42-build186-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -126,15 +117,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build185'
+          TAG='v0.10.42-build186'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build185-release.apk'
+          ASSET='LabProbe-v0.10.42-build186-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build185' \
-              --notes 'v0.10.42 build185：全局字体切换为平台默认字体并强化字重层级；首页 10台/2条缩小，出口与路由去除细横线；STUN 类型增加图标；连接与网络错误统一中文提示；Beta 固件版本卡片压缩空白；网络自检按钮统一青色；设置页移除高饱和紫色按钮。已通过单元测试、Release 编译与 APK 签名校验。'
+              --title '极客网探 v0.10.42 build186' \
+              --notes 'v0.10.42 build186：增强启动图标高光、渐变和明暗层次；首页标题加粗并提高黑度；WOL 页面移除紫色图标与按钮；NAT 分析结果重新建立标题/内容层级，最近检测字号统一；STUN 服务器与 STUN 类型统一内边距和文字基线。已通过单元测试、Release 编译与 APK 签名校验。'
           fi
