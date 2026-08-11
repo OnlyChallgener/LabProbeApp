@@ -592,7 +592,12 @@ internal fun favoriteAddressForCopy(rawAddress: String, serviceType: String = ""
     val hostPortService = scheme in setOf("ssh", "rdp", "telnet", "tcp", "udp") ||
         type in setOf("SSH", "RDP", "TELNET", "TCP", "UDP")
     if (!hostPortService) return raw
-    val host = uri.host?.takeIf { it.isNotBlank() } ?: return raw
+    val host = uri.host
+        ?.trim()
+        ?.removePrefix("[")
+        ?.removeSuffix("]")
+        ?.takeIf { it.isNotBlank() }
+        ?: return raw
     val renderedHost = if (host.contains(':')) "[$host]" else host
     val port = if (uri.port >= 0) uri.port else when (scheme) {
         "ssh" -> 22
