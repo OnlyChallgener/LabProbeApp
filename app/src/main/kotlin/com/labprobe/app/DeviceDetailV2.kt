@@ -37,12 +37,12 @@ fun DeviceDetailScreen(
         deviceMac?.let { mac -> devices.firstOrNull { cleanMac(it.mac) == cleanMac(mac) } }
     }
     if (device == null) {
-        DetailShell("设备详情", "设备数据已刷新", onBack) {
+        DetailShell("设备详情", "设备数据已刷新", onBack, unifiedTypography = true) {
             CompactListCard {
                 Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     LabV2ToolIcon(Icons.Rounded.DeviceUnknown, LabV2.InkMuted, size = 50)
-                    Text("找不到该设备", fontWeight = FontWeight.Black, color = LabV2.Ink)
-                    TextButton(onClick = onBack) { Text("返回设备列表") }
+                    Text("找不到该设备", style = LabTypography.CardTitle)
+                    TextButton(onClick = onBack) { Text("返回设备列表", style = LabTypography.CompactButton) }
                 }
             }
         }
@@ -60,7 +60,7 @@ fun DeviceDetailScreen(
     var editing by remember { mutableStateOf(false) }
     var waking by remember { mutableStateOf(false) }
 
-    DetailShell("设备详情", "信息紧凑视图", onBack) {
+    DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(
@@ -74,23 +74,23 @@ fun DeviceDetailScreen(
                     LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, fontSize = 18.sp, lineHeight = 21.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
                     LabStatusBadge(device.online)
                 }
                 Text(
                     listOf(cleanApiText(device.manufacture), profile.label, cleanApiText(device.hostName)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
-                    fontSize = 10.5.sp,
+                    fontSize = LabTypography.Supporting.fontSize,
                     fontWeight = FontWeight.SemiBold,
                     color = LabV2.InkMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2,
+                    overflow = TextOverflow.Clip
                 )
-                Text(cleanApiText(device.ip).ifBlank { ipv6.ifBlank { device.mac } }, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(cleanApiText(device.ip).ifBlank { ipv6.ifBlank { device.mac } }, fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.Medium, color = LabV2.Primary, maxLines = 2, overflow = TextOverflow.Clip)
             }
         }
 
         CompactListCard {
-            Text("连接概览", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 DeviceDetailMetric("频段", band, LabV2.Primary, Modifier.weight(1f))
                 DeviceDetailMetric("信号", signal, LabV2.Amber, Modifier.weight(1f))
@@ -101,9 +101,9 @@ fun DeviceDetailScreen(
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Wifi, null, Modifier.size(15.dp), tint = LabV2.Primary)
                         Spacer(Modifier.width(6.dp))
-                        Text("Wi-Fi", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+                        Text("Wi-Fi", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                         Spacer(Modifier.width(8.dp))
-                        Text(wifiName, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(wifiName, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -115,14 +115,14 @@ fun DeviceDetailScreen(
         }
 
         CompactListCard {
-            Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = 13.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             DeviceDetailAddress("IPv4", cleanApiText(device.ip).ifBlank { "--" }, LabV2.Primary)
             DeviceDetailAddress("IPv6", ipv6.ifBlank { "--" }, LabV2.Cyan, allowTwoLines = true)
             DeviceDetailAddress("MAC", cleanMac(device.mac).ifBlank { "--" }, profile.accent)
         }
 
         CompactListCard {
-            Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = 13.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+            Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DeviceDetailPair("类型", profile.label, Modifier.weight(1f))
                 DeviceDetailPair("厂商", cleanApiText(device.manufacture).ifBlank { "--" }, Modifier.weight(1f))
@@ -159,8 +159,8 @@ fun DeviceDetailScreen(
 private fun DeviceDetailMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = LabV2.MetricShape, color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
         Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(label, fontSize = 9.5.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
-            Text(value, modifier = Modifier.fillMaxWidth(), fontSize = if (value.length > 12) 10.5.sp else 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Text(value, modifier = Modifier.fillMaxWidth(), style = LabTypography.Value.copy(color = color, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Clip)
         }
     }
 }
@@ -169,8 +169,8 @@ private fun DeviceDetailMetric(label: String, value: String, color: Color, modif
 private fun DeviceDetailAddress(label: String, value: String, color: Color, allowTwoLines: Boolean = false) {
     val context = LocalContext.current
     Row(Modifier.fillMaxWidth().clickable(enabled = value != "--") { copy(context, value) }, verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(54.dp).padding(top = 1.dp), fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-        Text(value, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else color, maxLines = if (allowTwoLines) 2 else 1, overflow = TextOverflow.Clip)
+        Text(label, Modifier.width(54.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(value, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else color, maxLines = if (allowTwoLines) 2 else 1, overflow = TextOverflow.Clip)
         if (value != "--") Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp), tint = color.copy(alpha = .55f))
     }
 }
@@ -178,8 +178,8 @@ private fun DeviceDetailAddress(label: String, value: String, color: Color, allo
 @Composable
 private fun DeviceDetailPair(label: String, value: String, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(44.dp), fontSize = 10.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
-        Text(value, Modifier.weight(1f), fontSize = 11.8.sp, lineHeight = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(label, Modifier.width(44.dp), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(value, Modifier.weight(1f), style = LabTypography.ValueStrong, maxLines = 3, overflow = TextOverflow.Clip)
     }
 }
 
@@ -188,7 +188,7 @@ private fun DeviceActionButton(icon: androidx.compose.ui.graphics.vector.ImageVe
     Surface(onClick = onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(16.dp), color = color.copy(alpha = .09f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .12f))) {
         Column(Modifier.padding(horizontal = 3.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Icon(icon, null, Modifier.size(19.dp), tint = color)
-            Text(text, fontSize = 10.2.sp, lineHeight = 11.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

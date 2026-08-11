@@ -537,8 +537,8 @@ private fun RouterStatusHeader(onBack: () -> Unit) {
             "路由器状态",
             Modifier.weight(1f),
             textAlign = TextAlign.Center,
-            fontSize = 19.sp,
-            fontWeight = FontWeight.Black,
+            fontSize = LabTypography.PageTitle.fontSize,
+            fontWeight = FontWeight.SemiBold,
             color = Color(0xFF10264F)
         )
         IconButton(onClick = {}, modifier = Modifier.size(40.dp)) {
@@ -557,13 +557,13 @@ private fun RouterHubStatusError(error: String) {
             Column {
                 Text(
                     if (isAuthError) "Hub API认证失败" else "Hub无法获取路由器状态",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Black,
+                    fontSize = LabTypography.Value.fontSize,
+                    fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF991B1B)
                 )
                 Text(
                     if (isAuthError) "请检查 APP Token 后重试" else "请检查 Hub 连接后重试",
-                    fontSize = 10.sp,
+                    fontSize = LabTypography.Caption.fontSize,
                     color = Color(0xFF7F1D1D)
                 )
             }
@@ -660,8 +660,8 @@ private fun RouterHeroCard(
                     ) {
                         Text(
                             ui.name,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Black,
+                            fontSize = LabTypography.CardTitle.fontSize,
+                            fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF10264F),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -683,8 +683,8 @@ private fun RouterHeroCard(
                         Text(
                             if (ui.online) "在线" else "离线",
                             Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                            fontSize = 9.6.sp,
-                            fontWeight = FontWeight.Black,
+                            fontSize = LabTypography.Caption.fontSize,
+                            fontWeight = FontWeight.SemiBold,
                             color = if (ui.online) LabV2.Green else LabV2.Red
                         )
                     }
@@ -698,7 +698,7 @@ private fun RouterHeroCard(
                     ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF7C3AED), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
-                    Text("实时数据暂时未变化，已保留上次结果", fontSize = 8.6.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
+                    Text("实时数据暂时未变化，已保留上次结果", fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -731,7 +731,7 @@ private fun RouterHeroCard(
                     if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LabV2.Primary)
                     else Icon(Icons.Rounded.Refresh, null, Modifier.size(22.dp), tint = LabV2.Primary)
                     Spacer(Modifier.width(5.dp))
-                    Text(if (refreshing) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F))
+                    Text(if (refreshing) "刷新中" else "刷新", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
                 }
             }
         }
@@ -754,11 +754,11 @@ private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color
                 }
             }
             Spacer(Modifier.width(2.dp))
-            Text(rate.first, fontSize = 9.7.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Text(rate.first, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
             Spacer(Modifier.width(1.dp))
-            Text(rate.second, fontSize = 7.5.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Text(rate.second, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
         }
-        Text(label, Modifier.padding(start = 21.dp), fontSize = 7.3.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(label, Modifier.padding(start = 21.dp), fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
     }
 }
 
@@ -775,9 +775,9 @@ private fun ConnectionCountChip(label: String, count: Long, color: Color, modifi
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Text(label, fontSize = 7.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             Spacer(Modifier.width(4.dp))
-            Text(count.toString(), fontSize = 10.1.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+            Text(count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
         }
     }
 }
@@ -788,8 +788,8 @@ private fun HeroMetric(icon: ImageVector, label: String, value: String, color: C
         Icon(icon, null, Modifier.size(22.dp), tint = color)
         Spacer(Modifier.width(6.dp))
         Column {
-            Text(label, fontSize = 8.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
-            Text(value, fontSize = 12.4.sp, color = Color(0xFF10264F), fontWeight = FontWeight.Black, maxLines = 1)
+            Text(label, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+            Text(value, fontSize = LabTypography.Value.fontSize, color = Color(0xFF10264F), fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
@@ -827,9 +827,9 @@ private fun RealtimeMetric(icon: ImageVector, label: String, value: String, colo
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, Modifier.size(18.dp), tint = color)
                 Spacer(Modifier.width(4.dp))
-                Text(label, fontSize = 8.8.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+                Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             }
-            Text(value, fontSize = 13.2.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F), maxLines = 1)
+            Text(value, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 1)
             LinearProgressIndicator(
                 progress = { animated },
                 modifier = Modifier.fillMaxWidth().height(3.5.dp).clip(RoundedCornerShape(99.dp)),
@@ -935,7 +935,7 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
             )
         }
         if (ui.detailsStale) {
-            Text("网络详情超过 120 秒未更新", fontSize = 8.8.sp, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
+            Text("网络详情超过 120 秒未更新", fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -960,9 +960,9 @@ private fun ExpandableNetworkRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(icon, null, Modifier.size(18.dp), tint = LabV2.Primary)
                     Spacer(Modifier.width(6.dp))
-                    Text(title, fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F))
+                    Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
                 }
-                Text(mainValue, Modifier.padding(start = 24.dp, top = 3.dp), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(mainValue, Modifier.padding(start = 24.dp, top = 3.dp), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 3, overflow = TextOverflow.Clip)
             }
             NetworkCell(middleLabel, middleValue, Modifier.weight(.9f))
             NetworkCell(rightLabel, rightValue, Modifier.weight(.9f), rightColor)
@@ -998,12 +998,12 @@ private fun RouterInfoGrid(context: android.content.Context, items: List<RouterI
                         border = BorderStroke(1.dp, Color(0xFFE7EEF7))
                     ) {
                         Column(Modifier.padding(horizontal = 9.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(item.label, fontSize = 9.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            Text(item.value, fontSize = 11.2.sp, lineHeight = 13.5.sp, color = item.valueColor, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(item.label, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(item.value, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = item.valueColor, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
                             if (rowHasSupportingText) {
                                 Text(
                                     item.supportingText.ifBlank { " " },
-                                    fontSize = 7.4.sp,
+                                    fontSize = LabTypography.Caption.fontSize,
                                     color = LabV2.InkMuted.copy(alpha = .78f),
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1
@@ -1021,8 +1021,8 @@ private fun RouterInfoGrid(context: android.content.Context, items: List<RouterI
 @Composable
 private fun NetworkCell(label: String, value: String, modifier: Modifier, valueColor: Color = Color(0xFF10264F)) {
     Column(modifier.padding(horizontal = 6.dp)) {
-        Text(label, fontSize = 8.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
-        Text(value, fontSize = 10.1.sp, lineHeight = 13.sp, color = valueColor, fontWeight = FontWeight.Black, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        Text(label, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+        Text(value, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = valueColor, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
     }
 }
 
@@ -1030,7 +1030,7 @@ private fun NetworkCell(label: String, value: String, modifier: Modifier, valueC
 private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
     RouterGlassCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("端口状态", Modifier.weight(1f), fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F))
+            Text("端口状态", Modifier.weight(1f), fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
             Icon(Icons.Rounded.HelpOutline, null, Modifier.size(22.dp).clickable(onClick = onShowLegend), tint = Color(0xFF8392AA))
         }
         val ports = if (ui.ports.isEmpty()) (1..9).map { RouterPortUi("LAN$it", false, false, false, false) } else ui.ports.sortedBy { portSortKey(it.name) }
@@ -1044,12 +1044,12 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("WAN口速率：", fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F))
+            Text("WAN口速率：", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
             Icon(Icons.Rounded.North, null, Modifier.size(16.dp), tint = LabV2.Primary)
-            Text(formatBitRate(ui.uploadBps), fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = LabV2.Primary)
+            Text(formatBitRate(ui.uploadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary)
             Spacer(Modifier.width(12.dp))
             Icon(Icons.Rounded.South, null, Modifier.size(16.dp), tint = Color(0xFF7C3AED))
-            Text(formatBitRate(ui.downloadBps), fontSize = 12.4.sp, fontWeight = FontWeight.Black, color = Color(0xFF7C3AED))
+            Text(formatBitRate(ui.downloadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF7C3AED))
         }
     }
 }
@@ -1068,17 +1068,17 @@ private fun RouterPortItem(port: RouterPortUi) {
         Spacer(Modifier.height(4.dp))
         Text(
             port.name.replace("/", "/\n"),
-            fontSize = 8.6.sp,
-            lineHeight = 10.sp,
+            fontSize = LabTypography.Caption.fontSize,
+            lineHeight = LabTypography.Caption.lineHeight,
             textAlign = TextAlign.Center,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = Color(0xFF10264F),
             minLines = 2,
             maxLines = 2
         )
         if (port.speedLabel.isNotBlank() && port.connected) {
             Spacer(Modifier.height(2.dp))
-            Text(port.speedLabel, fontSize = 7.8.sp, fontWeight = FontWeight.Black, color = color)
+            Text(port.speedLabel, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color)
         }
     }
 }
@@ -1114,7 +1114,7 @@ private fun EthernetPortIcon(color: Color, active: Boolean) {
 private fun PortLegendDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("端口状态说明", fontWeight = FontWeight.Black, fontSize = 18.sp, color = LabV2.Ink) },
+        title = { Text("端口状态说明", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.PageTitle.fontSize, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 PortLegendRow(Color(0xFF9AA5B5), "灰色", "未连接 / 空闲端口")
@@ -1124,7 +1124,7 @@ private fun PortLegendDialog(onDismiss: () -> Unit) {
                 PortLegendRow(Color(0xFF05C858), "绿色", "普通 LAN 已连接")
             }
         },
-        confirmButton = { Button(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("知道了", fontWeight = FontWeight.Black) } },
+        confirmButton = { Button(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("知道了", style = LabTypography.Button) } },
         shape = RoundedCornerShape(28.dp),
         containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp
@@ -1136,8 +1136,8 @@ private fun PortLegendRow(color: Color, label: String, desc: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(16.dp).clip(RoundedCornerShape(5.dp)).background(color))
         Spacer(Modifier.width(8.dp))
-        Text(label, modifier = Modifier.width(42.dp), fontSize = 11.2.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-        Text(desc, fontSize = 11.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+        Text(label, modifier = Modifier.width(42.dp), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+        Text(desc, fontSize = LabTypography.Supporting.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1154,7 +1154,7 @@ private fun RouterIdentityDialog(
     var wan by remember(wanUrl) { mutableStateOf(wanUrl) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("路由器备注与地址", fontWeight = FontWeight.Black, fontSize = 19.sp, color = LabV2.Ink) },
+        title = { Text("路由器备注与地址", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.PageTitle.fontSize, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 CompactTextField(
@@ -1162,7 +1162,9 @@ private fun RouterIdentityDialog(
                     onValueChange = { displayName = it },
                     placeholder = "例如：BE72",
                     leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp), tint = LabV2.Primary) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = LabTypography.FieldValue,
+                    placeholderStyle = LabTypography.Placeholder
                 )
                 CompactTextField(
                     value = lan,
@@ -1170,7 +1172,9 @@ private fun RouterIdentityDialog(
                     placeholder = "192.168.5.1",
                     leadingIcon = { Icon(Icons.Rounded.Router, null, Modifier.size(16.dp), tint = LabV2.Primary) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = LabTypography.FieldValue,
+                    placeholderStyle = LabTypography.Placeholder
                 )
                 CompactTextField(
                     value = wan,
@@ -1178,17 +1182,19 @@ private fun RouterIdentityDialog(
                     placeholder = "example.com",
                     leadingIcon = { Icon(Icons.Rounded.Public, null, Modifier.size(16.dp), tint = LabV2.Cyan) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = LabTypography.FieldValue,
+                    placeholderStyle = LabTypography.Placeholder
                 )
-                Text("点击路由器图片或名称时，会按收藏夹的内外网切换设置优先打开对应地址。", fontSize = 10.4.sp, lineHeight = 14.sp, color = LabV2.InkMuted)
+                Text("点击路由器图片或名称时，会按收藏夹的内外网切换设置优先打开对应地址。", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted)
             }
         },
         confirmButton = {
             Button(onClick = { onSave(displayName.trim(), lan.trim(), wan.trim()) }, shape = RoundedCornerShape(16.dp)) {
-                Text("保存", fontWeight = FontWeight.Black)
+                Text("保存", style = LabTypography.Button)
             }
         },
-        dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("取消", fontWeight = FontWeight.Bold) } },
+        dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("取消", style = LabTypography.Button) } },
         shape = RoundedCornerShape(28.dp),
         containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp
@@ -1230,8 +1236,8 @@ private fun SectionHeader(icon: ImageVector, title: String, color: Color, traili
             Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(15.dp), tint = Color.White) }
         }
         Spacer(Modifier.width(6.dp))
-        Text(title, Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.Black, color = Color(0xFF10264F))
-        if (trailing.isNotBlank()) Text("更新于 ${timeOnly(trailing)}", fontSize = 8.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+        Text(title, Modifier.weight(1f), fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+        if (trailing.isNotBlank()) Text("更新于 ${timeOnly(trailing)}", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.width(4.dp))
         Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF8290A7))
     }

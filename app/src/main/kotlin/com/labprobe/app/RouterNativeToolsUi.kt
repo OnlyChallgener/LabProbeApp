@@ -24,7 +24,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -166,9 +165,9 @@ private fun NativeSelector(
             contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp)
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                Text(label, fontSize = 9.sp, lineHeight = 11.sp, color = NativeMuted, fontWeight = FontWeight.Medium)
+                Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(3.dp))
-                Text(value, fontSize = 13.sp, lineHeight = 16.sp, color = NativeInk, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(value, fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, color = NativeInk, fontWeight = FontWeight.SemiBold, maxLines = 1)
             }
             Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
         }
@@ -183,7 +182,7 @@ private fun NativeSelector(
         ) {
             options.forEach { (key, title) ->
                 DropdownMenuItem(
-                    text = { Text(title, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
+                    text = { Text(title, color = NativeInk, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold) },
                     onClick = { onSelect(key); onExpandedChange(false) },
                     modifier = Modifier.heightIn(min = 48.dp),
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
@@ -206,20 +205,14 @@ private fun NativeCompactPortField(value: String, onValueChange: (String) -> Uni
             Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalArrangement = Arrangement.Center
         ) {
-            Text("STUN 端口", fontSize = 9.sp, lineHeight = 11.sp, color = NativeMuted, fontWeight = FontWeight.Medium)
+            Text("STUN 端口", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(3.dp))
             BasicTextField(
                 value = value,
                 onValueChange = { onValueChange(it.filter(Char::isDigit).take(5)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = NativeInk,
-                    fontSize = 13.sp,
-                    lineHeight = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
-                ),
+                textStyle = LabTypography.FieldValue.copy(textAlign = TextAlign.Center),
                 keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                 cursorBrush = SolidColor(NativeBlue)
             )
@@ -492,7 +485,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
         if (task.succeeded && normalized.completed) history = saveNatHistory(context, normalized)
     }
 
-    DetailShell("路由 NAT 诊断", "路由器原生 RFC3489 / RFC5780", onBack, compactHeader = true) {
+    DetailShell("路由 NAT 诊断", "路由器原生 RFC3489 / RFC5780", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
             NativeTitle(Icons.Rounded.Radar, "检测参数", NativeBlue)
             val serverShape = RoundedCornerShape(22.dp)
@@ -507,9 +500,9 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                        Text("STUN 服务器", fontSize = 9.sp, lineHeight = 11.sp, color = NativeMuted, fontWeight = FontWeight.Medium)
+                        Text("STUN 服务器", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(3.dp))
-                        Text(server, fontSize = 13.sp, lineHeight = 16.sp, color = NativeInk, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(server, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 2, overflow = TextOverflow.Clip)
                     }
                     Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
                 }
@@ -524,7 +517,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 ) {
                     servers.forEach { host ->
                         DropdownMenuItem(
-                            text = { Text(host, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
+                            text = { Text(host, color = NativeInk, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold) },
                             onClick = { server = host; serverMenu = false },
                             modifier = Modifier.heightIn(min = 50.dp),
                             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
@@ -589,7 +582,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White, trackColor = Color.Transparent
                     ) else Icon(Icons.Rounded.PlayCircle, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text(if (running) "检测中" else "开始检测", fontWeight = FontWeight.Black)
+                    Text(if (running) "检测中" else "开始检测", style = LabTypography.Button)
                 }
             }
         }
@@ -639,8 +632,8 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         natLogZh(result.log),
                         modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp,
+                        fontSize = LabTypography.Caption.fontSize,
+                        lineHeight = LabTypography.Caption.lineHeight,
                         color = NativeInk
                     )
                 }
@@ -659,8 +652,8 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                     natFilteringBehaviorZh(item.filteringBehavior)
                                 ).filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
                             } else natTypeZh(item.natType),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Black,
+                            fontSize = LabTypography.Supporting.fontSize,
+                            fontWeight = FontWeight.SemiBold,
                             color = NativeInk,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -671,7 +664,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 if (item.mode == "5780") "RFC5780" else "RFC3489",
                                 item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
                             ).filter(String::isNotBlank).joinToString(" · "),
-                            fontSize = 9.8.sp,
+                            fontSize = LabTypography.Caption.fontSize,
                             color = NativeMuted
                         )
                     }
@@ -748,10 +741,10 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
         }
     }
 
-    DetailShell("Beta 在线升级", "显示上次检查快照 · 仅手动检测", onBack, compactHeader = true) {
+    DetailShell("Beta 在线升级", "显示上次检查快照 · 仅手动检测", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
             NativeTitle(Icons.Rounded.SystemUpdateAlt, "固件版本", NativeCyan)
-            NativeValueRow("当前版本", info.current.ifBlank { "--" })
+            NativeValueRow("当前版本", info.current.ifBlank { "--" }, stacked = true)
             NativeValueRow("可用版本", if (info.hasSnapshot) "${info.totalCount} 个" else "--")
             Text(
                 when {
@@ -759,7 +752,7 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     task.failed -> task.message.ifBlank { task.stageText }
                     else -> info.message.ifBlank { "尚未检测，点击下方按钮开始" }
                 },
-                fontSize = 10.5.sp,
+                fontSize = LabTypography.Supporting.fontSize,
                 color = if (task.failed) NativeRed else NativeMuted
             )
             if (task.active) {
@@ -768,7 +761,7 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
             if (info.checkedAt > 0L) Text(
                 "上次检测：${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(info.checkedAt * 1000L))}",
-                fontSize = 9.4.sp,
+                fontSize = LabTypography.Caption.fontSize,
                 color = NativeMuted
             )
             Button(
@@ -786,12 +779,12 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 if (task.active) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
                 else Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(7.dp))
-                Text(if (task.active) "检测进行中" else "检测更新", fontWeight = FontWeight.Black)
+                Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button)
             }
         }
         if (info.versions.isNotEmpty()) NativeCard {
             NativeTitle(Icons.Rounded.NewReleases, "可用版本", NativeAmber)
-            info.versions.forEach { Text(it, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = NativeInk) }
+            info.versions.forEach { Text(it, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = NativeInk) }
         }
     }
 }
@@ -816,22 +809,31 @@ private fun NativeTitle(icon: androidx.compose.ui.graphics.vector.ImageVector, t
             Icon(icon, null, Modifier.size(19.dp), tint = color)
         }
         Spacer(Modifier.width(9.dp))
-        Text(title, fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = NativeInk)
+        Text(title, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = NativeInk)
     }
 }
 
 @Composable
-private fun NativeValueRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(78.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = NativeMuted)
-        Text(value, Modifier.weight(1f), fontSize = 10.8.sp, fontWeight = FontWeight.Black, color = NativeInk)
+private fun NativeValueRow(label: String, value: String, stacked: Boolean = false) {
+    if (stacked) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(label, style = LabTypography.Supporting.copy(color = NativeMuted))
+            SelectionContainer {
+                Text(value, style = LabTypography.Value.copy(color = NativeInk), maxLines = 3, overflow = TextOverflow.Clip)
+            }
+        }
+    } else {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Text(label, Modifier.width(78.dp), style = LabTypography.Supporting.copy(color = NativeMuted))
+            Text(value, Modifier.weight(1f), style = LabTypography.Value.copy(color = NativeInk), maxLines = 3, overflow = TextOverflow.Clip)
+        }
     }
 }
 
 @Composable
 private fun NativeMessage(text: String, color: Color) {
     Surface(shape = RoundedCornerShape(14.dp), color = color.copy(alpha = .08f), border = BorderStroke(1.dp, color.copy(alpha = .18f))) {
-        Text(text, Modifier.fillMaxWidth().padding(10.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = color)
+        Text(text, Modifier.fillMaxWidth().padding(10.dp), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color)
     }
 }
 

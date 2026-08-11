@@ -74,11 +74,11 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("路由设置", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = SettingsInk)
+                Text("路由设置", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = SettingsInk)
                 Text(
                     "防火墙 · NAT诊断 · DDNS · Beta升级",
-                    fontSize = 10.5.sp,
-                    lineHeight = 13.sp,
+                    fontSize = LabTypography.Supporting.fontSize,
+                    lineHeight = LabTypography.Supporting.lineHeight,
                     fontWeight = FontWeight.SemiBold,
                     color = SettingsMuted,
                     maxLines = 2,
@@ -113,7 +113,8 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
         title = "路由设置",
         subtitle = "已预加载配置快照 · 页面打开不重复请求",
         onBack = onBack,
-        compactHeader = true
+        compactHeader = true,
+        unifiedTypography = true
     ) {
         RouterSettingsConnectionCard(statusResource) { onOpen("tool_router_login") }
 
@@ -200,8 +201,8 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = SettingsInk)
-                Text(detail, fontSize = 9.7.sp, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = SettingsInk)
+                Text(detail, fontSize = LabTypography.Caption.fontSize, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = accent)
         }
@@ -211,7 +212,7 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
 @Composable
 private fun RouterSettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(title, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = SettingsInk, modifier = Modifier.padding(start = 3.dp))
+        Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = SettingsInk, modifier = Modifier.padding(start = 3.dp))
         content()
     }
 }
@@ -239,8 +240,8 @@ private fun RouterSettingsTile(
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = if (enabled) SettingsInk else SettingsMuted)
-                Text(subtitle, fontSize = 9.6.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = if (enabled) SettingsInk else SettingsMuted)
+                Text(subtitle, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(19.dp), tint = actualColor.copy(alpha = if (enabled) 1f else .45f))
         }

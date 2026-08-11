@@ -2105,6 +2105,7 @@ fun ScreenShell(
     subtitle: String,
     action: (@Composable RowScope.() -> Unit)? = null,
     topNav: (@Composable () -> Unit)? = null,
+    unifiedTypography: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -2114,7 +2115,13 @@ fun ScreenShell(
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
     ) {
-        CompactPageHeader(title = title, subtitle = subtitle, action = action)
+        CompactPageHeader(
+            title = title,
+            subtitle = subtitle,
+            action = action,
+            titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
+            subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
+        )
         topNav?.invoke()
         content()
         Spacer(Modifier.height(2.dp))
@@ -2127,6 +2134,7 @@ fun DetailShell(
     subtitle: String,
     onBack: () -> Unit,
     compactHeader: Boolean = false,
+    unifiedTypography: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -2136,7 +2144,14 @@ fun DetailShell(
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
     ) {
-        CompactPageHeader(title = title, subtitle = subtitle, onBack = onBack, compactTitle = compactHeader)
+        CompactPageHeader(
+            title = title,
+            subtitle = subtitle,
+            onBack = onBack,
+            compactTitle = compactHeader,
+            titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
+            subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
+        )
         content()
         Spacer(Modifier.height(2.dp))
     }
@@ -3119,7 +3134,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                 ) {
                     Icon(Icons.Rounded.WifiTethering, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
                     Spacer(Modifier.width(3.dp))
-                    Text("实时", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2563EB), maxLines = 1)
+            Text("实时", style = LabTypography.CompactButton.copy(color = Color(0xFF2563EB)), maxLines = 1)
                 }
             }
         }
@@ -3178,11 +3193,11 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("极客网探", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1)
+                    Text("极客网探", style = LabTypography.AppTitle, maxLines = 1)
                     Spacer(Modifier.width(8.dp))
                     VersionBadge(hasUpdate = hasPendingUpdate) { if (hasPendingUpdate) onUpdateClick() else showVersion = true }
                 }
-                Text("家庭网络仪表盘", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B), maxLines = 1)
+                    Text("家庭网络仪表盘", style = LabTypography.Supporting, maxLines = 1)
             }
             HomeRefreshMenuButton(
                 autoRefresh = autoRefresh,
@@ -3493,9 +3508,9 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Text(
                             "网络健康得分",
                             Modifier.weight(1f),
-                            fontSize = 16.sp,
-                            lineHeight = 18.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize = LabTypography.CardTitle.fontSize,
+                            lineHeight = LabTypography.CardTitle.lineHeight,
+                            fontWeight = FontWeight.SemiBold,
                             color = LabV2.Ink,
                             maxLines = 1,
                             softWrap = false,
@@ -3505,14 +3520,14 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Surface(shape = HomeInnerShape, color = scoreColor.copy(alpha = .10f)) {
                             Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
-                                Text(scoreLabel, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = scoreColor)
+                                Text(scoreLabel, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = scoreColor)
                             }
                         }
                     }
                     Text(
                         message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
-                        fontSize = 9.2.sp,
-                        lineHeight = 11.sp,
+                        fontSize = LabTypography.Caption.fontSize,
+                        lineHeight = LabTypography.Caption.lineHeight,
                         fontWeight = FontWeight.SemiBold,
                         color = LabV2.InkMuted,
                         maxLines = 1,
@@ -3559,7 +3574,7 @@ private fun agentUpdateUiError(raw: String?): String {
 }
 
 @Composable
-fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack, compactHeader = true) {
+fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack, compactHeader = true, unifiedTypography = true) {
     val data = state.status?.optJSONObject("data") ?: state.status
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
@@ -3628,14 +3643,11 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     if (showCleanupConfirm) {
         AlertDialog(
             onDismissRequest = { if (!agentBusy) showCleanupConfirm = false },
-            title = { Text("清理 Agent 文件", fontWeight = FontWeight.Black, fontSize = 17.sp, color = LabV2.Ink) },
+            title = { Text("清理 Agent 文件", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.CardTitle.fontSize, color = LabV2.Ink) },
             text = {
                 Text(
                     "将删除路由器上的所有 Agent 备份、更新/安装日志和已失效的临时安装文件。不会删除 Agent 配置、运行程序或当前状态数据。",
-                    fontSize = 11.5.sp,
-                    lineHeight = 17.sp,
-                    color = LabV2.InkMuted,
-                    fontWeight = FontWeight.SemiBold
+                    style = LabTypography.Body.copy(color = LabV2.InkMuted)
                 )
             },
             confirmButton = {
@@ -3673,11 +3685,11 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                     enabled = !agentBusy,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
                     shape = RoundedCornerShape(15.dp)
-                ) { Text("确认清理", fontWeight = FontWeight.Black) }
+                ) { Text("确认清理", style = LabTypography.Button) }
             },
             dismissButton = {
                 OutlinedButton(onClick = { showCleanupConfirm = false }, enabled = !agentBusy, shape = RoundedCornerShape(15.dp)) {
-                    Text("取消", fontWeight = FontWeight.Bold)
+                    Text("取消", style = LabTypography.Button)
                 }
             },
             shape = RoundedCornerShape(25.dp),
@@ -3761,9 +3773,9 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         accent = LabV2.Green,
         headerIcon = Icons.Rounded.Handyman
     ) {
-        Text(agentMessage, modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = 10.6.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
+        Text(agentMessage, modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
         agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
-            Text("Agent 最后上报：$it", modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = 9.8.sp, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
+            Text("Agent 最后上报：$it", modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
@@ -3807,7 +3819,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
             ) {
                 Icon(Icons.Rounded.TravelExplore, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("检查更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                Text("检查更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
             }
             Button(
                 onClick = {
@@ -3860,7 +3872,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
             ) {
                 Icon(Icons.Rounded.CloudDownload, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                Text("立即更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
             }
         }
         OutlinedButton(
@@ -3873,16 +3885,16 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         ) {
             Icon(Icons.Rounded.CleaningServices, null, Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("一键清理", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+            Text("一键清理", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
         }
         Text(
             cleanupMessage,
-            fontSize = 9.9.sp,
-            lineHeight = 14.sp,
+            fontSize = LabTypography.Caption.fontSize,
+            lineHeight = LabTypography.Caption.lineHeight,
             color = if (cleanupMessage.startsWith("清理失败")) LabV2.Red else LabV2.InkMuted,
             fontWeight = FontWeight.SemiBold,
             maxLines = 3,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Clip
         )
     }
 }
@@ -3898,35 +3910,39 @@ private fun RouterUrlDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("路由器地址", fontWeight = FontWeight.Black, fontSize = 20.sp, color = LabV2.Ink) },
+        title = { Text("路由器地址", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.PageTitle.fontSize, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("内网", Modifier.width(42.dp), fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    Text("内网", Modifier.width(42.dp), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     CompactTextField(
                         value = lanUrl,
                         onValueChange = onLanChange,
                         placeholder = "192.168.5.1",
                         leadingIcon = { Icon(Icons.Rounded.Router, null, Modifier.size(16.dp), tint = LabV2.Primary) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        textStyle = LabTypography.FieldValue,
+                        placeholderStyle = LabTypography.Placeholder
                     )
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("外网", Modifier.width(42.dp), fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    Text("外网", Modifier.width(42.dp), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     CompactTextField(
                         value = wanUrl,
                         onValueChange = onWanChange,
                         placeholder = "example.com",
                         leadingIcon = { Icon(Icons.Rounded.Public, null, Modifier.size(16.dp), tint = LabV2.Cyan) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        textStyle = LabTypography.FieldValue,
+                        placeholderStyle = LabTypography.Placeholder
                     )
                 }
             }
         },
-        confirmButton = { Button(onClick = onSave, shape = RoundedCornerShape(16.dp)) { Text("保存", fontWeight = FontWeight.Black) } },
-        dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("取消", fontWeight = FontWeight.Bold) } },
+        confirmButton = { Button(onClick = onSave, shape = RoundedCornerShape(16.dp)) { Text("保存", style = LabTypography.Button) } },
+        dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("取消", style = LabTypography.Button) } },
         shape = RoundedCornerShape(28.dp),
         containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp
@@ -3970,15 +3986,15 @@ private fun HealthDetailCard(
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = LabTypography.SectionTitle, maxLines = 2, overflow = TextOverflow.Clip)
                 Text(
                     subtitle,
-                    fontSize = 9.8.sp,
+                    fontSize = LabTypography.Caption.fontSize,
                     fontWeight = FontWeight.SemiBold,
                     color = LabV2.InkMuted,
                     maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 12.5.sp
+                    overflow = TextOverflow.Clip,
+                    lineHeight = LabTypography.Caption.lineHeight
                 )
             }
         }
@@ -4017,20 +4033,20 @@ private fun ScoreRuleRow(title: String, detail: String, points: Int, achieved: B
         }
         Spacer(Modifier.width(7.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(title, fontSize = 10.2.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Text(detail, fontSize = 9.2.sp, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+            Text(detail, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(
             if (points > 0) "+$points" else "$points",
-            fontSize = 10.5.sp,
-            fontWeight = FontWeight.Black,
+            fontSize = LabTypography.Supporting.fontSize,
+            fontWeight = FontWeight.SemiBold,
             color = if (points < 0) LabV2.Red else if (achieved) LabV2.Green else LabV2.InkMuted
         )
     }
 }
 
 @Composable
-fun WolDetailScreen(state: AppState, onBack: () -> Unit) = DetailShell("WOL", "远程唤醒设备", onBack) {
+fun WolDetailScreen(state: AppState, onBack: () -> Unit) = DetailShell("WOL", "远程唤醒设备", onBack, unifiedTypography = true) {
     WolManagementPanel(state)
 }
 
@@ -4044,8 +4060,8 @@ private fun HealthStatePill(icon: ImageVector, label: String, value: String, col
                 Icon(icon, null, Modifier.size(16.dp), tint = color)
             }
             Spacer(Modifier.width(7.dp))
-            Text("$label：", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
-            Text(value, Modifier.weight(1f), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$label：", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
+            Text(value, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(trailing, null, Modifier.size(16.dp), tint = color.copy(alpha = if (trailing == Icons.Rounded.ChevronRight) .42f else 1f))
         }
     }
@@ -4060,8 +4076,8 @@ private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, 
             }
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(label, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
-                Text(value, fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(label, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
+                Text(value, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -4088,8 +4104,8 @@ fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(score.toString(), fontSize = if (size > 100.dp) 42.sp else 35.sp, lineHeight = if (size > 100.dp) 42.sp else 35.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
-            Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", fontSize = if (size > 100.dp) 10.5.sp else 9.5.sp, fontWeight = FontWeight.SemiBold, color = if (score >= 85) LabV2.Green else LabV2.InkMuted)
+            Text(score.toString(), style = if (size > 100.dp) LabTypography.Metric else LabTypography.CompactMetric)
+        Text(if (score >= 85) "健康" else if (score >= 70) "良好" else "待优化", style = LabTypography.Micro.copy(color = if (score >= 85) LabV2.Green else LabV2.InkMuted))
         }
     }
 }
@@ -4099,8 +4115,8 @@ fun HealthCompactState(label: String, value: String, color: Color) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
-        Text(label, Modifier.weight(1f), fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
-        Text(value, fontSize = 11.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1)
+        Text(label, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+        Text(value, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
     }
 }
 
@@ -4126,8 +4142,8 @@ fun WeeklyMiniBars(score: Int) {
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier.heightIn(min = 54.dp), shape = RoundedCornerShape(15.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label, fontSize = if (label.length > 4) 9.sp else 10.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(value, fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, style = LabTypography.Micro.copy(color = LabV2.InkMuted), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -4152,13 +4168,13 @@ fun HealthMiniCard(
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1)
+                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), lineHeight = 30.sp)
+                    Text(value, style = LabTypography.CompactMetric)
                     Spacer(Modifier.width(3.dp))
-                    Text(unit, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64748B), modifier = Modifier.padding(bottom = 4.dp))
+                    Text(unit, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, modifier = Modifier.padding(bottom = 4.dp))
                 }
-                Text(subtitle, fontSize = 10.5.sp, fontWeight = FontWeight.Medium, color = Color(0xFF788493), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -4177,8 +4193,8 @@ fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, acce
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF788493), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -4202,7 +4218,7 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
             Modifier.width(82.dp).then(if (mayWrap) Modifier.padding(top = 4.dp) else Modifier),
             color = LabV2.InkMuted,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 12.5.sp,
+            fontSize = LabTypography.Value.fontSize,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -4210,11 +4226,10 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
             SelectionContainer {
                 Text(
                     shown,
-                    color = accent,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif,
-                    fontSize = 12.8.sp,
-                    lineHeight = 16.sp,
+                    style = LabTypography.ValueStrong.copy(
+                        color = accent,
+                        fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif
+                    ),
                     maxLines = Int.MAX_VALUE,
                     softWrap = true,
                     overflow = TextOverflow.Clip
@@ -4266,15 +4281,15 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("VPN / STUN 地址", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(13.dp))
         if (rows.isEmpty()) {
             Text(
                 "正在等待 STUN 地址同步，获取后会保留上次有效地址。",
-                fontSize = 12.sp,
+                fontSize = LabTypography.Value.fontSize,
                 fontWeight = FontWeight.SemiBold,
                 color = LabV2.InkMuted
             )
@@ -4294,7 +4309,7 @@ fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
         if (visibleDevices.isEmpty()) {
-            Text("暂无关注终端。", color = LabV2.InkMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("暂无关注终端。", color = LabV2.InkMuted, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold)
         }
         visibleDevices.forEachIndexed { idx, d ->
             HealthDeviceLine(d)
@@ -4310,9 +4325,9 @@ fun HealthDeviceLine(d: DeviceItem) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontSize = 13.6.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(d.name.ifBlank { d.mac }, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
-            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = 11.2.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
                 listOfNotNull(
                     cleanApiText(d.onlineDurationText).takeIf { it.isNotBlank() }?.let { "在线 ${formatDurationText(it)}" },
@@ -4324,10 +4339,10 @@ fun HealthDeviceLine(d: DeviceItem) {
                     cleanApiText(d.rssi).takeIf { it.isNotBlank() }?.let { "最后信号 ${if (it.endsWith("dBm")) it else it + "dBm"}" }
                 ).joinToString(" · ")
             }
-            if (third.isNotBlank()) Text(third, fontSize = 10.8.sp, fontWeight = FontWeight.Medium, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (third.isNotBlank()) Text(third, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = Color(0xFF94A3B8), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .10f), tonalElevation = 0.dp) {
-            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = accent, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -4429,11 +4444,11 @@ fun HealthTodayCard(prefs: AppPrefs, state: AppState, lastRefresh: String, onCli
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("今日概览", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1)
-                Text("设备、VPN 与 DDNS 今日变化", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF64748B), maxLines = 1)
+                Text("今日概览", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
+                Text("设备、VPN 与 DDNS 今日变化", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
             }
             Surface(shape = RoundedCornerShape(99.dp), color = syncColor.copy(alpha = .10f)) {
-                Text(syncLabel, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.2.sp, lineHeight = 10.sp, fontWeight = FontWeight.SemiBold, color = syncColor)
+                Text(syncLabel, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = syncColor)
             }
         }
         Spacer(Modifier.height(9.dp))
@@ -4513,7 +4528,7 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
                 Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.OpenWith, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
                     Spacer(Modifier.width(5.dp))
-                    Text("拖动排序", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2563EB))
+                    Text("拖动排序", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF2563EB))
                 }
             }
         }
@@ -4530,10 +4545,10 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                Text(if (state.realtimeDataFresh) "实时数据正常" else if (state.mqttConnected) "等待首帧" else "实时未连接", fontSize = 12.sp, fontWeight = FontWeight.Black, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
+                Text("同步", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                Text(if (state.realtimeDataFresh) "实时数据正常" else if (state.mqttConnected) "等待首帧" else "实时未连接", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
             }
-            Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f))
+            Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, maxLines = 1, color = LabV2.InkMuted)
         }
     }
 }
@@ -4572,7 +4587,7 @@ fun DevicesHomeCard(state: AppState) {
     }
     val followed = remember(shared) { followedDeviceList(shared) }
     ExpressiveCard("关注终端", "在线时长、下线发现时间精确到秒。", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
-        if (followed.isEmpty()) Text("暂无关注终端。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
+        if (followed.isEmpty()) Text("暂无关注终端。", color = LabV2.InkMuted, fontSize = LabTypography.Value.fontSize)
         followed.take(4).forEach { DeviceLine(it, details = true) }
     }
 }
@@ -4580,7 +4595,7 @@ fun DevicesHomeCard(state: AppState) {
 @Composable
 fun StatusPill(label: String, value: String, color: Color) {
     Surface(shape = RoundedCornerShape(50), color = color.copy(alpha = .12f)) {
-        Text("$label $value", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = color, fontWeight = FontWeight.Black, fontSize = 11.5.sp, maxLines = 1)
+        Text("$label $value", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = color, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.Supporting.fontSize, maxLines = 1)
     }
 }
 
@@ -4602,7 +4617,14 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
         contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
     ) {
-        item { CompactPageHeader("设备", "设备识别 · IPv6 · WOL 唤醒") }
+        item {
+            CompactPageHeader(
+                "设备",
+                "设备识别 · IPv6 · WOL 唤醒",
+                titleStyle = LabTypography.PageTitle,
+                subtitleStyle = LabTypography.Supporting
+            )
+        }
         item { topNav() }
         item {
             val syncChipBlue = Color(0xFF2563EB)
@@ -4619,19 +4641,19 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
                 headerAction = {
                     Text(
                         state.message,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f),
-                        fontSize = 10.5.sp,
+                        color = LabV2.InkFaint,
+                        fontSize = LabTypography.Supporting.fontSize,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = 11.5.sp) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
-                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线", fontSize = 11.5.sp) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
-                    FilterChip(selected = mode == "offline", onClick = { mode = "offline" }, label = { Text("离线", fontSize = 11.5.sp) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
-                    FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = 11.5.sp) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
-                    FilterChip(selected = false, onClick = onOpenTraffic, label = { Text("今日流量", fontSize = 11.5.sp) }, leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(15.dp)) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
+                    FilterChip(selected = mode == "watch", onClick = { mode = "watch" }, label = { Text("关注", fontSize = LabTypography.Supporting.fontSize) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
+                    FilterChip(selected = mode == "online", onClick = { mode = "online" }, label = { Text("在线", fontSize = LabTypography.Supporting.fontSize) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
+                    FilterChip(selected = mode == "offline", onClick = { mode = "offline" }, label = { Text("离线", fontSize = LabTypography.Supporting.fontSize) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
+                    FilterChip(selected = mode == "wol", onClick = { mode = "wol" }, label = { Text("WOL", fontSize = LabTypography.Supporting.fontSize) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
+                    FilterChip(selected = false, onClick = onOpenTraffic, label = { Text("今日流量", fontSize = LabTypography.Supporting.fontSize) }, leadingIcon = { Icon(Icons.Rounded.DataUsage, null, modifier = Modifier.size(15.dp)) }, shape = RoundedCornerShape(10.dp), colors = syncChipColors)
                 }
             }
         }
@@ -4663,7 +4685,8 @@ private data class TodayTrafficRankItem(
 fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
     title = "今日流量",
     subtitle = "今日设备上网用量排名",
-    onBack = onBack
+    onBack = onBack,
+    unifiedTypography = true
 ) {
     var descending by remember { mutableStateOf(true) }
     val traffic = remember(state.devices, state.onlineDevices) {
@@ -4705,8 +4728,8 @@ fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("今日设备上网流量占比排行榜", fontSize = 14.5.sp, lineHeight = 17.sp, fontWeight = FontWeight.Black)
-                    Text("按设备今日上传与下载总量统计", fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f))
+                    Text("今日设备上网流量占比排行榜", fontSize = LabTypography.CardTitle.fontSize, lineHeight = LabTypography.CardTitle.lineHeight, fontWeight = FontWeight.SemiBold)
+                    Text("按设备今日上传与下载总量统计", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkFaint)
                 }
                 TrafficSortButton("升序", selected = !descending) { descending = false }
                 Spacer(Modifier.width(4.dp))
@@ -4725,8 +4748,8 @@ fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
                     ) {
                         Icon(Icons.Rounded.DataUsage, null, tint = Color(0xFF14B8A6), modifier = Modifier.size(25.dp))
                     }
-                    Text("暂无今日流量数据", fontWeight = FontWeight.Black, fontSize = 13.sp)
-                    Text("刷新终端数据后会自动生成用量排名", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .46f), fontSize = 10.5.sp)
+                    Text("暂无今日流量数据", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.SectionTitle.fontSize)
+                    Text("刷新终端数据后会自动生成用量排名", color = LabV2.InkFaint, fontSize = LabTypography.Supporting.fontSize)
                 }
             } else {
                 ranked.forEachIndexed { index, rankedItem ->
@@ -4736,7 +4759,7 @@ fun TodayTrafficScreen(state: AppState, onBack: () -> Unit) = DetailShell(
                         share = if (totalTraffic > 0L) rankedItem.second.totalBytes.toFloat() / totalTraffic.toFloat() else 0f
                     )
                     if (index < ranked.lastIndex) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .055f))
+                        HorizontalDivider(color = LabV2.InkFaint)
                     }
                 }
             }
@@ -4770,20 +4793,20 @@ private fun TodayTrafficSummaryCard(uploadBytes: Long, downloadBytes: Long, onli
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("今日设备上网总流量", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f))
+                    Text("今日设备上网总流量", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     Spacer(Modifier.weight(1f))
                     Surface(shape = RoundedCornerShape(99.dp), color = Color(0xFF22C55E).copy(alpha = .11f)) {
-                        Text("$onlineCount 台在线", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color(0xFF16A34A), fontSize = 9.5.sp, fontWeight = FontWeight.Black)
+                        Text("$onlineCount 台在线", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = Color(0xFF16A34A), fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("下载/", fontSize = 12.sp, color = Color(0xFF0EA5E9), fontWeight = FontWeight.Black)
-                    Text(formatTraffic(downloadBytes), fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Text("下载/", fontSize = LabTypography.Value.fontSize, color = Color(0xFF0EA5E9), fontWeight = FontWeight.SemiBold)
+                    Text(formatTraffic(downloadBytes), fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.width(10.dp))
-                    Box(Modifier.width(1.dp).height(21.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .09f)))
+                    Box(Modifier.width(1.dp).height(21.dp).background(LabV2.InkFaint))
                     Spacer(Modifier.width(10.dp))
-                    Text("上传/", fontSize = 12.sp, color = Color(0xFF22C55E), fontWeight = FontWeight.Black)
-                    Text(formatTraffic(uploadBytes), fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Text("上传/", fontSize = LabTypography.Value.fontSize, color = Color(0xFF22C55E), fontWeight = FontWeight.SemiBold)
+                    Text(formatTraffic(uploadBytes), fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -4796,9 +4819,9 @@ private fun TrafficSortButton(text: String, selected: Boolean, onClick: () -> Un
         Text(
             text,
             Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-            color = if (selected) Color(0xFF0F9F93) else MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
-            fontWeight = FontWeight.Black,
-            fontSize = 10.5.sp
+            color = if (selected) Color(0xFF0F9F93) else LabV2.InkFaint,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = LabTypography.Supporting.fontSize
         )
     }
 }
@@ -4824,7 +4847,7 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
             border = BorderStroke(1.dp, rankColor.copy(alpha = .16f))
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(rank.toString(), color = rankColor, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                Text(rank.toString(), color = rankColor, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(Modifier.width(7.dp))
@@ -4835,9 +4858,9 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                 Text(
                     device.remark.ifBlank { device.name.ifBlank { device.mac } },
                     Modifier.weight(1f),
-                    fontSize = 13.sp,
-                    lineHeight = 15.sp,
-                    fontWeight = FontWeight.Black,
+                    fontSize = LabTypography.SectionTitle.fontSize,
+                    lineHeight = LabTypography.SectionTitle.lineHeight,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -4847,17 +4870,17 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                         if (device.online) "在线" else "离线",
                         Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         color = if (device.online) Color(0xFF16A34A) else Color(0xFF64748B),
-                        fontSize = 8.8.sp,
-                        fontWeight = FontWeight.Black
+                        fontSize = LabTypography.Caption.fontSize,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.ArrowDownward, null, tint = Color(0xFF0EA5E9), modifier = Modifier.size(13.dp))
-                Text(formatTraffic(item.downloadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                Text(formatTraffic(item.downloadBytes), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                 Spacer(Modifier.width(7.dp))
                 Icon(Icons.Rounded.ArrowUpward, null, tint = Color(0xFF22C55E), modifier = Modifier.size(13.dp))
-                Text(formatTraffic(item.uploadBytes), fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                Text(formatTraffic(item.uploadBytes), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
             }
             Text(
                 if (device.todayOnlineDate == java.time.LocalDate.now().toString()) {
@@ -4867,10 +4890,10 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                             ?.let { "今日在线：${formatDurationMs(it * 1000L)}" }
                         ?: "今日在线：0分"
                 } else "今日在线：0分",
-                fontSize = 9.2.sp,
-                lineHeight = 10.5.sp,
+                fontSize = LabTypography.Caption.fontSize,
+                lineHeight = LabTypography.Caption.lineHeight,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f),
+                color = LabV2.InkFaint,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -4883,7 +4906,7 @@ private fun TodayTrafficRankRow(rank: Int, item: TodayTrafficRankItem, share: Fl
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                Text("$percent%", modifier = Modifier.width(29.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                Text("$percent%", modifier = Modifier.width(29.dp), color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -4920,7 +4943,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
                     }
                 }
                 Surface(shape = RoundedCornerShape(99.dp), color = if (d.online) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)) {
-                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFF64748B), fontSize = 10.5.sp, fontWeight = FontWeight.Black)
+                    Text(if (d.online) "在线" else "离线", Modifier.padding(horizontal = 9.dp, vertical = 4.dp), color = if (d.online) Color(0xFF16A34A) else Color(0xFF64748B), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                 }
             }
         },
@@ -4930,7 +4953,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         if (!d.online && wolManaged) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-                    Text("已加入 WOL 管理 · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 10.5.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("已加入 WOL 管理 · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
                     onClick = {
@@ -4948,7 +4971,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
                 ) {
                     Icon(Icons.Rounded.Power, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(5.dp))
-                    Text(if (busy) "发送中" else "唤醒", fontWeight = FontWeight.Black, fontSize = 12.sp)
+                    Text(if (busy) "发送中" else "唤醒", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.Value.fontSize)
                 }
             }
         }
@@ -5034,13 +5057,13 @@ fun DeviceRealtimeStatusBar(d: DeviceItem) {
     ) {
         Icon(Icons.Rounded.Speed, null, Modifier.size(15.dp), tint = Color(0xFF2563EB))
         Spacer(Modifier.width(5.dp))
-        Text("实时", fontSize = 9.5.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
+        Text("实时", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
         Spacer(Modifier.width(8.dp))
-        Text("↑${formatRealtimeRate(d.realtimeUploadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFF59E0B), maxLines = 1)
+        Text("↑${formatRealtimeRate(d.realtimeUploadBytes)}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFFF59E0B), maxLines = 1)
         Spacer(Modifier.width(8.dp))
-        Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = 9.8.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF06B6D4), maxLines = 1)
+        Text("↓${formatRealtimeRate(d.realtimeDownloadBytes)}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF06B6D4), maxLines = 1)
         Spacer(Modifier.width(16.dp))
-        Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = 9.6.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
+        Text("连接 ${d.connectionCount.coerceAtLeast(0)}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
     }
 }
 
@@ -5054,7 +5077,7 @@ fun DeviceTodayTrafficBar(d: DeviceItem) {
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("今日流量", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 1)
+        Text("今日流量", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
         Spacer(Modifier.width(8.dp))
         DeviceTrafficDirection(
             label = "上行",
@@ -5082,8 +5105,8 @@ private fun DeviceTrafficDirection(label: String, value: String, icon: ImageVect
         }
         Spacer(Modifier.width(5.dp))
         Column(Modifier.weight(1f)) {
-            Text(label, fontSize = 8.7.sp, lineHeight = 9.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .45f), maxLines = 1)
-            Text(value, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .34f) else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.Medium, color = LabV2.InkFaint, maxLines = 1)
+            Text(value, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -5109,10 +5132,10 @@ fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
             Text(
                 timeText,
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (showTime) .54f else .62f),
-                fontSize = 10.5.sp,
-                lineHeight = 12.sp,
-                fontWeight = FontWeight.Bold,
+                color = LabV2.InkMuted,
+                fontSize = LabTypography.Supporting.fontSize,
+                lineHeight = LabTypography.Supporting.lineHeight,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Clip
             )
@@ -5132,9 +5155,9 @@ fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Col
             }
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
-                Text(label, fontSize = 9.sp, lineHeight = 10.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), maxLines = 1)
+                Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.Medium, color = LabV2.InkFaint, maxLines = 1)
                 val textModifier = if (allowScroll && value != "--") Modifier.horizontalScroll(rememberScrollState()) else Modifier
-                Text(value, modifier = textModifier, fontSize = 10.7.sp, lineHeight = 12.5.sp, fontWeight = FontWeight.SemiBold, color = if (value == "--") MaterialTheme.colorScheme.onSurface.copy(alpha = .35f) else valueColor ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
+                Text(value, modifier = textModifier, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else valueColor ?: LabV2.Ink, maxLines = 1, overflow = if (allowScroll) TextOverflow.Clip else TextOverflow.Ellipsis)
             }
     }
 }
@@ -5160,10 +5183,10 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
         Box(Modifier.size(9.dp).clip(CircleShape).background(if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444)))
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontWeight = FontWeight.Black, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(d.name.ifBlank { d.mac }, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.SectionTitle.fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val mainInfo = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
             val mainFallback = if (d.online) "在线信息待刷新" else "离线 · 暂无历史详情"
-            Text(mainInfo.ifBlank { mainFallback }, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(mainInfo.ifBlank { mainFallback }, color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (details) {
                 val parts = if (d.online) {
                     listOfNotNull(
@@ -5177,10 +5200,10 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
                     )
                 }
                 val stateText = parts.joinToString(" · ").ifBlank { if (d.online) "在线" else "离线 · 暂无历史详情" }
-                Text(stateText, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.50f), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(stateText, color = LabV2.InkFaint, fontSize = LabTypography.Supporting.fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Text(if (d.online) "在线" else "离线", color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text(if (d.online) "在线" else "离线", color = if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444), fontWeight = FontWeight.Bold, fontSize = LabTypography.Value.fontSize)
     }
 }
 

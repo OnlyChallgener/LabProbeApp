@@ -655,7 +655,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         return
     }
 
-    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack) {
+    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true) {
         PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -664,7 +664,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     FilterChip(
                         selected = filter == item,
                         onClick = { filter = item },
-                        label = { Text(item, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        label = { Text(item, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) },
                         modifier = Modifier.padding(end = 5.dp),
                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PortBlue, selectedLabelColor = Color.White)
                     )
@@ -684,13 +684,13 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             val informational = message.startsWith("Agent 在线") || message.contains("已保留")
             val messageColor = if (informational) Color(0xFFF59E0B) else PortRed
             Surface(shape = RoundedCornerShape(18.dp), color = messageColor.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, messageColor.copy(alpha = .15f))) {
-                Text(message, Modifier.padding(12.dp), color = messageColor, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(message, Modifier.padding(12.dp), color = messageColor, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
             }
         }
 
         if (loading && rules.isEmpty()) {
             LabV2Card(compact = true) {
-                Text("正在后台同步映射快照，页面可以继续操作", color = LabV2.InkMuted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                Text("正在后台同步映射快照，页面可以继续操作", color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
             }
         } else if (visible.isEmpty()) {
             PortMapEmptyCard { editDraft = PortMapDraft.new(nextPort(rules, agent).toString()) }
@@ -766,12 +766,12 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(agent.router.ifBlank { "路由器" }, fontWeight = FontWeight.Black, fontSize = 14.5.sp, color = LabV2.Ink)
+                Text(agent.router.ifBlank { "路由器" }, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.CardTitle.fontSize, color = LabV2.Ink)
                 val versions = listOfNotNull(
                     agent.hubVersion.takeIf { it.isNotBlank() }?.let { "Hub $it" },
                     agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" }
                 ).joinToString(" · ")
-                Text(versions.ifBlank { "Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}" }, fontSize = 10.3.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(versions.ifBlank { "Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}" }, style = LabTypography.Supporting, maxLines = 2, overflow = TextOverflow.Clip)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(7.dp).background(color, CircleShape))
                     Spacer(Modifier.width(5.dp))
@@ -782,13 +782,13 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
                             else -> "Agent 未连接"
                         },
                         color = color,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = LabTypography.Caption.fontSize,
+                        fontWeight = FontWeight.SemiBold
                     )
-                    if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = 9.3.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (agent.protocolVersion.isNotBlank() || agent.capabilities.isNotBlank()) {
-                    Text(listOfNotNull(agent.protocolVersion.takeIf { it.isNotBlank() }?.let { "协议 $it" }, agent.capabilities.takeIf { it.isNotBlank() }).joinToString(" · "), fontSize = 9.2.sp, lineHeight = 11.sp, color = LabV2.InkFaint, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull(agent.protocolVersion.takeIf { it.isNotBlank() }?.let { "协议 $it" }, agent.capabilities.takeIf { it.isNotBlank() }).joinToString(" · "), style = LabTypography.Caption.copy(color = LabV2.InkFaint), maxLines = 2, overflow = TextOverflow.Clip)
                 }
             }
             IconButton(onClick = onRefresh) {
@@ -804,13 +804,13 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
         Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 52)
             Spacer(Modifier.height(10.dp))
-            Text("暂无端口映射设置", fontWeight = FontWeight.Black, color = LabV2.Ink)
-            Text("规则保存在 Hub 与 APP；Agent 离线不会删除设置", fontSize = 10.5.sp, color = LabV2.InkMuted)
+            Text("暂无端口映射设置", style = LabTypography.CardTitle)
+            Text("规则保存在 Hub 与 APP；Agent 离线不会删除设置", fontSize = LabTypography.Supporting.fontSize, color = LabV2.InkMuted)
             Spacer(Modifier.height(13.dp))
             Button(onClick = onAdd, shape = LabV2.ButtonShape) {
                 Icon(Icons.Rounded.Add, null)
                 Spacer(Modifier.width(5.dp))
-                Text("新建映射")
+                Text("新建映射", style = LabTypography.Button)
             }
         }
     }
@@ -824,17 +824,17 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(7.dp).background(status.color, CircleShape))
                 Spacer(Modifier.width(7.dp))
-                Text(rule.name, Modifier.weight(1f), fontSize = 14.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(rule.name, Modifier.weight(1f), fontSize = LabTypography.CardTitle.fontSize, lineHeight = LabTypography.CardTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Surface(shape = RoundedCornerShape(99.dp), color = status.color.copy(alpha = .10f)) {
-                    Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = status.color, fontSize = 10.3.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black)
+                    Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = status.color, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold)
                 }
             }
-            Text("${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
-            Text("→ ${rule.targetText}", fontSize = 11.2.sp, lineHeight = 13.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
+            Text("${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+            Text("→ ${rule.targetText}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
             if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
-                Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Clip)
             }
-            Text(portMapStateTrail(rule), fontSize = 9.8.sp, lineHeight = 11.sp, color = status.color, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(portMapStateTrail(rule), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = status.color, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 PortMapCompactMetric("连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
                 PortMapCompactMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
@@ -843,15 +843,15 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
             val error = portMapErrorText(rule.runtime.lastError)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    if (error.isNotBlank() && rule.syncState != "stale" && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) Text(error, color = PortRed, fontSize = 10.2.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(portMapTimeText(rule), fontSize = 10.2.sp, lineHeight = 12.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                    if (error.isNotBlank() && rule.syncState != "stale" && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) Text(error, style = LabTypography.Supporting.copy(color = PortRed), maxLines = 3, overflow = TextOverflow.Clip)
+                    Text(portMapTimeText(rule), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
                 }
                 OutlinedButton(onClick = onToggle, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.shouldStop) PortRed else PortBlue)) {
-                    Text(if (rule.shouldStop) "停止" else "启动", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                    Text(if (rule.shouldStop) "停止" else "启动", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.width(5.dp))
                 OutlinedButton(onClick = onEdit, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp)) {
-                    Text("编辑", fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                    Text("编辑", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -862,8 +862,8 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
 private fun PortMapCompactMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(modifier = modifier.height(42.dp), shape = RoundedCornerShape(13.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
         Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
-            Text(label, fontSize = 9.5.sp, lineHeight = 10.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
-            Text(value, fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.Black, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
+            Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Text(value, fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
         }
     }
 }
@@ -889,7 +889,7 @@ private fun PortMapMiniMetric(icon: androidx.compose.ui.graphics.vector.ImageVec
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = PortBlue.copy(alpha = .70f), modifier = Modifier.size(13.dp))
         Spacer(Modifier.width(4.dp))
-        Text(text, fontSize = 9.8.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .57f), fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(text, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -932,19 +932,19 @@ private fun PortMapEditorSheet(
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (isNew) "新建映射" else "编辑映射", fontSize = 20.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-                        Text("服务 → 目标设备 → 映射方式 → 外部访问", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                        Text(if (isNew) "新建映射" else "编辑映射", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+                        Text("服务 → 目标设备 → 映射方式 → 外部访问", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     }
-                    TextButton(onClick = ::submit) { Text(if (isNew) "保存并启动" else "保存修改", fontWeight = FontWeight.Black) }
+                    TextButton(onClick = ::submit) { Text(if (isNew) "保存并启动" else "保存修改", style = LabTypography.CompactButton) }
                 }
 
                 LabV2Card(compact = true) {
-                    Text("服务", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    Text("服务", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     PortMapV2Field("服务名称", draft.name, "例如：NAS HTTPS") { draft = draft.copy(name = it) }
                     fieldError("service").takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = PortRed, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        Text(it, color = PortRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                     }
-                    Text("选择服务类型后会保存；新建时可同时填写建议端口。", fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+                    Text("选择服务类型后会保存；新建时可同时填写建议端口。", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         PORT_MAP_SERVICE_TEMPLATES.forEach { template ->
                             val selected = selectedTemplateLabel == template.label || (selectedTemplateLabel == null && draft.serviceType == template.serviceType)
@@ -957,24 +957,25 @@ private fun PortMapEditorSheet(
                                 color = if (selected) LabV2.Primary.copy(alpha = .10f) else LabV2.Field,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .45f) else LabV2.BorderStrong.copy(alpha = .75f))
                             ) {
-                                Text(template.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (selected) LabV2.Primary else LabV2.Ink, fontSize = 10.8.sp, fontWeight = FontWeight.Black)
+                                Text(template.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (selected) LabV2.Primary else LabV2.Ink, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
                     val selectedTemplate = PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.label == selectedTemplateLabel }
                     val supportedProtocols = selectedTemplate?.protocols ?: setOf("TCP", "UDP")
                     if (supportedProtocols.size > 1) {
-                        Text("传输协议", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+                        Text("传输协议", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                         LabV2SegmentedControl(
                             options = listOf("TCP", "UDP"),
                             selected = draft.transportProtocol.takeIf { it in supportedProtocols } ?: selectedTemplate?.defaultProtocol.orEmpty().ifBlank { "TCP" },
-                            onSelect = { protocol -> draft = draft.copy(transportProtocol = protocol) }
+                            onSelect = { protocol -> draft = draft.copy(transportProtocol = protocol) },
+                            textStyle = LabTypography.CompactButton
                         )
                     }
                 }
 
                 LabV2Card(compact = true) {
-                    Text("目标设备", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    Text("目标设备", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     PortMapSelectedDevice(
                         device = selectedDevice,
                         mode = draft.mode,
@@ -983,12 +984,12 @@ private fun PortMapEditorSheet(
                         fallbackMac = draft.targetMac,
                         onClick = { showDevicePicker = true }
                     )
-                    Text("也可以手动填写地址；设备离线或不在列表时不会影响保存。", fontSize = 9.8.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+                    Text("也可以手动填写地址；设备离线或不在列表时不会影响保存。", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
 
                     if (draft.mode == "6to4") {
                         PortMapV2Field("目标 IPv4", draft.targetIpv4, "192.168.5.46") { draft = draft.copy(targetIpv4 = it) }
                     } else {
-                        Text("目标地址方式", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+                        Text("目标地址方式", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                         LabV2SegmentedControl(
                             options = listOf("后缀匹配", "完整 IPv6"),
                             selected = if (draft.targetMode == "ipv6_suffix") "后缀匹配" else "完整 IPv6",
@@ -997,12 +998,13 @@ private fun PortMapEditorSheet(
                                     draft,
                                     if (selected == "后缀匹配") "ipv6_suffix" else "ipv6_full"
                                 )
-                            }
+                            },
+                            textStyle = LabTypography.CompactButton
                         )
                         if (draft.targetMode == "ipv6_suffix") {
                             PortMapV2Field("目标 MAC", draft.targetMac, "6c:1f:f7:76:71:04") { draft = draft.copy(targetMac = it) }
                             PortMapV2Field("IPv6 后缀", draft.targetIpv6Suffix, "例如 ::8dc0:a9e5:169d:a7c") { draft = draft.copy(targetIpv6Suffix = it) }
-                            Text("按 MAC + 后 64 位 + 当前 LAN 前缀解析。目标消失时保持等待。", fontSize = 9.6.sp, lineHeight = 13.sp, color = LabV2.InkMuted)
+                            Text("按 MAC + 后 64 位 + 当前 LAN 前缀解析。目标消失时保持等待。", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = LabV2.InkMuted)
                         } else {
                             PortMapV2Field("目标 IPv6", draft.targetIpv6, "2409:...::1234") { draft = draft.copy(targetIpv6 = it) }
                         }
@@ -1011,16 +1013,17 @@ private fun PortMapEditorSheet(
                         draft = draft.copy(targetPort = it.filter(Char::isDigit))
                     }
                     fieldError("target").takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = PortRed, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        Text(it, color = PortRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
                 LabV2Card(compact = true) {
-                    Text("映射方式", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    Text("映射方式", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     LabV2SegmentedControl(
                         options = listOf("IPv6 → IPv4", "IPv6 → IPv6"),
                         selected = if (draft.mode == "6to4") "IPv6 → IPv4" else "IPv6 → IPv6",
-                        onSelect = { selected -> draft = draft.copy(mode = if (selected.endsWith("IPv4")) "6to4" else "6to6") }
+                        onSelect = { selected -> draft = draft.copy(mode = if (selected.endsWith("IPv4")) "6to4" else "6to6") },
+                        textStyle = LabTypography.CompactButton
                     )
                     Text(
                         when {
@@ -1028,21 +1031,21 @@ private fun PortMapEditorSheet(
                             selectedDevice?.pickIpv6()?.best.isNullOrBlank() -> "当前设备没有可用 IPv6，建议使用 IPv6 → IPv4。"
                             else -> "当前设备有可用 IPv6，可以选择 IPv6 → IPv6。"
                         },
-                        fontSize = 9.8.sp,
+                        fontSize = LabTypography.Caption.fontSize,
                         color = LabV2.InkMuted,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
 
                 LabV2Card(compact = true) {
-                    Text("外部访问", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
+                    Text("外部访问", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     PortMapV2Field("外部端口", draft.listenPort, "${portRange.first}-${portRange.last}", keyboardType = KeyboardType.Number) {
                         draft = draft.copy(listenPort = it.filter(Char::isDigit))
                     }
                     fieldError("externalPort").takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = PortRed, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        Text(it, color = PortRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                     }
-                    Text("TCP · IPv6 监听 [::]:${draft.listenPort.ifBlank { "—" }}", fontSize = 10.2.sp, color = PortBlue, fontWeight = FontWeight.Bold)
+                    Text("TCP · IPv6 监听 [::]:${draft.listenPort.ifBlank { "—" }}", fontSize = LabTypography.Supporting.fontSize, color = PortBlue, fontWeight = FontWeight.SemiBold)
                 }
 
                 val advancedSummary = "${draft.duration} · 最多 ${draft.maxConnections.ifBlank { "—" }} 连接 · 空闲 ${draft.idleTimeoutSec.ifBlank { "—" }} 秒"
@@ -1054,8 +1057,8 @@ private fun PortMapEditorSheet(
                 ) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("高级设置", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                            Text(advancedSummary, fontSize = 10.2.sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("高级设置", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                            Text(advancedSummary, fontSize = LabTypography.Supporting.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Icon(if (advancedExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = LabV2.Primary)
                     }
@@ -1075,14 +1078,14 @@ private fun PortMapEditorSheet(
                         }
                         PortMapV2ReadOnly("到期行为", "沿用现有有效期语义", accent = PortGreen)
                         fieldError("advanced").takeIf { it.isNotBlank() }?.let {
-                            Text(it, color = PortRed, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            Text(it, color = PortRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
 
                 if (fieldError("general").isNotBlank()) {
                     Surface(shape = RoundedCornerShape(16.dp), color = PortRed.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, PortRed.copy(alpha = .13f))) {
-                        Text(fieldError("general"), Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = PortRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(fieldError("general"), Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = PortRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Button(
@@ -1090,7 +1093,7 @@ private fun PortMapEditorSheet(
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     shape = LabV2.ButtonShape,
                     colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)
-                ) { Text(if (isNew) "保存并启动" else "保存修改", fontWeight = FontWeight.Black) }
+                ) { Text(if (isNew) "保存并启动" else "保存修改", style = LabTypography.Button) }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -1146,7 +1149,7 @@ private fun PortMapV2Field(
     onChange: (String) -> Unit
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Text(label, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
         Surface(
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = LabV2.FieldShape,
@@ -1160,18 +1163,18 @@ private fun PortMapV2Field(
                     onValueChange = onChange,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-                    textStyle = TextStyle(fontSize = 12.8.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink),
+                    textStyle = TextStyle(fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink),
                     modifier = Modifier.weight(1f),
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
-                            if (value.isBlank()) Text(hint, fontSize = 11.5.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (value.isBlank()) Text(hint, fontSize = LabTypography.Supporting.fontSize, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             inner()
                         }
                     }
                 )
                 if (suffix.isNotBlank()) {
                     Spacer(Modifier.width(6.dp))
-                    Text(suffix, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+                    Text(suffix, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
                 }
             }
         }
@@ -1188,7 +1191,7 @@ private fun PortMapV2ReadOnly(
 ) {
     val ctx = LocalContext.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Text(label, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
         Surface(
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = LabV2.FieldShape,
@@ -1200,7 +1203,7 @@ private fun PortMapV2ReadOnly(
                 Modifier.fillMaxSize().padding(horizontal = 13.dp).horizontalScroll(rememberScrollState()).clickable(enabled = copyable) { copy(ctx, value) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = accent, maxLines = 1, overflow = TextOverflow.Clip)
+                Text(value, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = accent, maxLines = 1, overflow = TextOverflow.Clip)
             }
         }
     }
@@ -1217,7 +1220,7 @@ private fun PortMapV2Select(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+        Text(label, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
             Surface(
                 modifier = Modifier.menuAnchor().fillMaxWidth().height(48.dp),
@@ -1227,7 +1230,7 @@ private fun PortMapV2Select(
                 tonalElevation = 0.dp
             ) {
                 Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(value, Modifier.weight(1f), fontSize = 12.6.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(value, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = LabV2.InkMuted)
                 }
             }
@@ -1242,7 +1245,7 @@ private fun PortMapV2Select(
             ) {
                 options.forEach { option ->
                     DropdownMenuItem(
-                        text = { Text(option, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        text = { Text(option, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold) },
                         leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = LabV2.Primary) }) else null,
                         onClick = { onPick(option); expanded = false }
                     )
@@ -1284,8 +1287,8 @@ private fun PortMapSelectedDevice(
             Column(Modifier.weight(1f)) {
                 Text(
                     device?.remark?.ifBlank { device.name }?.ifBlank { "已选设备" } ?: "从在线设备填充",
-                    fontSize = 12.2.sp,
-                    fontWeight = FontWeight.Black,
+                    fontSize = LabTypography.Value.fontSize,
+                    fontWeight = FontWeight.SemiBold,
                     color = LabV2.Ink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1297,11 +1300,11 @@ private fun PortMapSelectedDevice(
                 }
                 Text(
                     if (device != null) "${if (device.online) "在线" else "离线"} · $detail" else detail,
-                    fontSize = 9.7.sp,
+                    fontSize = LabTypography.Caption.fontSize,
                     fontWeight = FontWeight.SemiBold,
                     color = if (device?.online == true) PortGreen else LabV2.InkMuted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 3,
+                    overflow = TextOverflow.Clip
                 )
             }
             Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(20.dp))
@@ -1369,10 +1372,10 @@ private fun PortMapDevicePickerDialog(
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("选择目标设备", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                        Text("选择目标设备", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
                         Text(
                             if (mode == "6to4") "当前显示设备 IPv4 地址" else if (targetMode == "ipv6_suffix") "当前显示全局 IPv6 与后 64 位" else "当前显示设备完整 IPv6 地址",
-                            fontSize = 10.4.sp,
+                            fontSize = LabTypography.Supporting.fontSize,
                             fontWeight = FontWeight.SemiBold,
                             color = LabV2.InkMuted
                         )
@@ -1400,7 +1403,7 @@ private fun PortMapDevicePickerDialog(
                     Box(Modifier.fillMaxWidth().heightIn(min = 160.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Rounded.DevicesOther, null, tint = LabV2.InkMuted, modifier = Modifier.size(30.dp))
-                            Text(if (mode == "6to6") "没有可用 IPv6 设备，请刷新后重试" else "没有匹配设备", color = LabV2.InkMuted, fontSize = 12.sp)
+                            Text(if (mode == "6to6") "没有可用 IPv6 设备，请刷新后重试" else "没有匹配设备", color = LabV2.InkMuted, fontSize = LabTypography.Value.fontSize)
                             if (refreshDevices != null) {
                                 TextButton(
                                     onClick = {
@@ -1417,7 +1420,7 @@ private fun PortMapDevicePickerDialog(
                                         }
                                     },
                                     enabled = !refreshing,
-                                ) { Text("刷新设备", color = LabV2.Primary, fontWeight = FontWeight.Bold) }
+                            ) { Text("刷新设备", style = LabTypography.CompactButton.copy(color = LabV2.Primary)) }
                             }
                         }
                     }
@@ -1442,17 +1445,17 @@ private fun PortMapDevicePickerDialog(
                                     LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 38)
                                     Spacer(Modifier.width(10.dp))
                                     Column(Modifier.weight(1f)) {
-                                        Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(
                                             if (recommended.isBlank()) "暂无可用 IPv6" else recommended,
-                                            fontSize = 9.7.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (recommended.isBlank()) LabV2.InkMuted else if (mode == "6to6") PortBlue else LabV2.InkMuted,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
+                                            style = LabTypography.Value.copy(
+                                                color = if (recommended.isBlank()) LabV2.InkMuted else if (mode == "6to6") PortBlue else LabV2.InkMuted
+                                            ),
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Clip,
                                         )
                                         val extra = "${if (device.online) "在线" else "离线"} · " + if (mode == "6to6" && targetMode == "ipv6_suffix" && recommended.isNotBlank()) "后缀 ${ipv6Suffix64(recommended)} · ${device.mac}" else device.mac
-                                        Text(extra, fontSize = 9.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(extra, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     if (addresses.size > 1) {
                                         IconButton(onClick = { expandedMac = if (expanded) null else cleanMac(device.mac) }, modifier = Modifier.size(30.dp)) {
@@ -1466,7 +1469,7 @@ private fun PortMapDevicePickerDialog(
                                 Column(Modifier.padding(start = 48.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     addresses.drop(1).forEach { address ->
                                         TextButton(onClick = { onPick(device.copy(ipv6 = listOf(address), ipv6Candidates = listOf(Ipv6AddressCandidate(address, primary = true)))) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                                            Text(address, color = PortBlue, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(address, style = LabTypography.Value.copy(color = PortBlue), maxLines = 3, overflow = TextOverflow.Clip)
                                         }
                                     }
                                 }
@@ -1502,7 +1505,7 @@ private fun PortMapDetailPage(
             delay(10_000)
         }
     }
-    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
+    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss, unifiedTypography = true) {
             LabV2Card(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
@@ -1518,7 +1521,7 @@ private fun PortMapDetailPage(
 
             LabV2Card(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("流量统计", fontSize = 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black)
+                    Text("流量统计", fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
                         PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
@@ -1528,7 +1531,7 @@ private fun PortMapDetailPage(
                     if (rule.transportProtocol.equals("UDP", true)) {
                         Text(
                             "上行包 ${rule.runtime.totalUploadPackets} · 下行包 ${rule.runtime.totalDownloadPackets}",
-                            fontSize = 9.5.sp,
+                            fontSize = LabTypography.Caption.fontSize,
                             color = LabV2.InkMuted,
                         )
                     }
@@ -1537,8 +1540,8 @@ private fun PortMapDetailPage(
 
             LabV2Card(compact = true) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Black)
-                    Text("60 秒采样", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f))
+                    Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold)
+                    Text("60 秒采样", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkFaint)
                 }
                 PortMapTrafficChart(history, Modifier.fillMaxWidth().height(184.dp))
             }
@@ -1546,18 +1549,18 @@ private fun PortMapDetailPage(
             if (rule.runtime.lastError.isNotBlank() && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) {
                 Surface(shape = RoundedCornerShape(18.dp), color = PortRed.copy(alpha = .08f)) {
                     Column(Modifier.padding(horizontal = 11.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("最近错误", color = PortRed, fontWeight = FontWeight.Black, fontSize = 11.5.sp)
-                        Text(portMapErrorText(rule.runtime.lastError), color = PortRed, fontSize = 10.8.sp, lineHeight = 13.sp)
+                        Text("最近错误", color = PortRed, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.Supporting.fontSize)
+                        Text(portMapErrorText(rule.runtime.lastError), color = PortRed, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight)
                     }
                 }
             }
 
             LabV2Card(compact = true) {
-                Text("远程访问诊断", fontSize = 12.sp, fontWeight = FontWeight.Black)
+                Text("远程访问诊断", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold)
                 Text(
                     if (remoteEndpoint.isBlank()) "请先在关联收藏中填写可访问的远程入口。" else "由当前手机直接检测远程入口，不经过 Hub。",
-                    fontSize = 10.sp,
-                    lineHeight = 13.sp,
+                    fontSize = LabTypography.Caption.fontSize,
+                    lineHeight = LabTypography.Caption.lineHeight,
                     color = LabV2.InkMuted,
                 )
                 Button(
@@ -1580,11 +1583,11 @@ private fun PortMapDetailPage(
                     if (testingRemote) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
                         Spacer(Modifier.width(6.dp))
-                        Text("正在测试", fontWeight = FontWeight.Black)
+                        Text("正在测试", style = LabTypography.Button)
                     } else {
                         Icon(Icons.Rounded.Speed, null, Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("测试远程访问", fontWeight = FontWeight.Black)
+                        Text("测试远程访问", style = LabTypography.Button)
                     }
                 }
                 remoteTest?.let { report ->
@@ -1621,19 +1624,19 @@ private fun PortMapDetailPage(
             OutlinedButton(onClick = onAddFavorite, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortBlue)) {
                 Icon(Icons.Rounded.Bookmark, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("加入收藏", fontWeight = FontWeight.Black)
+                Text("加入收藏", style = LabTypography.Button)
             }
             Button(onClick = onToggle, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.shouldStop) PortRed else PortBlue)) {
                 Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
                 Spacer(Modifier.width(5.dp))
-                Text(if (rule.shouldStop) "停止映射" else "启动映射", fontWeight = FontWeight.Black)
+                Text(if (rule.shouldStop) "停止映射" else "启动映射", style = LabTypography.Button)
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) {
                 Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("编辑", fontWeight = FontWeight.Black)
+                Text("编辑", style = LabTypography.Button)
             }
             OutlinedButton(
                 onClick = { confirmDelete = true },
@@ -1644,7 +1647,7 @@ private fun PortMapDetailPage(
             ) {
                 Icon(Icons.Rounded.Delete, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("删除", fontWeight = FontWeight.Black)
+                Text("删除", style = LabTypography.Button.copy(color = PortRed))
             }
         }
         Spacer(Modifier.height(2.dp))
@@ -1653,10 +1656,10 @@ private fun PortMapDetailPage(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除端口映射？", fontWeight = FontWeight.Black) },
-            text = { Text("删除后会通知路由器停止并移除该规则。") },
-            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("删除", color = PortRed, fontWeight = FontWeight.Black) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } }
+            title = { Text("删除端口映射？", style = LabTypography.CardTitle) },
+            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.Body) },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("删除", style = LabTypography.CompactButton.copy(color = PortRed)) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消", style = LabTypography.CompactButton) } }
         )
     }
 }
@@ -1665,16 +1668,16 @@ private fun PortMapDetailPage(
 private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink, copyable: Boolean = false) {
     val context = LocalContext.current
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = 10.8.sp, lineHeight = 14.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Bold)
+        Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
         if (copyable && value.isNotBlank()) {
             SelectionContainer(Modifier.weight(1f)) {
-                Text(value, Modifier.fillMaxWidth(), fontSize = 12.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, softWrap = true)
+                Text(value, Modifier.fillMaxWidth(), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, color = color, fontWeight = FontWeight.SemiBold, softWrap = true)
             }
             IconButton(onClick = { copy(context, value) }, modifier = Modifier.size(28.dp)) {
                 Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(15.dp), tint = PortBlue)
             }
         } else {
-            Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = 12.sp, lineHeight = 15.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Clip)
+            Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, color = color, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
         }
     }
 }
@@ -1696,7 +1699,7 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
     }
     if (rates.size < 2) {
         Box(modifier.background(Color(0xFFF7FAFE), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
-            Text("等待流量采样", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f), fontSize = 10.2.sp)
+            Text("等待流量采样", color = LabV2.InkFaint, fontSize = LabTypography.Supporting.fontSize)
         }
         return
     }
@@ -1726,7 +1729,7 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
             val axisColor = Color(0xFF94A3B8).copy(alpha = .72f)
             val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.rgb(100, 116, 139)
-                textSize = 8.5.sp.toPx()
+                textSize = LabTypography.Caption.fontSize.toPx()
             }
 
             drawLine(axisColor, Offset(left, top), Offset(left, top + plotHeight), 0.8.dp.toPx())
@@ -1777,7 +1780,7 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
             ChartLegendDot(PortGreen, "下载")
             selectedIndex?.coerceIn(0, rates.lastIndex)?.let { index ->
                 Spacer(Modifier.width(12.dp))
-                Text("↑ ${formatPortRate(rates[index].second)}  ↓ ${formatPortRate(rates[index].third)}", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted, maxLines = 1)
+                Text("↑ ${formatPortRate(rates[index].second)}  ↓ ${formatPortRate(rates[index].third)}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             }
         }
     }
@@ -1792,7 +1795,7 @@ private fun formatPortRate(value: Float): String = when {
 @Composable
 private fun ChartLegendDot(color: Color, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(6.dp).background(color, CircleShape)); Spacer(Modifier.width(4.dp)); Text(text, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .5f))
+        Box(Modifier.size(6.dp).background(color, CircleShape)); Spacer(Modifier.width(4.dp)); Text(text, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted)
     }
 }
 

@@ -140,7 +140,7 @@ fun RouterFeatureRail(
     val connection = RouterConnectionStore.snapshot
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("路由器功能", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+            Text("路由器功能", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
             Spacer(Modifier.weight(1f))
             Surface(
                 onClick = onConnection,
@@ -151,7 +151,7 @@ fun RouterFeatureRail(
                 Row(Modifier.padding(start = 8.dp, end = 6.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(6.dp).background(if (connection.connected) RouterGreen else RouterMuted, CircleShape))
                     Spacer(Modifier.width(5.dp))
-                    Text(connection.statusText, fontSize = 9.3.sp, fontWeight = FontWeight.Black, color = if (connection.connected) RouterGreen else RouterMuted)
+                    Text(connection.statusText, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = if (connection.connected) RouterGreen else RouterMuted)
                     Spacer(Modifier.width(4.dp))
                     Icon(Icons.Rounded.Settings, "路由器连接", Modifier.size(14.dp), tint = RouterBlue)
                 }
@@ -188,8 +188,8 @@ private fun RouterFeatureCard(title: String, status: String, accent: Color, glyp
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                 RouterGlyphIcon(glyph, accent, Modifier.size(23.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(title, fontSize = 11.2.sp, lineHeight = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1)
-                    Text(status, fontSize = 8.7.sp, lineHeight = 10.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(title, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1)
+                    Text(status, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             Box(Modifier.align(Alignment.TopEnd).size(5.dp).background(accent.copy(alpha = .85f), CircleShape))
@@ -295,7 +295,7 @@ private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         titles.forEachIndexed { index, title ->
             Box(Modifier.weight(1f).fillMaxHeight().clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
-                Text(title, fontSize = 11.7.sp, fontWeight = if (selected == index) FontWeight.Black else FontWeight.SemiBold, color = if (selected == index) RouterBlue else RouterMuted)
+                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = if (selected == index) FontWeight.SemiBold else FontWeight.SemiBold, color = if (selected == index) RouterBlue else RouterMuted)
                 if (selected == index) Box(Modifier.align(Alignment.BottomCenter).width(30.dp).height(2.2.dp).background(RouterBlue, RoundedCornerShape(99.dp)))
             }
         }
@@ -375,10 +375,10 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(rule.ruleName, Modifier.weight(1f), fontSize = 12.6.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(rule.ruleName, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     TinyBadge(rule.proto.uppercase(), RouterBlue)
                 }
-                Text("WAN ${rule.srcPort}  →  ${rule.destIp}:${rule.destPort}", fontSize = 10.7.sp, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("WAN ${rule.srcPort}  →  ${rule.destIp}:${rule.destPort}", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, null, Modifier.size(17.dp), tint = RouterMuted) }
@@ -390,8 +390,8 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
                     tonalElevation = 0.dp,
                     shadowElevation = 9.dp
                 ) {
-                    DropdownMenuItem(text = { Text("编辑", fontSize = 11.8.sp, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = 11.8.sp, fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
+                    DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -414,8 +414,8 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
             ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(if (initial.ruleName.isBlank()) "新增端口映射" else "编辑端口映射", fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
-                    Text("路由器原生 IPv4 NAT", fontSize = 9.8.sp, color = RouterMuted)
+                    Text(if (initial.ruleName.isBlank()) "新增端口映射" else "编辑端口映射", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
+                    Text("路由器原生 IPv4 NAT", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, null, Modifier.size(19.dp)) }
             }
@@ -434,10 +434,10 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
             AnimatedVisibility(draft.srcIp.isNotBlank() || draft.src.isBlank()) {
                 CompactField("允许来源IP", draft.srcIp, "例如 10.0.0.8", keyboardType = KeyboardType.Ascii) { draft = draft.copy(src = "", srcIp = it.take(64)) }
             }
-            if (error.isNotBlank()) Text(error, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = RouterRed)
+            if (error.isNotBlank()) Text(error, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterRed)
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text("取消", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text("取消", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
                 Button(
                     onClick = {
                         error = when {
@@ -452,7 +452,7 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
                     modifier = Modifier.weight(1f).height(42.dp),
                     shape = RoundedCornerShape(13.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)
-                ) { Text("保存并同步", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+                ) { Text("保存并同步", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
             }
             Spacer(Modifier.height(12.dp))
             }
@@ -481,8 +481,8 @@ private fun UpnpPage(prefs: AppPrefs) {
                     RouterGlyphIcon(RouterGlyph.Upnp, RouterCyan, Modifier.size(30.dp))
                     Spacer(Modifier.width(9.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("自动端口发现", fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
-                        Text("默认线路 ${state.wan} · ${state.mappings.size} 条活动映射", fontSize = 9.6.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                        Text("自动端口发现", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
+                        Text("默认线路 ${state.wan} · ${state.mappings.size} 条活动映射", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                     }
                     Switch(
                         checked = state.enabled,
@@ -499,7 +499,7 @@ private fun UpnpPage(prefs: AppPrefs) {
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("默认线路", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+                    Text("默认线路", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                     Spacer(Modifier.weight(1f))
                     CompactChoice("", state.wan, listOf("AUTO", "WAN"), Modifier.width(116.dp)) { wan ->
                         scope.launch {
@@ -511,18 +511,18 @@ private fun UpnpPage(prefs: AppPrefs) {
                 }
             }
         }
-        item { Text("动态映射", fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.padding(top = 2.dp, start = 2.dp)) }
+        item { Text("动态映射", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.padding(top = 2.dp, start = 2.dp)) }
         if (resource.value != null && state.mappings.isEmpty()) item { CompactEmpty("暂无动态映射", "内网设备申请 UPnP 端口后会显示在这里", RouterGlyph.Upnp, null) }
         items(state.mappings, key = { "${it.clientIp}-${it.protocol}-${it.externalPort}" }) { row ->
             PremiumCard(if (row.protocol == "TCP") RouterBlue else RouterCyan) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(row.name, Modifier.weight(1f), fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(row.name, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             TinyBadge(row.protocol, if (row.protocol == "TCP") RouterBlue else RouterCyan)
                         }
-                        Text(row.clientIp, fontSize = 9.7.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                        Text("内部 ${row.internalPort}  →  外部 ${row.externalPort}", fontSize = 10.3.sp, fontWeight = FontWeight.Bold, color = RouterInk)
+                        Text(row.clientIp, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                        Text("内部 ${row.internalPort}  →  外部 ${row.externalPort}", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
                     }
                 }
             }
@@ -574,7 +574,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${visible.size} 条规则", fontSize = 10.3.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+                    Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = { scope.launch { repository.refreshFirewall(false) } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
                     Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(19.dp)) } }
@@ -617,14 +617,14 @@ private fun FirewallRuleCard(rule: FirewallRule, onOpen: () -> Unit, onToggle: (
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(rule.ruleName, Modifier.weight(1f), fontSize = 12.2.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(rule.ruleName, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     TinyBadge(if (rule.target == "ACCEPT") "允许" else "丢弃", accent)
                 }
                 val port = if (rule.proto in setOf("tcp", "udp")) rule.destPort.ifBlank { "任意端口" } else "不匹配端口"
-                Text("${rule.ipVersion.uppercase()} · ${rule.proto.uppercase()} · $port", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${rule.ipVersion.uppercase()} · ${rule.proto.uppercase()} · $port", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val targetText = rule.destIP.ifBlank { rule.ipv6SuffixDest.ifBlank { "任意目标" } }
-                Text("${rule.inIface.ifBlank { "本机" }.uppercase()} → ${rule.outIface.ifBlank { "本机" }.uppercase()} · $targetText", fontSize = 9.6.sp, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = 8.9.sp, color = RouterMuted)
+                Text("${rule.inIface.ifBlank { "本机" }.uppercase()} → ${rule.outIface.ifBlank { "本机" }.uppercase()} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Switch(checked = rule.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.76f), colors = SwitchDefaults.colors(checkedTrackColor = accent))
@@ -673,12 +673,12 @@ private fun FirewallEditorPage(initial: FirewallRule, onBack: () -> Unit, onSave
             if (rule.direction != "inbound") CompactChoice("出接口", rule.outIface.ifBlank { "lan" }, listOf("lan", "wan"), Modifier.weight(1f)) { rule = rule.copy(outIface = it) }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("保存后立即启用", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+            Text("保存后立即启用", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
             Spacer(Modifier.weight(1f))
             Switch(checked = rule.enabled, onCheckedChange = { rule = rule.copy(enabled = it) }, modifier = Modifier.scale(.85f), colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
         }
-        if (error.isNotBlank()) Text(error, fontSize = 10.5.sp, color = RouterRed, fontWeight = FontWeight.SemiBold)
-        Button(onClick = { error = if (rule.ruleName.isBlank()) "请填写规则名称" else ""; if (error.isBlank()) onSave(rule) }, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text("保存并同步路由器", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+        if (error.isNotBlank()) Text(error, fontSize = LabTypography.Supporting.fontSize, color = RouterRed, fontWeight = FontWeight.SemiBold)
+        Button(onClick = { error = if (rule.ruleName.isBlank()) "请填写规则名称" else ""; if (error.isBlank()) onSave(rule) }, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text("保存并同步路由器", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
     }
 }
 
@@ -971,11 +971,11 @@ private fun LabProbeDdnsCard(
             RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(30.dp))
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(record.hostname.ifBlank { "未命名 DDNS 记录" }, fontSize = 12.sp, fontWeight = FontWeight.Black, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${labProbeProviderLabel(record.provider)} · ${record.recordTypes.joinToString(" / ")}", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+                Text(record.hostname.ifBlank { "未命名 DDNS 记录" }, style = LabTypography.ValueStrong.copy(color = RouterInk), maxLines = 2, overflow = TextOverflow.Clip)
+                Text("${labProbeProviderLabel(record.provider)} · ${record.recordTypes.joinToString(" / ")}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                     TinyBadge(labProbeStatusLabel(record.status), accent)
-                    Text(if (record.enabled) "已启用" else "已停用", fontSize = 9.2.sp, color = if (record.enabled) RouterGreen else RouterMuted, fontWeight = FontWeight.Bold)
+                    Text(if (record.enabled) "已启用" else "已停用", fontSize = LabTypography.Caption.fontSize, color = if (record.enabled) RouterGreen else RouterMuted, fontWeight = FontWeight.SemiBold)
                 }
             }
             Switch(checked = record.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.76f), colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
@@ -989,17 +989,17 @@ private fun LabProbeDdnsCard(
                     tonalElevation = 0.dp,
                     shadowElevation = 8.dp,
                 ) {
-                    DropdownMenuItem(text = { Text(menuLabels[0], fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text(menuLabels[1], fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onToggle() })
-                    DropdownMenuItem(text = { Text(menuLabels[2], fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                    DropdownMenuItem(text = { Text(menuLabels[0], fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text(menuLabels[1], fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onToggle() })
+                    DropdownMenuItem(text = { Text(menuLabels[2], fontSize = LabTypography.Supporting.fontSize, color = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 39.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("检测 $detectedSummary", fontSize = 9.1.sp, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("发布 $publishedSummary", fontSize = 9.1.sp, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Column(Modifier.fillMaxWidth().padding(start = 39.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("检测 $detectedSummary", style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Clip)
+            Text("发布 $publishedSummary", style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Clip)
         }
-        Text("最后检测 ${labProbeTimeText(record.lastDetectedAt)} · 最后更新 ${labProbeTimeText(record.lastUpdatedAt)}", Modifier.padding(start = 39.dp), fontSize = 9.2.sp, color = RouterMuted)
+        Text("最后检测 ${labProbeTimeText(record.lastDetectedAt)} · 最后更新 ${labProbeTimeText(record.lastUpdatedAt)}", Modifier.padding(start = 39.dp), fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
     }
 }
 
@@ -1024,8 +1024,8 @@ private fun LabProbeDdnsDetailPage(
             Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.ArrowBack, null, Modifier.size(20.dp), tint = RouterInk) }
                 Column(Modifier.weight(1f)) {
-                    Text("DDNS 详情", fontSize = 15.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
-                    Text(labProbeProviderLabel(record.provider), fontSize = 9.2.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+                    Text("DDNS 详情", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
+                    Text(labProbeProviderLabel(record.provider), fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
                 }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(20.dp), tint = RouterMuted) }
@@ -1037,9 +1037,9 @@ private fun LabProbeDdnsDetailPage(
                         tonalElevation = 0.dp,
                         shadowElevation = 8.dp,
                     ) {
-                        DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onToggle() })
-                        DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                        DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onToggle() })
+                        DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Supporting.fontSize, color = RouterRed) }, onClick = { menu = false; onDelete() })
                     }
                 }
             }
@@ -1051,20 +1051,20 @@ private fun LabProbeDdnsDetailPage(
                     RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(31.dp))
                     Spacer(Modifier.width(9.dp))
                     Column(Modifier.weight(1f)) {
-                        LabProbeCopyableValue(record.hostname, "未命名 DDNS 记录", textSize = 14.sp)
-                        Text(if (record.enabled) "已启用 · ${record.recordTypes.joinToString(" / ")}" else "已停用", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
+                        LabProbeCopyableValue(record.hostname, "未命名 DDNS 记录", textSize = LabTypography.Value.fontSize)
+                        Text(if (record.enabled) "已启用 · ${record.recordTypes.joinToString(" / ")}" else "已停用", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
                     }
                     TinyBadge(labProbeStatusLabel(record.status), labProbeStatusColor(record.status))
                 }
             }
             if (externalError.isNotBlank()) CompactMessage(externalError, RouterRed)
-            Text("DNS 记录", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+            Text("DNS 记录", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
             if (record.recordTypes.contains("A")) LabProbeDdnsAddressCard("A / IPv4", record.publishedIpv4, record.detectedIpv4, record.ipv4State, record.ipv4Source.ifBlank { address.ipv4Source })
             if (record.recordTypes.contains("AAAA")) LabProbeDdnsAddressCard("AAAA / IPv6", record.publishedIpv6, record.detectedIpv6, record.ipv6State, record.ipv6Source.ifBlank { address.ipv6Source })
             if (record.recordTypes.contains("CNAME")) LabProbeDdnsValueCard("CNAME", "CNAME 目标", record.recordValues["CNAME"].orEmpty(), record.publishedValues["CNAME"].orEmpty())
             if (record.recordTypes.contains("TXT")) LabProbeDdnsValueCard("TXT", "TXT 内容", record.recordValues["TXT"].orEmpty(), record.publishedValues["TXT"].orEmpty())
             if (record.recordTypes.any { it == "A" || it == "AAAA" }) {
-                Text("检测地址", fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
+                Text("检测地址", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
                 PremiumCard(RouterCyan) {
                     if (record.recordTypes.contains("A")) {
                         LabProbeDetectedRow("IPv4", record.detectedIpv4.ifBlank { address.detectedIpv4 }, record.ipv4State.ifBlank { address.ipv4State }, record.ipv4Source.ifBlank { address.ipv4Source })
@@ -1075,20 +1075,21 @@ private fun LabProbeDdnsDetailPage(
                 }
             }
             PremiumCard(RouterMuted) {
-                Text("最后检测：${labProbeTimeText(record.lastDetectedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
-                Text("最后更新：${labProbeTimeText(record.lastUpdatedAt)}", fontSize = 10.sp, color = RouterMuted, fontWeight = FontWeight.Bold)
+                Text("最后检测：${labProbeTimeText(record.lastDetectedAt)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+                Text("最后更新：${labProbeTimeText(record.lastUpdatedAt)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
                 if (record.recordTypes.any { it == "A" || it == "AAAA" } && !labProbeDetectionIsFresh(record, address)) {
-                    Text("检测结果已过期，请先刷新检测地址", fontSize = 10.sp, color = RouterAmber, fontWeight = FontWeight.Bold)
+                    Text("检测结果已过期，请先刷新检测地址", fontSize = LabTypography.Caption.fontSize, color = RouterAmber, fontWeight = FontWeight.SemiBold)
                 }
-                if (record.lastError.isNotBlank()) Text(record.lastError, fontSize = 10.sp, color = RouterRed, fontWeight = FontWeight.SemiBold)
+                if (record.lastError.isNotBlank()) Text(record.lastError, fontSize = LabTypography.Caption.fontSize, color = RouterRed, fontWeight = FontWeight.SemiBold)
             }
             if (record.recordTypes.any { it == "A" || it == "AAAA" }) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
-                    Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 10.8.sp, fontWeight = FontWeight.Black) }
+                    OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
+                    Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
                 }
             } else {
-                Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
+                Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = LabTypography.Sup…1264 tokens truncated…辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
             }
         }
     }
@@ -1098,15 +1099,15 @@ private fun LabProbeDdnsDetailPage(
 private fun LabProbeDdnsAddressCard(title: String, published: String, detected: String, state: String, source: String) {
     PremiumCard(if (published.isNotBlank()) RouterGreen else RouterAmber) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.weight(1f))
+            Text(title, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.weight(1f))
             TinyBadge(if (published.isNotBlank()) "已发布" else if (detected.isNotBlank()) "待发布" else "无地址", if (published.isNotBlank()) RouterGreen else RouterAmber)
         }
-        LabProbeCopyableValue(published.ifBlank { detected }, "未检测到地址", textSize = 13.sp)
+        LabProbeCopyableValue(published.ifBlank { detected }, "未检测到地址", textSize = LabTypography.Value.fontSize)
         if (published.isNotBlank() && detected.isNotBlank() && published != detected) {
-            Text("检测到新地址", fontSize = 9.5.sp, color = RouterBlue, fontWeight = FontWeight.Bold)
-            LabProbeCopyableValue(detected, "未检测到地址", textSize = 11.5.sp, textColor = RouterBlue)
+            Text("检测到新地址", fontSize = LabTypography.Caption.fontSize, color = RouterBlue, fontWeight = FontWeight.SemiBold)
+        LabProbeCopyableValue(detected, "未检测到地址", textSize = LabTypography.Value.fontSize, textColor = RouterBlue)
         }
-        Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.5.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+        Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1114,13 +1115,13 @@ private fun LabProbeDdnsAddressCard(title: String, published: String, detected: 
 private fun LabProbeDdnsValueCard(type: String, label: String, value: String, published: String) {
     PremiumCard(if (published.isNotBlank()) RouterGreen else RouterAmber) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("记录类型：$type", fontSize = 11.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.weight(1f))
+            Text("记录类型：$type", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.weight(1f))
             TinyBadge(if (published.isNotBlank()) "已发布" else "待发布", if (published.isNotBlank()) RouterGreen else RouterAmber)
         }
-        Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
-        LabProbeCopyableValue(value, "未填写", textSize = 12.5.sp)
-        Text("已发布", fontSize = 9.8.sp, color = RouterMuted, fontWeight = FontWeight.SemiBold)
-        LabProbeCopyableValue(published, "未发布", textSize = 10.8.sp, textColor = RouterMuted, textWeight = FontWeight.SemiBold)
+        Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+        LabProbeCopyableValue(value, "未填写", textSize = LabTypography.Value.fontSize)
+        Text("已发布", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+        LabProbeCopyableValue(published, "未发布", textSize = LabTypography.Supporting.fontSize, textColor = RouterMuted, textWeight = FontWeight.Medium)
     }
 }
 
@@ -1129,9 +1130,9 @@ private fun LabProbeCopyableValue(
     value: String,
     placeholder: String,
     modifier: Modifier = Modifier,
-    textSize: androidx.compose.ui.unit.TextUnit = 12.5.sp,
+    textSize: androidx.compose.ui.unit.TextUnit = LabTypography.Value.fontSize,
     textColor: Color = RouterInk,
-    textWeight: FontWeight = FontWeight.Black,
+    textWeight: FontWeight = FontWeight.SemiBold,
 ) {
     val context = LocalContext.current
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -1157,10 +1158,10 @@ private fun LabProbeCopyableValue(
 @Composable
 private fun LabProbeDetectedRow(label: String, value: String, state: String, source: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = RouterInk, modifier = Modifier.width(54.dp))
+        Text(label, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.width(54.dp))
         Column(Modifier.weight(1f)) {
-            LabProbeCopyableValue(value, "未检测到", textSize = 10.7.sp, textWeight = FontWeight.Bold)
-            Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = 9.2.sp, color = RouterMuted)
+        LabProbeCopyableValue(value, "未检测到", textSize = LabTypography.Supporting.fontSize, textWeight = FontWeight.Medium)
+            Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
         }
     }
 }
@@ -1198,7 +1199,7 @@ private fun LabProbeDdnsEditorPage(
             credentialValues = emptyMap()
         }
         CompactField("域名", record.hostname, "例如 home.example.com") { record = record.copy(hostname = it.take(253)) }
-        Text("记录类型", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        Text("记录类型", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             CompactSegment("IPv4 / A", record.recordTypes.contains("A"), Modifier.weight(1f), enabled = "A" in supportedTypes) {
                 val next = if (record.recordTypes.contains("A")) record.recordTypes - "A" else record.recordTypes.filterNot { it == "CNAME" } + "A"
@@ -1229,7 +1230,7 @@ private fun LabProbeDdnsEditorPage(
                 record = record.copy(recordValues = record.recordValues + ("TXT" to next.take(2048)))
             }
         }
-        Text("服务商凭据", fontSize = 9.7.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        Text("服务商凭据", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         if (existingEdit && !hasEnteredCredential && !providerChanged) CompactMessage("已配置凭据；以下字段留空即可保持原凭据", RouterCyan)
         requiredFields.forEach { (key, label) ->
             val value = credentialValues[key].orEmpty()
@@ -1241,7 +1242,7 @@ private fun LabProbeDdnsEditorPage(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("启用", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+            Text("启用", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
             Spacer(Modifier.weight(1f))
             Switch(checked = record.enabled, onCheckedChange = { record = record.copy(enabled = it) }, colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
         }
@@ -1259,7 +1260,7 @@ private fun LabProbeDdnsEditorPage(
             }
             if (error.isBlank()) onSave(record, entered)
         }, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) {
-            Text("保存并同步", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+            Text("保存并同步", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -1277,7 +1278,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
     val error = actionError.ifBlank { resource.error }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("${rows.count { it.enabled }} 条启用 · ${rows.count { it.status.contains("error",true) || it.status.contains("fail",true) }} 条异常", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RouterMuted)
+        Text("${rows.count { it.enabled }} 条启用 · ${rows.count { it.status.contains("error",true) || it.status.contains("fail",true) }} 条异常", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         Spacer(Modifier.weight(1f))
         IconButton(onClick={scope.launch{repository.refreshDdns(false)}},modifier=Modifier.size(33.dp)){Icon(Icons.Rounded.Refresh,null,Modifier.size(17.dp),tint=RouterBlue)}
         Surface(onClick={adding=true},shape=CircleShape,color=RouterBlue,modifier=Modifier.size(34.dp)){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(18.dp))}}
@@ -1346,9 +1347,9 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
                 RouterGlyphIcon(RouterGlyph.Ddns,accent,Modifier.size(27.dp))
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
-                    Text(domainText,fontSize=11.9.sp,fontWeight=FontWeight.Black,color=RouterInk,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    Text("$providerText · ${if(record.useIpv6)"IPv6" else "IPv4"} · $interfaceText",fontSize=9.5.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
-                    Text(record.ip.ifBlank{record.status.ifBlank{"等待更新"}},fontSize=9.8.sp,fontWeight=FontWeight.SemiBold,color=if(warning)RouterAmber else if(record.ip.isBlank())RouterMuted else RouterBlue,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    Text(domainText,style=LabTypography.ValueStrong,maxLines=2,overflow=TextOverflow.Clip)
+                    Text("$providerText · ${if(record.useIpv6)"IPv6" else "IPv4"} · $interfaceText",fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
+                    Text(record.ip.ifBlank{record.status.ifBlank{"等待更新"}},style=LabTypography.Caption.copy(color=if(warning)RouterAmber else if(record.ip.isBlank())RouterMuted else RouterBlue),maxLines=2,overflow=TextOverflow.Clip)
                 }
             }
             Switch(checked=record.enabled,onCheckedChange={onToggle()},modifier=Modifier.scale(.76f),colors=SwitchDefaults.colors(checkedTrackColor=accent))
@@ -1364,8 +1365,8 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
                     tonalElevation = 0.dp,
                     shadowElevation = 8.dp,
                 ) {
-                    DropdownMenuItem(text = { Text("编辑", fontSize = 11.5.sp, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = 11.5.sp, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                    DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Supporting.fontSize, color = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -1400,10 +1401,10 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",onBack:()-
         CompactField("用户名 / AccessKey",record.username,"AccessKey ID"){record=record.copy(username=it.take(160))}
         CompactPasswordField(if(normalizedInitial.passwordConfigured)"密码 / Secret（留空保持）" else "密码 / Secret",password,"请输入密钥",showPassword,{showPassword=!showPassword}){password=it.take(256)}
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){CompactChoice("接口",record.interfaceName,interfaceOptions,Modifier.weight(1f)){record=record.copy(interfaceName=it)};CompactChoice("记录类型",if(record.useIpv6)"IPv6" else "IPv4",listOf("IPv6","IPv4"),Modifier.weight(1f)){record=record.copy(useIpv6=it=="IPv6")}}
-        Row(verticalAlignment=Alignment.CenterVertically){Text("启用记录",fontSize=10.5.sp,fontWeight=FontWeight.Bold,color=RouterMuted);Spacer(Modifier.weight(1f));Switch(record.enabled,{record=record.copy(enabled=it)},modifier=Modifier.scale(.85f),colors=SwitchDefaults.colors(checkedTrackColor=RouterCyan))}
+        Row(verticalAlignment=Alignment.CenterVertically){Text("启用记录",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted);Spacer(Modifier.weight(1f));Switch(record.enabled,{record=record.copy(enabled=it)},modifier=Modifier.scale(.85f),colors=SwitchDefaults.colors(checkedTrackColor=RouterCyan))}
         val visibleError=error.ifBlank{externalError}
-        if(visibleError.isNotBlank())Text(visibleError,fontSize=10.5.sp,color=RouterRed)
-        Button(onClick={error=when{record.domain.isBlank()->"请填写域名";record.username.isBlank()->"请填写账号/AccessKey";normalizedInitial.serviceId.isBlank()&&password.isBlank()->"请填写密码/Secret";else->""};if(error.isBlank())onSave(record,password.ifBlank{null})},modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize=11.5.sp,fontWeight=FontWeight.Black)}
+        if(visibleError.isNotBlank())Text(visibleError,fontSize = LabTypography.Supporting.fontSize,color=RouterRed)
+        Button(onClick={error=when{record.domain.isBlank()->"请填写域名";record.username.isBlank()->"请填写账号/AccessKey";normalizedInitial.serviceId.isBlank()&&password.isBlank()->"请填写密码/Secret";else->""};if(error.isBlank())onSave(record,password.ifBlank{null})},modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
     }
 }
 @Composable
@@ -1419,15 +1420,15 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
                     RouterGlyphIcon(RouterGlyph.Diagnostic,if(task.failed)RouterRed else if(result.errorCount==0)RouterGreen else RouterAmber,Modifier.size(31.dp))
                     Spacer(Modifier.width(9.dp))
                     Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
-                        Text(when{task.active->task.stageText;task.failed->task.message.ifBlank{task.stageText};result.items.isEmpty()->"尚未检测";result.errorCount==0->"网络状态正常";else->"发现 ${result.errorCount} 项异常"},fontSize=12.5.sp,fontWeight=FontWeight.Black,color=RouterInk)
-                        Text(if(task.active)"已耗时 ${task.elapsedSeconds} 秒 · 进度 ${result.progress}" else "进度 ${result.progress}",fontSize=9.7.sp,color=RouterMuted)
-                        if(task.active&&task.lastRouterResponseAt<=0L)Text("检测已由 Hub 接管，可以安全离开页面",fontSize=9.4.sp,color=RouterMuted)
+                        Text(when{task.active->task.stageText;task.failed->task.message.ifBlank{task.stageText};result.items.isEmpty()->"尚未检测";result.errorCount==0->"网络状态正常";else->"发现 ${result.errorCount} 项异常"},fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk)
+                        Text(if(task.active)"已耗时 ${task.elapsedSeconds} 秒 · 进度 ${result.progress}" else "进度 ${result.progress}",fontSize = LabTypography.Caption.fontSize,color=RouterMuted)
+                        if(task.active&&task.lastRouterResponseAt<=0L)Text("检测已由 Hub 接管，可以安全离开页面",fontSize = LabTypography.Caption.fontSize,color=RouterMuted)
                     }
-                    Button(onClick={tasks.startDiagnostic()},enabled=!task.active,shape=RoundedCornerShape(12.dp),contentPadding=PaddingValues(horizontal=10.dp),modifier=Modifier.height(35.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterBlue,contentColor=Color.White,disabledContainerColor=RouterBlue.copy(alpha=.62f),disabledContentColor=Color.White)){Text(if(task.active)"检测中" else "开始检测",fontSize=10.3.sp,fontWeight=FontWeight.Black)}
+                    Button(onClick={tasks.startDiagnostic()},enabled=!task.active,shape=RoundedCornerShape(12.dp),contentPadding=PaddingValues(horizontal=10.dp),modifier=Modifier.height(35.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterBlue,contentColor=Color.White,disabledContainerColor=RouterBlue.copy(alpha=.62f),disabledContentColor=Color.White)){Text(if(task.active)"检测中" else "开始检测",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
                 }
             }}
             if(task.failed)item{CompactMessage(task.message.ifBlank{task.stageText},RouterRed)}
-            items(result.items){item->val accent=if(item.status=="success")RouterGreen else RouterAmber;PremiumCard(accent){Row(verticalAlignment=Alignment.Top){Icon(if(item.status=="success")Icons.Rounded.CheckCircle else Icons.Rounded.Warning,null,tint=accent,modifier=Modifier.size(18.dp));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){Text(item.title.ifBlank{item.type},fontSize=11.7.sp,fontWeight=FontWeight.Black,color=RouterInk);Text(item.result,fontSize=10.2.sp,fontWeight=FontWeight.SemiBold,color=RouterInk);if(item.port.isNotBlank())Text("问题接口：${item.port}",fontSize=9.7.sp,color=RouterRed);if(item.tips.isNotBlank())Text(item.tips,fontSize=9.5.sp,color=RouterMuted);if(item.advise.isNotBlank())Text(item.advise,fontSize=9.5.sp,color=RouterMuted,lineHeight=13.sp)}}}}
+            items(result.items){item->val accent=if(item.status=="success")RouterGreen else RouterAmber;PremiumCard(accent){Row(verticalAlignment=Alignment.Top){Icon(if(item.status=="success")Icons.Rounded.CheckCircle else Icons.Rounded.Warning,null,tint=accent,modifier=Modifier.size(18.dp));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){Text(item.title.ifBlank{item.type},fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);Text(item.result,fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);if(item.port.isNotBlank())Text("问题接口：${item.port}",fontSize = LabTypography.Caption.fontSize,color=RouterRed);if(item.tips.isNotBlank())Text(item.tips,fontSize = LabTypography.Caption.fontSize,color=RouterMuted);if(item.advise.isNotBlank())Text(item.advise,fontSize = LabTypography.Caption.fontSize,color=RouterMuted,lineHeight = LabTypography.Caption.lineHeight)}}}}
         }
     }
 }
@@ -1460,12 +1461,12 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(30.dp))
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(headline, fontSize = 12.5.sp, fontWeight = FontWeight.Black, color = RouterInk)
-                    Text(detail, fontSize = 10.2.sp, fontWeight = FontWeight.Bold, color = RouterMuted, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    if ((status?.lastSuccessAt ?: 0L) > 0L) Text(routerLastSyncText(status!!.lastSuccessAt), fontSize = 9.6.sp, color = RouterMuted)
+                    Text(headline, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
+                    Text(detail, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if ((status?.lastSuccessAt ?: 0L) > 0L) Text(routerLastSyncText(status!!.lastSuccessAt), fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
                 }
                 Surface(shape = RoundedCornerShape(99.dp), color = accent.copy(alpha = .09f)) {
-                    Text(if (sessionConnected) "正常" else "待同步", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = 9.2.sp, fontWeight = FontWeight.Black, color = accent)
+                    Text(if (sessionConnected) "正常" else "待同步", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = accent)
                 }
             }
         }
@@ -1478,7 +1479,7 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
         ) {
             Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
-            Text(if (resource.refreshing) "正在后台刷新" else "刷新 Hub 状态", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+            Text(if (resource.refreshing) "正在后台刷新" else "刷新 Hub 状态", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -1499,7 +1500,7 @@ private fun routerLastSyncText(lastSuccessAt: Long): String {
 private fun CompactTopBar(title:String,onBack:()->Unit,subtitle:String=""){
     Row(Modifier.fillMaxWidth().height(46.dp).padding(horizontal=7.dp),verticalAlignment=Alignment.CenterVertically){
         IconButton(onClick=onBack,modifier=Modifier.size(34.dp)){Icon(Icons.Rounded.ArrowBack,null,Modifier.size(20.dp),tint=RouterInk)}
-        Column(Modifier.weight(1f)){Text(title,fontSize=15.5.sp,lineHeight=17.sp,fontWeight=FontWeight.Black,color=RouterInk,maxLines=1);if(subtitle.isNotBlank())Text(subtitle,fontSize=9.2.sp,lineHeight=10.5.sp,fontWeight=FontWeight.SemiBold,color=RouterMuted,maxLines=1,overflow=TextOverflow.Ellipsis)}
+        Column(Modifier.weight(1f)){Text(title,style=LabTypography.CardTitle,maxLines=1);if(subtitle.isNotBlank())Text(subtitle,style=LabTypography.Caption,maxLines=1,overflow=TextOverflow.Ellipsis)}
     }
 }
 
@@ -1514,7 +1515,7 @@ private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,content:
 @Composable
 private fun CompactToolbar(title:String,subtitle:String,loading:Boolean,onRefresh:(()->Unit)?,onAdd:(()->Unit)?){
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-        Column(Modifier.weight(1f)){Text(title,fontSize=12.7.sp,fontWeight=FontWeight.Black,color=RouterInk);Text(subtitle,fontSize=9.3.sp,fontWeight=FontWeight.SemiBold,color=RouterMuted)}
+        Column(Modifier.weight(1f)){Text(title,fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);Text(subtitle,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)}
         if(onRefresh!=null)IconButton(onClick=onRefresh,modifier=Modifier.size(33.dp)){if(loading)CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)else Icon(Icons.Rounded.Refresh,null,Modifier.size(17.dp),tint=RouterBlue)}
         if(onAdd!=null)Surface(onClick=onAdd,shape=CircleShape,color=RouterBlue,modifier=Modifier.size(34.dp),shadowElevation=2.dp){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(18.dp))}}
     }
@@ -1530,7 +1531,7 @@ private fun PremiumCard(accent:Color,modifier:Modifier=Modifier,content:@Composa
 @Composable
 private fun CompactField(label:String,value:String,hint:String,modifier:Modifier=Modifier,keyboardType:KeyboardType=KeyboardType.Text,onChange:(String)->Unit){
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Text(label,fontSize=9.7.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
+        Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Surface(Modifier.fillMaxWidth().height(44.dp),shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
             BasicTextField(
                 value=value,
@@ -1538,9 +1539,9 @@ private fun CompactField(label:String,value:String,hint:String,modifier:Modifier
                 modifier=Modifier.fillMaxSize(),
                 singleLine=true,
                 keyboardOptions=KeyboardOptions(keyboardType=keyboardType),
-                textStyle=TextStyle(fontSize=12.2.sp,lineHeight=14.sp,fontWeight=FontWeight.SemiBold,color=RouterInk),
+                textStyle=TextStyle(fontSize = LabTypography.Value.fontSize,lineHeight = LabTypography.Value.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk),
                 cursorBrush=SolidColor(RouterBlue),
-                decorationBox={inner->Row(Modifier.fillMaxSize().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f),contentAlignment=Alignment.CenterStart){if(value.isEmpty())Text(hint,fontSize=11.2.sp,lineHeight=13.sp,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f),maxLines=1,overflow=TextOverflow.Clip);inner()}}}
+                decorationBox={inner->Row(Modifier.fillMaxSize().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f),contentAlignment=Alignment.CenterStart){if(value.isEmpty())Text(hint,fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f),maxLines=1,overflow=TextOverflow.Clip);inner()}}}
             )
         }
     }
@@ -1549,7 +1550,7 @@ private fun CompactField(label:String,value:String,hint:String,modifier:Modifier
 @Composable
 private fun CompactMultilineField(label:String,value:String,hint:String,onChange:(String)->Unit){
     Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Text(label,fontSize=9.7.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
+        Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Surface(Modifier.fillMaxWidth().heightIn(min=76.dp,max=132.dp),shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
             BasicTextField(
                 value=value,
@@ -1557,9 +1558,9 @@ private fun CompactMultilineField(label:String,value:String,hint:String,onChange
                 modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=10.dp),
                 minLines=3,
                 maxLines=8,
-                textStyle=TextStyle(fontSize=12.2.sp,lineHeight=17.sp,fontWeight=FontWeight.SemiBold,color=RouterInk),
+                textStyle=TextStyle(fontSize = LabTypography.Value.fontSize,lineHeight = LabTypography.Value.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk),
                 cursorBrush=SolidColor(RouterBlue),
-                decorationBox={inner->Box{if(value.isEmpty())Text(hint,fontSize=11.2.sp,lineHeight=15.sp,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f));inner()}}
+                decorationBox={inner->Box{if(value.isEmpty())Text(hint,fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f));inner()}}
             )
         }
     }
@@ -1568,7 +1569,7 @@ private fun CompactMultilineField(label:String,value:String,hint:String,onChange
 @Composable
 private fun CompactPasswordField(label:String,value:String,hint:String,visible:Boolean,onToggle:()->Unit,onChange:(String)->Unit){
     Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
-        Text(label,fontSize=9.7.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
+        Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Surface(Modifier.fillMaxWidth().height(44.dp),shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
             BasicTextField(
                 value=value,
@@ -1576,9 +1577,9 @@ private fun CompactPasswordField(label:String,value:String,hint:String,visible:B
                 modifier=Modifier.fillMaxSize(),
                 singleLine=true,
                 visualTransformation=if(visible)VisualTransformation.None else PasswordVisualTransformation(),
-                textStyle=TextStyle(fontSize=12.2.sp,lineHeight=14.sp,fontWeight=FontWeight.SemiBold,color=RouterInk),
+                textStyle=TextStyle(fontSize = LabTypography.Value.fontSize,lineHeight = LabTypography.Value.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk),
                 cursorBrush=SolidColor(RouterBlue),
-                decorationBox={inner->Row(Modifier.fillMaxSize().padding(start=12.dp,end=5.dp),verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f),contentAlignment=Alignment.CenterStart){if(value.isEmpty())Text(hint,fontSize=11.2.sp,lineHeight=13.sp,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f),maxLines=1);inner()};IconButton(onClick=onToggle,modifier=Modifier.size(34.dp)){Icon(if(visible)Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,null,Modifier.size(18.dp),tint=RouterMuted)}}}
+                decorationBox={inner->Row(Modifier.fillMaxSize().padding(start=12.dp,end=5.dp),verticalAlignment=Alignment.CenterVertically){Box(Modifier.weight(1f),contentAlignment=Alignment.CenterStart){if(value.isEmpty())Text(hint,fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterMuted.copy(alpha=.78f),maxLines=1);inner()};IconButton(onClick=onToggle,modifier=Modifier.size(34.dp)){Icon(if(visible)Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,null,Modifier.size(18.dp),tint=RouterMuted)}}}
             )
         }
     }
@@ -1588,12 +1589,12 @@ private fun CompactPasswordField(label:String,value:String,hint:String,visible:B
 private fun CompactChoice(label:String,value:String,options:List<String>,modifier:Modifier=Modifier,onPick:(String)->Unit){
     var expanded by remember{mutableStateOf(false)}
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
-        if(label.isNotBlank())Text(label,fontSize=9.7.sp,fontWeight=FontWeight.Bold,color=RouterMuted)
+        if(label.isNotBlank())Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Box{
             Surface(Modifier.fillMaxWidth().height(44.dp).clickable{expanded=true},shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
-                Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(value,Modifier.weight(1f),fontSize=11.5.sp,lineHeight=13.sp,fontWeight=FontWeight.Bold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
+                Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(value,Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
-            DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(option,fontSize=11.5.sp,fontWeight=if(option==value)FontWeight.Black else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
+            DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(option,fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
         }
     }
 }
@@ -1605,22 +1606,22 @@ private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier=Modifi
 
 @Composable
 private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier,enabled:Boolean,onClick:()->Unit){
-    Surface(onClick=onClick, enabled=enabled, modifier=modifier.height(33.dp), shape=RoundedCornerShape(11.dp), color=if(selected)RouterBlue else RouterField, border=androidx.compose.foundation.BorderStroke(1.dp,if(selected)RouterBlue else RouterBorder)){Box(contentAlignment=Alignment.Center){Text(text,fontSize=10.5.sp,fontWeight=FontWeight.Black,color=if(selected)Color.White else RouterMuted)}}
+    Surface(onClick=onClick, enabled=enabled, modifier=modifier.height(33.dp), shape=RoundedCornerShape(11.dp), color=if(selected)RouterBlue else RouterField, border=androidx.compose.foundation.BorderStroke(1.dp,if(selected)RouterBlue else RouterBorder)){Box(contentAlignment=Alignment.Center){Text(text,fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold,color=if(selected)Color.White else RouterMuted)}}
 }
 
 @Composable
-private fun TinyBadge(text:String,color:Color){Surface(shape=RoundedCornerShape(99.dp),color=color.copy(alpha=.09f)){Text(text,Modifier.padding(horizontal=6.dp,vertical=2.dp),fontSize=8.5.sp,fontWeight=FontWeight.Black,color=color,maxLines=1)}}
+private fun TinyBadge(text:String,color:Color){Surface(shape=RoundedCornerShape(99.dp),color=color.copy(alpha=.09f)){Text(text,Modifier.padding(horizontal=6.dp,vertical=2.dp),fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=color,maxLines=1)}}
 
 @Composable
-private fun CompactMessage(text:String,color:Color){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(13.dp),color=color.copy(alpha=.065f),border=androidx.compose.foundation.BorderStroke(1.dp,color.copy(alpha=.13f))){Text(text,Modifier.padding(horizontal=10.dp,vertical=7.dp),fontSize=10.sp,fontWeight=FontWeight.SemiBold,color=color)}}
+private fun CompactMessage(text:String,color:Color){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(13.dp),color=color.copy(alpha=.065f),border=androidx.compose.foundation.BorderStroke(1.dp,color.copy(alpha=.13f))){Text(text,Modifier.padding(horizontal=10.dp,vertical=7.dp),fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=color)}}
 
 @Composable
-private fun CompactEmpty(title:String,subtitle:String,glyph:RouterGlyph,onAdd:(()->Unit)?){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(16.dp),color=Color.White,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){Column(Modifier.fillMaxWidth().padding(vertical=18.dp,horizontal=12.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)){RouterGlyphIcon(glyph,RouterBlue,Modifier.size(34.dp));Text(title,fontSize=11.8.sp,fontWeight=FontWeight.Black,color=RouterInk);Text(subtitle,fontSize=9.5.sp,color=RouterMuted);if(onAdd!=null)TextButton(onClick=onAdd,contentPadding=PaddingValues(horizontal=10.dp,vertical=2.dp)){Text("立即添加",fontSize=10.5.sp,fontWeight=FontWeight.Black)}}}}
+private fun CompactEmpty(title:String,subtitle:String,glyph:RouterGlyph,onAdd:(()->Unit)?){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(16.dp),color=Color.White,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){Column(Modifier.fillMaxWidth().padding(vertical=18.dp,horizontal=12.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)){RouterGlyphIcon(glyph,RouterBlue,Modifier.size(34.dp));Text(title,fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);Text(subtitle,fontSize = LabTypography.Caption.fontSize,color=RouterMuted);if(onAdd!=null)TextButton(onClick=onAdd,contentPadding=PaddingValues(horizontal=10.dp,vertical=2.dp)){Text("立即添加",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}}}}
 
 @Composable
 private fun LoadingBlock(){Box(Modifier.fillMaxWidth().height(130.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.4.dp)}}
 
 @Composable
-private fun ConfirmDialog(title:String,text:String,confirmText:String,onConfirm:()->Unit,onDismiss:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title,fontSize=15.sp,fontWeight=FontWeight.Black)},text={Text(text,fontSize=11.8.sp)},confirmButton={TextButton(onClick=onConfirm){Text(confirmText,color=RouterRed,fontWeight=FontWeight.Black)}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}},shape=RoundedCornerShape(17.dp))}
+private fun ConfirmDialog(title:String,text:String,confirmText:String,onConfirm:()->Unit,onDismiss:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title,fontSize = LabTypography.CardTitle.fontSize,fontWeight=FontWeight.SemiBold)},text={Text(text,fontSize = LabTypography.Value.fontSize)},confirmButton={TextButton(onClick=onConfirm){Text(confirmText,color=RouterRed,fontWeight=FontWeight.SemiBold)}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}},shape=RoundedCornerShape(17.dp))}
 
 private fun formatBytesCompact(bytes:Long):String=when{bytes<1024->"${bytes}B";bytes<1024*1024->String.format(Locale.US,"%.1fKB",bytes/1024.0);else->String.format(Locale.US,"%.1fMB",bytes/1024.0/1024.0)}

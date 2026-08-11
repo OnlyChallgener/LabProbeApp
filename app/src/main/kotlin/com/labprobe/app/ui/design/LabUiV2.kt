@@ -48,6 +48,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,6 +105,92 @@ object LabV2 {
     val ButtonShape = RoundedCornerShape(16.dp)
 }
 
+/** Shared type scale for the home, device and router-settings surfaces. */
+object LabTypography {
+    val AppTitle = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        fontWeight = FontWeight.Bold,
+        color = LabV2.Ink
+    )
+    val PageTitle = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 20.sp,
+        lineHeight = 25.sp,
+        fontWeight = FontWeight.Bold,
+        color = LabV2.Ink
+    )
+    val CardTitle = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = LabV2.Ink
+    )
+    val SectionTitle = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = LabV2.Ink
+    )
+    val Body = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        fontWeight = FontWeight.Medium,
+        color = LabV2.Ink
+    )
+    val Value = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+        color = LabV2.Ink
+    )
+    val ValueStrong = Value.copy(fontWeight = FontWeight.SemiBold)
+    val Supporting = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        fontWeight = FontWeight.Medium,
+        color = LabV2.InkMuted
+    )
+    val Caption = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Medium,
+        color = LabV2.InkMuted
+    )
+    val Micro = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 10.sp,
+        lineHeight = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = LabV2.InkMuted
+    )
+    val Button = Value.copy(fontWeight = FontWeight.SemiBold, color = Color.Unspecified)
+    val CompactButton = Supporting.copy(fontWeight = FontWeight.SemiBold, color = Color.Unspecified)
+    val FieldLabel = Supporting
+    val FieldValue = Value
+    val Placeholder = Supporting.copy(fontWeight = FontWeight.Regular, color = LabV2.InkFaint)
+    val Log = Supporting.copy(lineHeight = 15.sp)
+    val Metric = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 40.sp,
+        lineHeight = 44.sp,
+        fontWeight = FontWeight.Bold,
+        color = LabV2.Ink
+    )
+
+    val CompactMetric = Metric.copy(
+        fontSize = 32.sp,
+        lineHeight = 36.sp
+    )
+}
+
 fun Modifier.labV2PageBackground(): Modifier = background(
     Brush.verticalGradient(
         0f to LabV2.BackgroundTop,
@@ -142,7 +230,9 @@ fun CompactPageHeader(
     onBack: (() -> Unit)? = null,
     action: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    compactTitle: Boolean = false
+    compactTitle: Boolean = false,
+    titleStyle: TextStyle? = null,
+    subtitleStyle: TextStyle? = null
 ) {
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         if (onBack != null) {
@@ -160,9 +250,29 @@ fun CompactPageHeader(
             Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontSize = if (compactTitle) 19.sp else 21.sp, lineHeight = if (compactTitle) 22.sp else 24.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                title,
+                style = titleStyle ?: TextStyle(
+                    fontSize = if (compactTitle) 19.sp else 21.sp,
+                    lineHeight = if (compactTitle) 22.sp else 24.sp,
+                    fontWeight = FontWeight.Black,
+                    color = LabV2.Ink
+                ),
+                maxLines = if (titleStyle == null) 1 else 2,
+                overflow = if (titleStyle == null) TextOverflow.Ellipsis else TextOverflow.Clip
+            )
             if (!subtitle.isNullOrBlank()) {
-                Text(subtitle, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    subtitle,
+                    style = subtitleStyle ?: TextStyle(
+                        fontSize = 10.5.sp,
+                        lineHeight = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted
+                    ),
+                    maxLines = 2,
+                    overflow = if (subtitleStyle == null) TextOverflow.Ellipsis else TextOverflow.Clip
+                )
             }
         }
         action?.let {
@@ -184,8 +294,14 @@ fun CompactTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     singleLine: Boolean = true,
     readOnly: Boolean = false,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    textStyle: TextStyle? = null,
+    placeholderStyle: TextStyle? = null
 ) {
+    val resolvedTextStyle = textStyle
+        ?: LocalTextStyle.current.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+    val resolvedPlaceholderStyle = placeholderStyle
+        ?: TextStyle(fontSize = 12.sp, color = LabV2.InkFaint)
     Surface(
         modifier = modifier.height(LabV2.FieldHeight),
         shape = LabV2.FieldShape,
@@ -208,11 +324,11 @@ fun CompactTextField(
                 singleLine = singleLine,
                 keyboardOptions = keyboardOptions,
                 visualTransformation = visualTransformation,
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink),
+                textStyle = resolvedTextStyle,
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty() && placeholder.isNotBlank()) {
-                            Text(placeholder, fontSize = 12.sp, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(placeholder, style = resolvedPlaceholderStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         inner()
                     }
@@ -460,8 +576,11 @@ fun LabV2SegmentedControl(
     selected: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
-    accent: Color = LabV2.Primary
+    accent: Color = LabV2.Primary,
+    textStyle: TextStyle? = null
 ) {
+    val resolvedTextStyle = textStyle
+        ?: TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Black)
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(17.dp),
@@ -483,9 +602,7 @@ fun LabV2SegmentedControl(
                     Box(Modifier.height(40.dp), contentAlignment = Alignment.Center) {
                         Text(
                             option,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Black,
-                            color = if (active) Color.White else LabV2.InkMuted,
+                            style = resolvedTextStyle.copy(color = if (active) Color.White else LabV2.InkMuted),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
