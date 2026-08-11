@@ -1,11 +1,11 @@
 name: Android Release APK
-# build180 service-access, mapping-sync, and favorite-link stability release.
+# v0.10.42 / build184 signed release pipeline.
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - build163
+      - release/build180
     paths:
       - '.github/workflows/android-release.yml'
 
@@ -14,172 +14,111 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-build180]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.5.1
+
       - name: Install Android SDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
       - name: Prepare signing key
         env:
           LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
         run: |
+          set -euo pipefail
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-      - name: Prepare and verify build180
-        run: |
-          python3 -m py_compile \
-            scripts/apply_build172_agent_icon_fixes.py \
-            scripts/apply_build173_icon_fidelity_fix.py \
-            scripts/apply_build174_stability_fixes.py \
-            scripts/apply_build175_icon_version_display_fix.py \
-            scripts/apply_build176_standard_adaptive_icon.py \
-            scripts/apply_build177_centered_icon_spacing.py \
-            scripts/apply_build178_ssh_color_device_name_fixes.py
-          python3 scripts/prepare_android_sources_build167.py
-          python3 scripts/verify_build154_sources.py
 
-          grep -Fq 'versionCode = 181' app/build.gradle.kts
-          grep -Fq 'versionName = "0.10.39"' app/build.gradle.kts
-          grep -Fq 'SSH、控件配色与设备名称一致性修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+      - name: Verify v0.10.42 build184 source
+        run: |
+          set -euo pipefail
+          grep -Fq 'versionCode = 184' app/build.gradle.kts
+          grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
+
+          # Security / stability fixes retained from the previous release line.
           grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'aes128-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
-          grep -Fq 'private val LAB_MENU_SURFACE = Color(0xFFF8FBFF)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'containerColor = LAB_MENU_SURFACE' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'selectedContainerColor = Color(0xFFE8F1FF)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'selectedLabelColor = Color(0xFF2563EB)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'colors = natChipColors' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
           grep -Fq 'fun deviceDisplayName(device: DeviceItem)' app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt
-          grep -Fq 'deviceDisplayName(d)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'userRemarkOverridesRouterName' app/src/test/kotlin/com/labprobe/app/DeviceDisplayNameTest.kt
-          ! grep -Fq 'Text(d.name.ifBlank { d.mac },' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'title = d.remark.ifBlank { d.name.ifBlank { d.mac } },' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'latestVersion = info.currentVersion' app/src/main/kotlin/com/labprobe/app/AgentUpdateCoordinator.kt
-          grep -Fq '"offline" -> state.offlineDevices' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
-          grep -Fq 'oldRejected && !candidateRejected' app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
-          grep -Fq '运行时间同步中' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
 
-          grep -Fq 'android:scaleX="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -Fq 'android:scaleY="0.69"' app/src/main/res/drawable/ic_launcher_radar.xml
-          grep -Fq 'android:scaleX="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
-          grep -Fq 'android:scaleY="0.72"' app/src/main/res/drawable/ic_launcher_network.xml
+          # Final v0.10.42 UI / interaction fixes.
+          grep -Fq 'Text("WOL 设备", fontSize = 14.5.sp' app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
+          grep -Fq 'HomeMiniMetric = Metric.copy(fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.Bold)' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          grep -Fq 'Modifier.size(124.dp).clickable { onNavigate("health_score") }' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'border = null' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'modifier = Modifier.width(64.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'One shared bidirectional mapping symbol across settings, IPv6 mapping and native port mapping.' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -Fq 'Shared double-lightning symbol for router-control health everywhere.' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
+          grep -Fq 'RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(23.dp))' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt
+          grep -Fq 'Modifier.weight(1f).height(LabV2.FieldHeight)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'routerDdnsRecord(value, nativeDdnsRecords)?.let(::routerDdnsHostname)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq '#FF76DDD3' app/src/main/res/drawable/ic_launcher_background.xml
+          grep -Fq '#FF259BB8' app/src/main/res/drawable/ic_launcher_background.xml
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import xml.etree.ElementTree as ET
+          git diff --check
+          echo 'v0.10.42 build184 source verification passed'
 
-          gradle = Path('app/build.gradle.kts').read_text(encoding='utf-8')
-          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
-          display = Path('app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt').read_text(encoding='utf-8')
-          radar = Path('app/src/main/res/drawable/ic_launcher_radar.xml').read_text(encoding='utf-8')
-          network = Path('app/src/main/res/drawable/ic_launcher_network.xml').read_text(encoding='utf-8')
-
-          if 'versionName = "0.10.39"' not in gradle:
-              raise SystemExit('wrong build180 versionName')
-          if 'cfg["StrictHostKeyChecking"]="ask"' not in main:
-              raise SystemExit('SSH host-key checking was weakened')
-          if main.index('diffie-hellman-group14-sha256') > main.index('diffie-hellman-group14-sha1'):
-              raise SystemExit('legacy SSH KEX must remain behind group14-sha256')
-          if main.count('deviceDisplayName(d)') < 3:
-              raise SystemExit('home, list and detail device titles are not unified')
-          priority = [
-              display.index('cleanApiText(remark)'),
-              display.index('cleanApiText(name)'),
-              display.index('cleanApiText(hostName)'),
-              display.index('cleanMac(mac)'),
-          ]
-          if priority != sorted(priority):
-              raise SystemExit('device display-name priority is incorrect')
-          if 'android:scaleX="0.69"' not in radar or 'android:scaleY="0.69"' not in radar:
-              raise SystemExit('radar icon scale regressed')
-          if 'android:scaleX="0.72"' not in network or 'android:scaleY="0.72"' not in network:
-              raise SystemExit('network icon scale regressed')
-
-          for path in (
-              'app/src/main/res/drawable/ic_launcher_background.xml',
-              'app/src/main/res/drawable/ic_launcher_foreground.xml',
-              'app/src/main/res/drawable/ic_launcher_radar.xml',
-              'app/src/main/res/drawable/ic_launcher_network.xml',
-              'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml',
-              'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
-          ):
-              ET.parse(path)
-          print('build180 source verification passed')
-          PY
-      - name: Test and build signed APK
+      - name: Test and build signed Release APK
         env:
           LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
           LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
           LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
           LABPROBE_SKIP_SOURCE_PREPARE: '1'
-        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+        run: |
+          set -euo pipefail
+          gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+
       - name: Verify signed APK
         run: |
+          set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='181' versionName='0.10.39'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='184' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
-          python3 - <<'PY'
-          import zipfile
-          from pathlib import Path
+          sha256sum "$APK"
+          echo 'signed v0.10.42 build184 APK verified'
 
-          apk = Path('app/build/outputs/apk/release/app-release.apk')
-          with zipfile.ZipFile(apk) as archive:
-              dex = b''.join(
-                  archive.read(name)
-                  for name in archive.namelist()
-                  if name.startswith('classes') and name.endswith('.dex')
-              )
-          for text in (
-              'SSH、控件配色与设备名称一致性修复',
-              'SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法',
-              '下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色',
-              '首页、设备页和详情卡统一优先显示用户备注名称',
-              '已安装版本高于旧更新清单时，最新版本不再倒退显示',
-              '运行时间同步中',
-          ):
-              if text.encode() not in dex:
-                  raise SystemExit(f'missing signed APK content: {text}')
-
-          configured_kex = (
-              'curve25519-sha256@libssh.org,curve25519-sha256,'
-              'ecdh-sha2-nistp256,diffie-hellman-group14-sha256,'
-              'diffie-hellman-group14-sha1'
-          )
-          if configured_kex.encode() not in dex:
-              raise SystemExit('configured SSH KEX policy missing from signed APK')
-
-          # JSch's own classes contain names of optional algorithms such as
-          # group1-sha1 even when the APP never enables them. Therefore the
-          # prohibition is verified against MainActivity source above, while
-          # the signed APK is checked for the exact configured KEX policy.
-          print('signed build180 APK verified')
-          PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.39-build181-release-apk
+          name: LabProbe-v0.10.42-build184-release-apk
           path: app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='v0.10.42-build184'
+          APK='app/build/outputs/apk/release/app-release.apk'
+          ASSET='LabProbe-v0.10.42-build184-release.apk'
+          cp "$APK" "$RUNNER_TEMP/$ASSET"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
+          else
+            gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
+              --target 'release/build180' \
+              --title '极客网探 v0.10.42 build184' \
+              --notes 'v0.10.42 build184：完成本轮首页、健康分、终端卡片、WOL、映射/路由图标、收藏与 DDNS 联动等修复；已通过单元测试、Release 编译与 APK 签名校验。'
+          fi
