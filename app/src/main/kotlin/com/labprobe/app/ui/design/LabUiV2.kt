@@ -566,7 +566,7 @@ fun LabV2BottomNav(
     Surface(
         color = Color(0xFFFBFDFF).copy(alpha = .98f),
         tonalElevation = 0.dp,
-        shadowElevation = 8.dp,
+        shadowElevation = 0.dp,
         border = BorderStroke(1.dp, LabV2.Border.copy(alpha = .78f)),
         modifier = Modifier.fillMaxWidth()
     ) {

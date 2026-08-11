@@ -169,7 +169,7 @@ fun RouterFeatureRail(
     }
 }
 
-private enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port, Connection }
+internal enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port, Connection, Beta }
 
 @Composable
 private fun RouterFeatureCard(title: String, status: String, accent: Color, glyph: RouterGlyph, onClick: () -> Unit) {
@@ -202,30 +202,41 @@ private fun RouterFeatureCard(title: String, status: String, accent: Color, glyp
 }
 
 @Composable
-private fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifier = Modifier) {
+internal fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifier = Modifier) {
     Canvas(modifier) {
         val w = size.width
         val h = size.height
         val stroke = Stroke(width = w * .064f, cap = StrokeCap.Round, join = StrokeJoin.Round)
         when (glyph) {
             RouterGlyph.Mapping, RouterGlyph.Port -> {
-                drawRoundRect(color.copy(alpha = .12f), Offset(w*.02f,h*.18f), Size(w*.34f,h*.52f), CornerRadius(w*.10f,w*.10f))
-                drawRoundRect(color.copy(alpha = .12f), Offset(w*.64f,h*.30f), Size(w*.34f,h*.52f), CornerRadius(w*.10f,w*.10f))
-                drawRoundRect(color, Offset(w*.05f,h*.21f), Size(w*.28f,h*.46f), CornerRadius(w*.08f,w*.08f), style=stroke)
-                drawRoundRect(color, Offset(w*.67f,h*.33f), Size(w*.28f,h*.46f), CornerRadius(w*.08f,w*.08f), style=stroke)
-                drawLine(color, Offset(w*.36f,h*.48f), Offset(w*.65f,h*.48f), stroke.width, StrokeCap.Round)
-                drawLine(color, Offset(w*.57f,h*.39f), Offset(w*.65f,h*.48f), stroke.width, StrokeCap.Round)
-                drawLine(color, Offset(w*.57f,h*.57f), Offset(w*.65f,h*.48f), stroke.width, StrokeCap.Round)
+                // A listening entry port forwarding into a target endpoint.
+                val source = Offset(w * .21f, h * .50f)
+                val arrow = Offset(w * .63f, h * .50f)
+                drawCircle(color.copy(alpha = .10f), w * .18f, source)
+                drawCircle(color, w * .105f, source, style = stroke)
+                drawLine(color, Offset(w * .34f, h * .50f), arrow, stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * .53f, h * .39f), arrow, stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * .53f, h * .61f), arrow, stroke.width, StrokeCap.Round)
+                drawRoundRect(color.copy(alpha = .10f), Offset(w * .69f, h * .26f), Size(w * .22f, h * .48f), CornerRadius(w * .06f, w * .06f))
+                drawRoundRect(color, Offset(w * .69f, h * .26f), Size(w * .22f, h * .48f), CornerRadius(w * .06f, w * .06f), style = stroke)
+                drawCircle(color, w * .032f, Offset(w * .80f, h * .42f))
+                drawCircle(color, w * .032f, Offset(w * .80f, h * .58f))
             }
             RouterGlyph.Ddns -> {
-                val cloud = Path().apply {
-                    moveTo(w*.17f,h*.64f); cubicTo(w*.02f,h*.61f,w*.05f,h*.38f,w*.24f,h*.38f)
-                    cubicTo(w*.29f,h*.15f,w*.61f,h*.15f,w*.67f,h*.38f)
-                    cubicTo(w*.88f,h*.33f,w*.98f,h*.58f,w*.82f,h*.69f); lineTo(w*.24f,h*.69f)
-                }
-                drawPath(cloud,color,style=stroke)
-                drawArc(color, -50f, 150f, false, Offset(w*.36f,h*.38f), Size(w*.36f,h*.36f), style=stroke)
-                drawLine(color,Offset(w*.69f,h*.39f),Offset(w*.69f,h*.54f),stroke.width,StrokeCap.Round)
+                // Domain resolution: one hostname node resolving to several network nodes.
+                val center = Offset(w * .50f, h * .50f)
+                val top = Offset(w * .50f, h * .22f)
+                val left = Offset(w * .24f, h * .67f)
+                val right = Offset(w * .76f, h * .67f)
+                drawCircle(color.copy(alpha = .09f), w * .40f, center)
+                drawCircle(color, w * .34f, center, style = stroke)
+                drawLine(color, center, top, stroke.width, StrokeCap.Round)
+                drawLine(color, center, left, stroke.width, StrokeCap.Round)
+                drawLine(color, center, right, stroke.width, StrokeCap.Round)
+                drawCircle(color, w * .055f, center)
+                drawCircle(color, w * .055f, top)
+                drawCircle(color, w * .055f, left)
+                drawCircle(color, w * .055f, right)
             }
             RouterGlyph.Firewall -> {
                 val shield = Path().apply {
@@ -249,10 +260,27 @@ private fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifier
                 drawArc(color,210f,120f,false,Offset(w*.27f,h*.05f),Size(w*.46f,h*.40f),style=stroke)
             }
             RouterGlyph.Connection -> {
-                drawCircle(color.copy(alpha=.10f), w*.42f, Offset(w*.5f,h*.5f))
-                drawArc(color, 205f, 130f, false, Offset(w*.18f,h*.12f), Size(w*.64f,h*.58f), style=stroke)
-                drawArc(color, 210f, 120f, false, Offset(w*.31f,h*.29f), Size(w*.38f,h*.34f), style=stroke)
-                drawCircle(color, w*.06f, Offset(w*.5f,h*.72f))
+                // A small central hub with active links, deliberately not a Wi-Fi symbol.
+                val center = Offset(w * .50f, h * .50f)
+                val left = Offset(w * .20f, h * .50f)
+                val right = Offset(w * .80f, h * .50f)
+                val bottom = Offset(w * .50f, h * .80f)
+                drawRoundRect(color.copy(alpha = .10f), Offset(w * .37f, h * .37f), Size(w * .26f, h * .26f), CornerRadius(w * .07f, w * .07f))
+                drawRoundRect(color, Offset(w * .37f, h * .37f), Size(w * .26f, h * .26f), CornerRadius(w * .07f, w * .07f), style = stroke)
+                listOf(left, right, bottom).forEach { node ->
+                    drawLine(color, center, node, stroke.width, StrokeCap.Round)
+                    drawCircle(color, w * .052f, node)
+                }
+                drawCircle(color, w * .040f, center)
+            }
+            RouterGlyph.Beta -> {
+                // Firmware package with an upward upgrade arrow.
+                drawRoundRect(color.copy(alpha = .10f), Offset(w * .20f, h * .24f), Size(w * .60f, h * .52f), CornerRadius(w * .08f, w * .08f))
+                drawRoundRect(color, Offset(w * .20f, h * .24f), Size(w * .60f, h * .52f), CornerRadius(w * .08f, w * .08f), style = stroke)
+                drawLine(color, Offset(w * .50f, h * .63f), Offset(w * .50f, h * .35f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * .39f, h * .46f), Offset(w * .50f, h * .35f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * .61f, h * .46f), Offset(w * .50f, h * .35f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * .34f, h * .68f), Offset(w * .66f, h * .68f), stroke.width, StrokeCap.Round)
             }
         }
     }
@@ -266,7 +294,7 @@ fun MappingAndUpnpScreen(prefs: AppPrefs, onBack: () -> Unit) {
     Scaffold(
         containerColor = RouterPage,
         topBar = {
-            Surface(color = Color.White, shadowElevation = 1.dp) {
+            Surface(color = Color.White) {
                 Column {
                     CompactTopBar("映射与 UPnP", onBack)
                     RouterSuiteTabs(pager.currentPage) { scope.launch { pager.animateScrollToPage(it) } }
@@ -1028,7 +1056,7 @@ private fun LabProbeDdnsDetailPage(
     val canUpdate = labProbeCanUpdate(record, address, busy)
     BackHandler(onBack = onBack)
     Scaffold(containerColor = RouterPage, topBar = {
-        Surface(color = Color.White, shadowElevation = 1.dp) {
+        Surface(color = Color.White) {
             Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.ArrowBack, null, Modifier.size(20.dp), tint = RouterInk) }
                 Column(Modifier.weight(1f)) {
@@ -1526,7 +1554,7 @@ private fun CompactTopBar(title:String,onBack:()->Unit,subtitle:String=""){
 @Composable
 private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,content:@Composable ColumnScope.()->Unit){
     BackHandler(onBack=onBack)
-    Scaffold(containerColor=RouterPage,topBar={Surface(color=Color.White,shadowElevation=1.dp){CompactTopBar(title,onBack,subtitle)}}){padding->
+    Scaffold(containerColor=RouterPage,topBar={Surface(color=Color.White){CompactTopBar(title,onBack,subtitle)}}){padding->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=13.dp,vertical=9.dp),verticalArrangement=Arrangement.spacedBy(8.dp),content=content)
     }
 }

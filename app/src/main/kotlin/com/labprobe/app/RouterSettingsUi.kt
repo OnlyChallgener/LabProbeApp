@@ -119,6 +119,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 title = "映射与 UPnP",
                 subtitle = "IPv6 映射、原生端口映射与 UPnP",
                 icon = Icons.Rounded.AccountTree,
+                glyph = RouterGlyph.Mapping,
                 color = SettingsBlue,
                 enabled = capabilities.nativePortMapping || capabilities.upnp
             ) { onOpen("tool_portmap") }
@@ -136,6 +137,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 title = "DDNS",
                 subtitle = "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
                 icon = Icons.Rounded.CloudSync,
+                glyph = RouterGlyph.Ddns,
                 color = SettingsCyan,
                 enabled = capabilities.ddns || capabilities.configured
             ) { onOpen("tool_router_ddns") }
@@ -160,6 +162,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 title = "Beta 在线升级",
                 subtitle = "显示上次快照，点击后才检测",
                 icon = Icons.Rounded.SystemUpdateAlt,
+                glyph = RouterGlyph.Beta,
                 color = SettingsCyan,
                 enabled = true
             ) { onOpen("tool_router_beta") }
@@ -193,7 +196,7 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).background(accent.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Hub, null, Modifier.size(21.dp), tint = accent)
+                RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(21.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -218,6 +221,7 @@ private fun RouterSettingsTile(
     title: String,
     subtitle: String,
     icon: ImageVector,
+    glyph: RouterGlyph? = null,
     color: Color,
     enabled: Boolean,
     onClick: () -> Unit
@@ -232,7 +236,11 @@ private fun RouterSettingsTile(
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).background(actualColor.copy(alpha = .10f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, Modifier.size(20.dp), tint = actualColor)
+                if (glyph != null) {
+                    RouterGlyphIcon(glyph, actualColor, Modifier.size(20.dp))
+                } else {
+                    Icon(icon, null, Modifier.size(20.dp), tint = actualColor)
+                }
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

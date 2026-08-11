@@ -51,12 +51,13 @@ private object RouterNativeMemoryCache {
     var natResult: RouterNatResult? = null
 }
 
-private fun Modifier.nativeBlueShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 7.dp): Modifier =
+private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 7.dp): Modifier =
     shadow(
         elevation = elevation,
         shape = shape,
-        ambientColor = NativeBlue.copy(alpha = .22f),
-        spotColor = NativeBlue.copy(alpha = .28f)
+        clip = false,
+        ambientColor = Color(0x12142033),
+        spotColor = Color(0x1A142033)
     )
 
 private fun natTypeZh(value: String): String = when (value.trim().lowercase()) {
@@ -158,7 +159,7 @@ private fun NativeSelector(
     Box(modifier) {
         OutlinedButton(
             onClick = { onExpandedChange(true) },
-            modifier = Modifier.fillMaxWidth().height(58.dp).nativeBlueShadow(shape, 5.dp),
+            modifier = Modifier.fillMaxWidth().height(58.dp).nativeCardShadow(shape, 5.dp),
             shape = shape,
             colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
             border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
@@ -200,7 +201,7 @@ private fun NativeCompactPortField(
 ) {
     val shape = RoundedCornerShape(14.dp)
     Surface(
-        modifier = modifier.height(52.dp).nativeBlueShadow(shape, 4.dp),
+        modifier = modifier.height(52.dp).nativeCardShadow(shape, 4.dp),
         shape = shape,
         color = Color.White,
         border = BorderStroke(1.dp, NativeBlue.copy(alpha = .30f))
@@ -501,7 +502,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Box(Modifier.weight(1.65f)) {
                     OutlinedButton(
                         onClick = { serverMenu = true },
-                        modifier = Modifier.fillMaxWidth().height(52.dp).nativeBlueShadow(serverShape, 5.dp),
+                        modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(serverShape, 5.dp),
                         shape = serverShape,
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
                         border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f))
@@ -583,7 +584,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                     },
                     enabled = !running,
-                    modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow(RoundedCornerShape(14.dp), 7.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp).nativeCardShadow(RoundedCornerShape(14.dp), 7.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = NativeBlue,
@@ -781,7 +782,7 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Button(
                 onClick = { tasks.startBeta() },
                 enabled = !task.active,
-                modifier = Modifier.fillMaxWidth().height(42.dp).nativeBlueShadow(RoundedCornerShape(14.dp), 7.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp).nativeCardShadow(RoundedCornerShape(14.dp), 7.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = NativeCyan,
