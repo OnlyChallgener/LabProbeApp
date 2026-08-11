@@ -175,18 +175,22 @@ private enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port
 private fun RouterFeatureCard(title: String, status: String, accent: Color, glyph: RouterGlyph, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.width(104.dp).height(72.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .12f)),
-        shadowElevation = 1.5.dp
+        shape = LabCoreSurface.CompactShape,
+        color = LabCoreSurface.Card,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
+        shadowElevation = 2.dp
     ) {
         Box(
             Modifier.fillMaxSize()
-                .background(Brush.linearGradient(listOf(accent.copy(alpha = .055f), Color.White, Color.White)))
                 .padding(horizontal = 9.dp, vertical = 7.dp)
         ) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-                RouterGlyphIcon(glyph, accent, Modifier.size(23.dp))
+                Box(
+                    Modifier.size(38.dp).background(accent.copy(alpha = .10f), LabCoreSurface.InnerShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    RouterGlyphIcon(glyph, accent, Modifier.size(20.dp))
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(title, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1)
                     Text(status, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -358,20 +362,22 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
 @Composable
 private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDelete: () -> Unit) {
     var menu by remember(rule.ruleName) { mutableStateOf(false) }
-    val shape = RoundedCornerShape(16.dp)
+    val shape = LabCoreSurface.CompactShape
     Surface(
         onClick = onEdit,
         modifier = Modifier.fillMaxWidth(),
         shape = shape,
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, RouterBlue.copy(alpha = .10f)),
-        shadowElevation = 1.5.dp
+        color = LabCoreSurface.Card,
+        border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
+        shadowElevation = 2.dp
     ) {
         Row(
-            Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(RouterBlue.copy(alpha = .038f), Color.Transparent))).padding(horizontal = 11.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            RouterGlyphIcon(RouterGlyph.Port, RouterBlue, Modifier.size(27.dp))
+            Box(Modifier.size(38.dp).background(RouterBlue.copy(alpha = .10f), LabCoreSurface.InnerShape), contentAlignment = Alignment.Center) {
+                RouterGlyphIcon(RouterGlyph.Port, RouterBlue, Modifier.size(20.dp))
+            }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1516,15 +1522,22 @@ private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,content:
 private fun CompactToolbar(title:String,subtitle:String,loading:Boolean,onRefresh:(()->Unit)?,onAdd:(()->Unit)?){
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
         Column(Modifier.weight(1f)){Text(title,fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);Text(subtitle,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)}
-        if(onRefresh!=null)IconButton(onClick=onRefresh,modifier=Modifier.size(33.dp)){if(loading)CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)else Icon(Icons.Rounded.Refresh,null,Modifier.size(17.dp),tint=RouterBlue)}
-        if(onAdd!=null)Surface(onClick=onAdd,shape=CircleShape,color=RouterBlue,modifier=Modifier.size(34.dp),shadowElevation=2.dp){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(18.dp))}}
+        if(onRefresh!=null) Surface(
+            onClick = onRefresh,
+            modifier = Modifier.size(36.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = LabCoreSurface.Card,
+            border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
+            shadowElevation = 1.dp
+        ) { Box(contentAlignment = Alignment.Center) { if(loading)CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)else Icon(Icons.Rounded.Refresh,null,Modifier.size(18.dp),tint=RouterBlue) } }
+        if(onAdd!=null) Surface(onClick=onAdd,shape=RoundedCornerShape(12.dp),color=RouterBlue,modifier=Modifier.size(36.dp),shadowElevation=2.dp){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(19.dp))}}
     }
 }
 
 @Composable
 private fun PremiumCard(accent:Color,modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit){
-    Surface(modifier.fillMaxWidth(),shape=RoundedCornerShape(16.dp),color=Color.White,border=androidx.compose.foundation.BorderStroke(1.dp,accent.copy(alpha=.10f)),shadowElevation=1.5.dp){
-        Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(accent.copy(alpha=.038f),Color.Transparent))).padding(horizontal=11.dp,vertical=9.dp),verticalArrangement=Arrangement.spacedBy(5.dp),content=content)
+    Surface(modifier.fillMaxWidth(),shape=LabCoreSurface.CompactShape,color=LabCoreSurface.Card,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border),shadowElevation=2.dp){
+        Column(Modifier.fillMaxWidth().padding(horizontal=11.dp,vertical=9.dp),verticalArrangement=Arrangement.spacedBy(5.dp),content=content)
     }
 }
 
@@ -1532,7 +1545,7 @@ private fun PremiumCard(accent:Color,modifier:Modifier=Modifier,content:@Composa
 private fun CompactField(label:String,value:String,hint:String,modifier:Modifier=Modifier,keyboardType:KeyboardType=KeyboardType.Text,onChange:(String)->Unit){
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
         Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
-        Surface(Modifier.fillMaxWidth().height(44.dp),shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
+        Surface(Modifier.fillMaxWidth().height(50.dp),shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
             BasicTextField(
                 value=value,
                 onValueChange=onChange,
@@ -1570,7 +1583,7 @@ private fun CompactMultilineField(label:String,value:String,hint:String,onChange
 private fun CompactPasswordField(label:String,value:String,hint:String,visible:Boolean,onToggle:()->Unit,onChange:(String)->Unit){
     Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
         Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
-        Surface(Modifier.fillMaxWidth().height(44.dp),shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
+        Surface(Modifier.fillMaxWidth().height(50.dp),shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
             BasicTextField(
                 value=value,
                 onValueChange=onChange,
@@ -1591,7 +1604,7 @@ private fun CompactChoice(label:String,value:String,options:List<String>,modifie
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
         if(label.isNotBlank())Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Box{
-            Surface(Modifier.fillMaxWidth().height(44.dp).clickable{expanded=true},shape=RoundedCornerShape(13.dp),color=RouterField,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){
+            Surface(Modifier.fillMaxWidth().height(50.dp).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
                 Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(value,Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
             DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(option,fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}

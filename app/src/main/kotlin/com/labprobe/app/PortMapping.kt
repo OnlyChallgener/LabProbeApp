@@ -761,7 +761,7 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
         "stale" -> Color(0xFFF59E0B)
         else -> PortRed
     }
-    LabV2Card(compact = true) {
+    LabCoreCard(compact = true) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
             Spacer(Modifier.width(11.dp))
@@ -800,7 +800,7 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
 
 @Composable
 private fun PortMapEmptyCard(onAdd: () -> Unit) {
-    LabV2Card {
+    LabCoreCard {
         Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 52)
             Spacer(Modifier.height(10.dp))
@@ -819,7 +819,7 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 @Composable
 private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
     val status = portMapStatus(rule)
-    LabV2Card(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
+    LabCoreCard(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(7.dp).background(status.color, CircleShape))
@@ -860,7 +860,7 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
 
 @Composable
 private fun PortMapCompactMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.height(42.dp), shape = RoundedCornerShape(13.dp), color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
+    Surface(modifier = modifier.height(42.dp), shape = LabCoreSurface.InnerShape, color = LabCoreSurface.Inner, border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
             Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             Text(value, fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
@@ -938,7 +938,7 @@ private fun PortMapEditorSheet(
                     TextButton(onClick = ::submit) { Text(if (isNew) "保存并启动" else "保存修改", style = LabTypography.CompactButton) }
                 }
 
-                LabV2Card(compact = true) {
+                LabCoreCard(compact = true) {
                     Text("服务", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     PortMapV2Field("服务名称", draft.name, "例如：NAS HTTPS") { draft = draft.copy(name = it) }
                     fieldError("service").takeIf { it.isNotBlank() }?.let {
@@ -974,7 +974,7 @@ private fun PortMapEditorSheet(
                     }
                 }
 
-                LabV2Card(compact = true) {
+                LabCoreCard(compact = true) {
                     Text("目标设备", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     PortMapSelectedDevice(
                         device = selectedDevice,
@@ -1017,7 +1017,7 @@ private fun PortMapEditorSheet(
                     }
                 }
 
-                LabV2Card(compact = true) {
+                LabCoreCard(compact = true) {
                     Text("映射方式", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     LabV2SegmentedControl(
                         options = listOf("IPv6 → IPv4", "IPv6 → IPv6"),
@@ -1037,7 +1037,7 @@ private fun PortMapEditorSheet(
                     )
                 }
 
-                LabV2Card(compact = true) {
+                LabCoreCard(compact = true) {
                     Text("外部访问", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     PortMapV2Field("外部端口", draft.listenPort, "${portRange.first}-${portRange.last}", keyboardType = KeyboardType.Number) {
                         draft = draft.copy(listenPort = it.filter(Char::isDigit))
@@ -1051,9 +1051,9 @@ private fun PortMapEditorSheet(
                 val advancedSummary = "${draft.duration} · 最多 ${draft.maxConnections.ifBlank { "—" }} 连接 · 空闲 ${draft.idleTimeoutSec.ifBlank { "—" }} 秒"
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable { advancedExpanded = !advancedExpanded },
-                    shape = RoundedCornerShape(18.dp),
-                    color = LabV2.CardTop,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)
+                    shape = LabCoreSurface.InnerShape,
+                    color = LabCoreSurface.Inner,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
                 ) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -1064,7 +1064,7 @@ private fun PortMapEditorSheet(
                     }
                 }
                 AnimatedVisibility(advancedExpanded) {
-                    LabV2Card(compact = true) {
+                    LabCoreCard(compact = true) {
                         val durationOptions = buildList {
                             if (draft.originalExpiresAt != null) add("保持原有效期")
                             addAll(listOf("1小时", "6小时", "24小时", "永久"))
@@ -1506,7 +1506,7 @@ private fun PortMapDetailPage(
         }
     }
     DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss, unifiedTypography = true) {
-            LabV2Card(compact = true) {
+            LabCoreCard(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
                 PortMapDetailLine("监听", "[::]:${rule.listenPort}", copyable = true)
@@ -1519,7 +1519,7 @@ private fun PortMapDetailPage(
                 if (rule.revision > 0L) PortMapDetailLine("配置版本", "revision ${rule.revision}")
             }
 
-            LabV2Card(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
+            LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("流量统计", fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1538,7 +1538,7 @@ private fun PortMapDetailPage(
                 }
             }
 
-            LabV2Card(compact = true) {
+            LabCoreCard(compact = true) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("近 1 小时吞吐", Modifier.weight(1f), fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold)
                     Text("60 秒采样", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkFaint)
@@ -1555,7 +1555,7 @@ private fun PortMapDetailPage(
                 }
             }
 
-            LabV2Card(compact = true) {
+            LabCoreCard(compact = true) {
                 Text("远程访问诊断", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold)
                 Text(
                     if (remoteEndpoint.isBlank()) "请先在关联收藏中填写可访问的远程入口。" else "由当前手机直接检测远程入口，不经过 Hub。",

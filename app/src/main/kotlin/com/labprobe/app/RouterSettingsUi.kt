@@ -20,14 +20,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val SettingsBlue = Color(0xFF2563EB)
-private val SettingsCyan = Color(0xFF0891B2)
-private val SettingsGreen = Color(0xFF16A36A)
-private val SettingsAmber = Color(0xFFF59E0B)
-private val SettingsPurple = Color(0xFF7C3AED)
-private val SettingsInk = Color(0xFF17233A)
-private val SettingsMuted = Color(0xFF687890)
-private val SettingsBorder = Color(0xFFE3EAF4)
+private val SettingsBlue = LabV2.Primary
+private val SettingsCyan = LabV2.Cyan
+private val SettingsGreen = LabV2.Green
+private val SettingsAmber = LabV2.Amber
+private val SettingsInk = LabV2.Ink
+private val SettingsMuted = LabV2.InkMuted
+private val SettingsBorder = LabCoreSurface.Border
 
 private fun routerSettingsRawMessageZh(raw: String): String {
     val text = raw.trim()
@@ -67,20 +66,17 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.size(48.dp).background(SettingsBlue.copy(alpha = .11f), RoundedCornerShape(14.dp)),
+                Modifier.size(42.dp).background(SettingsBlue.copy(alpha = .10f), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Rounded.Router, null, Modifier.size(29.dp), tint = SettingsBlue)
+                Icon(Icons.Rounded.Router, null, Modifier.size(21.dp), tint = SettingsBlue)
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("路由设置", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = SettingsInk)
+                Text("路由设置", style = LabTypography.CardTitle.copy(color = SettingsInk))
                 Text(
                     "防火墙 · NAT诊断 · DDNS · Beta升级",
-                    fontSize = LabTypography.Supporting.fontSize,
-                    lineHeight = LabTypography.Supporting.lineHeight,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SettingsMuted,
+                    style = LabTypography.Supporting.copy(color = SettingsMuted),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -157,7 +153,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 title = "路由 NAT 诊断",
                 subtitle = "路由器原生 RFC3489 / RFC5780 检测",
                 icon = Icons.Rounded.Radar,
-                color = SettingsPurple,
+                color = SettingsCyan,
                 enabled = true
             ) { onOpen("tool_router_nat") }
             RouterSettingsTile(
@@ -189,11 +185,11 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
         else -> status?.message.orEmpty().ifBlank { "路由设置快照已就绪" }
     }
     Surface(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(19.dp)).clickable(onClick = onClick),
-        shape = RoundedCornerShape(19.dp),
+        modifier = Modifier.fillMaxWidth().clip(LabCoreSurface.CompactShape).clickable(onClick = onClick),
+        shape = LabCoreSurface.CompactShape,
         color = Color.White,
-        border = BorderStroke(1.dp, accent.copy(alpha = .17f)),
-        shadowElevation = 1.dp
+        border = BorderStroke(1.dp, SettingsBorder),
+        shadowElevation = 2.dp
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).background(accent.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
@@ -201,8 +197,8 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = SettingsInk)
-                Text(detail, fontSize = LabTypography.Caption.fontSize, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, style = LabTypography.CardTitle.copy(color = SettingsInk))
+                Text(detail, style = LabTypography.Supporting.copy(color = SettingsMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = accent)
         }
@@ -212,7 +208,7 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
 @Composable
 private fun RouterSettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = SettingsInk, modifier = Modifier.padding(start = 3.dp))
+        Text(title, style = LabTypography.SectionTitle.copy(color = SettingsInk), modifier = Modifier.padding(start = 3.dp))
         content()
     }
 }
@@ -228,20 +224,20 @@ private fun RouterSettingsTile(
 ) {
     val actualColor = if (enabled) color else SettingsMuted
     Surface(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth().clip(LabCoreSurface.CompactShape).clickable(enabled = enabled, onClick = onClick),
+        shape = LabCoreSurface.CompactShape,
         color = Color.White,
         border = BorderStroke(1.dp, SettingsBorder),
-        shadowElevation = 1.dp
+        shadowElevation = 2.dp
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(39.dp).background(actualColor.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, Modifier.size(22.dp), tint = actualColor)
+            Box(Modifier.size(40.dp).background(actualColor.copy(alpha = .10f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(20.dp), tint = actualColor)
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = if (enabled) SettingsInk else SettingsMuted)
-                Text(subtitle, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = SettingsMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, style = LabTypography.CardTitle.copy(color = if (enabled) SettingsInk else SettingsMuted))
+                Text(subtitle, style = LabTypography.Supporting.copy(color = SettingsMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(19.dp), tint = actualColor.copy(alpha = if (enabled) 1f else .45f))
         }

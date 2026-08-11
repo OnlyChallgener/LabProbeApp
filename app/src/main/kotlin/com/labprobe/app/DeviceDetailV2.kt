@@ -38,7 +38,7 @@ fun DeviceDetailScreen(
     }
     if (device == null) {
         DetailShell("设备详情", "设备数据已刷新", onBack, unifiedTypography = true) {
-            CompactListCard {
+            CompactListCard(coreSurface = true) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     LabV2ToolIcon(Icons.Rounded.DeviceUnknown, LabV2.InkMuted, size = 50)
                     Text("找不到该设备", style = LabTypography.CardTitle)
@@ -61,7 +61,7 @@ fun DeviceDetailScreen(
     var waking by remember { mutableStateOf(false) }
 
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
-        CompactListCard {
+        CompactListCard(coreSurface = true) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(
                     Modifier
@@ -89,7 +89,7 @@ fun DeviceDetailScreen(
             }
         }
 
-        CompactListCard {
+        CompactListCard(coreSurface = true) {
             Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 DeviceDetailMetric("频段", band, LabV2.Primary, Modifier.weight(1f))
@@ -114,14 +114,14 @@ fun DeviceDetailScreen(
             }
         }
 
-        CompactListCard {
+        CompactListCard(coreSurface = true) {
             Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             DeviceDetailAddress("IPv4", cleanApiText(device.ip).ifBlank { "--" }, LabV2.Primary)
             DeviceDetailAddress("IPv6", ipv6.ifBlank { "--" }, LabV2.Cyan, allowTwoLines = true)
             DeviceDetailAddress("MAC", cleanMac(device.mac).ifBlank { "--" }, profile.accent)
         }
 
-        CompactListCard {
+        CompactListCard(coreSurface = true) {
             Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DeviceDetailPair("类型", profile.label, Modifier.weight(1f))
@@ -157,7 +157,7 @@ fun DeviceDetailScreen(
 
 @Composable
 private fun DeviceDetailMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, shape = LabV2.MetricShape, color = color.copy(alpha = .075f), border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .10f))) {
+    Surface(modifier = modifier, shape = LabCoreSurface.InnerShape, color = LabCoreSurface.Inner, border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             Text(value, modifier = Modifier.fillMaxWidth(), style = LabTypography.Value.copy(color = color, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Clip)

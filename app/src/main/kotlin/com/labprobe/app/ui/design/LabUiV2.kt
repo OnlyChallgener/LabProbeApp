@@ -105,6 +105,20 @@ object LabV2 {
     val ButtonShape = RoundedCornerShape(16.dp)
 }
 
+/**
+ * Opaque, neutral surfaces for the dashboard, devices and router settings.
+ * Keep this separate from [LabV2Card]: several older tool and history pages
+ * intentionally retain their original gradient treatment.
+ */
+object LabCoreSurface {
+    val Card = Color.White
+    val Inner = Color(0xFFF8FAFC)
+    val Border = Color(0xFFE7EDF4)
+    val CardShape = RoundedCornerShape(20.dp)
+    val CompactShape = RoundedCornerShape(18.dp)
+    val InnerShape = RoundedCornerShape(14.dp)
+}
+
 /** Shared type scale for the home, device and router-settings surfaces. */
 object LabTypography {
     val AppTitle = TextStyle(
@@ -214,6 +228,30 @@ fun LabV2Card(
             .clip(shape)
             .background(Brush.linearGradient(listOf(LabV2.CardTop, LabV2.CardBottom)))
             .border(1.dp, Color.White.copy(alpha = .92f), shape)
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(contentPadding),
+            verticalArrangement = Arrangement.spacedBy(LabV2.RowGap),
+            content = content
+        )
+    }
+}
+
+@Composable
+fun LabCoreCard(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(horizontal = LabV2.CardHorizontal, vertical = LabV2.CardVertical),
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val shape = if (compact) LabCoreSurface.CompactShape else LabCoreSurface.CardShape
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = shape,
+        color = LabCoreSurface.Card,
+        border = BorderStroke(1.dp, LabCoreSurface.Border),
+        tonalElevation = 0.dp,
+        shadowElevation = 2.dp
     ) {
         Column(
             Modifier.fillMaxWidth().padding(contentPadding),
@@ -388,8 +426,16 @@ fun CompactSegmentedControl(
 ) = LabV2SegmentedControl(options, selected, onSelect, modifier)
 
 @Composable
-fun CompactListCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    LabV2Card(modifier = modifier, compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp), content = content)
+fun CompactListCard(
+    modifier: Modifier = Modifier,
+    coreSurface: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    if (coreSurface) {
+        LabCoreCard(modifier = modifier, compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp), content = content)
+    } else {
+        LabV2Card(modifier = modifier, compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp), content = content)
+    }
 }
 
 @Composable

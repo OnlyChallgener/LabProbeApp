@@ -169,10 +169,10 @@ private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
 
 // 首页专用视觉 token：保持页面渐变，但让卡片层级使用纯白、轻边框和较小圆角。
-private val HomeCardShape = RoundedCornerShape(20.dp)
-private val HomeSmallCardShape = RoundedCornerShape(18.dp)
-private val HomeInnerShape = RoundedCornerShape(14.dp)
-private val HomeCardBorder = Color(0xFFE7EDF4)
+private val HomeCardShape = LabCoreSurface.CardShape
+private val HomeSmallCardShape = LabCoreSurface.CompactShape
+private val HomeInnerShape = LabCoreSurface.InnerShape
+private val HomeCardBorder = LabCoreSurface.Border
 
 object AppVersion {
     val NAME: String get() = BuildConfig.VERSION_NAME
@@ -2220,9 +2220,10 @@ fun ExpressiveCard(
     modifier: Modifier = Modifier,
     iconKey: String = "",
     compactTitle: Boolean = false,
+    coreSurface: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    LabV2Card(modifier = modifier) {
+    val cardContent: @Composable ColumnScope.() -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (iconKey.isNotBlank()) {
                 // Device artwork stays exactly as the existing device icon system.
@@ -2233,16 +2234,28 @@ fun ExpressiveCard(
                 Spacer(Modifier.width(10.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = if (compactTitle) 14.2.sp else 15.5.sp, fontWeight = FontWeight.Black, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    title,
+                    fontSize = if (coreSurface) {
+                        if (compactTitle) LabTypography.SectionTitle.fontSize else LabTypography.CardTitle.fontSize
+                    } else if (compactTitle) 14.2.sp else 15.5.sp,
+                    lineHeight = if (coreSurface) {
+                        if (compactTitle) LabTypography.SectionTitle.lineHeight else LabTypography.CardTitle.lineHeight
+                    } else androidx.compose.ui.unit.TextUnit.Unspecified,
+                    fontWeight = if (coreSurface) FontWeight.SemiBold else FontWeight.Black,
+                    color = LabV2.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 if (!subtitle.isNullOrBlank()) {
                     Text(
                         subtitle,
-                        fontSize = 10.5.sp,
+                        fontSize = if (coreSurface) LabTypography.Supporting.fontSize else 10.5.sp,
+                        lineHeight = if (coreSurface) LabTypography.Supporting.lineHeight else 13.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = LabV2.InkMuted,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        lineHeight = 13.5.sp
                     )
                 }
             }
@@ -2252,6 +2265,11 @@ fun ExpressiveCard(
             }
         }
         content()
+    }
+    if (coreSurface) {
+        LabCoreCard(modifier = modifier, content = cardContent)
+    } else {
+        LabV2Card(modifier = modifier, content = cardContent)
     }
 }
 
@@ -4638,6 +4656,7 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
                 "${if (mode == "online") "在线" else if (mode == "offline") "离线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount",
                 Icons.Rounded.Devices,
                 Color(0xFFF59E0B),
+                coreSurface = true,
                 headerAction = {
                     Text(
                         state.message,
@@ -4932,6 +4951,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         icon = profile.icon,
         accent = profile.accent,
         iconKey = profile.iconKey,
+        coreSurface = true,
         headerAction = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 androidx.compose.material3.Surface(onClick = { editingDevice = true }, modifier = Modifier.size(28.dp), shape = CircleShape, color = DEVICE_ICON_ACCENT.copy(alpha = .11f)) {
@@ -5100,7 +5120,7 @@ fun DeviceTodayTrafficBar(d: DeviceItem) {
 @Composable
 private fun DeviceTrafficDirection(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(20.dp).clip(RoundedCornerShape(8.dp)).background(color.copy(alpha = .08f)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(20.dp).clip(RoundedCornerShape(8.dp)).background(LabCoreSurface.Inner), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = color, modifier = Modifier.size(13.dp))
         }
         Spacer(Modifier.width(5.dp))
@@ -5150,7 +5170,7 @@ fun DeviceFooterLine(d: DeviceItem, showTime: Boolean) {
 fun DeviceMiniMetric(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, copyValue: String = "", allowScroll: Boolean = false, valueColor: Color? = null) {
     val ctx = LocalContext.current
     Row(modifier.clickable(enabled = copyValue.isNotBlank()) { copy(ctx, copyValue) }.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(22.dp).clip(RoundedCornerShape(8.dp)).background(color.copy(alpha = .07f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(22.dp).clip(RoundedCornerShape(8.dp)).background(LabCoreSurface.Inner), contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
             }
             Spacer(Modifier.width(6.dp))

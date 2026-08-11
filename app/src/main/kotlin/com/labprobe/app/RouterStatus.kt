@@ -1203,28 +1203,13 @@ private fun RouterIdentityDialog(
 
 @Composable
 private fun RouterGlassCard(contentPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 12.dp), content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(25.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(4.dp, shape, clip = false)
-            .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        Color(0xFFFDFEFF),
-                        Color(0xFFF7FAFF),
-                        Color(0xFFFBFDFF)
-                    )
-                )
-            )
-            .border(1.dp, Color(0xFFE7EEF7), shape)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = LabCoreSurface.CardShape,
+        color = LabCoreSurface.Card,
+        border = BorderStroke(1.dp, LabCoreSurface.Border),
+        shadowElevation = 2.dp
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(Color(0x0B4F8CFF), radius = size.minDimension * .42f, center = Offset(size.width * .90f, size.height * .04f))
-            drawLine(Color(0x0C5F8FFF), Offset(size.width * .68f, 0f), Offset(size.width, size.height * .32f), 1.dp.toPx())
-            drawLine(Color(0x0873A7FF), Offset(size.width * .78f, 0f), Offset(size.width, size.height * .22f), 1.dp.toPx())
-        }
         Column(Modifier.fillMaxWidth().padding(contentPadding), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
     }
 }

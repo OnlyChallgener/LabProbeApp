@@ -38,14 +38,14 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val NativeBlue = Color(0xFF2563EB)
-private val NativeCyan = Color(0xFF0891B2)
-private val NativeGreen = Color(0xFF16A36A)
-private val NativeAmber = Color(0xFFF59E0B)
-private val NativeRed = Color(0xFFDC2626)
-private val NativeInk = Color(0xFF17233A)
-private val NativeMuted = Color(0xFF687890)
-private val NativeBorder = Color(0xFFE3EAF4)
+private val NativeBlue = LabV2.Primary
+private val NativeCyan = LabV2.Cyan
+private val NativeGreen = LabV2.Green
+private val NativeAmber = LabV2.Amber
+private val NativeRed = LabV2.Red
+private val NativeInk = LabV2.Ink
+private val NativeMuted = LabV2.InkMuted
+private val NativeBorder = LabCoreSurface.Border
 
 private object RouterNativeMemoryCache {
     var natResult: RouterNatResult? = null
@@ -793,10 +793,10 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
 private fun NativeCard(content: @Composable ColumnScope.() -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.White,
+        shape = LabCoreSurface.CardShape,
+        color = LabCoreSurface.Card,
         border = BorderStroke(1.dp, NativeBorder),
-        shadowElevation = 1.dp
+        shadowElevation = 2.dp
     ) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
     }
