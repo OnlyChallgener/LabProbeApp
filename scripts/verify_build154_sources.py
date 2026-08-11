@@ -205,7 +205,7 @@ def main() -> None:
         NATIVE,
         'repository.ddns.collectAsState()',
         'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
-        'fontSize = 13.sp',
+        'LabTypography.SectionTitle.fontSize',
         'modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow',
         'RouterTaskRepositoryRegistry.get(prefs)',
         'tasks.startNat(server, port, interfaceName, mode)',

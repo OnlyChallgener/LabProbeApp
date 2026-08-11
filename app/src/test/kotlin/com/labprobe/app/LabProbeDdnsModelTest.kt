@@ -9,6 +9,12 @@ import org.json.JSONObject
 
 class LabProbeDdnsModelTest {
     @Test
+    fun olderAddressRefreshGenerationCannotReplaceNewerDdnsMutation() {
+        assertTrue(isCurrentLabProbeDdnsGeneration(expected = 8L, current = 8L))
+        assertFalse(isCurrentLabProbeDdnsGeneration(expected = 8L, current = 9L))
+    }
+
+    @Test
     fun recordJsonKeepsAAndAAAAIndependentAndDoesNotAddCredentialsByDefault() {
         val json = LabProbeDdnsRecord(
             provider = "cloudflare",

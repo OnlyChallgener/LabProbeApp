@@ -358,7 +358,7 @@ data class PortMapDraft(
             targetIpv6Suffix = rule.targetIpv6Suffix,
             targetMac = rule.targetMac,
             targetPort = rule.targetPort.toString(),
-            serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) },
+            serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) },
             transportProtocol = rule.transportProtocol.ifBlank { "TCP" },
             duration = if (rule.expiresAt == null) "永久" else "保持原有效期",
             originalExpiresAt = rule.expiresAt,
@@ -389,13 +389,24 @@ internal val PORT_MAP_SERVICE_TEMPLATES = listOf(
     PortMapServiceTemplate("自定义", "Custom", null, setOf("TCP", "UDP"), "TCP")
 )
 
-internal fun defaultPortMapServiceType(targetPort: Int): String = when (targetPort) {
-    22 -> "SSH"
-    80 -> "HTTP"
-    443 -> "HTTPS"
-    3389 -> "RDP"
-    23 -> "Telnet"
-    else -> "TCP"
+/**
+ * Compatibility inference for old rules which predate serviceType. Keep this
+ * shared with Favorites so an empty UDP rule is never presented as TCP.
+ */
+internal fun defaultPortMapServiceType(targetPort: Int, transportProtocol: String = "TCP"): String {
+    val protocol = transportProtocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" }
+    return when {
+        targetPort == 22 && protocol == "TCP" -> "SSH"
+        targetPort == 23 && protocol == "TCP" -> "Telnet"
+        targetPort == 53 -> "DNS"
+        targetPort == 80 && protocol == "TCP" -> "HTTP"
+        targetPort == 443 && protocol == "TCP" -> "HTTPS"
+        targetPort == 1194 -> "OpenVPN"
+        targetPort == 3389 && protocol == "TCP" -> "RDP"
+        targetPort == 51820 && protocol == "UDP" -> "WireGuard"
+        protocol == "UDP" -> "Custom"
+        else -> "TCP"
+    }
 }
 
 internal fun applyPortMapServiceTemplate(
@@ -829,7 +840,7 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
                     Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = status.color, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold)
                 }
             }
-            Text("${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+            Text("${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }} · ${rule.modeText} · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
             Text("→ ${rule.targetText}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
             if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
                 Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Clip)
@@ -1505,7 +1516,7 @@ private fun PortMapDetailPage(
             delay(10_000)
         }
     }
-    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss, unifiedTypography = true) {
+    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss, unifiedTypography = true) {
             LabCoreCard(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
@@ -1570,7 +1581,7 @@ private fun PortMapDetailPage(
                             remoteTest = testServiceRemoteEndpoint(
                                 remoteEndpoint,
                                 ServiceAddressFamily.Any,
-                                rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) },
+                                rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) },
                                 rule.transportProtocol.ifBlank { "TCP" },
                             )
                             testingRemote = false

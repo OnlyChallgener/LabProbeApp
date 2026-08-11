@@ -4,6 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.cert.CertificateException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLProtocolException
 
 class ServiceAccessModelTest {
     @Test
@@ -58,6 +61,19 @@ class ServiceAccessModelTest {
         assertEquals("澶栫綉璁块棶", serviceAccessStatus(report))
         assertEquals("鍙揪", report.tcp)
         assertEquals("璇佷功璀﹀憡", report.https)
+    }
+
+    @Test
+    fun onlyCertificateFailuresBecomeCertificateWarnings() {
+        val certificate = SSLHandshakeException("certificate validation failed").apply {
+            initCause(CertificateException("expired certificate"))
+        }
+        assertTrue(isCertificateFailure(certificate))
+        assertFalse(isTlsHandshakeFailure(certificate))
+
+        val protocol = SSLProtocolException("unsupported protocol")
+        assertFalse(isCertificateFailure(protocol))
+        assertTrue(isTlsHandshakeFailure(protocol))
     }
 
     @Test

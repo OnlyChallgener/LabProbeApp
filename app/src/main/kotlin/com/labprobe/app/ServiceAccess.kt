@@ -17,8 +17,11 @@ import java.net.Socket
 import java.net.SocketException
 import java.net.URI
 import java.net.UnknownHostException
+import java.security.cert.CertificateException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLException
+import javax.net.ssl.SSLPeerUnverifiedException
 import kotlin.math.max
 
 internal data class ServiceAccessReport(
@@ -107,11 +110,23 @@ private fun isIpv6Unavailable(error: Throwable?): Boolean = generateSequence(err
             ))
 }
 
-private fun isCertificateFailure(error: Throwable?): Boolean =
-    generateSequence(error) { it.cause }.any { it is SSLException }
+internal fun isCertificateFailure(error: Throwable?): Boolean =
+    generateSequence(error) { it.cause }.any { cause ->
+        cause is CertificateException ||
+            cause is SSLPeerUnverifiedException ||
+            (cause is SSLHandshakeException && cause.message.orEmpty().containsAny(
+                "certificate", "certpath", "trust anchor", "self signed", "hostname", "peer unverified"
+            ))
+    }
+
+private fun String.containsAny(vararg values: String): Boolean = values.any { contains(it, ignoreCase = true) }
+
+internal fun isTlsHandshakeFailure(error: Throwable?): Boolean =
+    !isCertificateFailure(error) && generateSequence(error) { it.cause }.any { it is SSLException }
 
 private fun failureReason(error: Throwable?, family: ServiceAddressFamily, https: Boolean): String = when {
-    error is SSLException -> "HTTPS 证书校验失败"
+    https && isCertificateFailure(error) -> "HTTPS 证书校验失败"
+    https && isTlsHandshakeFailure(error) -> "TCP 可达 · HTTPS 握手失败"
     family == ServiceAddressFamily.Ipv6 && isIpv6Unavailable(error) -> "当前网络无法使用 IPv6 远程访问"
     https -> "HTTPS 服务不可达"
     else -> "服务不可达"
@@ -183,6 +198,7 @@ internal suspend fun probeServiceEndpoint(
     }
     val elapsed = max(1L, (System.nanoTime() - started) / 1_000_000L)
     val certificateWarning = endpoint.scheme == "https" && isCertificateFailure(result.exceptionOrNull())
+    val tlsHandshakeFailure = endpoint.scheme == "https" && isTlsHandshakeFailure(result.exceptionOrNull())
     val reachable = result.isSuccess || certificateWarning
     val reason = when {
         certificateWarning -> "服务可访问 · 证书校验异常"
@@ -192,11 +208,12 @@ internal suspend fun probeServiceEndpoint(
         reachable = reachable,
         dns = "正常",
         ipv6 = if (effectiveFamily == ServiceAddressFamily.Ipv6) "可用" else "—",
-        tcp = if (reachable) "可达" else "不可达",
+        tcp = if (reachable || tlsHandshakeFailure) "可达" else "不可达",
         https = when {
             endpoint.scheme != "https" -> "—"
             certificateWarning -> "证书警告"
             result.isSuccess -> "正常"
+            tlsHandshakeFailure -> "握手失败"
             else -> "失败"
         },
         latencyMs = elapsed,

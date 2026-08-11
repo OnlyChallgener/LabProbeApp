@@ -124,6 +124,15 @@ class PortMapEditorModelTest {
     }
 
     @Test
+    fun legacyUdpRulesUseTheSharedServiceTypeFallback() {
+        assertEquals("DNS", defaultPortMapServiceType(53, "UDP"))
+        assertEquals("OpenVPN", defaultPortMapServiceType(1194, "UDP"))
+        assertEquals("WireGuard", defaultPortMapServiceType(51820, "UDP"))
+        assertEquals("Custom", defaultPortMapServiceType(9999, "UDP"))
+        assertEquals("TCP", defaultPortMapServiceType(9999, "TCP"))
+    }
+
+    @Test
     fun suffixModeUsesSavedIpv6SnapshotWhenFullFieldWasCleared() {
         val full = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe"
         val draft = switchPortMapTargetMode(

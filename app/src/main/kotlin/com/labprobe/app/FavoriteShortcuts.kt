@@ -146,16 +146,8 @@ internal fun resolveFavoriteMapping(favorite: FavoriteShortcut, rules: List<Port
     return FavoriteMappingResolution(rule = rules.firstOrNull { it.id == id }, missing = rules.none { it.id == id })
 }
 
-private fun favoriteServiceType(rule: PortMapRule): String = rule.serviceType.ifBlank {
-    when (rule.targetPort) {
-        22 -> "SSH"
-        80 -> "HTTP"
-        443 -> "HTTPS"
-        3389 -> "RDP"
-        23 -> "Telnet"
-        else -> "TCP"
-    }
-}
+private fun favoriteServiceType(rule: PortMapRule): String =
+    rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }
 
 private fun favoriteServiceScheme(serviceType: String): String = when (serviceType.trim().uppercase(Locale.ROOT)) {
     "HTTPS" -> "https"

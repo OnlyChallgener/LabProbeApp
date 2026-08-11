@@ -39,6 +39,9 @@ data class RouterResource<T>(
     val initialLoading: Boolean get() = value == null && refreshing
 }
 
+/** A polling response may only publish while no later DDNS mutation owns the snapshot. */
+internal fun isCurrentLabProbeDdnsGeneration(expected: Long, current: Long): Boolean = expected == current
+
 class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -319,13 +322,25 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     }
 
     suspend fun refreshLabProbeDdnsAddress(): Result<Unit> = executeCommand {
+        val key = "labProbeDdns"
+        val seq = sequence(key).incrementAndGet()
         val before = _labProbeDdns.value.value?.address?.detectedAt ?: 0L
         api.refreshLabProbeDdnsAddress()
         var observed = false
         for (attempt in 0 until 8) {
             delay(1_000L)
             val latest = api.labProbeDdns(true)
-            _labProbeDdns.value = RouterResource(latest, System.currentTimeMillis())
+            val applied = labProbeMutationMutex.withLock {
+                if (!isCurrentLabProbeDdnsGeneration(seq, sequence(key).get())) {
+                    false
+                } else {
+                    _labProbeDdns.value = RouterResource(latest, System.currentTimeMillis(), generation = seq)
+                    true
+                }
+            }
+            // A later add/update/delete/update-now owns the snapshot. Its result
+            // must remain visible instead of being replaced by this old poll.
+            if (!applied) return@executeCommand
             if (latest.address.detectedAt > before || latest.records.any { it.lastDetectedAt > before }) {
                 observed = true
                 break
