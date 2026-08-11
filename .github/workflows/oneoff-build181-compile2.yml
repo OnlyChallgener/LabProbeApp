@@ -1,0 +1,113 @@
+name: One-off build181 clean compile
+
+on:
+  push:
+    branches:
+      - release/build180
+    paths:
+      - .github/workflows/oneoff-build181-compile2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/build180
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Materialize and verify
+        shell: bash
+        run: |
+          set -e
+          git config user.name "OpenAI UI Fix"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/prepare_android_sources_build167.py
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          main=Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
+          port=Path('app/src/main/kotlin/com/labprobe/app/PortMapping.kt').read_text(encoding='utf-8')
+          control=Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt').read_text(encoding='utf-8')
+          settings=Path('app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt').read_text(encoding='utf-8')
+          native=Path('app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt').read_text(encoding='utf-8')
+          access=Path('app/src/main/kotlin/com/labprobe/app/ServiceAccess.kt').read_text(encoding='utf-8')
+          fav=Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
+          ui=Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
+          assert ".clickable(enabled = real.isNotBlank()) { copy(ctx, real) }" in main
+          row=main[main.index('fun HealthDataRowDisplay'):main.index('@Composable\nfun HealthExitCard')]
+          assert 'ContentCopy' not in row and 'IconButton(' not in row
+          assert 'HealthCard(Modifier.clip(HomeCardShape).clickable' not in main[main.index('fun HealthExitCard'):main.index('@Composable\nfun HealthVpnCard')]
+          assert 'HealthCard(Modifier.clip(HomeCardShape).clickable' not in main[main.index('fun HealthVpnCard'):main.index('@Composable\nfun HealthDevicesCard')]
+          assert "val stroke = if (size > 100.dp) 12.dp.toPx() else 11.dp.toPx()" in main
+          assert "shown.contains('\\n')" in main
+          assert 'embedded: Boolean = false' in port and 'showHeader = !embedded' in port
+          assert 'offset(y = (-62).dp)' not in control
+          assert 'import androidx.compose.foundation.BorderStroke' in control
+          assert 'Color(0xFFE8F1FF)' in control
+          assert 'icon = Icons.Rounded.CompareArrows' in settings and settings.count('Icons.Rounded.Bolt') >= 2
+          assert 'Box(Modifier.weight(1.35f))' in native and native.count('modifier = Modifier.weight(.85f)') >= 2
+          assert 'tcpReachableBeforeHttp' in access and '可继续用浏览器尝试' in access
+          assert '快速检测未确认，继续在浏览器尝试' in fav
+          card=ui[ui.index('val CardTitle = TextStyle('):ui.index('val SectionTitle = TextStyle(')]
+          assert 'fontSize = 16.sp' in card and 'fontWeight = FontWeight.Bold' in card
+          print('UI/access assertions passed')
+          PY
+          git add app scripts
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: materialize build181 release source state"
+          fi
+          python3 scripts/prepare_android_sources_build167.py
+          git diff --exit-code
+          python3 scripts/verify_build154_sources.py
+
+      - name: Test and assemble debug
+        shell: bash
+        env:
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: |
+          set +e
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --console=plain >/tmp/build.log 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            git reset --hard origin/release/build180
+            {
+              echo "build_rc=$RC"
+              echo "build_log_tail:"
+              tail -n 220 /tmp/build.log
+            } > .build181-build-result.txt
+            git add .build181-build-result.txt
+            git commit -m "chore: record build181 compile failure"
+            git pull --rebase origin release/build180
+            git push origin HEAD:release/build180
+            exit 0
+          fi
+          echo "build181 compile passed"
+
+      - name: Publish validated source and clean workflow
+        shell: bash
+        run: |
+          rm -f .build181-build-result.txt
+          git rm .github/workflows/oneoff-build181-compile2.yml
+          git add -A
+          git commit -m "chore: remove one-off build181 compile workflow"
+          git pull --rebase origin release/build180
+          git push origin HEAD:release/build180
