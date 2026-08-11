@@ -189,7 +189,7 @@ object LabTypography {
     val CompactButton = Supporting.copy(fontWeight = FontWeight.SemiBold, color = Color.Unspecified)
     val FieldLabel = Supporting
     val FieldValue = Value
-    val Placeholder = Supporting.copy(fontWeight = FontWeight.Regular, color = LabV2.InkFaint)
+    val Placeholder = Supporting.copy(fontWeight = FontWeight.Normal, color = LabV2.InkFaint)
     val Log = Supporting.copy(lineHeight = 15.sp)
     val Metric = TextStyle(
         fontFamily = FontFamily.SansSerif,

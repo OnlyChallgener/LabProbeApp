@@ -1094,8 +1094,19 @@ private fun LabProbeDdnsDetailPage(
                     Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
                 }
             } else {
-                Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = LabTypography.Sup…1264 tokens truncated…辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
+                Button(
+                    onClick = onUpdateNow,
+                    enabled = canUpdate,
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = RouterBlue),
+                ) {
+                    Text(
+                        if (busy) "正在更新…" else "立即更新",
+                        fontSize = LabTypography.Supporting.fontSize,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }
