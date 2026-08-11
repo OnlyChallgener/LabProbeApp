@@ -154,7 +154,7 @@ private fun NativeSelector(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(22.dp)
+    val shape = RoundedCornerShape(14.dp)
     Box(modifier) {
         OutlinedButton(
             onClick = { onExpandedChange(true) },
@@ -193,10 +193,14 @@ private fun NativeSelector(
 }
 
 @Composable
-private fun NativeCompactPortField(value: String, onValueChange: (String) -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
+private fun NativeCompactPortField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth()
+) {
+    val shape = RoundedCornerShape(14.dp)
     Surface(
-        modifier = Modifier.fillMaxWidth().height(58.dp).nativeBlueShadow(shape, 4.dp),
+        modifier = modifier.height(52.dp).nativeBlueShadow(shape, 4.dp),
         shape = shape,
         color = Color.White,
         border = BorderStroke(1.dp, NativeBlue.copy(alpha = .30f))
@@ -212,7 +216,7 @@ private fun NativeCompactPortField(value: String, onValueChange: (String) -> Uni
                 onValueChange = { onValueChange(it.filter(Char::isDigit).take(5)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                textStyle = LabTypography.FieldValue.copy(textAlign = TextAlign.Center),
+                textStyle = LabTypography.FieldValue.copy(textAlign = TextAlign.Start),
                 keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                 cursorBrush = SolidColor(NativeBlue)
             )
@@ -488,44 +492,54 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     DetailShell("路由 NAT 诊断", "路由器原生 RFC3489 / RFC5780", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
             NativeTitle(Icons.Rounded.Radar, "检测参数", NativeBlue)
-            val serverShape = RoundedCornerShape(22.dp)
-            Box {
-                OutlinedButton(
-                    onClick = { serverMenu = true },
-                    modifier = Modifier.fillMaxWidth().height(58.dp).nativeBlueShadow(serverShape, 5.dp),
-                    shape = serverShape,
-                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f))
-                ) {
-                    Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
-                    Spacer(Modifier.width(8.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                        Text("STUN 服务器", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
-                        Spacer(Modifier.height(3.dp))
-                        Text(server, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 2, overflow = TextOverflow.Clip)
+            val serverShape = RoundedCornerShape(14.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.weight(1.65f)) {
+                    OutlinedButton(
+                        onClick = { serverMenu = true },
+                        modifier = Modifier.fillMaxWidth().height(52.dp).nativeBlueShadow(serverShape, 5.dp),
+                        shape = serverShape,
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f))
+                    ) {
+                        Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                            Text("STUN 服务器", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(3.dp))
+                            Text(server, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 2, overflow = TextOverflow.Clip)
+                        }
+                        Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
                     }
-                    Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
-                }
-                DropdownMenu(
-                    expanded = serverMenu,
-                    onDismissRequest = { serverMenu = false },
-                    modifier = Modifier.widthIn(min = 300.dp).padding(vertical = 5.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    containerColor = Color.White,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 11.dp
-                ) {
-                    servers.forEach { host ->
-                        DropdownMenuItem(
-                            text = { Text(host, color = NativeInk, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold) },
-                            onClick = { server = host; serverMenu = false },
-                            modifier = Modifier.heightIn(min = 50.dp),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
-                        )
+                    DropdownMenu(
+                        expanded = serverMenu,
+                        onDismissRequest = { serverMenu = false },
+                        modifier = Modifier.widthIn(min = 300.dp).padding(vertical = 5.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        containerColor = Color.White,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 11.dp
+                    ) {
+                        servers.forEach { host ->
+                            DropdownMenuItem(
+                                text = { Text(host, color = NativeInk, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold) },
+                                onClick = { server = host; serverMenu = false },
+                                modifier = Modifier.heightIn(min = 50.dp),
+                                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
+                NativeCompactPortField(
+                    value = portText,
+                    onValueChange = { portText = it },
+                    modifier = Modifier.weight(.75f)
+                )
             }
-            NativeCompactPortField(portText) { portText = it }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NativeSelector(
                     label = "STUN 类型",
@@ -798,7 +812,7 @@ private fun NativeCard(content: @Composable ColumnScope.() -> Unit) {
         border = BorderStroke(1.dp, NativeBorder),
         shadowElevation = 2.dp
     ) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }
 
@@ -816,10 +830,10 @@ private fun NativeTitle(icon: androidx.compose.ui.graphics.vector.ImageVector, t
 @Composable
 private fun NativeValueRow(label: String, value: String, stacked: Boolean = false) {
     if (stacked) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(label, style = LabTypography.Supporting.copy(color = NativeMuted))
             SelectionContainer {
-                Text(value, style = LabTypography.Value.copy(color = NativeInk), maxLines = 3, overflow = TextOverflow.Clip)
+                Text(value, style = LabTypography.Value.copy(color = NativeInk), maxLines = 4, overflow = TextOverflow.Clip)
             }
         }
     } else {

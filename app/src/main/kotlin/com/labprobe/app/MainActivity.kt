@@ -4105,7 +4105,7 @@ private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, 
 fun HealthScoreGauge(score: Int, size: Dp = 96.dp) {
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(8.dp)) {
-            val stroke = if (size > 100.dp) 9.dp.toPx() else 8.dp.toPx()
+            val stroke = if (size > 100.dp) 10.dp.toPx() else 9.dp.toPx()
             drawArc(
                 color = Color(0xFFE2EAF3),
                 startAngle = 135f,
@@ -4651,9 +4651,15 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
                 selectedLabelColor = syncChipBlue,
                 selectedLeadingIconColor = syncChipBlue
             )
+            val syncSummary = when (mode) {
+                "wol" -> "WOL 设备 · $wolCount 台"
+                "online" -> "在线 ${list.size} 台 · WOL $wolCount"
+                "offline" -> "离线 ${list.size} 台 · WOL $wolCount"
+                else -> "关注设备 ${list.size} 台 · WOL $wolCount"
+            }
             ExpressiveCard(
                 "终端同步",
-                "${if (mode == "online") "在线" else if (mode == "offline") "离线" else if (mode == "wol") "WOL设备" else "关注设备"} · ${if (mode == "wol") wolCount else list.size} 台 · WOL $wolCount",
+                syncSummary,
                 Icons.Rounded.Devices,
                 Color(0xFFF59E0B),
                 coreSurface = true,
@@ -4820,12 +4826,22 @@ private fun TodayTrafficSummaryCard(uploadBytes: Long, downloadBytes: Long, onli
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("下载/", fontSize = LabTypography.Value.fontSize, color = Color(0xFF0EA5E9), fontWeight = FontWeight.SemiBold)
-                    Text(formatTraffic(downloadBytes), fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        formatTraffic(downloadBytes),
+                        fontSize = LabTypography.CardTitle.fontSize,
+                        lineHeight = LabTypography.CardTitle.lineHeight,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Spacer(Modifier.width(10.dp))
-                    Box(Modifier.width(1.dp).height(21.dp).background(LabV2.InkFaint))
+                    Box(Modifier.width(1.dp).height(18.dp).background(LabV2.InkFaint))
                     Spacer(Modifier.width(10.dp))
                     Text("上传/", fontSize = LabTypography.Value.fontSize, color = Color(0xFF22C55E), fontWeight = FontWeight.SemiBold)
-                    Text(formatTraffic(uploadBytes), fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        formatTraffic(uploadBytes),
+                        fontSize = LabTypography.CardTitle.fontSize,
+                        lineHeight = LabTypography.CardTitle.lineHeight,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
@@ -5583,7 +5599,7 @@ fun NatScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) = De
 fun NatHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("NAT 记录", "最近 50 条 · 左滑删除", onBack) { NatHistoryTool(prefs) }
 @Composable
 fun SshScreen(prefs: AppPrefs, onBack: () -> Unit, openHistory: () -> Unit) =
-    DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack, compactHeader = true) { SshTool(prefs, openHistory) }
+    DetailShell("SSH 命令", "二级页面执行，返回工具页", onBack, compactHeader = true, unifiedTypography = true) { SshTool(prefs, openHistory) }
 
 @Composable
 fun SshHistoryScreen(prefs: AppPrefs, onBack: () -> Unit) =
