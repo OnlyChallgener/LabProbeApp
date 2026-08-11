@@ -1,0 +1,38 @@
+name: One-off build181 prepare diff
+
+on:
+  push:
+    branches:
+      - release/build180
+    paths:
+      - .github/workflows/oneoff-build181-prepdiff.yml
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/build180
+          fetch-depth: 0
+      - name: Capture source preparation diff
+        shell: bash
+        run: |
+          python3 scripts/prepare_android_sources_build167.py >/tmp/prepare.log 2>&1
+          git diff -- app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt \
+                     app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
+                     app/src/main/kotlin/com/labprobe/app/PortMapping.kt \
+                     app/src/main/kotlin/com/labprobe/app/RouterRepository.kt \
+                     app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt \
+                     app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt \
+                     app/src/main/res/drawable/ic_launcher_logo.xml \
+                     scripts/verify_build154_sources.py > .build181-prepare.diff
+          git restore app scripts
+          git config user.name "OpenAI UI Fix"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .build181-prepare.diff
+          git commit -m "chore: capture build181 source prepare diff"
+          git push origin HEAD:release/build180
