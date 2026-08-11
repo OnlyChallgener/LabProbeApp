@@ -1,0 +1,31 @@
+prepare_rc=0
+prepare_diff=dirty
+changed_files:
+app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt
+app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+app/src/main/kotlin/com/labprobe/app/PortMapping.kt
+app/src/main/kotlin/com/labprobe/app/RouterRepository.kt
+app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
+app/src/main/kotlin/com/labprobe/app/WolManagementPanel.kt
+app/src/main/res/drawable/ic_launcher_logo.xml
+scripts/verify_build154_sources.py
+diff_stat:
+ app/src/main/kotlin/com/labprobe/app/Ipv6Utils.kt  |   7 +-
+ .../main/kotlin/com/labprobe/app/MainActivity.kt   | 169 ++++++++-------------
+ .../main/kotlin/com/labprobe/app/PortMapping.kt    |   9 +-
+ .../kotlin/com/labprobe/app/RouterRepository.kt    |   9 ++
+ .../kotlin/com/labprobe/app/SecureTokenStore.kt    |   7 +
+ .../kotlin/com/labprobe/app/WolManagementPanel.kt  |  19 ++-
+ app/src/main/res/drawable/ic_launcher_logo.xml     |   8 +-
+ scripts/verify_build154_sources.py                 |   6 +-
+ 8 files changed, 112 insertions(+), 122 deletions(-)
+prepare_log:
+build170 APP fixes applied
+build171 offline authority and launcher regression fixes applied
+build172 Relay update coordinator and launcher source state applied
+build173 original SVG launcher details and adaptive safe-zone source state applied
+build174 launcher visibility and Relay update stability applied
+build175 balanced launcher margin and Relay version display applied
+build176 standard adaptive icon layers applied
+build177 centered launcher spacing applied
+build178 SSH compatibility, blue-white controls, and device names applied
