@@ -469,7 +469,7 @@ private suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceIte
 }
 
 @Composable
-fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
+fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = false) {
     val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
@@ -666,7 +666,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
         return
     }
 
-    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true) {
+    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true, showHeader = !embedded) {
         Spacer(Modifier.height(8.dp))
         PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
 

@@ -2132,6 +2132,7 @@ fun DetailShell(
     onBack: () -> Unit,
     compactHeader: Boolean = false,
     unifiedTypography: Boolean = false,
+    showHeader: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -2141,14 +2142,16 @@ fun DetailShell(
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
     ) {
-        CompactPageHeader(
-            title = title,
-            subtitle = subtitle,
-            onBack = onBack,
-            compactTitle = compactHeader,
-            titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
-            subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
-        )
+        if (showHeader) {
+            CompactPageHeader(
+                title = title,
+                subtitle = subtitle,
+                onBack = onBack,
+                compactTitle = compactHeader,
+                titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
+                subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
+            )
+        }
         content()
         Spacer(Modifier.height(2.dp))
     }

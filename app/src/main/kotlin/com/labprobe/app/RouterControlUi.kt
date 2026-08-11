@@ -308,21 +308,38 @@ fun MappingAndUpnpScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
 @Composable
 private fun LegacyIpv6MappingPage(prefs: AppPrefs, onBack: () -> Unit) {
-    Box(Modifier.fillMaxSize().clipToBounds()) {
-        Box(Modifier.fillMaxSize().offset(y = (-62).dp)) {
-            PortMappingScreen(prefs = prefs, onBack = onBack)
-        }
-    }
+    PortMappingScreen(prefs = prefs, onBack = onBack, embedded = true)
 }
 
 @Composable
 private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
     val titles = listOf("IPv6映射", "端口映射", "UPnP")
-    Row(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 12.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
         titles.forEachIndexed { index, title ->
-            Box(Modifier.weight(1f).fillMaxHeight().clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
-                Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = if (selected == index) FontWeight.SemiBold else FontWeight.SemiBold, color = if (selected == index) RouterBlue else RouterMuted)
-                if (selected == index) Box(Modifier.align(Alignment.BottomCenter).width(30.dp).height(2.2.dp).background(RouterBlue, RoundedCornerShape(99.dp)))
+            val active = selected == index
+            Surface(
+                onClick = { onSelect(index) },
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                shape = RoundedCornerShape(14.dp),
+                color = if (active) Color(0xFFE8F1FF) else Color.Transparent,
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+                border = if (active) BorderStroke(1.dp, RouterBlue.copy(alpha = .12f)) else null
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        title,
+                        style = LabTypography.Value.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (active) RouterBlue else RouterMuted
+                        ),
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
