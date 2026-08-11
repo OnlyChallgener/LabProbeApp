@@ -1127,7 +1127,7 @@ private fun LabProbeDdnsDetailPage(
                 if (record.recordTypes.any { it == "A" || it == "AAAA" } && !labProbeDetectionIsFresh(record, address)) {
                     Text("检测结果已过期，请先刷新检测地址", fontSize = LabTypography.Caption.fontSize, color = RouterAmber, fontWeight = FontWeight.SemiBold)
                 }
-                if (record.lastError.isNotBlank()) Text(record.lastError, fontSize = LabTypography.Caption.fontSize, color = RouterRed, fontWeight = FontWeight.SemiBold)
+                if (record.lastError.isNotBlank()) Text(uiMessageZh(record.lastError), fontSize = LabTypography.Caption.fontSize, color = RouterRed, fontWeight = FontWeight.SemiBold)
             }
             if (record.recordTypes.any { it == "A" || it == "AAAA" }) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1482,7 +1482,7 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
                         Text(if(task.active)"已耗时 ${task.elapsedSeconds} 秒 · 进度 ${result.progress}" else "进度 ${result.progress}",fontSize = LabTypography.Caption.fontSize,color=RouterMuted)
                         if(task.active&&task.lastRouterResponseAt<=0L)Text("检测已由 Hub 接管，可以安全离开页面",fontSize = LabTypography.Caption.fontSize,color=RouterMuted)
                     }
-                    Button(onClick={tasks.startDiagnostic()},enabled=!task.active,shape=RoundedCornerShape(12.dp),contentPadding=PaddingValues(horizontal=10.dp),modifier=Modifier.height(35.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterBlue,contentColor=Color.White,disabledContainerColor=RouterBlue.copy(alpha=.62f),disabledContentColor=Color.White)){Text(if(task.active)"检测中" else "开始检测",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
+                    Button(onClick={tasks.startDiagnostic()},enabled=!task.active,shape=RoundedCornerShape(12.dp),contentPadding=PaddingValues(horizontal=10.dp),modifier=Modifier.height(35.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan,contentColor=Color.White,disabledContainerColor=RouterCyan.copy(alpha=.62f),disabledContentColor=Color.White)){Text(if(task.active)"检测中" else "开始检测",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
                 }
             }}
             if(task.failed)item{CompactMessage(task.message.ifBlank{task.stageText},RouterRed)}
@@ -1678,7 +1678,7 @@ private fun CompactSegment(text:String,selected:Boolean,modifier:Modifier,enable
 private fun TinyBadge(text:String,color:Color){Surface(shape=RoundedCornerShape(99.dp),color=color.copy(alpha=.09f)){Text(text,Modifier.padding(horizontal=6.dp,vertical=2.dp),fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=color,maxLines=1)}}
 
 @Composable
-private fun CompactMessage(text:String,color:Color){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(13.dp),color=color.copy(alpha=.065f),border=androidx.compose.foundation.BorderStroke(1.dp,color.copy(alpha=.13f))){Text(text,Modifier.padding(horizontal=10.dp,vertical=7.dp),fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=color)}}
+private fun CompactMessage(text:String,color:Color){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(13.dp),color=color.copy(alpha=.065f),border=androidx.compose.foundation.BorderStroke(1.dp,color.copy(alpha=.13f))){Text(uiMessageZh(text),Modifier.padding(horizontal=10.dp,vertical=7.dp),fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=color)}}
 
 @Composable
 private fun CompactEmpty(title:String,subtitle:String,glyph:RouterGlyph,onAdd:(()->Unit)?){Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(16.dp),color=Color.White,border=androidx.compose.foundation.BorderStroke(1.dp,RouterBorder)){Column(Modifier.fillMaxWidth().padding(vertical=18.dp,horizontal=12.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)){RouterGlyphIcon(glyph,RouterBlue,Modifier.size(34.dp));Text(title,fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);Text(subtitle,fontSize = LabTypography.Caption.fontSize,color=RouterMuted);if(onAdd!=null)TextButton(onClick=onAdd,contentPadding=PaddingValues(horizontal=10.dp,vertical=2.dp)){Text("立即添加",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}}}}

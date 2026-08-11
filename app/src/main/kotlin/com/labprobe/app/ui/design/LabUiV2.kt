@@ -69,7 +69,7 @@ object LabV2 {
     val PrimaryStrong = Color(0xFF0E5BD8)
     val Cyan = Color(0xFF10A9C8)
     val Green = Color(0xFF16A36A)
-    val Purple = Color(0xFF7456D8)
+    val Purple = Cyan
     val Amber = Color(0xFFF09A3E)
     val Red = Color(0xFFE74B55)
 
@@ -125,85 +125,85 @@ object LabCoreSurface {
 /** Shared type scale for the home, device and router-settings surfaces. */
 object LabTypography {
     val AppTitle = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 20.sp,
         lineHeight = 25.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
         letterSpacing = (-0.12).sp,
         color = LabV2.Ink
     )
     val PageTitle = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 18.sp,
         lineHeight = 23.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
         letterSpacing = (-0.10).sp,
         color = LabV2.Ink
     )
     val CardTitle = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 15.sp,
         lineHeight = 20.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = (-0.06).sp,
+        letterSpacing = (-0.08).sp,
         color = LabV2.Ink
     )
     val SectionTitle = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 13.5.sp,
         lineHeight = 18.sp,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
         letterSpacing = (-0.03).sp,
         color = LabV2.Ink
     )
     val Body = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 13.sp,
         lineHeight = 18.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.Ink
     )
     val Value = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 13.5.sp,
         lineHeight = 18.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.Ink
     )
-    val ValueStrong = Value.copy(fontWeight = FontWeight.SemiBold)
+    val ValueStrong = Value.copy(fontWeight = FontWeight.Bold)
     val Supporting = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 11.5.sp,
         lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.InkMuted
     )
     val Caption = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 10.5.sp,
         lineHeight = 14.sp,
         fontWeight = FontWeight.Medium,
         color = LabV2.InkMuted
     )
     val Micro = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 10.5.sp,
         lineHeight = 14.sp,
         fontWeight = FontWeight.SemiBold,
         color = LabV2.InkMuted
     )
     val Button = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 14.sp,
         lineHeight = 18.sp,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
         color = Color.Unspecified
     )
     val CompactButton = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 12.sp,
         lineHeight = 16.sp,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
         color = Color.Unspecified
     )
     val FieldLabel = Supporting.copy(fontWeight = FontWeight.SemiBold)
@@ -211,14 +211,14 @@ object LabTypography {
     val Placeholder = Supporting.copy(fontWeight = FontWeight.Normal, color = LabV2.InkFaint)
     val Log = Supporting.copy(lineHeight = 16.sp)
     val Metric = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
         fontSize = 40.sp,
         lineHeight = 44.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.ExtraBold,
         color = LabV2.Ink
     )
     val CompactMetric = Metric.copy(fontSize = 32.sp, lineHeight = 36.sp)
-    val HomeMiniMetric = Metric.copy(fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.Bold)
+    val HomeMiniMetric = Metric.copy(fontSize = 22.sp, lineHeight = 25.sp, fontWeight = FontWeight.ExtraBold)
 }
 
 fun Modifier.labV2PageBackground(): Modifier = background(

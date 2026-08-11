@@ -181,7 +181,7 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · SSH、控件配色与设备名称一致性修复" to listOf(
+            "v$NAME build$CODE · 字体、色彩、排版与中文提示统一优化" to listOf(
                 "启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点",
                 "SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法",
                 "下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色",
@@ -2450,7 +2450,7 @@ fun TinyParamInput(label: String, value: String, onValueChange: (String) -> Unit
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 textStyle = LocalTextStyle.current.copy(
                     fontSize = 13.8.sp,
-                    fontFamily = FontFamily.SansSerif,
+                    fontFamily = FontFamily.Default,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 ),
@@ -2477,7 +2477,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                 Text(
                     value + "ms",
                     fontSize = 13.8.sp,
-                    fontFamily = FontFamily.SansSerif,
+                    fontFamily = FontFamily.Default,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -2502,7 +2502,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
+                    text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Default) },
                     onClick = { onChange(option); expanded = false },
                     leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
                 )
@@ -2547,7 +2547,7 @@ fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> 
                 onValueChange = onValueChange,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-                textStyle = LocalTextStyle.current.copy(fontSize = 12.7.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
+                textStyle = LocalTextStyle.current.copy(fontSize = 12.7.sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
                 modifier = Modifier.weight(1f)
             )
         }
@@ -2565,7 +2565,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                 Text(
                     value + suffix,
                     fontSize = 13.0.sp,
-                    fontFamily = FontFamily.SansSerif,
+                    fontFamily = FontFamily.Default,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -2578,7 +2578,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
             options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
+                    text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Default) },
                     onClick = { onChange(option); expanded = false },
                     leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }) else null
                 )
@@ -2599,7 +2599,7 @@ fun TinyHistoryParamInputIcon(label: String, hint: String, value: String, onValu
                 onValueChange = onValueChange,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.8.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.8.sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
                 modifier = Modifier.weight(1f)
             )
             HistoryDropdown(historyKey, prefs) { onValueChange(it) }
@@ -3575,7 +3575,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         }
                     }
                     Text(
-                        message.replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
+                        uiMessageZh(message).replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
                         fontSize = LabTypography.Caption.fontSize,
                         lineHeight = LabTypography.Caption.lineHeight,
                         fontWeight = FontWeight.SemiBold,
@@ -4216,7 +4216,7 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
             modifier = Modifier.weight(1f),
             style = LabTypography.ValueStrong.copy(
                 color = accent,
-                fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif
+                fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.Default
             ),
             maxLines = 2,
             softWrap = true,
@@ -4238,7 +4238,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
         }.filter { it.second.isNotBlank() }
         Spacer(Modifier.height(9.dp))
         addressRows.forEachIndexed { index, (label, value) ->
-            if (index > 0) HorizontalDivider(color = HomeCardBorder, modifier = Modifier.padding(vertical = 7.dp))
+            if (index > 0) Spacer(Modifier.height(5.dp))
             HealthDataRowDisplay(label, value, maskAddressForUi(value, privacyMode))
         }
     }
@@ -4519,7 +4519,7 @@ fun HomeReorderableCard(cardKey: String, order: List<String>, onOrder: (List<Str
 
 @Composable
 fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit) {
-    ExpressiveCard("状态总览", state.message, Icons.Rounded.Dashboard, Color(0xFF2D63D8)) {
+    ExpressiveCard("状态总览", uiMessageZh(state.message), Icons.Rounded.Dashboard, Color(0xFF2D63D8)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill("Hub", if (prefs.hub.isBlank()) "未设" else if (state.hubConnected) "就绪" else "待连", Color(0xFF2D63D8))
             StatusPill("终端", "${state.onlineDevices.size} 在线", Color(0xFFF59E0B))
@@ -4548,7 +4548,7 @@ fun ExitCard(nas: JSONObject?, router: JSONObject?) {
 
 @Composable
 fun VpnCard(rows: List<Pair<String, String>>) {
-    ExpressiveCard("VPN / STUN 地址", null, Icons.Rounded.VpnKey, Color(0xFF7C3AED)) {
+    ExpressiveCard("VPN / STUN 地址", null, Icons.Rounded.VpnKey, LabV2.Cyan) {
         rows.forEach { (label, value) -> InfoRowVisible(label, value, true) }
     }
 }
@@ -5278,7 +5278,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
                     "NAT类型",
                     profile.natType,
                     Icons.Rounded.Router,
-                    Color(0xFF7C3AED),
+                    LabV2.Cyan,
                     Modifier.weight(1f),
                     clickable = true,
                     onClick = { open("tool_nat") }
@@ -5849,7 +5849,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.widthIn(min = 76.dp))
             StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.widthIn(min = 82.dp))
             StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.widthIn(min = 82.dp))
-            StatChip("漫游", "$roamCount", Color(0xFF7C3AED), Modifier.widthIn(min = 76.dp))
+            StatChip("漫游", "$roamCount", LabV2.Cyan, Modifier.widthIn(min = 76.dp))
         }
         if (enableCandidateScan) {
             Row(
@@ -6135,7 +6135,7 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatChip("当前", current, blue, Modifier.weight(1f))
             StatChip("平均", avg, Color(0xFF0EA5E9), Modifier.weight(1f))
-            StatChip("峰值", peak, Color(0xFF7C3AED), Modifier.weight(1f))
+            StatChip("峰值", peak, LabV2.Cyan, Modifier.weight(1f))
         }
         LabSpeedChart(samples, modifier = Modifier.fillMaxWidth().height(260.dp))
         Text("总流量 $total · 峰值稳定后自动停止；测速源/CDN/运营商会影响结果，不等于宽带物理上限。", fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
@@ -6188,7 +6188,7 @@ fun LanSpeedTool(prefs: AppPrefs) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatChip("当前", current, blue, Modifier.weight(1f))
             StatChip("平均", avg, Color(0xFF2563EB), Modifier.weight(1f))
-            StatChip("峰值", peak, Color(0xFF7C3AED), Modifier.weight(1f))
+            StatChip("峰值", peak, LabV2.Cyan, Modifier.weight(1f))
         }
         LabSpeedChart(samples, modifier = Modifier.fillMaxWidth().height(260.dp))
         Text("总流量 $total · 局域网测速取决于服务端、Wi‑Fi 协商速率、手机性能和路由器 CPU。", fontSize = 11.4.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.62f), lineHeight = 16.sp)
@@ -6205,7 +6205,7 @@ fun LoadLatencyTool(prefs: AppPrefs) {
     var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
     var summary by remember { mutableStateOf<LoadLatencyResult?>(null) }
     val scope = rememberCoroutineScope()
-    val accent = Color(0xFF7C3AED)
+    val accent = LabV2.Cyan
     ExpressiveCard("负载配置", "先测空闲 Ping，再下载满载并同步采样延迟。", Icons.Rounded.Timeline, accent) {
         CompactIconHistoryInput("下载URL", "https://...", url, { url = it }, "load_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
@@ -6457,9 +6457,9 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                 RoamMetric("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it dBm" } ?: "—", Color(0xFF16A34A), 92.dp),
                 RoamMetric("延迟", latest?.latency?.let { if (it >= 1000) String.format(Locale.US, "%.1fs", it / 1000.0) else "${it}ms" } ?: "—", Color(0xFFF59E0B), 92.dp),
                 RoamMetric("候选AP", latest?.sameSsidApCount?.takeIf { it > 0 }?.let { "${it}个" } ?: "—", Color(0xFF0EA5E9), 96.dp),
-                RoamMetric("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", Color(0xFF7C3AED), 84.dp),
+                RoamMetric("差值", latest?.rssiGapDb?.takeIf { it > 0 }?.let { "+${it}dB" } ?: "—", LabV2.Cyan, 84.dp),
                 RoamMetric("粘AP", "$stickyScore", Color(0xFFEF4444), 84.dp),
-                RoamMetric("漫游", "${roamCount}", Color(0xFF7C3AED), 84.dp)
+                RoamMetric("漫游", "${roamCount}", LabV2.Cyan, 84.dp)
             )
         )
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
@@ -6637,7 +6637,7 @@ fun MtuTool(prefs: AppPrefs) {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             TinyInfoParam("常用", if (protocol == "IPv6") "1280/1492/1500" else "1492/1500", Icons.Rounded.Timeline, Color(0xFF2563EB), Modifier.weight(1f))
-            TinyInfoParam("说明", if (protocol == "IPv6") "payload+48" else "payload+28", Icons.Rounded.Info, Color(0xFF7C3AED), Modifier.weight(1f))
+            TinyInfoParam("说明", if (protocol == "IPv6") "payload+48" else "payload+28", Icons.Rounded.Info, LabV2.Cyan, Modifier.weight(1f))
         }
         PillButton(if (running) "检测中..." else "开始 MTU 检测", Icons.Rounded.PlayArrow, enabled = !running, accent = accent) {
             scope.launch {
@@ -6663,10 +6663,10 @@ fun DnsQualityTool(prefs: AppPrefs) {
     var rows by remember { mutableStateOf<List<DnsQualityRow>>(emptyList()) }
     var msg by remember { mutableStateOf("等待测试") }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("质量配置", "并行对比多个 DNS 的 A/AAAA 响应时间。", Icons.Rounded.TravelExplore, Color(0xFF7C3AED)) {
+    ExpressiveCard("质量配置", "并行对比多个 DNS 的 A/AAAA 响应时间。", Icons.Rounded.TravelExplore, LabV2.Cyan) {
         CompactIconHistoryInput("域名", "www.baidu.com", domain, { domain = it }, "dnsq_domain", prefs, Icons.Rounded.Dns)
         CompactIconHistoryInput("DNS", "逗号分隔", servers, { servers = it }, "dnsq_servers", prefs, Icons.Rounded.Storage)
-        PillButton("开始 DNS 质量测试", Icons.Rounded.PlayArrow, accent = Color(0xFF7C3AED)) {
+        PillButton("开始 DNS 质量测试", Icons.Rounded.PlayArrow, accent = LabV2.Cyan) {
             scope.launch {
                 msg = "测试中..."; prefs.addHistory("dnsq_domain", domain); prefs.addHistory("dnsq_servers", servers)
                 rows = runDnsQuality(domain, servers.split(',').map { it.trim() }.filter { it.isNotBlank() }.take(8))
@@ -7344,7 +7344,7 @@ fun LabLatencyOnlyChart(samples: List<WifiSample>, modifier: Modifier = Modifier
         values = latencySamples.mapNotNull { it.latency?.toDouble() },
         minY = 0.0,
         maxY = maxLat.toDouble(),
-        color = Color(0xFF7C3AED),
+        color = LabV2.Cyan,
         empty = "等待负载延迟",
         yFormat = { it.roundToInt().toString() },
         pointLabels = latencySamples.map { "${it.time}\n延迟 ${it.latency ?: 0} ms\n丢包 ${if (it.lost) "是" else "否"}" },
@@ -7637,7 +7637,7 @@ fun RoamQualityCard(summary: RoamQualitySummary) {
                 RoamScorePill("稳定性", if (summary.lossCount == 0) "优秀" else "丢包${summary.lossCount}", if (summary.lossCount == 0) Color(0xFF16A34A) else Color(0xFFF59E0B))
                 RoamScorePill("延迟", summary.avgLatencyMs?.let { "均${it}ms" } ?: "--", Color(0xFF2563EB))
                 RoamScorePill("峰值", summary.worstLatencyMs?.let { "${it}ms" } ?: "--", if ((summary.worstLatencyMs ?: 0) > 150) Color(0xFFF59E0B) else Color(0xFF16A34A))
-                RoamScorePill("切换", "${summary.roamCount}次", Color(0xFF7C3AED))
+                RoamScorePill("切换", "${summary.roamCount}次", LabV2.Cyan)
                 RoamScorePill("粘AP", "${summary.stickyScore}", if (summary.stickyScore > 35) Color(0xFFEF4444) else Color(0xFF64748B))
             }
         }
@@ -7910,7 +7910,7 @@ fun RoamingReportDetailScreen(report: RoamingReport, onBack: () -> Unit) {
             RoamingReportLine("粘AP分析", "Sticky ${report.stickyScore} · 最高候选差${report.bestCandidateGap?.let { "${it}dB" } ?: "--"}")
             Text(report.conclusion, fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f), lineHeight = 17.sp)
         }
-        ExpressiveCard("事件链", "最多显示最近 30 条关键事件", Icons.Rounded.Timeline, Color(0xFF7C3AED)) {
+        ExpressiveCard("事件链", "最多显示最近 30 条关键事件", Icons.Rounded.Timeline, LabV2.Cyan) {
             if (report.events.isEmpty()) Text("暂无事件。", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.60f))
             report.events.forEach { line ->
                 Text(line, fontSize = 10.8.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.66f), lineHeight = 15.sp)
@@ -8100,7 +8100,7 @@ fun DnsTool(prefs: AppPrefs) {
     }
     ExpressiveCard("查询结果", msg, Icons.Rounded.TravelExplore, Color(0xFF06B6D4)) { if (result.isEmpty()) Text("暂无结果", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f)); result.forEach { r -> DnsResultRow(r) { copy(ctx, r.value) } } }
     if (history.isNotEmpty()) {
-        ExpressiveCard("查询记录", "最多保存 10 条，结果相同自动丢弃。", Icons.Rounded.History, Color(0xFF7C3AED)) {
+        ExpressiveCard("查询记录", "最多保存 10 条，结果相同自动丢弃。", Icons.Rounded.History, LabV2.Cyan) {
             history.forEach { h -> DnsHistoryRow(h) { copy(ctx, h.summary) } }
             TextButton(onClick = { prefs.clearDnsQueryHistory(); history = emptyList() }) { Text("清空查询记录", fontSize = 12.sp) }
         }
@@ -8260,7 +8260,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
     var showServers by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val accent = if (mode == "RFC3489") Color(0xFF7C3AED) else Color(0xFF2563EB)
+    val accent = if (mode == "RFC3489") LabV2.Cyan else Color(0xFF2563EB)
 
     val natChipColors = FilterChipDefaults.filterChipColors(
         containerColor = Color.White,
@@ -8364,7 +8364,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
             ResultText("说明：RFC5780 用 STUN 行为发现描述映射/过滤行为；RFC3489 保留 TEST 1-4 传统分类。公共 STUN 服务器能力不一致，失败会按服务器列表顺序重测。")
         } else {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusPill("类型", r.classicType, Color(0xFF7C3AED))
+                StatusPill("类型", r.classicType, LabV2.Cyan)
                 StatusPill("可信度", r.confidence, Color(0xFF2563EB))
             }
             InfoRow("服务器", r.serverUsed, copyable = true)
@@ -8432,7 +8432,7 @@ fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Uni
             ) {
                 Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF7C3AED).copy(alpha=.12f)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Router, null, tint = Color(0xFF7C3AED), modifier = Modifier.size(18.dp)) }
+                        Box(Modifier.size(36.dp).clip(RoundedCornerShape(14.dp)).background(LabV2.Cyan.copy(alpha=.12f)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Router, null, tint = LabV2.Cyan, modifier = Modifier.size(18.dp)) }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(item.time, fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f))
@@ -8905,7 +8905,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
             })
         }
         item { topNav() }
-        item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED), headerAction = { Text("${visibleEvents.size}条 · ${formatEventStorageBytes(visibleEventBytes)}", fontSize = 10.8.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted) }) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+        item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, LabV2.Cyan, headerAction = { Text("${visibleEvents.size}条 · ${formatEventStorageBytes(visibleEventBytes)}", fontSize = 10.8.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted) }) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
         dayGroups.forEach { group ->
             val date = group.date
             val events = group.events
@@ -9470,7 +9470,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
                     modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
                     shape = RoundedCornerShape(20.dp),
                     colors = labOutlinedColors(),
-                    textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 14.5.sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold),
                     placeholder = { Text("写下今天网络情况、异常判断或处理记录", fontSize = 13.sp) }
                 )
             },
@@ -9511,7 +9511,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     val d = data
     if (d == null) { ExpressiveCard("总结", "暂无数据", Icons.Rounded.Notes, Color(0xFF64748B)) { Text("等待查询", fontSize = 12.sp) } } else {
         val summary = d.optJSONObject("summary") ?: JSONObject()
-        ExpressiveCard("概览", "上线 / 下线 / VPN-STUN / DDNS / 备注", Icons.Rounded.Dashboard, Color(0xFF7C3AED)) {
+        ExpressiveCard("概览", "上线 / 下线 / VPN-STUN / DDNS / 备注", Icons.Rounded.Dashboard, LabV2.Cyan) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 StatusPill("上线", localSnapshot.up.toString()+"次", Color(0xFF16A34A))
                 StatusPill("下线", localSnapshot.down.toString()+"次", Color(0xFFEF4444))
@@ -9525,7 +9525,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
         val sections = d.optJSONObject("sections") ?: JSONObject()
         fun arr(name:String) = sections.optJSONArray(name) ?: JSONArray()
         DailySection("终端情况", if (localDevices.length() > 0) localDevices else arr("devices"), Icons.Rounded.Devices, Color(0xFFF59E0B), kind = "devices")
-        DailySection("VPN / STUN", arr("vpn"), Icons.Rounded.VpnKey, Color(0xFF7C3AED), kind = "address")
+        DailySection("VPN / STUN", arr("vpn"), Icons.Rounded.VpnKey, LabV2.Cyan, kind = "address")
         DailySection("网络变化", arr("network"), Icons.Rounded.Public, Color(0xFF0EA5E9), kind = "address")
         DailySection("DDNS 状态", arr("ddns"), Icons.Rounded.Dns, Color(0xFF2563EB), kind = "normal")
         ExpressiveCard("今日备注", if (noteText.isBlank()) "未填写" else "已保存", Icons.Rounded.EditNote, Color(0xFF64748B)) {
@@ -9680,7 +9680,7 @@ private fun realtimeFailureText(raw: String): String {
         reason.contains("WebSocket", true) || reason.contains("handshake", true) -> "WSS握手失败"
         reason.contains("connection refused", true) -> "Hub 拒绝实时连接"
         reason.contains("network is unreachable", true) || reason.contains("no route", true) -> "当前网络无法到达 Hub"
-        else -> reason.take(120)
+        else -> uiMessageZh(reason).take(120)
     }
 }
 
@@ -9727,7 +9727,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             is HubRealtimeState.Reconnecting -> realtimeFailureText(realtime.reason)
             else -> ""
         }
-        Text(connectionMessage, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected || state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(uiMessageZh(connectionMessage), color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected || state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (realtimeFailure.isNotBlank()) {
             Text("原因：$realtimeFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
@@ -9769,21 +9769,21 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                     }.onSuccess {
                         msg = ""
                         toast(ctx, "数据校准完成")
-                    }.onFailure { msg = "校准失败：${it.message}" }
+                    }.onFailure { msg = "校准失败：${uiMessageZh(it.message.orEmpty())}" }
                 }
-            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED))) {
+            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
                 Icon(Icons.Rounded.Sync, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即校准", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
     }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
-    ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, Color(0xFF7C3AED)) {
-        PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = Color(0xFF7C3AED)) {
+    ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, LabV2.Cyan) {
+        PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = LabV2.Cyan) {
             privacy = !privacy
             prefs.privacyMode = privacy
         }
     }
-    ExpressiveCard("关于", "Kotlin + Compose + One UI 仪表盘风格", Icons.Rounded.Info, Color(0xFF64748B)) {
+    ExpressiveCard("关于", "Kotlin + Compose · Material 3 Expressive × One UI", Icons.Rounded.Info, Color(0xFF64748B)) {
         Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\n${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }

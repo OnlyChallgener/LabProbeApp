@@ -142,6 +142,7 @@ private fun natLogZh(raw: String): String {
         .replace("Same mapping", "映射一致", ignoreCase = true)
         .replace("consistent mapping behavior", "映射行为稳定", ignoreCase = true)
         .replace("Detection completed successfully", "检测成功完成", ignoreCase = true)
+        .replace(Regex("""(?i)(\d+)\s+attempts?""")) { match -> "${match.groupValues[1]} 次尝试" }
     return text
 }
 
@@ -153,7 +154,8 @@ private fun NativeSelector(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null
 ) {
     val shape = RoundedCornerShape(14.dp)
     Box(modifier) {
@@ -165,6 +167,10 @@ private fun NativeSelector(
             border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
             contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp)
         ) {
+            if (leadingIcon != null) {
+                Icon(leadingIcon, null, Modifier.size(16.dp), tint = NativeBlue)
+                Spacer(Modifier.width(8.dp))
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                 Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(3.dp))
@@ -550,7 +556,8 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     expanded = modeMenu,
                     onExpandedChange = { modeMenu = it },
                     onSelect = { mode = it },
-                    modifier = Modifier.weight(1.35f)
+                    modifier = Modifier.weight(1.35f),
+                    leadingIcon = Icons.Rounded.Tune
                 )
                 NativeSelector(
                     label = "WAN 类型",
@@ -760,13 +767,13 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
     DetailShell("Beta 在线升级", "显示上次检查快照 · 仅手动检测", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
             NativeTitle(Icons.Rounded.SystemUpdateAlt, "固件版本", NativeCyan)
-            NativeValueRow("当前版本", info.current.ifBlank { "--" }, stacked = true)
+            NativeFirmwareVersionRow(info.current.ifBlank { "--" })
             NativeValueRow("可用版本", if (info.hasSnapshot) "${info.totalCount} 个" else "--")
             Text(
                 when {
                     task.active -> task.stageText
-                    task.failed -> task.message.ifBlank { task.stageText }
-                    else -> info.message.ifBlank { "尚未检测，点击下方按钮开始" }
+                    task.failed -> uiMessageZh(task.message.ifBlank { task.stageText })
+                    else -> uiMessageZh(info.message).ifBlank { "尚未检测，点击下方按钮开始" }
                 },
                 fontSize = LabTypography.Supporting.fontSize,
                 color = if (task.failed) NativeRed else NativeMuted
@@ -830,6 +837,23 @@ private fun NativeTitle(icon: androidx.compose.ui.graphics.vector.ImageVector, t
 }
 
 @Composable
+private fun NativeFirmwareVersionRow(value: String) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Text("当前版本", style = LabTypography.Supporting.copy(color = NativeMuted))
+        Text(
+            value,
+            style = LabTypography.Supporting.copy(
+                color = NativeInk,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 16.sp
+            ),
+            maxLines = 3,
+            overflow = TextOverflow.Clip
+        )
+    }
+}
+
+@Composable
 private fun NativeValueRow(label: String, value: String, stacked: Boolean = false) {
     if (stacked) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -849,7 +873,7 @@ private fun NativeValueRow(label: String, value: String, stacked: Boolean = fals
 @Composable
 private fun NativeMessage(text: String, color: Color) {
     Surface(shape = RoundedCornerShape(14.dp), color = color.copy(alpha = .08f), border = BorderStroke(1.dp, color.copy(alpha = .18f))) {
-        Text(text, Modifier.fillMaxWidth().padding(10.dp), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color)
+        Text(uiMessageZh(text), Modifier.fillMaxWidth().padding(10.dp), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color)
     }
 }
 
