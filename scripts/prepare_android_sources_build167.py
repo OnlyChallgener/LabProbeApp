@@ -27,7 +27,7 @@ verify_before = verify_path.read_text(encoding="utf-8") if verify_path.exists() 
 materialized_build181 = (
     build_code >= 181
     and f"versionCode = {build_code}" in verify_before
-    and f'versionName = \\\"{version_name}\\\"' in verify_before
+    and f'versionName = "{version_name}"' in verify_before
     and "build178 SSH compatibility, blue-white controls, and device names verified" in verify_before
 )
 
