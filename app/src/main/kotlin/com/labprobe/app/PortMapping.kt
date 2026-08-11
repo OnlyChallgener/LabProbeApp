@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,10 +88,12 @@ data class PortMapRule(
     val targetMode: String,
     val targetIpv4: String,
     val targetIpv6: String,
+    val targetIpv6Snapshot: String = "",
     val targetIpv6Suffix: String,
     val targetMac: String,
     val targetPort: Int,
     val serviceType: String = "",
+    val transportProtocol: String = "TCP",
     val preferCurrentPrefix: Boolean,
     val expiresAt: Long?,
     val leaseSeconds: Long,
@@ -154,10 +158,12 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
         targetMode = cleanApiText(o.optString("targetMode")),
         targetIpv4 = cleanApiText(o.optString("targetIpv4")),
         targetIpv6 = cleanApiText(o.optString("targetIpv6")),
+        targetIpv6Snapshot = cleanApiText(o.optString("targetIpv6Snapshot")),
         targetIpv6Suffix = cleanApiText(o.optString("targetIpv6Suffix")),
         targetMac = cleanMac(o.optString("targetMac")),
         targetPort = o.optInt("targetPort"),
         serviceType = cleanApiText(o.optString("serviceType")),
+        transportProtocol = cleanApiText(o.optString("transportProtocol", "TCP")).uppercase(Locale.ROOT).ifBlank { "TCP" },
         preferCurrentPrefix = o.optBoolean("preferCurrentPrefix", true),
         expiresAt = nullableEpoch(o, "expiresAt"),
         leaseSeconds = o.optLong("leaseSeconds", 0L).coerceAtLeast(0L),
@@ -277,10 +283,12 @@ data class PortMapDraft(
     val targetMode: String = "ipv6_suffix",
     val targetIpv4: String = "192.168.5.46",
     val targetIpv6: String = "",
+    val targetIpv6Snapshot: String = "",
     val targetIpv6Suffix: String = "",
     val targetMac: String = "",
     val targetPort: String = "443",
     val serviceType: String = "",
+    val transportProtocol: String = "TCP",
     val duration: String = "永久",
     val originalExpiresAt: Long? = null,
     val leaseSeconds: Long = 0L,
@@ -310,10 +318,12 @@ data class PortMapDraft(
             put("targetMode", if (mode == "6to4") "ipv4" else targetMode)
             put("targetIpv4", targetIpv4.trim())
             put("targetIpv6", targetIpv6.trim().removePrefix("[").removeSuffix("]"))
+            put("targetIpv6Snapshot", targetIpv6Snapshot.trim().removePrefix("[").removeSuffix("]"))
             put("targetIpv6Suffix", targetIpv6Suffix.trim())
             put("targetMac", cleanMac(targetMac))
             put("targetPort", targetPort.toIntOrNull() ?: 0)
             serviceType.trim().takeIf { it.isNotBlank() }?.let { put("serviceType", it) }
+            put("transportProtocol", transportProtocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" })
             put("preferCurrentPrefix", true)
             if (expires == null) put("expiresAt", JSONObject.NULL) else put("expiresAt", expires)
             put("leaseSeconds", selectedLease)
@@ -338,10 +348,12 @@ data class PortMapDraft(
             targetMode = rule.targetMode.ifBlank { if (rule.mode == "6to6") "ipv6_suffix" else "ipv4" },
             targetIpv4 = rule.targetIpv4,
             targetIpv6 = rule.targetIpv6,
+            targetIpv6Snapshot = rule.targetIpv6Snapshot.ifBlank { rule.targetIpv6 },
             targetIpv6Suffix = rule.targetIpv6Suffix,
             targetMac = rule.targetMac,
             targetPort = rule.targetPort.toString(),
             serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) },
+            transportProtocol = rule.transportProtocol.ifBlank { "TCP" },
             duration = if (rule.expiresAt == null) "永久" else "保持原有效期",
             originalExpiresAt = rule.expiresAt,
             leaseSeconds = rule.leaseSeconds,
@@ -393,6 +405,17 @@ internal fun portMapDraftForSave(draft: PortMapDraft): PortMapDraft = if (draft.
     draft
 }
 
+/** Keeps a selected full address as a shortcut snapshot and derives the lower 64 bits on demand. */
+internal fun switchPortMapTargetMode(draft: PortMapDraft, targetMode: String): PortMapDraft {
+    val normalized = if (targetMode == "ipv6_full") "ipv6_full" else "ipv6_suffix"
+    val full = draft.targetIpv6.trim().removePrefix("[").removeSuffix("]")
+    return draft.copy(
+        targetMode = normalized,
+        targetIpv6Snapshot = draft.targetIpv6Snapshot.ifBlank { full },
+        targetIpv6Suffix = if (normalized == "ipv6_suffix") ipv6Suffix64(full).ifBlank { draft.targetIpv6Suffix } else draft.targetIpv6Suffix,
+    )
+}
+
 internal fun portMapValidationField(message: String): String = when {
     message == "请输入规则名称" -> "service"
     message.contains("监听端口") -> "externalPort"
@@ -408,6 +431,17 @@ private object PortMappingMemoryCache {
     var snapshotRevision: Long = 0L
     var devices: List<DeviceItem> = emptyList()
     var agent: PortMapAgentInfo? = null
+}
+
+/** Uses the same status/NDP plus watched/online merge as the device page. */
+private suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceItem> = coroutineScope {
+    val statusRequest = async { runCatching { api.getStatus() }.getOrNull() }
+    val watchedRequest = async { api.getDevices(false) }
+    val onlineRequest = async { api.getDevices(true) }
+    val status = statusRequest.await()
+    val watched = mergeIpv6NeighborsFromStatus(status, watchedRequest.await())
+    val online = mergeIpv6NeighborsFromStatus(status, onlineRequest.await())
+    mergeSharedDeviceState(watched, online)
 }
 
 @Composable
@@ -438,6 +472,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
     var agent by remember { mutableStateOf(PortMappingMemoryCache.agent ?: PortMapAgentInfo(false, "router", "", 20000, 20020)) }
+    var canonicalDevicesLoaded by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(PortMappingMemoryCache.agent == null && initialRules.isEmpty()) }
     var refreshInFlight by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -500,7 +535,12 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             agent = newAgent
             PortMappingMemoryCache.agent = newAgent
             presenceStore.acceptHttp(newAgent)
-            if (devices.isEmpty()) devices = runCatching { deviceApi.getDevices(false) }.getOrDefault(devices)
+            if (!canonicalDevicesLoaded) {
+                runCatching { loadCanonicalPortMappingDevices(deviceApi) }.onSuccess {
+                    devices = it
+                    canonicalDevicesLoaded = true
+                }
+            }
             PortMappingMemoryCache.devices = devices
             if (mayAccept) snapshot.rules.forEach {
                 syncExistingMappingFavorite(
@@ -589,8 +629,10 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 scope.launch {
                     runCatching { api.delete(selected.id) }
                         .onSuccess {
+                            val detached = detachMappingFavorites(prefs, selected.id)
                             commitRulesLocally(rules.filterNot { it.id == selected.id })
                             selectedId = null
+                            if (detached > 0) message = "已保留 $detached 个关联收藏"
                         }
                         .onFailure { message = it.message ?: "删除失败" }
                     refresh(true)
@@ -664,7 +706,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {
             initial = editDraft!!,
             devices = devices,
             portRange = agent.portMin..agent.portMax,
-            refreshDevices = { deviceApi.getDevices(false) },
+            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi) },
             onDismiss = { editDraft = null },
             onSave = { draft ->
                 val saveDraft = portMapDraftForSave(draft)
@@ -925,7 +967,12 @@ private fun PortMapEditorSheet(
                         LabV2SegmentedControl(
                             options = listOf("后缀匹配", "完整 IPv6"),
                             selected = if (draft.targetMode == "ipv6_suffix") "后缀匹配" else "完整 IPv6",
-                            onSelect = { selected -> draft = draft.copy(targetMode = if (selected == "后缀匹配") "ipv6_suffix" else "ipv6_full") }
+                            onSelect = { selected ->
+                                draft = switchPortMapTargetMode(
+                                    draft,
+                                    if (selected == "后缀匹配") "ipv6_suffix" else "ipv6_full"
+                                )
+                            }
                         )
                         if (draft.targetMode == "ipv6_suffix") {
                             PortMapV2Field("目标 MAC", draft.targetMac, "6c:1f:f7:76:71:04") { draft = draft.copy(targetMac = it) }
@@ -1039,6 +1086,7 @@ private fun PortMapEditorSheet(
                     targetMac = device.mac,
                     targetIpv4 = device.ip.ifBlank { draft.targetIpv4 },
                     targetIpv6 = bestIpv6.ifBlank { draft.targetIpv6 },
+                    targetIpv6Snapshot = bestIpv6.ifBlank { draft.targetIpv6Snapshot },
                     targetIpv6Suffix = ipv6Suffix64(bestIpv6).ifBlank { draft.targetIpv6Suffix }
                 )
                 showDevicePicker = false

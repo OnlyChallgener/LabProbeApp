@@ -45,4 +45,18 @@ class ServiceAccessModelTest {
         assertTrue(wildcard?.port == 20000)
         assertTrue(isWildcardServiceEndpoint("tcp://[::]:20000"))
     }
+
+    @Test
+    fun tlsWarningRemainsReachableAfterTcpSucceeds() {
+        val report = ServiceAccessReport(
+            reachable = true,
+            path = "澶栫綉璁块棶",
+            tcp = "鍙揪",
+            https = "璇佷功璀﹀憡",
+            reason = "鏈嶅姟鍙闂?路 璇佷功鏍￠獙寮傚父",
+        )
+        assertEquals("澶栫綉璁块棶", serviceAccessStatus(report))
+        assertEquals("鍙揪", report.tcp)
+        assertEquals("璇佷功璀﹀憡", report.https)
+    }
 }

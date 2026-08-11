@@ -107,6 +107,7 @@ class FavoriteLinkModelTest {
             targetMode = "ipv6_suffix",
             targetIpv4 = "",
             targetIpv6 = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe",
+            targetIpv6Snapshot = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe",
             targetIpv6Suffix = "::a9e5:169d:a7c8:9bfe",
         )
         assertEquals(
@@ -247,6 +248,29 @@ class FavoriteLinkModelTest {
         val favorite = sampleFavorite(ddnsRecordId = "missing").copy(wanUrl = "https://old.example.com:20000/test")
         assertEquals(favorite.wanUrl, resolveFavoriteRemoteUrl(favorite, LabProbeDdnsSnapshot()))
         assertEquals(favorite.wanUrl, resolveFavoriteRemoteUrl(favorite, null))
+    }
+
+    @Test
+    fun mappingWithoutDdnsHasNoRemoteEndpoint() {
+        val favorite = sampleFavorite(mappingId = "map-1").copy(
+            remoteEndpoint = "",
+            wanUrl = "https://legacy.example.com:20000/keep",
+        )
+        assertEquals("", resolveFavoriteRemoteEndpoint(favorite, LabProbeDdnsSnapshot(), listOf(sampleRule("map-1"))))
+        assertEquals("褰撳墠涓嶅彲杈?", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+    }
+
+    @Test
+    fun mappingSyncKeepsUserPathWhileChangingTargetHostAndPort() {
+        assertEquals(
+            "https://[2409:8a50:2e40:8dc0::99]:9443/admin?a=1#section",
+            syncFavoriteLocalEndpoint(
+                "https://[2409:8a50:2e40:8dc0::10]:443/admin?a=1#section",
+                "https://[2409:8a50:2e40:8dc0::99]:9443",
+                9443,
+                "https",
+            ),
+        )
     }
 
     @Test

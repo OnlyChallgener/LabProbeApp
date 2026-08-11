@@ -85,6 +85,28 @@ class PortMapEditorModelTest {
         assertEquals("advanced", portMapValidationField("空闲超时应为 30-3600 秒"))
     }
 
+    @Test
+    fun suffixModeKeepsFullIpv6SnapshotAndFillsLower64Bits() {
+        val full = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe"
+        val draft = switchPortMapTargetMode(
+            PortMapDraft.new("20001").copy(targetIpv6 = full),
+            "ipv6_suffix",
+        )
+        assertEquals("ipv6_suffix", draft.targetMode)
+        assertEquals(full, draft.targetIpv6Snapshot)
+        assertEquals("::a9e5:169d:a7c8:9bfe", draft.targetIpv6Suffix)
+    }
+
+    @Test
+    fun legacyDraftSerializesTcpTransportByDefault() {
+        val json = PortMapDraft.new("20001").copy(
+            name = "NAS",
+            targetIpv4 = "192.168.5.46",
+            targetPort = "443",
+        ).toJson()
+        assertEquals("TCP", json.getString("transportProtocol"))
+    }
+
     private fun sampleRule(enabled: Boolean, mode: String = "6to4", targetPort: Int = 443) = PortMapRule(
         id = "mapping-1",
         name = "旧服务",

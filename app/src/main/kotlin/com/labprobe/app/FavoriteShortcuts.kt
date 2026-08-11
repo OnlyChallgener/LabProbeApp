@@ -199,11 +199,18 @@ private fun favoriteIpv6Snapshot(vararg values: String): String? = values.asSequ
 private fun favoriteLocalEndpoint(rule: PortMapRule, fallbackIpv6: String = ""): String = when {
     rule.mode == "6to4" && rule.targetIpv4.isNotBlank() -> "${favoriteServiceScheme(rule)}://${rule.targetIpv4}:${rule.targetPort}"
     rule.mode == "6to6" -> favoriteIpv6Snapshot(
+        rule.targetIpv6Snapshot,
         rule.targetIpv6,
-        rule.runtime.resolvedTarget,
         fallbackIpv6,
     )?.let { "${favoriteServiceScheme(rule)}://[$it]:${rule.targetPort}" }.orEmpty()
     else -> ""
+}
+
+/** Keeps a manually-entered URL suffix while refreshing the mapping-owned host, port and scheme. */
+internal fun syncFavoriteLocalEndpoint(existing: String, generated: String, targetPort: Int, scheme: String): String {
+    if (existing.isBlank() || generated.isBlank()) return generated.ifBlank { existing }
+    val generatedHost = runCatching { URI(generated) }.getOrNull()?.host ?: return generated
+    return replaceFavoriteUrlHost(existing, generatedHost, targetPort, scheme) ?: generated
 }
 
 /** Builds the lightweight favorite payload for an existing mapping rule. */
@@ -264,15 +271,21 @@ internal fun upsertMappingFavorite(
                 }
                 else -> URI(favoriteServiceScheme(rule), null, hostname, rule.listenPort, null, null, null).toString()
             }
-        } else remote
+        } else ""
+        val local = syncFavoriteLocalEndpoint(
+            old.localEndpoint.ifBlank { old.lanUrl },
+            generated.localEndpoint,
+            rule.targetPort,
+            favoriteServiceScheme(rule),
+        )
         old.copy(
             type = "mapping",
             mappingId = rule.id,
             deviceId = generated.deviceId,
-            localEndpoint = generated.localEndpoint,
+            localEndpoint = local,
             remoteEndpoint = syncedRemote.ifBlank { generated.remoteEndpoint },
             serviceType = generated.serviceType,
-            lanUrl = generated.lanUrl,
+            lanUrl = local,
             wanUrl = wan.ifBlank { generated.wanUrl },
         ).also { current[index] = it }
     } else {
@@ -306,7 +319,11 @@ internal fun favoriteServiceStatus(
     if (mapping?.missing == true) return "当前不可达"
     if (mapping?.rule?.enabled == false) return "当前不可达"
     val endpoint = if (mode == "wan") {
-        favorite.remoteEndpoint.ifBlank { favorite.wanUrl }.takeUnless(::isWildcardServiceEndpoint).orEmpty()
+        if (normalizeFavoriteType(favorite.type) == "mapping") {
+            favorite.remoteEndpoint
+        } else {
+            favorite.remoteEndpoint.ifBlank { favorite.wanUrl }
+        }.takeUnless(::isWildcardServiceEndpoint).orEmpty()
     } else {
         mapping?.rule?.let { rule ->
             val fallback = devices.firstOrNull { cleanMac(it.mac) == cleanMac(rule.targetMac) }?.pickIpv6()?.best.orEmpty()
@@ -377,19 +394,9 @@ internal fun syncExistingMappingFavorite(
     val generatedLocal = favoriteLocalEndpoint(rule, fallbackIpv6)
     val serviceScheme = favoriteServiceScheme(rule)
     val existingLocal = old.localEndpoint.ifBlank { old.lanUrl }
-    val local = if (existingLocal.isBlank() || generatedLocal.isBlank()) {
-        generatedLocal.ifBlank { existingLocal }
-    } else {
-        val generatedUri = runCatching { URI(generatedLocal) }.getOrNull()
-        generatedUri?.host?.let { replaceFavoriteUrlHost(existingLocal, it, rule.targetPort, serviceScheme) }
-            ?: generatedLocal
-    }
-    val remote = old.remoteEndpoint.takeIf { it.isNotBlank() }?.takeUnless(::isWildcardServiceEndpoint)?.let {
-        replaceFavoriteUrlPort(it, rule.listenPort, serviceScheme) ?: it
-    }.orEmpty()
-    val wan = old.wanUrl.takeIf { it.isNotBlank() }?.takeUnless(::isWildcardServiceEndpoint)?.let {
-        replaceFavoriteUrlPort(it, rule.listenPort, serviceScheme) ?: it
-    }.orEmpty()
+    val local = syncFavoriteLocalEndpoint(existingLocal, generatedLocal, rule.targetPort, serviceScheme)
+    val remote = old.remoteEndpoint.takeIf { it.isNotBlank() }?.takeUnless(::isWildcardServiceEndpoint).orEmpty()
+    val wan = old.wanUrl.takeIf { it.isNotBlank() }?.takeUnless(::isWildcardServiceEndpoint).orEmpty()
     val hostname = favoriteDdnsHostname(old.ddnsRecordId, ddnsSnapshot, nativeDdnsRecords)
     val syncedRemote = if (hostname != null && rule.listenPort in 1..65535) {
         when {
@@ -399,7 +406,7 @@ internal fun syncExistingMappingFavorite(
                 .orEmpty().ifBlank { URI(serviceScheme, null, hostname, rule.listenPort, null, null, null).toString() }
             else -> URI(serviceScheme, null, hostname, rule.listenPort, null, null, null).toString()
         }
-    } else remote
+    } else ""
     val updated = old.copy(
         type = "mapping",
         mappingId = rule.id,
@@ -427,26 +434,48 @@ internal fun resolveFavoriteRemoteEndpoint(
     mappingRules: List<PortMapRule> = emptyList(),
     nativeDdnsRecords: List<DdnsRecord> = emptyList(),
 ): String {
-    val raw = favorite.remoteEndpoint.ifBlank { favorite.wanUrl }
+    val mapping = resolveFavoriteMapping(favorite, mappingRules).rule
+    val isMapping = normalizeFavoriteType(favorite.type) == "mapping"
+    val raw = if (isMapping) favorite.remoteEndpoint else favorite.remoteEndpoint.ifBlank { favorite.wanUrl }
         .takeUnless(::isWildcardServiceEndpoint).orEmpty()
     val fallback = favorite.wanUrl.ifBlank { favorite.remoteEndpoint }
         .takeUnless(::isWildcardServiceEndpoint).orEmpty()
-    val recordId = optionalFavoriteId(favorite.ddnsRecordId) ?: return fallback
+    val recordId = optionalFavoriteId(favorite.ddnsRecordId) ?: return if (isMapping) raw else fallback
     val hostname = snapshot?.records?.firstOrNull { it.id == recordId }?.hostname?.let(::validFavoriteHostname)
         ?: routerDdnsRecord(recordId, nativeDdnsRecords)?.domain?.let(::validFavoriteHostname)
-        ?: return fallback
-    val mappingPort = resolveFavoriteMapping(favorite, mappingRules).rule?.listenPort?.takeIf { it in 1..65535 }
+        ?: return if (isMapping) raw else fallback
+    val mappingPort = mapping?.listenPort?.takeIf { it in 1..65535 }
     if (raw.isBlank()) {
-        val rule = resolveFavoriteMapping(favorite, mappingRules).rule ?: return raw
+        val rule = mapping ?: return raw
         if (rule.listenPort !in 1..65535) return raw
         val type = favorite.serviceType.ifBlank { favoriteServiceType(rule) }
         return URI(favoriteServiceScheme(type), null, hostname, rule.listenPort, null, null, null).toString()
     }
-    return replaceFavoriteUrlHost(raw, hostname, mappingPort) ?: raw
+    return if (isMapping) {
+        replaceFavoriteUrlHost(raw, hostname, mappingPort, mapping?.let { favoriteServiceScheme(it) }) ?: raw
+    } else {
+        replaceFavoriteUrlHost(raw, hostname) ?: raw
+    }
 }
 
 internal fun resolveFavoriteRemoteUrl(favorite: FavoriteShortcut, snapshot: LabProbeDdnsSnapshot?): String =
     resolveFavoriteRemoteEndpoint(favorite.copy(remoteEndpoint = favorite.wanUrl), snapshot)
+
+/** A deleted mapping leaves its shortcut usable as a normal, user-owned favorite. */
+internal fun detachMappingFavorites(prefs: AppPrefs, mappingId: String): Int {
+    val current = prefs.favoriteShortcuts()
+    var detached = 0
+    val updated = current.map { favorite ->
+        if (favorite.mappingId == mappingId) {
+            detached += 1
+            favorite.copy(type = "manual", mappingId = null)
+        } else {
+            favorite
+        }
+    }
+    if (detached > 0) prefs.saveFavoriteShortcuts(updated)
+    return detached
+}
 
 private data class FavoriteDraft(
     val id: String = UUID.randomUUID().toString(),
@@ -1049,19 +1078,27 @@ private fun FavoriteEditorSheet(
         }
     }
     fun selectDdns(id: String?, hostnameValue: String?) {
+        val mapping = mappingRules.firstOrNull { it.id == draft.mappingId }
+        val isMapping = normalizeFavoriteType(draft.type) == "mapping"
         if (id == null || hostnameValue.isNullOrBlank()) {
-            draft = draft.copy(ddnsRecordId = null, remoteEndpoint = ddnsOriginalRemote)
+            draft = draft.copy(
+                ddnsRecordId = null,
+                remoteEndpoint = if (isMapping) "" else ddnsOriginalRemote,
+            )
             ddnsMenu = false
             return
         }
         val hostname = validFavoriteHostname(hostnameValue) ?: return
         if (ddnsOriginalRemote.isBlank()) ddnsOriginalRemote = draft.remoteEndpoint
         val base = draft.remoteEndpoint.ifBlank { ddnsOriginalRemote }
-        val mapping = mappingRules.firstOrNull { it.id == draft.mappingId }
-        val portOverride = mapping?.listenPort?.takeIf { it in 1..65535 }
-        val schemeOverride = draft.serviceType.trim().takeIf { it.isNotBlank() }?.let(::favoriteServiceScheme)
         val replaced = when {
-            base.isNotBlank() -> replaceFavoriteUrlHost(base, hostname, portOverride = portOverride, schemeOverride = schemeOverride) ?: base
+            base.isNotBlank() && isMapping -> replaceFavoriteUrlHost(
+                base,
+                hostname,
+                portOverride = mapping?.listenPort?.takeIf { it in 1..65535 },
+                schemeOverride = mapping?.let(::favoriteServiceScheme),
+            ) ?: base
+            base.isNotBlank() -> replaceFavoriteUrlHost(base, hostname) ?: base
             mapping != null && mapping.listenPort in 1..65535 -> URI(
                 favoriteServiceScheme(draft.serviceType.ifBlank { favoriteServiceType(mapping) }),
                 null,
@@ -1224,7 +1261,7 @@ private fun FavoriteEditorSheet(
                 onClick = {
                     val lan = normalizeFavoriteUrl(draft.localEndpoint)
                     val wan = normalizeFavoriteUrl(draft.remoteEndpoint)
-                    val wanFallback = if (draft.ddnsRecordId != null) {
+                    val wanFallback = if (draft.ddnsRecordId != null || normalizeFavoriteType(draft.type) == "mapping") {
                         normalizeFavoriteUrl(ddnsOriginalRemote.ifBlank { wan })
                     } else {
                         wan
