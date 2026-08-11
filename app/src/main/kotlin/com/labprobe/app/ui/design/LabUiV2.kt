@@ -76,20 +76,20 @@ object LabV2 {
     val Ink = Color(0xFF142033)
     val InkMuted = Color(0xFF6B778A)
     val InkFaint = Color(0xFF95A1B3)
-    // Shared neutral elevation: no blue, white, or feature-colored shadows.
-    val ShadowAmbient = Color(0x0F142033)
-    val ShadowSpot = Color(0x17142033)
+    // Shared cool-blue elevation: very light depth without grey square shadows.
+    val ShadowAmbient = Color(0x0C3B82C4)
+    val ShadowSpot = Color(0x123B82C4)
 
-    val BackgroundTop = Color(0xFFEAF3FF)
-    val BackgroundMid = Color(0xFFF2F7FD)
+    val BackgroundTop = Color(0xFFE8F4FF)
+    val BackgroundMid = Color(0xFFF5FAFF)
     val BackgroundBottom = Color(0xFFFBFDFF)
 
-    val CardTop = Color(0xFFFCFEFF)
-    val CardBottom = Color(0xFFF3F7FC)
+    val CardTop = Color(0xFFFFFFFF)
+    val CardBottom = Color(0xFFFBFDFF)
     val Field = Color(0xFFFFFFFF)
-    val FieldSoft = Color(0xFFF7FAFE)
-    val Border = Color(0xFFDDE7F2)
-    val BorderStrong = Color(0xFFCAD8E8)
+    val FieldSoft = Color(0xFFF6FAFF)
+    val Border = Color(0xFFD8E8F7)
+    val BorderStrong = Color(0xFFC4DCF2)
 
     val PageHorizontal = 14.dp
     val PageTop = 8.dp
@@ -115,8 +115,8 @@ object LabV2 {
  */
 object LabCoreSurface {
     val Card = Color.White
-    val Inner = Color(0xFFF8FAFC)
-    val Border = Color(0xFFE7EDF4)
+    val Inner = Color(0xFFF3F9FF)
+    val Border = Color(0xFFDDEAF6)
     val CardShape = RoundedCornerShape(20.dp)
     val CompactShape = RoundedCornerShape(18.dp)
     val InnerShape = RoundedCornerShape(14.dp)
@@ -126,30 +126,34 @@ object LabCoreSurface {
 object LabTypography {
     val AppTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
+        fontSize = 20.sp,
+        lineHeight = 25.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.12).sp,
         color = LabV2.Ink
     )
     val PageTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 20.sp,
-        lineHeight = 26.sp,
+        fontSize = 18.sp,
+        lineHeight = 23.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.10).sp,
         color = LabV2.Ink
     )
     val CardTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 16.sp,
-        lineHeight = 21.sp,
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.06).sp,
         color = LabV2.Ink
     )
     val SectionTitle = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 14.sp,
-        lineHeight = 19.sp,
+        fontSize = 13.5.sp,
+        lineHeight = 18.sp,
         fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.03).sp,
         color = LabV2.Ink
     )
     val Body = TextStyle(

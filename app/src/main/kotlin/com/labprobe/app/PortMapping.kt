@@ -775,7 +775,7 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
     }
     LabCoreCard(compact = true) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 46)
+            LabV2ToolIcon(Icons.Rounded.CompareArrows, PortBlue, size = 46)
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
                 val routerName = agent.router.ifBlank { "Router" }.let { if (it.equals("router", ignoreCase = true)) "Router" else it }
@@ -815,7 +815,7 @@ private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefres
 private fun PortMapEmptyCard(onAdd: () -> Unit) {
     LabCoreCard {
         Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            LabV2ToolIcon(Icons.Rounded.SwapHoriz, PortBlue, size = 52)
+            LabV2ToolIcon(Icons.Rounded.CompareArrows, PortBlue, size = 52)
             Spacer(Modifier.height(10.dp))
             Text("暂无端口映射设置", style = LabTypography.CardTitle)
             Text("规则保存在 Hub 与 APP；Agent 离线不会删除设置", fontSize = LabTypography.Supporting.fontSize, color = LabV2.InkMuted)

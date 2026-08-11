@@ -63,9 +63,9 @@ private val RouterAmber = Color(0xFFF59E0B)
 private val RouterRed = Color(0xFFE94B55)
 private val RouterInk = Color(0xFF17233A)
 private val RouterMuted = Color(0xFF687890)
-private val RouterField = Color(0xFFF7F9FD)
-private val RouterBorder = Color(0xFFE4EAF3)
-private val RouterPage = Color(0xFFF5F8FD)
+private val RouterField = Color(0xFFFBFDFF)
+private val RouterBorder = Color(0xFFD9E8F7)
+private val RouterPage = Color(0xFFF2F8FF)
 
 private const val ROUTER_DIAGNOSTIC_CACHE_PREF = "router_diagnostic_cache_v1"
 
@@ -210,20 +210,19 @@ internal fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifie
         val stroke = Stroke(width = w * .064f, cap = StrokeCap.Round, join = StrokeJoin.Round)
         when (glyph) {
             RouterGlyph.Mapping, RouterGlyph.Port -> {
-                // A listening entry port forwarding into a target endpoint.
-                val source = Offset(w * .21f, h * .50f)
-                val arrow = Offset(w * .63f, h * .50f)
-                drawCircle(color.copy(alpha = .10f), w * .18f, source)
-                drawCircle(color, w * .105f, source, style = stroke)
-                drawLine(color, Offset(w * .34f, h * .50f), arrow, stroke.width, StrokeCap.Round)
-                drawLine(color, Offset(w * .53f, h * .39f), arrow, stroke.width, StrokeCap.Round)
-                drawLine(color, Offset(w * .53f, h * .61f), arrow, stroke.width, StrokeCap.Round)
-                drawRoundRect(color.copy(alpha = .10f), Offset(w * .69f, h * .26f), Size(w * .22f, h * .48f), CornerRadius(w * .06f, w * .06f))
-                drawRoundRect(color, Offset(w * .69f, h * .26f), Size(w * .22f, h * .48f), CornerRadius(w * .06f, w * .06f), style = stroke)
-                drawCircle(color, w * .032f, Offset(w * .80f, h * .42f))
-                drawCircle(color, w * .032f, Offset(w * .80f, h * .58f))
-            }
-            RouterGlyph.Ddns -> {
+      // One shared bidirectional mapping symbol across settings, IPv6 mapping and native port mapping.
+      val left = w * .18f
+      val right = w * .82f
+      val upper = h * .36f
+      val lower = h * .64f
+      drawLine(color, Offset(left, upper), Offset(right, upper), stroke.width, StrokeCap.Round)
+      drawLine(color, Offset(right - w * .13f, upper - h * .10f), Offset(right, upper), stroke.width, StrokeCap.Round)
+      drawLine(color, Offset(right - w * .13f, upper + h * .10f), Offset(right, upper), stroke.width, StrokeCap.Round)
+      drawLine(color, Offset(right, lower), Offset(left, lower), stroke.width, StrokeCap.Round)
+      drawLine(color, Offset(left + w * .13f, lower - h * .10f), Offset(left, lower), stroke.width, StrokeCap.Round)
+      drawLine(color, Offset(left + w * .13f, lower + h * .10f), Offset(left, lower), stroke.width, StrokeCap.Round)
+  }
+  RouterGlyph.Ddns -> {
                 // Domain resolution: a compact globe instead of a cloud/node cluster.
                 val center = Offset(w * .50f, h * .50f)
                 val globe = w * .32f
@@ -255,20 +254,20 @@ internal fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifie
                 drawArc(color,210f,120f,false,Offset(w*.27f,h*.05f),Size(w*.46f,h*.40f),style=stroke)
             }
             RouterGlyph.Connection -> {
-                // A small central hub with active links, deliberately not a Wi-Fi symbol.
-                val center = Offset(w * .50f, h * .50f)
-                val left = Offset(w * .20f, h * .50f)
-                val right = Offset(w * .80f, h * .50f)
-                val bottom = Offset(w * .50f, h * .80f)
-                drawRoundRect(color.copy(alpha = .10f), Offset(w * .37f, h * .37f), Size(w * .26f, h * .26f), CornerRadius(w * .07f, w * .07f))
-                drawRoundRect(color, Offset(w * .37f, h * .37f), Size(w * .26f, h * .26f), CornerRadius(w * .07f, w * .07f), style = stroke)
-                listOf(left, right, bottom).forEach { node ->
-                    drawLine(color, center, node, stroke.width, StrokeCap.Round)
-                    drawCircle(color, w * .052f, node)
-                }
-                drawCircle(color, w * .040f, center)
-            }
-            RouterGlyph.Beta -> {
+      // Shared double-lightning symbol for router-control health everywhere.
+      fun bolt(cx: Float): Path = Path().apply {
+          moveTo(cx + w * .04f, h * .12f)
+          lineTo(cx - w * .09f, h * .50f)
+          lineTo(cx - w * .01f, h * .50f)
+          lineTo(cx - w * .06f, h * .88f)
+          lineTo(cx + w * .11f, h * .42f)
+          lineTo(cx + w * .02f, h * .42f)
+          close()
+      }
+      drawPath(bolt(w * .34f), color)
+      drawPath(bolt(w * .66f), color)
+  }
+  RouterGlyph.Beta -> {
                 // Firmware package with an upward upgrade arrow.
                 drawRoundRect(color.copy(alpha = .10f), Offset(w * .20f, h * .24f), Size(w * .60f, h * .52f), CornerRadius(w * .08f, w * .08f))
                 drawRoundRect(color, Offset(w * .20f, h * .24f), Size(w * .60f, h * .52f), CornerRadius(w * .08f, w * .08f), style = stroke)
@@ -416,7 +415,7 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.size(38.dp).background(RouterBlue.copy(alpha = .10f), LabCoreSurface.InnerShape), contentAlignment = Alignment.Center) {
-                RouterGlyphIcon(RouterGlyph.Port, RouterBlue, Modifier.size(20.dp))
+                Icon(Icons.Rounded.CompareArrows, null, Modifier.size(20.dp), tint = RouterBlue)
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -178,6 +178,18 @@ private fun routerDdnsRecord(id: String?, records: List<DdnsRecord>): DdnsRecord
     return records.firstOrNull { routerDdnsId(it) == value || it.serviceId == key || it.domain == key }
 }
 
+private fun routerDdnsHostname(record: DdnsRecord): String? {
+    val raw = record.domain.trim()
+    validFavoriteHostname(raw)?.let { return it }
+    val at = raw.indexOf('@')
+    if (at > 0 && at < raw.lastIndex) {
+        val rr = raw.substring(0, at).trim().trim('.')
+        val zone = raw.substring(at + 1).trim().trim('.')
+        validFavoriteHostname("$rr.$zone")?.let { return it }
+    }
+    return null
+}
+
 private fun favoriteDdnsHostname(
     id: String?,
     snapshot: LabProbeDdnsSnapshot?,
@@ -185,7 +197,7 @@ private fun favoriteDdnsHostname(
 ): String? {
     val value = id?.trim().orEmpty().takeIf { it.isNotBlank() } ?: return null
     return snapshot?.records?.firstOrNull { it.id == value }?.hostname?.let(::validFavoriteHostname)
-        ?: routerDdnsRecord(value, nativeDdnsRecords)?.domain?.let(::validFavoriteHostname)
+        ?: routerDdnsRecord(value, nativeDdnsRecords)?.let(::routerDdnsHostname)
 }
 
 private fun favoriteIpv6Snapshot(vararg values: String): String? = values.asSequence()
@@ -1131,7 +1143,7 @@ private fun FavoriteEditorSheet(
     fun selectLabProbeDdns(record: LabProbeDdnsRecord?) =
         selectDdns(record?.id, record?.hostname)
     fun selectRouterDdns(record: DdnsRecord?) =
-        selectDdns(record?.let(::routerDdnsId), record?.domain)
+        selectDdns(record?.let(::routerDdnsId), record?.let(::routerDdnsHostname))
     val webhookManaged = existing?.id?.startsWith("webhook-") == true
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -1175,6 +1187,8 @@ private fun FavoriteEditorSheet(
                         modifier = Modifier.fillMaxWidth().height(LabV2.FieldHeight),
                         shape = LabV2.FieldShape,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Ink),
+                        border = BorderStroke(1.dp, LabV2.BorderStrong),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
                         Text(selectedDdns?.hostname ?: selectedRouterDdns?.domain ?: "不关联", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Start)
                         Icon(Icons.Rounded.ArrowDropDown, null, tint = LabV2.Primary)
@@ -1212,7 +1226,7 @@ private fun FavoriteEditorSheet(
                                 DropdownMenuItem(
                                     text = {
                                         Column {
-                                            Text(record.domain, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(record.domain, color = LabV2.Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(
                                                 record.ip.ifBlank { "路由器当前解析地址" },
                                                 color = LabV2.InkFaint,
@@ -1327,7 +1341,7 @@ private fun RowScope.FavoriteInlineField(label: String, value: String, onValueCh
         CompactTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).height(LabV2.FieldHeight),
             placeholder = placeholder,
             keyboardOptions = if (uri) KeyboardOptions(keyboardType = KeyboardType.Uri) else KeyboardOptions.Default,
             readOnly = readOnly

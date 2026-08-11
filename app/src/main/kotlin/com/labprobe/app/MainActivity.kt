@@ -5076,22 +5076,29 @@ fun DeviceTodayTrafficBar(d: DeviceItem) {
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("今日流量", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
-        Spacer(Modifier.width(8.dp))
-        DeviceTrafficDirection(
-            label = "上行",
-            value = upload.ifBlank { "--" },
-            icon = Icons.Rounded.ArrowUpward,
-            color = Color(0xFFF59E0B),
-            modifier = Modifier.weight(1f)
-        )
-        Spacer(Modifier.width(8.dp))
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "今日流量",
+                modifier = Modifier.width(64.dp),
+                fontSize = LabTypography.Caption.fontSize,
+                fontWeight = FontWeight.Medium,
+                color = LabV2.InkMuted,
+                maxLines = 1,
+            )
+            DeviceTrafficDirection(
+                label = "上行",
+                value = upload.ifBlank { "--" },
+                icon = Icons.Rounded.ArrowUpward,
+                color = Color(0xFFF59E0B),
+                modifier = Modifier.weight(1f),
+            )
+        }
         DeviceTrafficDirection(
             label = "下行",
             value = download.ifBlank { "--" },
             icon = Icons.Rounded.ArrowDownward,
             color = Color(0xFF06B6D4),
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
         )
     }
 }

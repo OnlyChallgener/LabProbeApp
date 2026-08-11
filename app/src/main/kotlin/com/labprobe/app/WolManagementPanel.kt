@@ -77,7 +77,7 @@ fun WolManagementPanel(state: AppState) {
                 }
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text("WOL 设备", fontSize = 16.5.sp, lineHeight = 19.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
+                    Text("WOL 设备", fontSize = 14.5.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                     Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                 }
                 Button(

@@ -196,10 +196,7 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
     ) {
         Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).background(accent.copy(alpha = .10f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(23.dp)) {
-          Icon(Icons.Rounded.Bolt, null, Modifier.align(Alignment.CenterStart).size(16.dp), tint = accent)
-          Icon(Icons.Rounded.Bolt, null, Modifier.align(Alignment.CenterEnd).size(16.dp), tint = accent)
-      }
+                RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(23.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
