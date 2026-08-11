@@ -1,1 +1,1 @@
-Temporary CI trigger for the v0.10.42 UI validation. Removed automatically after a successful build.
+Temporary CI trigger for the v0.10.42 UI validation. Rerun after inline patch update.
