@@ -1,4 +1,5 @@
 name: One-off build181 materialize check
+# rerun after idempotency fix
 
 on:
   push:
@@ -24,7 +25,6 @@ jobs:
           set +e
           python3 scripts/prepare_android_sources_build167.py >/tmp/first.log 2>&1
           FIRST=$?
-          UI=ok
           python3 - <<'PY' >/tmp/ui.log 2>&1
           from pathlib import Path
           main=Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text()
