@@ -6,13 +6,13 @@
     android:viewportHeight="2044">
 
     <!-- Exact white detail layer converted from the original source SVG.
-         The 0.74 scale keeps every ring, node and the three right-side dots
-         inside the adaptive-icon safe zone on circle and rounded-square masks. -->
+         The 0.78 scale leaves visible background around every edge without
+         making the original network mark look undersized. -->
     <group
         android:pivotX="1022.5"
         android:pivotY="1022"
-        android:scaleX="0.74"
-        android:scaleY="0.74">
+        android:scaleX="0.78"
+        android:scaleY="0.78">
         <group
             android:translateX="-1177"
             android:translateY="-215">

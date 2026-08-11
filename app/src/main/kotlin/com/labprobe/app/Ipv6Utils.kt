@@ -181,10 +181,9 @@ fun mergeIpv6Candidates(vararg groups: List<Ipv6AddressCandidate>): List<Ipv6Add
             val oldHasMetadata = old.source.isNotBlank() || old.state.isNotBlank() || old.primary || old.currentPrefix || old.historical
             val candidateHasMetadata = candidate.source.isNotBlank() || candidate.state.isNotBlank() || candidate.primary || candidate.currentPrefix || candidate.historical
             val preferred = when {
-                oldRejected && ipv6StateRank(candidate.state) > 1 -> candidate
-                candidateRejected && ipv6StateRank(old.state) > 1 -> old
-                oldRejected -> old
-                candidateRejected -> candidate
+                oldRejected && !candidateRejected -> candidate
+                candidateRejected && !oldRejected -> old
+                oldRejected && candidateRejected -> if (ipv6StateRank(candidate.state) > ipv6StateRank(old.state)) candidate else old
                 oldHasMetadata && !candidateHasMetadata -> old
                 candidateHasMetadata && !oldHasMetadata -> candidate
                 scoreIpv6Candidate(candidate) > scoreIpv6Candidate(old) -> candidate

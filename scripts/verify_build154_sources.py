@@ -48,13 +48,13 @@ def section(path: Path, start: str, end: str) -> str:
 
 
 def main() -> None:
-    require(GRADLE, 'versionCode = 169', 'versionName = "0.10.27"')
+    require(GRADLE, 'versionCode = 181', 'versionName = "0.10.39"')
 
     require(
         MAIN,
         'RouterRepositoryRegistry.get(prefs).start()',
         'RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)',
-        '图标与终端状态修复',
+        'SSH、控件配色与设备名称一致性修复',
         'realtimeClient.start(prefs.hub, prefs.token)',
         'private suspend fun calibrateRealtimeCache()',
         'onRouterRealtime = { raw ->',
@@ -270,7 +270,7 @@ def main() -> None:
     )
 
     DIAGNOSTIC.unlink(missing_ok=True)
-    print('build169 icon, offline-device, and navigation source state verified')
+    print('build178 SSH compatibility, blue-white controls, and device names verified')
 
 
 if __name__ == '__main__':

@@ -1526,7 +1526,7 @@ private fun PortMapDetailPage(
                 PortMapDetailLine("监听", "[::]:${rule.listenPort}", copyable = true)
                 PortMapDetailLine("配置目标", rule.targetText, copyable = true)
                 if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue, copyable = true)
-                PortMapDetailLine("运行时间", formatPortDuration(portMapRunningDuration(rule)))
+                PortMapDetailLine("运行时间", portMapRunningText(rule))
                 PortMapDetailLine("剩余时间", portMapRemainingText(rule))
                 PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久")
                 PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt))
@@ -1878,6 +1878,11 @@ private fun portMapRunningDuration(rule: PortMapRule): Long? {
     }
 }
 
+private fun portMapRunningText(rule: PortMapRule): String {
+    val duration = portMapRunningDuration(rule)
+    return if (duration == null) "运行时间同步中" else "已运行 ${formatPortDuration(duration)}"
+}
+
 private fun portMapDesiredText(rule: PortMapRule): String = when (rule.effectiveDesiredState) {
     "running" -> "期望启动"
     "stopped" -> "期望停止"
@@ -1933,7 +1938,7 @@ private fun portMapTimeText(rule: PortMapRule): String = when {
     rule.syncState == "syncing" -> if (rule.effectiveDesiredState == "stopped") "停止命令已提交 · 正在同步" else "启动命令已提交 · 正在同步"
     rule.syncState == "stale" -> "Agent 在线 · 正在重新获取运行状态"
     rule.effectiveActualState == "starting" -> "启动中 · 等待 Hub 返回实际状态"
-    rule.effectiveActualState == "running" -> "已运行 ${formatPortDuration(portMapRunningDuration(rule))} · 剩余 ${portMapRemainingText(rule)}"
+    rule.effectiveActualState == "running" -> "${portMapRunningText(rule)} · 剩余 ${portMapRemainingText(rule)}"
     rule.effectiveActualState == "waiting_target" -> "等待目标 IPv6 · 每 30 秒重试"
     rule.effectiveActualState == "waiting_agent" -> "命令等待路由器领取"
     rule.effectiveActualState == "draining" -> "正在停止现有连接"

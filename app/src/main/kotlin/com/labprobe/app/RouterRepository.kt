@@ -9,6 +9,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -539,6 +540,12 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                 }
             }
     }
+
+    fun close() {
+        scope.cancel()
+        commandScope.cancel()
+    }
+
 }
 
 object RouterRepositoryRegistry {
@@ -550,8 +557,10 @@ object RouterRepositoryRegistry {
         RouterSlowDataCache.ensureScope(prefs.hub, prefs.token)
         val next = prefs.hub.trim().trimEnd('/') + "|" + prefs.token.hashCode() + "|" + prefs.hubDns.trim()
         if (instance == null || key != next) {
+            val previous = instance
             key = next
             instance = RouterRepository(prefs)
+            previous?.close()
         }
         return instance!!.also(RouterRepository::start)
     }

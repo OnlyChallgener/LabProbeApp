@@ -309,7 +309,12 @@ private fun IconButtonLite(icon: androidx.compose.ui.graphics.vector.ImageVector
 
 fun mergeSharedDeviceState(watched: List<DeviceItem>, online: List<DeviceItem>): List<DeviceItem> {
     val map = linkedMapOf<String, DeviceItem>()
-    watched.forEach { if (it.mac.isNotBlank()) map[cleanMac(it.mac)] = it }
+    watched.forEach { device ->
+        if (device.mac.isBlank()) return@forEach
+        val key = cleanMac(device.mac)
+        val old = map[key]
+        map[key] = if (old == null) device else mergePreferFreshDevice(old, device)
+    }
     online.forEach { d ->
         if (d.mac.isBlank()) return@forEach
         val key = cleanMac(d.mac)
@@ -357,10 +362,14 @@ private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceIt
         hostName = fresh.hostName.ifBlank { old.hostName },
         wolMode = fresh.wolMode.ifBlank { old.wolMode },
         connectType = fresh.connectType.ifBlank { old.connectType },
-        remark = fresh.remark.ifBlank { old.remark },
-        manualType = fresh.manualType.ifBlank { old.manualType },
-        wolEnabledOverride = fresh.wolEnabledOverride ?: old.wolEnabledOverride,
-        followedOverride = fresh.followedOverride ?: old.followedOverride,
+        remark = old.remark.ifBlank { fresh.remark },
+        manualType = old.manualType.ifBlank { fresh.manualType },
+        wolEnabledOverride = old.wolEnabledOverride ?: fresh.wolEnabledOverride,
+        followedOverride = when {
+            old.followedOverride == true || fresh.followedOverride == true -> true
+            old.followedOverride == false || fresh.followedOverride == false -> false
+            else -> null
+        },
         todayUpload = fresh.todayUpload.ifBlank { old.todayUpload },
         todayDownload = fresh.todayDownload.ifBlank { old.todayDownload },
         totalUpload = fresh.totalUpload.ifBlank { old.totalUpload },

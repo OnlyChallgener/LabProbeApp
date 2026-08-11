@@ -62,6 +62,13 @@ class SecureTokenStore(context: Context) {
     fun set(value: String) = delegate.set(value)
 }
 
+/** Stores an optional SSH password with a separate non-exportable key. */
+class SecureSshPasswordStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure_ssh", "labprobe_ssh_password_v1")
+    fun get(): String = delegate.get()
+    fun set(value: String) = delegate.set(value)
+}
+
 /** Removes the deprecated APP-side HOOK_TOKEN copy left by build132. */
 fun clearDeprecatedHookToken(context: Context) {
     context.applicationContext

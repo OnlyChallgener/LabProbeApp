@@ -167,6 +167,7 @@ private const val DEFAULT_HUB = ""
 private const val DEFAULT_DNS1 = "223.5.5.5"
 private const val DEFAULT_DNS2 = "8.8.8.8"
 private const val DEFAULT_TOKEN = ""
+private val LAB_MENU_SURFACE = Color(0xFFF8FBFF)
 
 // 首页专用视觉 token：保持页面渐变，但让卡片层级使用纯白、轻边框和较小圆角。
 private val HomeCardShape = LabCoreSurface.CardShape
@@ -180,8 +181,19 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 图标与终端状态修复" to listOf(
-                "启动图标移除背景发光圆环，保留原有青绿渐变与网络立方体",
+            "v$NAME build$CODE · SSH、控件配色与设备名称一致性修复" to listOf(
+                "启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点",
+                "SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法",
+                "下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色",
+                "首页、设备页和详情卡统一优先显示用户备注名称",
+                "已安装版本高于旧更新清单时，最新版本不再倒退显示",
+                "Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报",
+                "区分更新请求超时和已下发后的状态轮询超时",
+                "Relay 版本检查与更新任务移到应用级作用域，离开页面仍会继续",
+                "更新后持续监测 Agent 心跳，版本号和最后上报时间自动刷新",
+                "离线列表保持独立权威数据，关注列表只引用在线或离线最新记录",
+                "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
+                "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
                 "设备一级页面按返回键回到 APP 首页，不再直接退出到桌面",
                 "离线事件会校正旧归档时间，避免通知与离线卡片不一致",
                 "每日设备排行保留 Hub 返回的当天在线时长与流量数据",
@@ -218,6 +230,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = AppPrefs(this)
+        AgentUpdateCoordinator.bind(prefs)
+        AgentUpdateCoordinator.check(prefs, silent = true)
         // Preload the shared router-control repository before any settings page
         // is opened. The repository waits briefly so WSS startup stays first.
         RouterRepositoryRegistry.get(prefs).start()
@@ -253,11 +267,17 @@ fun Activity.applyLabProbeSystemBars() {
 class AppPrefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
+    private val secureSshPasswordStore = SecureSshPasswordStore(context)
     init {
         clearDeprecatedHookToken(context)
         val legacy = sp.getString("token", "").orEmpty().trim()
         if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
         if (sp.contains("token")) sp.edit().remove("token").apply()
+        val legacySshPassword = sp.getString("ssh_password", "").orEmpty()
+        if (secureSshPasswordStore.get().isBlank() && legacySshPassword.isNotBlank()) {
+            secureSshPasswordStore.set(legacySshPassword)
+        }
+        if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply()
     }
     var hub: String get() = normalizeHubAddressForDisplay(sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
         set(v) = sp.edit().putString("hub", normalizeHubAddressForDisplay(v)).apply()
@@ -621,8 +641,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("ssh_user", v).apply()
     var sshSavePass: Boolean get() = sp.getBoolean("ssh_save_pass", false)
         set(v) = sp.edit().putBoolean("ssh_save_pass", v).apply()
-    var sshPassword: String get() = sp.getString("ssh_password", "") ?: ""
-        set(v) = sp.edit().putString("ssh_password", v).apply()
+    var sshPassword: String get() = secureSshPasswordStore.get()
+        set(v) { secureSshPasswordStore.set(v); if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply() }
     var sshCommand: String get() = sp.getString("ssh_cmd", "ip -6 neigh show") ?: "ip -6 neigh show"
         set(v) = sp.edit().putString("ssh_cmd", v).apply()
 
@@ -2316,7 +2336,7 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(18.dp),
-            containerColor = LAB_POPUP_SURFACE,
+            containerColor = LAB_MENU_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp,
             modifier = Modifier.widthIn(min = 230.dp, max = 340.dp).padding(vertical = 6.dp)
@@ -2476,7 +2496,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(18.dp),
-            containerColor = LAB_POPUP_SURFACE,
+            containerColor = LAB_MENU_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp
         ) {
@@ -2555,7 +2575,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                 Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.SansSerif) },
@@ -3629,11 +3649,14 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
-    var agentInfo by remember { mutableStateOf(storedAgentUpdateInfo(prefs.agentUpdateInfoJson)) }
-    var agentMessage by remember { mutableStateOf(prefs.agentUpdateMessage.ifBlank { "等待检查 Rust Agent 版本" }) }
+    AgentUpdateCoordinator.bind(prefs)
+    val agentUpdateUi by AgentUpdateCoordinator.state.collectAsState()
+    val agentInfo = agentUpdateUi.info
+    val agentMessage = agentUpdateUi.message
     var cleanupMessage by remember { mutableStateOf("可清理所有 Agent 备份和非必要临时日志") }
     var showCleanupConfirm by remember { mutableStateOf(false) }
-    var agentBusy by remember { mutableStateOf(false) }
+    var cleanupBusy by remember { mutableStateOf(false) }
+    val agentBusy = agentUpdateUi.busy || cleanupBusy
     val scope = rememberCoroutineScope()
 
     val context = LocalContext.current
@@ -3685,7 +3708,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                     onClick = {
                         showCleanupConfirm = false
                         scope.launch {
-                            agentBusy = true
+                            cleanupBusy = true
                             cleanupMessage = "正在等待路由器执行清理…"
                             runCatching {
                                 val requested = HubApi(prefs).requestAgentCleanup()
@@ -3709,7 +3732,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                             }.onFailure {
                                 cleanupMessage = "清理失败：${it.message}"
                             }
-                            agentBusy = false
+                            cleanupBusy = false
                         }
                     },
                     enabled = !agentBusy,
@@ -3809,39 +3832,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        agentBusy = true
-                        runCatching {
-                            val api = HubApi(prefs)
-                            api.requestAgentUpdateCheck()
-                            var info = api.getAgentUpdateStatus()
-                            repeat(8) {
-                                val settled = info.latestVersion != "未知" ||
-                                    (info.message.isNotBlank() && !info.message.contains("正在后台"))
-                                if (settled) return@runCatching info
-                                delay(750L)
-                                info = api.getAgentUpdateStatus()
-                            }
-                            info
-                        }.onSuccess { info ->
-                            val checkedMessage = when {
-                                info.updateAvailable -> "发现 Rust Agent 新版本"
-                                info.latestVersion == "未知" -> info.message.ifBlank { "Hub 正在后台检查更新" }
-                                else -> info.message.ifBlank { "当前已是最新版本" }
-                            }
-                            agentInfo = info
-                            agentMessage = checkedMessage
-                            prefs.agentUpdateInfoJson = info.toStoredJson()
-                            prefs.agentUpdateMessage = checkedMessage
-                        }.onFailure {
-                            val failedMessage = agentUpdateUiError(it.message)
-                            agentMessage = failedMessage
-                            prefs.agentUpdateMessage = failedMessage
-                        }
-                        agentBusy = false
-                    }
-                },
+                onClick = { AgentUpdateCoordinator.check(prefs) },
                 enabled = !agentBusy,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Green),
@@ -3852,50 +3843,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                 Text("检查更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
             }
             Button(
-                onClick = {
-                    scope.launch {
-                        agentBusy = true
-                        runCatching {
-                            val api = HubApi(prefs)
-                            val requested = api.requestAgentUpdate()
-                            var info = api.getAgentUpdateStatus()
-                            repeat(60) {
-                                if (info.state !in setOf("completed", "failed")) {
-                                    delay(1_000)
-                                    info = api.getAgentUpdateStatus()
-                                }
-                            }
-                            requested
-                                .put("message", info.message)
-                                .put("state", info.state)
-                                .put("currentVersion", info.currentVersion)
-                                .put("latestVersion", info.latestVersion)
-                                .put("updateAvailable", info.updateAvailable)
-                                .put("lastSeenAt", info.lastSeenAt)
-                            requested
-                        }
-                            .onSuccess {
-                                val updateMessage = it.optString("message", "更新指令已发送")
-                                agentInfo = AgentUpdateInfo(
-                                    currentVersion = it.optString("currentVersion", agentInfo?.currentVersion ?: "未知"),
-                                    latestVersion = it.optString("latestVersion", agentInfo?.latestVersion ?: "未知"),
-                                    updateAvailable = it.optBoolean("updateAvailable", agentInfo?.updateAvailable ?: false),
-                                    state = it.optString("state", agentInfo?.state ?: "idle"),
-                                    message = updateMessage,
-                                    lastSeenAt = it.optString("lastSeenAt", agentInfo?.lastSeenAt ?: "")
-                                )
-                                agentMessage = updateMessage
-                                prefs.agentUpdateInfoJson = agentInfo!!.toStoredJson()
-                                prefs.agentUpdateMessage = updateMessage
-                            }
-                            .onFailure {
-                                val failedMessage = "下发失败：${it.message}"
-                                agentMessage = failedMessage
-                                prefs.agentUpdateMessage = failedMessage
-                            }
-                        agentBusy = false
-                    }
-                },
+                onClick = { AgentUpdateCoordinator.update(prefs) },
                 enabled = !agentBusy && agentInfo?.updateAvailable == true,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = LabV2.Green)
@@ -4246,8 +4194,7 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
     val display = cleanApiText(displayValue)
     if (real.isBlank() && display.isBlank()) return
     val shown = display.ifBlank { real }
-    val mayWrap = shown.length > 22 || shown.contains('
-')
+    val mayWrap = shown.length > 22 || shown.contains('\n')
     val shape = RoundedCornerShape(10.dp)
     Row(
         Modifier
@@ -4336,7 +4283,9 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
 
 @Composable
 fun HealthDevicesCard(state: AppState, onClick: () -> Unit = {}) {
-    val visibleDevices = remember(state.devices) { followedDeviceList(state.devices).take(4) }
+    val visibleDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+        followedDeviceList(mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)).take(4)
+    }
     HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {
         HealthSectionTitle("关注终端", "在线状态、信号与最后离线信息。", Icons.Rounded.Devices, Color(0xFFF59E0B))
         Spacer(Modifier.height(12.dp))
@@ -4357,7 +4306,7 @@ fun HealthDeviceLine(d: DeviceItem) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(deviceDisplayName(d), fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
             Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val third = if (d.online) {
@@ -4615,7 +4564,7 @@ fun vpnServiceLabel(key: String): String = when (key.lowercase(Locale.getDefault
 @Composable
 fun DevicesHomeCard(state: AppState) {
     val shared = remember(state.devices, state.onlineDevices, state.offlineDevices) {
-        mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
+        mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)
     }
     val followed = remember(shared) { followedDeviceList(shared) }
     ExpressiveCard("关注终端", "在线时长、下线发现时间精确到秒。", Icons.Rounded.Devices, Color(0xFFF59E0B)) {
@@ -4635,7 +4584,7 @@ fun StatusPill(label: String, value: String, color: Color) {
 fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic: () -> Unit, onOpenDetails: (String) -> Unit) {
     var mode by rememberSaveable { mutableStateOf("watch") }
     val shared = remember(state.devices, state.onlineDevices, state.offlineDevices) {
-        mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
+        mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)
     }
     val followed = remember(shared) { followedDeviceList(shared) }
     val list = when (mode) {
@@ -4972,7 +4921,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
     val wifi = remember(d.ssid, d.band, d.rssi, d.rxrate, d.connectType) { hasWifiInfo(d) }
     val wolManaged = remember(d.mac, state.wolDevices) { state.wolDevices.any { it.enabled && it.mac.equals(d.mac, ignoreCase = true) } }
     ExpressiveCard(
-        title = d.remark.ifBlank { d.name.ifBlank { d.mac } },
+        title = deviceDisplayName(d),
         subtitle = if (wifi) {
             listOf(profile.label, d.mac).filter { it.isNotBlank() }.joinToString(" · ")
         } else {
@@ -5233,7 +5182,7 @@ fun DeviceLine(d: DeviceItem, details: Boolean = false) {
         Box(Modifier.size(9.dp).clip(CircleShape).background(if (d.online) Color(0xFF16A34A) else Color(0xFFEF4444)))
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
-            Text(d.name.ifBlank { d.mac }, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.SectionTitle.fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(deviceDisplayName(d), fontWeight = FontWeight.SemiBold, fontSize = LabTypography.SectionTitle.fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val mainInfo = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
             val mainFallback = if (d.online) "在线信息待刷新" else "离线 · 暂无历史详情"
             Text(mainInfo.ifBlank { mainFallback }, color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -8306,9 +8255,15 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
     val scope = rememberCoroutineScope()
     val accent = if (mode == "RFC3489") Color(0xFF7C3AED) else Color(0xFF2563EB)
 
+    val natChipColors = FilterChipDefaults.filterChipColors(
+        containerColor = Color.White,
+        labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f),
+        selectedContainerColor = Color(0xFFE8F1FF),
+        selectedLabelColor = Color(0xFF2563EB)
+    )
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = mode == "RFC5780", onClick = { mode = "RFC5780"; prefs.natMode = mode }, label = { Text("RFC5780 / 8489", fontSize = 12.sp, fontWeight = FontWeight.Black) })
-        FilterChip(selected = mode == "RFC3489", onClick = { mode = "RFC3489"; prefs.natMode = mode }, label = { Text("RFC3489 TEST", fontSize = 12.sp, fontWeight = FontWeight.Black) })
+        FilterChip(selected = mode == "RFC5780", onClick = { mode = "RFC5780"; prefs.natMode = mode }, label = { Text("RFC5780 / 8489", fontSize = 12.sp, fontWeight = FontWeight.Black) }, colors = natChipColors)
+        FilterChip(selected = mode == "RFC3489", onClick = { mode = "RFC3489"; prefs.natMode = mode }, label = { Text("RFC3489 TEST", fontSize = 12.sp, fontWeight = FontWeight.Black) }, colors = natChipColors)
         Spacer(Modifier.weight(1f))
         Surface(onClick = openHistory, shape = CircleShape, color = Color(0xFF2563EB).copy(alpha = .10f), modifier = Modifier.size(38.dp)) {
             Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, tint = Color(0xFF2563EB), modifier = Modifier.size(19.dp)) }
@@ -8699,7 +8654,7 @@ fun SshTool(prefs: AppPrefs, openHistory: () -> Unit) {
                 running = true
                 prefs.addHistory("ssh_host", host)
                 prefs.addHistory("ssh_cmd", command)
-                val raw = runCatching { sshExec(host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" }
+                val raw = runCatching { sshExec(ctx, host, port.toIntOrNull() ?: 22, user, password, command) }.getOrElse { "SSH失败：${it.message}" }
                 val clean = sshRealOutput(raw)
                 prefs.addSshResult(SshResultEntry(
                     id = System.currentTimeMillis(),
@@ -9522,7 +9477,7 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_POPUP_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
                 dates.take(7).forEachIndexed { idx, d ->
                     val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
                     DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)
@@ -9989,8 +9944,9 @@ class HubApi(private val prefs: AppPrefs) {
 
     internal fun requestText(path: String, method: String = "GET", json: String? = null): String {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        val safeHub = validateHubTransportAddress(prefs.hub)
         val requestBuilder = Request.Builder()
-            .url(joinUrl(prefs.hub, path))
+            .url(joinUrl(safeHub, path))
             .header("Accept", "application/json")
         val body = json?.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = when (method.uppercase(Locale.ROOT)) {
@@ -11271,10 +11227,14 @@ private fun u8(data: ByteArray, idx: Int): Int = data[idx].toInt() and 0xff
 private fun u16(data: ByteArray, idx: Int): Int = (u8(data, idx) shl 8) or u8(data, idx + 1)
 
 
-suspend fun sshExec(host: String, port: Int, user: String, pass: String, cmd: String): String = withContext(Dispatchers.IO) {
-    val session = JSch().getSession(user, host, port); session.setPassword(pass)
-    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="no"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256"; cfg["PubkeyAcceptedAlgorithms"]="+ssh-rsa,rsa-sha2-256,rsa-sha2-512"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["cipher.c2s"]="aes256-ctr,aes128-ctr,aes192-ctr,aes128-cbc,3des-cbc"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512,hmac-sha1"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)
-    session.userInfo = object: UserInfo, UIKeyboardInteractive { override fun getPassphrase(): String?=null; override fun getPassword(): String=pass; override fun promptPassword(message:String?)=true; override fun promptPassphrase(message:String?)=false; override fun promptYesNo(message:String?)=true; override fun showMessage(message:String?){}; override fun promptKeyboardInteractive(destination:String?, name:String?, instruction:String?, prompt:Array<out String>?, echo:BooleanArray?): Array<String> = Array(prompt?.size ?: 0) { pass } }
+suspend fun sshExec(context: Context, host: String, port: Int, user: String, pass: String, cmd: String): String = withContext(Dispatchers.IO) {
+    val jsch = JSch()
+    val knownHosts = File(context.filesDir, "ssh_known_hosts").apply { if (!exists()) createNewFile() }
+    jsch.setKnownHosts(knownHosts.absolutePath)
+    val session = jsch.getSession(user, host, port); session.setPassword(pass)
+    // StrictHostKeyChecking accept-new semantics: accept the first key and reject a changed key.
+    val cfg = java.util.Properties(); cfg["StrictHostKeyChecking"]="ask"; cfg["PreferredAuthentications"]="password,keyboard-interactive,publickey"; cfg["server_host_key"]="rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256,ssh-rsa"; cfg["PubkeyAcceptedAlgorithms"]="rsa-sha2-256,rsa-sha2-512,ssh-rsa"; cfg["kex"]="curve25519-sha256@libssh.org,curve25519-sha256,ecdh-sha2-nistp256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1"; cfg["cipher.s2c"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["cipher.c2s"]="aes256-ctr,aes192-ctr,aes128-ctr"; cfg["mac.s2c"]="hmac-sha2-256,hmac-sha2-512"; cfg["mac.c2s"]="hmac-sha2-256,hmac-sha2-512"; cfg["enable_server_sig_algs"]="yes"; session.setConfig(cfg)
+    session.userInfo = object: UserInfo, UIKeyboardInteractive { override fun getPassphrase(): String?=null; override fun getPassword(): String=pass; override fun promptPassword(message:String?)=true; override fun promptPassphrase(message:String?)=false; override fun promptYesNo(message:String?) = message?.contains("HOST IDENTIFICATION HAS CHANGED", ignoreCase = true) != true; override fun showMessage(message:String?){}; override fun promptKeyboardInteractive(destination:String?, name:String?, instruction:String?, prompt:Array<out String>?, echo:BooleanArray?): Array<String> = Array(prompt?.size ?: 0) { pass } }
     session.connect(10000); val ch = session.openChannel("exec") as ChannelExec; ch.setCommand(cmd); val err=ByteArrayOutputStream(); ch.setErrStream(err); val input=ch.inputStream; ch.connect(10000); val out=input.bufferedReader().readText(); val errText=err.toString().trim(); val exit=ch.exitStatus; ch.disconnect(); session.disconnect(); buildString { val hasOut = out.isNotBlank(); val title = when { exit == 0 -> "执行成功"; exit == -1 && hasOut -> "执行完成 · 未获取退出码"; exit != 0 && hasOut -> "执行完成 · exit $exit"; else -> "执行失败 · exit $exit" }; append(title); append("\n"); append(out.ifBlank { "无输出" }); if(errText.isNotBlank()) append("\nERR: ").append(errText); if (exit != 0 && !hasOut) append("\n返回码：").append(exit) }
 }
 
