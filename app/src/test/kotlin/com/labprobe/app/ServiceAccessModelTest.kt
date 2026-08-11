@@ -59,4 +59,24 @@ class ServiceAccessModelTest {
         assertEquals("鍙揪", report.tcp)
         assertEquals("璇佷功璀﹀憡", report.https)
     }
+
+    @Test
+    fun udpServicesAreNotMisreportedAsTcpUnreachable() {
+        assertEquals(
+            "服务未验证",
+            serviceAccessStatus(ServiceAccessReport(false, udp = "未验证", reason = "UDP 服务不能通过通用探测确认")),
+        )
+    }
+
+    @Test
+    fun udpServiceAddressesCopyAsHostAndPort() {
+        assertEquals(
+            "[2409:8a50::53]:53",
+            favoriteAddressForCopy("tcp://[2409:8a50::53]:53", "DNS"),
+        )
+        assertEquals(
+            "vpn.example.com:51820",
+            favoriteAddressForCopy("tcp://vpn.example.com:51820", "WireGuard"),
+        )
+    }
 }

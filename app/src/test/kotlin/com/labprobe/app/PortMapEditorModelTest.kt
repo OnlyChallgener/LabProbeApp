@@ -20,10 +20,10 @@ class PortMapEditorModelTest {
     }
 
     @Test
-    fun customTcpLeavesTargetPortBlank() {
+    fun customTemplateLeavesTargetPortBlank() {
         val draft = applyPortMapServiceTemplate(
             PortMapDraft.new("20001").copy(targetPort = "443"),
-            PORT_MAP_SERVICE_TEMPLATES.first { it.label == "自定义 TCP" }
+            PORT_MAP_SERVICE_TEMPLATES.first { it.label == "自定义" }
         )
         assertEquals("", draft.targetPort)
         assertEquals("", draft.targetIpv4)
@@ -105,6 +105,32 @@ class PortMapEditorModelTest {
             targetPort = "443",
         ).toJson()
         assertEquals("TCP", json.getString("transportProtocol"))
+    }
+
+    @Test
+    fun udpTemplatesPersistTheirProtocolAndPorts() {
+        val dns = applyPortMapServiceTemplate(
+            PortMapDraft.new("20001"),
+            PORT_MAP_SERVICE_TEMPLATES.first { it.label == "DNS" },
+        )
+        val wireGuard = applyPortMapServiceTemplate(
+            PortMapDraft.new("20002"),
+            PORT_MAP_SERVICE_TEMPLATES.first { it.label == "WireGuard" },
+        )
+        assertEquals("UDP", dns.transportProtocol)
+        assertEquals("53", dns.targetPort)
+        assertEquals("UDP", wireGuard.transportProtocol)
+        assertEquals("51820", wireGuard.targetPort)
+    }
+
+    @Test
+    fun suffixModeUsesSavedIpv6SnapshotWhenFullFieldWasCleared() {
+        val full = "2409:8a50:2e40:8dc0:a9e5:169d:a7c8:9bfe"
+        val draft = switchPortMapTargetMode(
+            PortMapDraft.new("20001").copy(targetIpv6Snapshot = full),
+            "ipv6_suffix",
+        )
+        assertEquals("::a9e5:169d:a7c8:9bfe", draft.targetIpv6Suffix)
     }
 
     private fun sampleRule(enabled: Boolean, mode: String = "6to4", targetPort: Int = 443) = PortMapRule(

@@ -67,12 +67,15 @@ private val PortSlate = Color(0xFF718096)
 private val PortSheetBg = Color(0xFFFFFFFF)
 private val PortPopupBg = Color(0xFFFFFFFF)
 
- data class PortMapRuntime(
+data class PortMapRuntime(
     val state: String = "stopped",
     val resolvedTarget: String = "",
     val activeConnections: Long = 0,
+    val activePeers: Long = 0,
     val totalUploadBytes: Long = 0,
     val totalDownloadBytes: Long = 0,
+    val totalUploadPackets: Long = 0,
+    val totalDownloadPackets: Long = 0,
     val startedAt: Long? = null,
     val expiresAt: Long? = null,
     val lastResolvedAt: Long? = null,
@@ -177,8 +180,11 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
             state = cleanApiText(r.optString("state", if (o.optBoolean("enabled")) "waiting_agent" else "stopped")),
             resolvedTarget = cleanApiText(r.optString("resolvedTarget")),
             activeConnections = r.optLong("activeConnections"),
+            activePeers = r.optLong("activePeers"),
             totalUploadBytes = r.optLong("totalUploadBytes"),
             totalDownloadBytes = r.optLong("totalDownloadBytes"),
+            totalUploadPackets = r.optLong("totalUploadPackets"),
+            totalDownloadPackets = r.optLong("totalDownloadPackets"),
             startedAt = nullableEpoch(r, "startedAt"),
             expiresAt = nullableEpoch(r, "expiresAt") ?: nullableEpoch(o, "expiresAt"),
             lastResolvedAt = nullableEpoch(r, "lastResolvedAt"),
@@ -366,16 +372,21 @@ data class PortMapDraft(
 internal data class PortMapServiceTemplate(
     val label: String,
     val serviceType: String,
-    val targetPort: Int?
+    val targetPort: Int?,
+    val protocols: Set<String>,
+    val defaultProtocol: String,
 )
 
 internal val PORT_MAP_SERVICE_TEMPLATES = listOf(
-    PortMapServiceTemplate("HTTPS", "HTTPS", 443),
-    PortMapServiceTemplate("HTTP", "HTTP", 80),
-    PortMapServiceTemplate("SSH", "SSH", 22),
-    PortMapServiceTemplate("RDP", "RDP", 3389),
-    PortMapServiceTemplate("Telnet", "Telnet", 23),
-    PortMapServiceTemplate("自定义 TCP", "TCP", null)
+    PortMapServiceTemplate("HTTPS", "HTTPS", 443, setOf("TCP"), "TCP"),
+    PortMapServiceTemplate("HTTP", "HTTP", 80, setOf("TCP"), "TCP"),
+    PortMapServiceTemplate("SSH", "SSH", 22, setOf("TCP"), "TCP"),
+    PortMapServiceTemplate("RDP", "RDP", 3389, setOf("TCP"), "TCP"),
+    PortMapServiceTemplate("Telnet", "Telnet", 23, setOf("TCP"), "TCP"),
+    PortMapServiceTemplate("OpenVPN", "OpenVPN", 1194, setOf("TCP", "UDP"), "UDP"),
+    PortMapServiceTemplate("DNS", "DNS", 53, setOf("TCP", "UDP"), "UDP"),
+    PortMapServiceTemplate("WireGuard", "WireGuard", 51820, setOf("UDP"), "UDP"),
+    PortMapServiceTemplate("自定义", "Custom", null, setOf("TCP", "UDP"), "TCP")
 )
 
 internal fun defaultPortMapServiceType(targetPort: Int): String = when (targetPort) {
@@ -393,10 +404,11 @@ internal fun applyPortMapServiceTemplate(
 ): PortMapDraft = if (draft.id.isBlank()) {
     draft.copy(
         serviceType = template.serviceType,
-        targetPort = template.targetPort?.toString().orEmpty()
+        targetPort = template.targetPort?.toString().orEmpty(),
+        transportProtocol = template.defaultProtocol,
     )
 } else {
-    draft.copy(serviceType = template.serviceType)
+    draft.copy(serviceType = template.serviceType, transportProtocol = template.defaultProtocol)
 }
 
 internal fun portMapDraftForSave(draft: PortMapDraft): PortMapDraft = if (draft.id.isBlank()) {
@@ -409,6 +421,7 @@ internal fun portMapDraftForSave(draft: PortMapDraft): PortMapDraft = if (draft.
 internal fun switchPortMapTargetMode(draft: PortMapDraft, targetMode: String): PortMapDraft {
     val normalized = if (targetMode == "ipv6_full") "ipv6_full" else "ipv6_suffix"
     val full = draft.targetIpv6.trim().removePrefix("[").removeSuffix("]")
+        .ifBlank { draft.targetIpv6Snapshot.trim().removePrefix("[").removeSuffix("]") }
     return draft.copy(
         targetMode = normalized,
         targetIpv6Snapshot = draft.targetIpv6Snapshot.ifBlank { full },
@@ -894,7 +907,9 @@ private fun PortMapEditorSheet(
     var error by remember { mutableStateOf("") }
     var showDevicePicker by remember { mutableStateOf(false) }
     var selectedTemplateLabel by remember(initial.id, initial.serviceType) {
-        mutableStateOf(PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.serviceType == initial.serviceType }?.label)
+        mutableStateOf(PORT_MAP_SERVICE_TEMPLATES.firstOrNull {
+            it.serviceType == initial.serviceType || (initial.serviceType == "TCP" && it.serviceType == "Custom")
+        }?.label)
     }
     var advancedExpanded by remember(initial.id) { mutableStateOf(false) }
     val isNew = draft.id.isBlank()
@@ -945,6 +960,16 @@ private fun PortMapEditorSheet(
                                 Text(template.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = if (selected) LabV2.Primary else LabV2.Ink, fontSize = 10.8.sp, fontWeight = FontWeight.Black)
                             }
                         }
+                    }
+                    val selectedTemplate = PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.label == selectedTemplateLabel }
+                    val supportedProtocols = selectedTemplate?.protocols ?: setOf("TCP", "UDP")
+                    if (supportedProtocols.size > 1) {
+                        Text("传输协议", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = LabV2.InkMuted)
+                        LabV2SegmentedControl(
+                            options = listOf("TCP", "UDP"),
+                            selected = draft.transportProtocol.takeIf { it in supportedProtocols } ?: selectedTemplate?.defaultProtocol.orEmpty().ifBlank { "TCP" },
+                            onSelect = { protocol -> draft = draft.copy(transportProtocol = protocol) }
+                        )
                     }
                 }
 
@@ -1101,6 +1126,7 @@ private fun validateDraft(draft: PortMapDraft, range: IntRange): String {
     if (draft.name.trim().isBlank()) return "请输入规则名称"
     if (listen == null || listen !in range) return "监听端口必须在 ${range.first}-${range.last}"
     if (target == null || target !in 1..65535) return "目标端口无效"
+    if (draft.transportProtocol.uppercase(Locale.ROOT) !in setOf("TCP", "UDP")) return "传输协议只能是 TCP 或 UDP"
     if (draft.mode == "6to4" && draft.targetIpv4.isBlank()) return "请输入目标 IPv4"
     if (draft.mode == "6to6" && draft.targetMode == "ipv6_full" && draft.targetIpv6.isBlank()) return "请输入目标 IPv6"
     if (draft.mode == "6to6" && draft.targetMode == "ipv6_suffix" && draft.targetIpv6Suffix.isBlank()) return "请输入 IPv6 后缀"
@@ -1476,7 +1502,7 @@ private fun PortMapDetailPage(
             delay(10_000)
         }
     }
-    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
+    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss) {
             LabV2Card(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
@@ -1496,8 +1522,15 @@ private fun PortMapDetailPage(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
                         PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
-                        PortMapBigMetric("当前连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
+                        PortMapBigMetric(if (rule.transportProtocol.equals("UDP", true)) "活跃 Peer" else "当前连接", if (rule.transportProtocol.equals("UDP", true)) rule.runtime.activePeers.toString() else rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
                         PortMapBigMetric("最大连接", rule.maxConnections.toString(), PortSlate, Modifier.weight(1f))
+                    }
+                    if (rule.transportProtocol.equals("UDP", true)) {
+                        Text(
+                            "上行包 ${rule.runtime.totalUploadPackets} · 下行包 ${rule.runtime.totalDownloadPackets}",
+                            fontSize = 9.5.sp,
+                            color = LabV2.InkMuted,
+                        )
                     }
                 }
             }
@@ -1531,7 +1564,12 @@ private fun PortMapDetailPage(
                     onClick = {
                         scope.launch {
                             testingRemote = true
-                            remoteTest = testServiceRemoteEndpoint(remoteEndpoint, ServiceAddressFamily.Any)
+                            remoteTest = testServiceRemoteEndpoint(
+                                remoteEndpoint,
+                                ServiceAddressFamily.Any,
+                                rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort) },
+                                rule.transportProtocol.ifBlank { "TCP" },
+                            )
                             testingRemote = false
                         }
                     },
@@ -1556,7 +1594,15 @@ private fun PortMapDetailPage(
                         "—" -> PortSlate
                         else -> PortRed
                     })
-                    PortMapDetailLine("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed)
+                    if (rule.transportProtocol.equals("UDP", ignoreCase = true)) {
+                        PortMapDetailLine("UDP", report.udp, when (report.udp) {
+                            "可用" -> PortGreen
+                            "未验证" -> PortSlate
+                            else -> PortRed
+                        })
+                    } else {
+                        PortMapDetailLine("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed)
+                    }
                     if (report.https != "—") PortMapDetailLine("HTTPS", report.https, when (report.https) {
                         "正常" -> PortGreen
                         "证书警告" -> Color(0xFFF59E0B)

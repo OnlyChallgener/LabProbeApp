@@ -168,6 +168,12 @@ private fun favoriteServiceScheme(serviceType: String): String = when (serviceTy
 
 private fun favoriteServiceScheme(rule: PortMapRule): String = favoriteServiceScheme(favoriteServiceType(rule))
 
+/** Only client-addressable protocols can use Android's generic open action. */
+private fun favoriteServiceSupportsDirectOpen(serviceType: String): Boolean = when (serviceType.trim().uppercase(Locale.ROOT)) {
+    "", "HTTP", "HTTPS", "SSH", "RDP", "TELNET" -> true
+    else -> false
+}
+
 private const val ROUTER_DDNS_ID_PREFIX = "router:"
 
 private fun routerDdnsId(record: DdnsRecord): String =
@@ -619,7 +625,7 @@ internal fun favoriteAddressForCopy(rawAddress: String, serviceType: String = ""
     val scheme = uri.scheme.orEmpty().lowercase(Locale.ROOT)
     val type = serviceType.trim().uppercase(Locale.ROOT)
     val hostPortService = scheme in setOf("ssh", "rdp", "telnet", "tcp", "udp") ||
-        type in setOf("SSH", "RDP", "TELNET", "TCP", "UDP")
+        type in setOf("SSH", "RDP", "TELNET", "TCP", "UDP", "OPENVPN", "DNS", "WIREGUARD", "CUSTOM")
     if (!hostPortService) return raw
     val host = uri.host
         ?.trim()
@@ -779,7 +785,11 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                         onOpen = {
                             onBeforeOpenShortcut()
                             mappingRules = PortMappingRuleStore.load(context, prefs).rules
-                            if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank() && shortcut.ddnsRecordId == null) {
+                            val linkedRule = resolveFavoriteMapping(shortcut, mappingRules).rule
+                            val serviceType = shortcut.serviceType.ifBlank { linkedRule?.let(::favoriteServiceType).orEmpty() }
+                            if (!favoriteServiceSupportsDirectOpen(serviceType)) {
+                                toast(context, "该服务请复制地址并使用对应客户端连接")
+                            } else if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank() && shortcut.ddnsRecordId == null) {
                                 openFavorite(context, shortcut, mode)
                             } else {
                                 scope.launch {
@@ -788,6 +798,8 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                                         localEndpoint = resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices),
                                         remoteEndpoint = remoteEndpoint,
                                         mode = mode,
+                                        serviceType = serviceType,
+                                        transportProtocol = linkedRule?.transportProtocol?.ifBlank { "TCP" } ?: "TCP",
                                     )
                                     accessReports[shortcut.id] = decision.report
                                     decision.endpoint?.let { openFavoriteEndpoint(context, it) }

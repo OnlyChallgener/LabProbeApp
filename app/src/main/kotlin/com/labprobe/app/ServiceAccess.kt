@@ -10,6 +10,8 @@ import java.net.Inet6Address
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.NoRouteToHostException
 import java.net.Socket
 import java.net.SocketException
@@ -25,6 +27,7 @@ internal data class ServiceAccessReport(
     val dns: String = "—",
     val ipv6: String = "—",
     val tcp: String = "—",
+    val udp: String = "—",
     val https: String = "—",
     val latencyMs: Long? = null,
     val reason: String = "",
@@ -117,6 +120,8 @@ private fun failureReason(error: Throwable?, family: ServiceAddressFamily, https
 internal suspend fun probeServiceEndpoint(
     raw: String,
     family: ServiceAddressFamily = ServiceAddressFamily.Any,
+    serviceType: String = "",
+    transportProtocol: String = "TCP",
 ): ServiceAccessReport {
     val endpoint = parseServiceEndpoint(raw)
         ?: return ServiceAccessReport(false, dns = "失败", ipv6 = if (family == ServiceAddressFamily.Ipv6) "不可用" else "—", tcp = "不可达", reason = "地址格式无效")
@@ -150,6 +155,10 @@ internal suspend fun probeServiceEndpoint(
             https = if (endpoint.scheme == "https") "未测试" else "—",
             reason = if (effectiveFamily == ServiceAddressFamily.Ipv6) "当前网络无法使用 IPv6 远程访问" else "服务不可达",
         )
+    }
+
+    if (transportProtocol.equals("UDP", ignoreCase = true)) {
+        return probeUdpServiceEndpoint(endpoint, candidates, effectiveFamily, serviceType, started)
     }
 
     val result = withContext(Dispatchers.IO) {
@@ -195,13 +204,73 @@ internal suspend fun probeServiceEndpoint(
     )
 }
 
+private fun dnsQuery(): ByteArray = byteArrayOf(
+    0x4c.toByte(), 0x50.toByte(), 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x07, 'e'.code.toByte(), 'x'.code.toByte(), 'a'.code.toByte(), 'm'.code.toByte(), 'p'.code.toByte(), 'l'.code.toByte(), 'e'.code.toByte(),
+    0x03, 'c'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte(), 0x00,
+    0x00, 0x01, 0x00, 0x01,
+)
+
+private fun validDnsResponse(bytes: ByteArray, length: Int): Boolean =
+    length >= 12 && bytes[0] == 0x4c.toByte() && bytes[1] == 0x50.toByte() && (bytes[2].toInt() and 0x80) != 0
+
+private suspend fun probeUdpServiceEndpoint(
+    endpoint: ServiceEndpoint,
+    candidates: List<InetAddress>,
+    family: ServiceAddressFamily,
+    serviceType: String,
+    started: Long,
+): ServiceAccessReport {
+    val ipv6 = if (family == ServiceAddressFamily.Ipv6) "可用" else "—"
+    val normalizedType = serviceType.trim().uppercase()
+    if (normalizedType != "DNS") {
+        val detail = when (normalizedType) {
+            "WIREGUARD" -> "未验证"
+            "OPENVPN" -> "未验证"
+            else -> "未验证"
+        }
+        return ServiceAccessReport(
+            reachable = false,
+            dns = "正常",
+            ipv6 = ipv6,
+            udp = detail,
+            reason = "UDP 服务不能通过通用探测确认，请以客户端实际连接结果为准",
+        )
+    }
+    val response = withContext(Dispatchers.IO) {
+        candidates.any { address ->
+            runCatching {
+                DatagramSocket().use { socket ->
+                    socket.soTimeout = SERVICE_ACCESS_TIMEOUT_MS.toInt()
+                    socket.connect(InetSocketAddress(address, endpoint.port))
+                    val request = dnsQuery()
+                    socket.send(DatagramPacket(request, request.size))
+                    val buffer = ByteArray(1500)
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    socket.receive(packet)
+                    check(validDnsResponse(buffer, packet.length)) { "invalid DNS response" }
+                }
+            }.isSuccess
+        }
+    }
+    val elapsed = max(1L, (System.nanoTime() - started) / 1_000_000L)
+    return if (response) {
+        ServiceAccessReport(true, dns = "正常", ipv6 = ipv6, udp = "可用", latencyMs = elapsed, reason = "DNS 服务可用")
+    } else {
+        ServiceAccessReport(false, dns = "正常", ipv6 = ipv6, udp = "无响应", latencyMs = elapsed, reason = "DNS 服务无响应")
+    }
+}
+
 internal suspend fun chooseServiceAccess(
     localEndpoint: String,
     remoteEndpoint: String,
     mode: String = "auto",
+    serviceType: String = "",
+    transportProtocol: String = "TCP",
 ): ServiceAccessDecision {
     if (mode == "lan") {
-        val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
+        val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, serviceType = serviceType, transportProtocol = transportProtocol) }
         return if (local?.reachable == true) {
             ServiceAccessDecision(localEndpoint.trim(), local.copy(path = "内网直连"))
         } else {
@@ -209,7 +278,7 @@ internal suspend fun chooseServiceAccess(
         }
     }
     if (mode == "wan") {
-        val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, ServiceAddressFamily.Any) }
+        val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, ServiceAddressFamily.Any, serviceType, transportProtocol) }
         return if (remote?.reachable == true) {
             ServiceAccessDecision(remoteEndpoint.trim(), remote.copy(path = "外网访问"))
         } else {
@@ -217,9 +286,9 @@ internal suspend fun chooseServiceAccess(
         }
     }
 
-    val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
+    val local = localEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, serviceType = serviceType, transportProtocol = transportProtocol) }
     if (local?.reachable == true) return ServiceAccessDecision(localEndpoint.trim(), local.copy(path = "内网直连"))
-    val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it) }
+    val remote = remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { probeServiceEndpoint(it, serviceType = serviceType, transportProtocol = transportProtocol) }
     if (remote?.reachable == true) return ServiceAccessDecision(remoteEndpoint.trim(), remote.copy(path = "外网访问"))
     val failure = remote ?: local ?: ServiceAccessReport(false, reason = "当前不可达")
     return ServiceAccessDecision(null, failure.copy(reason = failure.reason.ifBlank { "服务不可达" }))
@@ -228,14 +297,17 @@ internal suspend fun chooseServiceAccess(
 internal suspend fun testServiceRemoteEndpoint(
     remoteEndpoint: String,
     family: ServiceAddressFamily = ServiceAddressFamily.Any,
+    serviceType: String = "",
+    transportProtocol: String = "TCP",
 ): ServiceAccessReport {
     val value = remoteEndpoint.trim()
     if (value.isBlank()) return ServiceAccessReport(false, dns = "未配置", ipv6 = "不可用", tcp = "未测试", https = "未测试", reason = "未配置可测试的远程入口")
-    return probeServiceEndpoint(value, family)
+    return probeServiceEndpoint(value, family, serviceType, transportProtocol)
 }
 
 internal fun serviceAccessStatus(report: ServiceAccessReport): String = when {
     report.reachable -> report.path
+    report.udp == "未验证" -> "服务未验证"
     report.reason == "当前网络无法使用 IPv6 远程访问" -> "当前不可达 · 当前网络无 IPv6"
     report.reason == "未配置可测试的远程入口" -> "当前不可达 · 未配置远程入口"
     else -> "服务不可达 · 目标端口无响应"
