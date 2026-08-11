@@ -1,0 +1,65 @@
+name: One-off build181 materialize check
+
+on:
+  push:
+    branches:
+      - release/build180
+    paths:
+      - .github/workflows/oneoff-build181-materialize-check.yml
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/build180
+          fetch-depth: 0
+      - name: Check prepare twice
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/prepare_android_sources_build167.py >/tmp/first.log 2>&1
+          FIRST=$?
+          UI=ok
+          python3 - <<'PY' >/tmp/ui.log 2>&1
+          from pathlib import Path
+          main=Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text()
+          port=Path('app/src/main/kotlin/com/labprobe/app/PortMapping.kt').read_text()
+          control=Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt').read_text()
+          assert '.clickable(enabled = real.isNotBlank()) { copy(ctx, real) }' in main
+          row=main[main.index('fun HealthDataRowDisplay'):main.index('@Composable\nfun HealthExitCard')]
+          assert 'ContentCopy' not in row
+          assert 'embedded: Boolean = false' in port
+          assert 'showHeader = !embedded' in port
+          assert 'offset(y = (-62).dp)' not in control
+          assert 'Color(0xFFE8F1FF)' in control
+          PY
+          UIRC=$?
+          git add app scripts
+          git config user.name "OpenAI UI Fix"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m temp-materialized >/tmp/commit.log 2>&1
+          python3 scripts/prepare_android_sources_build167.py >/tmp/second.log 2>&1
+          SECOND=$?
+          if git diff --quiet; then DIRTY=no; else DIRTY=yes; fi
+          {
+            echo "first_prepare_rc=$FIRST"
+            echo "ui_marker_rc=$UIRC"
+            echo "second_prepare_rc=$SECOND"
+            echo "second_prepare_dirty=$DIRTY"
+            echo "second_changed_files:"
+            git diff --name-only
+            echo "ui_log:"
+            cat /tmp/ui.log
+            echo "second_log:"
+            tail -n 80 /tmp/second.log
+          } > /tmp/result.txt
+          git reset --hard origin/release/build180
+          cp /tmp/result.txt .build181-materialize-check.txt
+          git add .build181-materialize-check.txt
+          git commit -m "chore: record build181 materialization check"
+          git push origin HEAD:release/build180
