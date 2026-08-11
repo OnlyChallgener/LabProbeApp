@@ -63,13 +63,36 @@ for name in names:
 
 main_path = ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt"
 main_text = main_path.read_text(encoding="utf-8")
+
+# Some legacy one-shot Python patches embedded the Kotlin '\n' character
+# literal through a Python triple-quoted replacement. On a fresh materialize
+# pass that can turn it into a literal line break between single quotes. Repair
+# the generated Kotlin deterministically before compiling.
+broken_newline_literal = "shown.contains('\n')"
+fixed_newline_literal = "shown.contains('\\n')"
+if broken_newline_literal in main_text:
+    main_text = main_text.replace(broken_newline_literal, fixed_newline_literal, 1)
+
 semantic_marker = "    // StrictHostKeyChecking accept-new semantics: accept the first key and reject a changed key.\n"
 config_marker = "    val cfg = java.util.Properties(); cfg[\"StrictHostKeyChecking\"]=\"ask\";"
 if semantic_marker not in main_text:
     if config_marker not in main_text:
         raise RuntimeError("secure SSH host-key policy marker missing")
     main_text = main_text.replace(config_marker, semantic_marker + config_marker, 1)
-    main_path.write_text(main_text, encoding="utf-8")
+main_path.write_text(main_text, encoding="utf-8")
+
+# RouterSuiteTabs uses foundation BorderStroke for the pale-blue rounded
+# selected pill. Keep the import materialized together with the generated
+# source state so a clean CI checkout compiles without relying on IDE imports.
+router_control_path = ROOT / "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt"
+router_control_text = router_control_path.read_text(encoding="utf-8")
+border_import = "import androidx.compose.foundation.BorderStroke\n"
+if border_import not in router_control_text:
+    import_anchor = "import androidx.compose.foundation.BasicTooltipBox\n"
+    if import_anchor not in router_control_text:
+        raise RuntimeError("RouterControlUi BorderStroke import anchor missing")
+    router_control_text = router_control_text.replace(import_anchor, import_anchor + border_import, 1)
+    router_control_path.write_text(router_control_text, encoding="utf-8")
 
 verify_text = verify_path.read_text(encoding="utf-8")
 if build_code >= 178:
