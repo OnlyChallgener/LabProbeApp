@@ -206,7 +206,7 @@ def main() -> None:
         'repository.ddns.collectAsState()',
         'private const val ROUTER_NAT_HISTORY_LIMIT = 5',
         'LabTypography.SectionTitle.fontSize',
-        'modifier = Modifier.fillMaxWidth().height(44.dp).nativeBlueShadow',
+        'modifier = Modifier.fillMaxWidth().height(44.dp).nativeCardShadow',
         'RouterTaskRepositoryRegistry.get(prefs)',
         'tasks.startNat(server, port, interfaceName, mode)',
         'result.stageText.ifBlank { "检测中" }',

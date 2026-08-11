@@ -53,8 +53,8 @@ jobs:
           python3 scripts/prepare_android_sources_build167.py
           python3 scripts/verify_build154_sources.py
 
-          grep -Fq 'versionCode = 180' app/build.gradle.kts
-          grep -Fq 'versionName = "0.10.38"' app/build.gradle.kts
+          grep -Fq 'versionCode = 181' app/build.gradle.kts
+          grep -Fq 'versionName = "0.10.39"' app/build.gradle.kts
           grep -Fq 'SSH、控件配色与设备名称一致性修复' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
@@ -96,7 +96,7 @@ jobs:
           radar = Path('app/src/main/res/drawable/ic_launcher_radar.xml').read_text(encoding='utf-8')
           network = Path('app/src/main/res/drawable/ic_launcher_network.xml').read_text(encoding='utf-8')
 
-          if 'versionName = "0.10.38"' not in gradle:
+          if 'versionName = "0.10.39"' not in gradle:
               raise SystemExit('wrong build180 versionName')
           if 'cfg["StrictHostKeyChecking"]="ask"' not in main:
               raise SystemExit('SSH host-key checking was weakened')
@@ -141,7 +141,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='180' versionName='0.10.38'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='181' versionName='0.10.39'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           python3 - <<'PY'
           import zipfile
@@ -181,5 +181,5 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.38-build180-release-apk
+          name: LabProbe-v0.10.39-build181-release-apk
           path: app/build/outputs/apk/release/app-release.apk
