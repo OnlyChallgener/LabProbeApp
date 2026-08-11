@@ -16,25 +16,43 @@ version_name = name_match.group(1)
 if build_code < 170:
     raise RuntimeError(f"legacy build{build_code} source preparation is no longer supported on this branch")
 
+# build170-build178 started life as one-shot migration scripts. Once their
+# complete output has been checked into a build181+ release source tree, some
+# of those scripts intentionally can no longer find their old input patterns.
+# The verifier is rewritten only at the very end of a successful preparation,
+# so it is a safe completion marker: it cannot become current after a partial
+# legacy-patch run.
+verify_path = ROOT / "scripts/verify_build154_sources.py"
+verify_before = verify_path.read_text(encoding="utf-8") if verify_path.exists() else ""
+materialized_build181 = (
+    build_code >= 181
+    and f"versionCode = {build_code}" in verify_before
+    and f'versionName = \\\"{version_name}\\\"' in verify_before
+    and "build178 SSH compatibility, blue-white controls, and device names verified" in verify_before
+)
+
 names = []
-if build_code >= 170:
-    names.append("apply_build170_fixes.py")
-if build_code >= 171:
-    names.append("apply_build171_regression_fixes.py")
-if build_code >= 172:
-    names.append("apply_build172_agent_icon_fixes.py")
-if build_code >= 173:
-    names.append("apply_build173_icon_fidelity_fix.py")
-if build_code >= 174:
-    names.append("apply_build174_stability_fixes.py")
-if build_code >= 175:
-    names.append("apply_build175_icon_version_display_fix.py")
-if build_code >= 176:
-    names.append("apply_build176_standard_adaptive_icon.py")
-if build_code >= 177:
-    names.append("apply_build177_centered_icon_spacing.py")
-if build_code >= 178:
-    names.append("apply_build178_ssh_color_device_name_fixes.py")
+if materialized_build181:
+    print(f"build{build_code} legacy source patches already materialized; skipping build170-build178 migrations")
+else:
+    if build_code >= 170:
+        names.append("apply_build170_fixes.py")
+    if build_code >= 171:
+        names.append("apply_build171_regression_fixes.py")
+    if build_code >= 172:
+        names.append("apply_build172_agent_icon_fixes.py")
+    if build_code >= 173:
+        names.append("apply_build173_icon_fidelity_fix.py")
+    if build_code >= 174:
+        names.append("apply_build174_stability_fixes.py")
+    if build_code >= 175:
+        names.append("apply_build175_icon_version_display_fix.py")
+    if build_code >= 176:
+        names.append("apply_build176_standard_adaptive_icon.py")
+    if build_code >= 177:
+        names.append("apply_build177_centered_icon_spacing.py")
+    if build_code >= 178:
+        names.append("apply_build178_ssh_color_device_name_fixes.py")
 
 for name in names:
     try:
@@ -53,7 +71,6 @@ if semantic_marker not in main_text:
     main_text = main_text.replace(config_marker, semantic_marker + config_marker, 1)
     main_path.write_text(main_text, encoding="utf-8")
 
-verify_path = ROOT / "scripts/verify_build154_sources.py"
 verify_text = verify_path.read_text(encoding="utf-8")
 if build_code >= 178:
     expected_title = "SSH、控件配色与设备名称一致性修复"
