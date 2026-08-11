@@ -64,8 +64,8 @@ def verify() -> None:
         (network, 'M2753 685C2753 618.174'),
         (network, 'M2058 1171C2058 1093.68'),
         (background, 'M0,0H108V108H0Z'),
-        (background, '#FF087CAD'),
-        (background, '#FF65DDD3'),
+        (background, '#FF62C8C8'),
+        (background, '#FF4BA9B7'),
     )
     if build_code == 176:
         required += (
