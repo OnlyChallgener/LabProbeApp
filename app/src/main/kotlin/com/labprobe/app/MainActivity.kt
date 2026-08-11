@@ -1361,12 +1361,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val previousEventKeys = events.mapTo(mutableSetOf(), ::eventNotificationIdentity)
         val online = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.onlineDevices), deviceOverrides)
         val watched = applyDeviceOverrides(mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.watchedDevices), deviceOverrides)
+        val normalizedEvents = normalizeDeviceEvents(snapshot.events)
         val disappeared = onlineDevices
             .filterNot { old -> online.any { cleanMac(it.mac) == cleanMac(old.mac) } }
             .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
-        val archivedOffline = reconcileOfflineDevicesWithEvents(
+        val archivedOffline = reconcileOfflineDevicesWithNormalizedEvents(
             applyDeviceOverrides(snapshot.offlineDevices + disappeared, deviceOverrides),
-            normalizeDeviceEvents(snapshot.events),
+            normalizedEvents,
             online
         )
         val merged = preserveFollowedDeviceSnapshots(
@@ -1375,7 +1376,6 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             online = online,
             overrides = deviceOverrides
         )
-        val normalizedEvents = normalizeDeviceEvents(snapshot.events)
         val statusChanged = status?.toString() != snapshot.statusRoot.toString()
         val devicesChanged = devices != merged
         val onlineChanged = onlineDevices != online
@@ -1493,7 +1493,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                 if (updated == events) return false
                 events = updated
                 refreshOfflineDevices(
-                    reconcileOfflineDevicesWithEvents(offlineDevices, events, onlineDevices),
+                    reconcileOfflineDevicesWithNormalizedEvents(offlineDevices, events, onlineDevices),
                     onlineDevices
                 )
                 return true
@@ -1596,7 +1596,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             .filterNot { old -> devOnlineWithIpv6.any { cleanMac(it.mac) == cleanMac(old.mac) } }
             .map { old -> old.copy(online = false, offlineAt = old.offlineAt.ifBlank { offlineNow() }, lastSeenAt = old.lastSeenAt.ifBlank { offlineNow() }) }
         val offlineChanged = refreshOfflineDevices(
-            reconcileOfflineDevicesWithEvents(offlineDevices + disappeared, evs, devOnlineWithIpv6),
+            reconcileOfflineDevicesWithNormalizedEvents(offlineDevices + disappeared, evs, devOnlineWithIpv6),
             devOnlineWithIpv6
         )
         val eventsChanged = events != evs
@@ -8886,13 +8886,18 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
     val eventDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
         mergeSharedDeviceState(state.devices + state.offlineDevices, state.onlineDevices)
     }
+    val eventDeviceLookup = remember(eventDevices) { EventDeviceLookup.from(eventDevices) }
     val visibleEvents = remember(state.events, eventDevices, state.deviceOverrides, state.hiddenEventDates) {
         applyEventDeviceNames(state.events, eventDevices, state.deviceOverrides)
             .filterNot { eventDayKey(it) in state.hiddenEventDates }
     }
     val visibleEventBytes = remember(visibleEvents) { eventStorageBytes(visibleEvents) }
     val dayGroups = remember(visibleEvents) {
-        visibleEvents.groupBy(::eventDayKey).toSortedMap(reverseOrder())
+        visibleEvents.groupBy(::eventDayKey)
+            .toSortedMap(reverseOrder())
+            .map { (date, events) ->
+                EventDayGroup(date = date, events = events, storageLabel = formatEventStorageBytes(eventStorageBytes(events)))
+            }
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -8909,7 +8914,9 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
         }
         item { topNav() }
         item { ExpressiveCard("事件同步", "新事件同步后会在手机状态栏弹出系统通知。", Icons.Rounded.NotificationsActive, Color(0xFF7C3AED), headerAction = { Text("${visibleEvents.size}条 · ${formatEventStorageBytes(visibleEventBytes)}", fontSize = 10.8.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted) }) { Text(state.message, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
-        dayGroups.forEach { (date, events) ->
+        dayGroups.forEach { group ->
+            val date = group.date
+            val events = group.events
             item(key = "event-day-$date") {
                 EventDayHeaderCard(
                     date = date,
@@ -8926,14 +8933,14 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
                         expandedDays = expandedDays - date
                         state.hideEventDay(date)
                     },
-                    storageLabel = formatEventStorageBytes(eventStorageBytes(events))
+                    storageLabel = group.storageLabel
                 )
             }
             if (date in expandedDays) {
                 items(events, key = { eventNotificationIdentity(it) }) { e ->
                     EventCompactCard(
                         e = e,
-                        knownDevices = eventDevices,
+                        deviceLookup = eventDeviceLookup,
                         openedSwipeId = openedSwipeId,
                         onSwipeOpen = { openedSwipeId = it },
                         onSwipeClose = { if (openedSwipeId == e.id) openedSwipeId = null },
@@ -8954,6 +8961,12 @@ private fun eventDayKey(event: EventItem): String {
     val millis = parseEventMillis(event.time) ?: return "日期未知"
     return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(millis))
 }
+private data class EventDayGroup(
+    val date: String,
+    val events: List<EventItem>,
+    val storageLabel: String
+)
+
 private fun eventStorageBytes(events: List<EventItem>): Long = JSONArray(events.map { it.toJson() })
     .toString()
     .toByteArray(Charsets.UTF_8)
@@ -9060,7 +9073,7 @@ private fun EventDayHeaderCard(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun EventCompactCard(e: EventItem, knownDevices: List<DeviceItem>, openedSwipeId: Int?, onSwipeOpen: (Int) -> Unit, onSwipeClose: () -> Unit, onDelete: () -> Unit) {
+private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, openedSwipeId: Int?, onSwipeOpen: (Int) -> Unit, onSwipeClose: () -> Unit, onDelete: () -> Unit) {
     val isOnline = e.type == "device_online"
     val isOffline = e.type == "device_offline"
     val accent = when {
@@ -9158,7 +9171,7 @@ fun EventCompactCard(e: EventItem, knownDevices: List<DeviceItem>, openedSwipeId
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(accent.copy(alpha=.10f)), contentAlignment = Alignment.Center) {
                             if (isOnline) {
-                                val profile = remember(e, knownDevices) { eventDeviceProfile(e, knownDevices) }
+                                val profile = remember(e, deviceLookup) { eventDeviceProfile(e, deviceLookup) }
                                 LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 25)
                             } else {
                                 Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp))
@@ -9214,7 +9227,26 @@ private fun EventSelectionDialog(e: EventItem, onDismiss: () -> Unit) {
 }
 
 
-private fun eventDeviceProfile(e: EventItem, knownDevices: List<DeviceItem>): DeviceVisualProfile {
+private data class EventDeviceLookup(
+    val byMac: Map<String, DeviceItem>,
+    val byNameIdentity: Map<String, DeviceItem>
+) {
+    companion object {
+        fun from(devices: List<DeviceItem>): EventDeviceLookup {
+            val byMac = LinkedHashMap<String, DeviceItem>()
+            val byNameIdentity = LinkedHashMap<String, DeviceItem>()
+            devices.forEach { device ->
+                cleanMac(device.mac).takeIf(String::isNotBlank)?.let { byMac.putIfAbsent(it, device) }
+                offlineDeviceIdentity(device)
+                    .takeIf { it.startsWith("name:") }
+                    ?.let { byNameIdentity.putIfAbsent(it, device) }
+            }
+            return EventDeviceLookup(byMac = byMac, byNameIdentity = byNameIdentity)
+        }
+    }
+}
+
+private fun eventDeviceProfile(e: EventItem, deviceLookup: EventDeviceLookup): DeviceVisualProfile {
     val probe = DeviceItem(
         name = e.name.ifBlank { e.title },
         mac = e.mac,
@@ -9237,8 +9269,8 @@ private fun eventDeviceProfile(e: EventItem, knownDevices: List<DeviceItem>): De
     )
     val eventMac = cleanMac(e.mac)
     val identity = offlineDeviceIdentity(probe)
-    val matched = knownDevices.firstOrNull { eventMac.isNotBlank() && cleanMac(it.mac) == eventMac }
-        ?: knownDevices.firstOrNull { identity.startsWith("name:") && offlineDeviceIdentity(it) == identity }
+    val matched = eventMac.takeIf(String::isNotBlank)?.let(deviceLookup.byMac::get)
+        ?: identity.takeIf { it.startsWith("name:") }?.let(deviceLookup.byNameIdentity::get)
     return inferDeviceProfile(matched ?: probe)
 }
 

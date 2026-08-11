@@ -4,10 +4,31 @@ import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
+import java.util.IdentityHashMap
 import java.util.Locale
 
 private const val DEVICE_EVENT_OFFLINE_COOLDOWN_MS = 5 * 60 * 1000L
 private const val DEVICE_EVENT_MAX_DAYS = 15
+private val EVENT_DAY_PATTERN = Regex("""\d{4}-\d{2}-\d{2}""")
+private val EVENT_TIME_PATTERNS = listOf(
+    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ssXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    "yyyy-MM-dd HH:mm:ss",
+    "yyyy/MM/dd HH:mm:ss",
+    "MM-dd HH:mm:ss",
+    "HH:mm:ss"
+)
+
+private class EventTimestampCache {
+    private val values = IdentityHashMap<EventItem, Long?>()
+
+    fun get(event: EventItem): Long? {
+        if (values.containsKey(event)) return values[event]
+        return parseEventMillis(event.time).also { values[event] = it }
+    }
+}
 
 fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<DeviceItem> {
     val oldByMac = old.associateBy { cleanMac(it.mac) }
@@ -68,7 +89,11 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
 
 fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
     if (raw.isEmpty()) return raw
-    val chronological = raw.sortedWith(compareBy<EventItem> { parseEventMillis(it.time) ?: Long.MAX_VALUE }.thenBy { it.id })
+    // One snapshot is sorted, normalized and retained below.  Cache its parsed
+    // timestamps for this pass so large history imports do not repeatedly
+    // allocate formatters while preserving the exact existing ordering rules.
+    val timestamps = EventTimestampCache()
+    val chronological = raw.sortedWith(compareBy<EventItem> { timestamps.get(it) ?: Long.MAX_VALUE }.thenBy { it.id })
     val stateByKey = mutableMapOf<String, String>()
     val onlineAtByKey = mutableMapOf<String, Long>()
     val lastOfflineAtByKey = mutableMapOf<String, Long>()
@@ -86,7 +111,7 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
             return@forEach
         }
 
-        val at = parseEventMillis(event.time)
+        val at = timestamps.get(event)
         val previousState = stateByKey[key]
         if (type == "device_online") {
             if (previousState == "online") return@forEach
@@ -110,19 +135,25 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
         if (at != null) lastOfflineAtByKey[key] = at
         onlineAtByKey.remove(key)
     }
-    return trimDeviceEventsToRecentDays(kept.sortedWith(compareByDescending<EventItem> { parseEventMillis(it.time) ?: 0L }.thenByDescending { it.id }))
+    return trimDeviceEventsToRecentDays(
+        kept.sortedWith(compareByDescending<EventItem> { timestamps.get(it) ?: 0L }.thenByDescending { it.id }),
+        timestamps::get
+    )
 }
 
-private fun trimDeviceEventsToRecentDays(events: List<EventItem>): List<EventItem> {
+private fun trimDeviceEventsToRecentDays(
+    events: List<EventItem>,
+    timestampOf: (EventItem) -> Long? = { parseEventMillis(it.time) }
+): List<EventItem> {
     if (events.isEmpty()) return events
-    val days = events.mapNotNull(::eventRetentionDay).distinct().sortedDescending().take(DEVICE_EVENT_MAX_DAYS).toSet()
+    val days = events.mapNotNull { eventRetentionDay(it, timestampOf) }.distinct().sortedDescending().take(DEVICE_EVENT_MAX_DAYS).toSet()
     if (days.isEmpty()) return events
-    return events.filter { eventRetentionDay(it)?.let { day -> day in days } ?: true }
+    return events.filter { eventRetentionDay(it, timestampOf)?.let { day -> day in days } ?: true }
 }
 
-private fun eventRetentionDay(event: EventItem): String? {
-    Regex("""\d{4}-\d{2}-\d{2}""").find(event.time)?.value?.let { return it }
-    val millis = parseEventMillis(event.time) ?: return null
+private fun eventRetentionDay(event: EventItem, timestampOf: (EventItem) -> Long?): String? {
+    EVENT_DAY_PATTERN.find(event.time)?.value?.let { return it }
+    val millis = timestampOf(event) ?: return null
     return SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(millis))
 }
 fun eventDeviceKey(e: EventItem): String {
@@ -160,17 +191,7 @@ fun parseDurationSeconds(raw: String): Long? {
 fun parseEventMillis(raw: String): Long? {
     val s = raw.trim()
     if (s.isBlank() || s == "-") return null
-    val patterns = listOf(
-        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-        "yyyy-MM-dd'T'HH:mm:ssXXX",
-        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-        "yyyy-MM-dd'T'HH:mm:ss'Z'",
-        "yyyy-MM-dd HH:mm:ss",
-        "yyyy/MM/dd HH:mm:ss",
-        "MM-dd HH:mm:ss",
-        "HH:mm:ss"
-    )
-    for (pattern in patterns) {
+    for (pattern in EVENT_TIME_PATTERNS) {
         val parsed = runCatching { SimpleDateFormat(pattern, Locale.CHINA).parse(s) }.getOrNull() ?: continue
         val cal = Calendar.getInstance(Locale.CHINA)
         cal.time = parsed

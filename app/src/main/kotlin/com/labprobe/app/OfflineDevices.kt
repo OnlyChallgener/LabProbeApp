@@ -62,8 +62,24 @@ fun reconcileOfflineDevicesWithEvents(
     archived: List<DeviceItem>,
     events: List<EventItem>,
     online: List<DeviceItem>
+): List<DeviceItem> = reconcileOfflineDevicesWithNormalizedEvents(
+    archived = archived,
+    normalizedEvents = normalizeDeviceEvents(events),
+    online = online
+)
+
+/**
+ * Reuses a snapshot that the caller has already normalized.  Full and
+ * incremental synchronization both need the normalized event list for UI and
+ * offline reconciliation; keeping that work single-pass avoids redundant
+ * JSON-time parsing without changing any transition or archive behavior.
+ */
+fun reconcileOfflineDevicesWithNormalizedEvents(
+    archived: List<DeviceItem>,
+    normalizedEvents: List<EventItem>,
+    online: List<DeviceItem>
 ): List<DeviceItem> {
-    val transitions = normalizeDeviceEvents(events)
+    val transitions = normalizedEvents
         .asSequence()
         .filter { it.type == "device_online" || it.type == "device_offline" }
         .sortedByDescending(::eventTransitionMillis)
