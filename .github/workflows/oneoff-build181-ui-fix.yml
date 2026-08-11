@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  patch:
+  patch-and-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,416 +19,246 @@ jobs:
           ref: release/build180
           fetch-depth: 0
 
-      - name: Apply focused UI and access fixes
+      - name: Finish embedded mapping and rounded tab surfaces
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
-
-          root = Path('.')
 
           def read(path):
-              return (root / path).read_text(encoding='utf-8')
+              return Path(path).read_text(encoding='utf-8')
 
           def write(path, text):
-              (root / path).write_text(text, encoding='utf-8', newline='\n')
+              Path(path).write_text(text, encoding='utf-8', newline='\n')
 
-          def replace_exact(path, old, new, expected=1):
+          def replace(path, old, new, count=1):
               text = read(path)
-              count = text.count(old)
-              if count != expected:
-                  raise RuntimeError(f'{path}: expected {expected} exact matches, found {count}: {old[:100]!r}')
-              write(path, text.replace(old, new, expected))
+              found = text.count(old)
+              if found != count:
+                  raise RuntimeError(f'{path}: expected {count} matches, found {found}: {old[:120]!r}')
+              write(path, text.replace(old, new, count))
 
-          def replace_regex(path, pattern, replacement, expected=1, flags=re.S):
-              text = read(path)
-              text2, count = re.subn(pattern, replacement, text, count=expected, flags=flags)
-              if count != expected:
-                  raise RuntimeError(f'{path}: expected {expected} regex matches, found {count}: {pattern[:120]!r}')
-              write(path, text2)
-
-          # -----------------------------------------------------------------
-          # 1) Shared typography: stronger Samsung-like hierarchy, no Black.
-          # -----------------------------------------------------------------
-          p = 'app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt'
-          typography = '''object LabTypography {
-              val AppTitle = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 22.sp,
-                  lineHeight = 28.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = LabV2.Ink
-              )
-              val PageTitle = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 20.sp,
-                  lineHeight = 26.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = LabV2.Ink
-              )
-              val CardTitle = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 16.sp,
-                  lineHeight = 21.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = LabV2.Ink
-              )
-              val SectionTitle = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 14.sp,
-                  lineHeight = 19.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = LabV2.Ink
-              )
-              val Body = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 13.sp,
-                  lineHeight = 18.sp,
-                  fontWeight = FontWeight.Medium,
-                  color = LabV2.Ink
-              )
-              val Value = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 13.5.sp,
-                  lineHeight = 18.sp,
-                  fontWeight = FontWeight.Medium,
-                  color = LabV2.Ink
-              )
-              val ValueStrong = Value.copy(fontWeight = FontWeight.SemiBold)
-              val Supporting = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 11.5.sp,
-                  lineHeight = 16.sp,
-                  fontWeight = FontWeight.Medium,
-                  color = LabV2.InkMuted
-              )
-              val Caption = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 10.5.sp,
-                  lineHeight = 14.sp,
-                  fontWeight = FontWeight.Medium,
-                  color = LabV2.InkMuted
-              )
-              val Micro = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 10.5.sp,
-                  lineHeight = 14.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = LabV2.InkMuted
-              )
-              val Button = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 14.sp,
-                  lineHeight = 18.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = Color.Unspecified
-              )
-              val CompactButton = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 12.sp,
-                  lineHeight = 16.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = Color.Unspecified
-              )
-              val FieldLabel = Supporting.copy(fontWeight = FontWeight.SemiBold)
-              val FieldValue = Value.copy(fontWeight = FontWeight.SemiBold)
-              val Placeholder = Supporting.copy(fontWeight = FontWeight.Normal, color = LabV2.InkFaint)
-              val Log = Supporting.copy(lineHeight = 16.sp)
-              val Metric = TextStyle(
-                  fontFamily = FontFamily.SansSerif,
-                  fontSize = 40.sp,
-                  lineHeight = 44.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = LabV2.Ink
-              )
-              val CompactMetric = Metric.copy(fontSize = 32.sp, lineHeight = 36.sp)
-              val HomeMiniMetric = Metric.copy(fontSize = 28.sp, lineHeight = 32.sp)
-          }
-
-          fun Modifier.labV2PageBackground'''
-          replace_regex(
-              p,
-              r'object LabTypography \{.*?\n\}\n\nfun Modifier\.labV2PageBackground',
-              typography,
-          )
-          text = read(p).replace('FontWeight.Black', 'FontWeight.Bold')
-          text = text.replace('shadowElevation = 10.dp', 'shadowElevation = 4.dp')
-          write(p, text)
-
-          # -----------------------------------------------------------------
-          # 2) Material typography + home card interaction/layout.
-          # -----------------------------------------------------------------
+          # Proper embedded mode for IPv6 mapping. This removes the old -62dp
+          # clipping hack instead of compensating it with more padding.
           p = 'app/src/main/kotlin/com/labprobe/app/MainActivity.kt'
-          material_typography = '''private val LabMaterialTypography: Typography = Typography(
-              displayLarge = LabTypography.Metric.copy(fontSize = 48.sp, lineHeight = 52.sp),
-              displayMedium = LabTypography.Metric,
-              displaySmall = LabTypography.CompactMetric,
-              headlineLarge = LabTypography.AppTitle,
-              headlineMedium = LabTypography.PageTitle,
-              headlineSmall = LabTypography.CardTitle,
-              titleLarge = LabTypography.PageTitle,
-              titleMedium = LabTypography.CardTitle,
-              titleSmall = LabTypography.SectionTitle,
-              bodyLarge = LabTypography.Body,
-              bodyMedium = LabTypography.Body,
-              bodySmall = LabTypography.Supporting,
-              labelLarge = LabTypography.Button,
-              labelMedium = LabTypography.Supporting,
-              labelSmall = LabTypography.Caption
-          )
-
-          class MainActivity'''
-          replace_regex(
+          replace(
               p,
-              r'private val LabMaterialTypography: Typography = run \{.*?\n\}\n\nclass MainActivity',
-              material_typography,
+              '''fun DetailShell(
+              title: String,
+              subtitle: String,
+              onBack: () -> Unit,
+              compactHeader: Boolean = false,
+              unifiedTypography: Boolean = false,
+              content: @Composable ColumnScope.() -> Unit
+          ) {''',
+              '''fun DetailShell(
+              title: String,
+              subtitle: String,
+              onBack: () -> Unit,
+              compactHeader: Boolean = false,
+              unifiedTypography: Boolean = false,
+              showHeader: Boolean = true,
+              content: @Composable ColumnScope.() -> Unit
+          ) {'''
           )
-
-          home_row = '''@Composable
-          fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String?, accent: Color = Color(0xFF0F172A)) {
-              val ctx = LocalContext.current
-              val real = cleanApiText(realValue)
-              val display = cleanApiText(displayValue)
-              if (real.isBlank() && display.isBlank()) return
-              val shown = display.ifBlank { real }
-              val mayWrap = shown.length > 22 || shown.contains('\\n')
-              val shape = RoundedCornerShape(10.dp)
-              Row(
-                  Modifier
-                      .fillMaxWidth()
-                      .clip(shape)
-                      .clickable(enabled = real.isNotBlank()) { copy(ctx, real) }
-                      .padding(vertical = 3.dp),
-                  verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically
-              ) {
-                  Text(
-                      label,
-                      Modifier.width(94.dp).then(if (mayWrap) Modifier.padding(top = 2.dp) else Modifier),
-                      style = LabTypography.Value.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted),
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis
+          replace(
+              p,
+              '''    ) {
+                  CompactPageHeader(
+                      title = title,
+                      subtitle = subtitle,
+                      onBack = onBack,
+                      compactTitle = compactHeader,
+                      titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
+                      subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
                   )
-                  Text(
-                      shown,
-                      modifier = Modifier.weight(1f),
-                      style = LabTypography.ValueStrong.copy(
-                          color = accent,
-                          fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.SansSerif
-                      ),
-                      maxLines = 2,
-                      softWrap = true,
-                      overflow = TextOverflow.Clip
-                  )
+                  content()
+                  Spacer(Modifier.height(2.dp))
               }
           }
 
           @Composable
-          fun HealthExitCard'''
-          replace_regex(
-              p,
-              r'@Composable\nfun HealthDataRowDisplay\(.*?\n\}\n\n@Composable\nfun HealthExitCard',
-              home_row,
-          )
-          replace_exact(
-              p,
-              'fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {\n    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {',
-              'fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {\n    HealthCard(Modifier.clip(HomeCardShape)) {',
-          )
-          replace_exact(
-              p,
-              'fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {\n    HealthCard(Modifier.clip(HomeCardShape).clickable { onClick() }) {',
-              'fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {\n    HealthCard(Modifier.clip(HomeCardShape)) {',
-          )
-          replace_exact(
-              p,
-              'Text("VPN / STUN 地址", fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)',
-              'Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = LabV2.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)',
-          )
-          replace_exact(
-              p,
-              'Surface(Modifier.fillMaxWidth().height(42.dp), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)))',
-              'Surface(Modifier.fillMaxWidth().height(LabV2.FieldHeight), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)))',
-          )
-          replace_exact(
-              p,
-              'Text("DNS", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))',
-              'Text("DNS", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))',
-          )
-          replace_exact(
-              p,
-              'Text("同步", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp))',
-              'Text("同步", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))',
-          )
-          replace_exact(
-              p,
-              'Text(syncLabel, fontSize = 12.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)',
-              'Text(syncLabel, style = LabTypography.FieldValue.copy(color = LabV2.Ink))',
-          )
-          replace_exact(
-              p,
-              'val stroke = if (size > 100.dp) 10.dp.toPx() else 9.dp.toPx()',
-              'val stroke = if (size > 100.dp) 12.dp.toPx() else 11.dp.toPx()',
-          )
-
-          # -----------------------------------------------------------------
-          # 3) Router settings icons: mapping = bidirectional arrows;
-          #    connection = two small lightning bolts.
-          # -----------------------------------------------------------------
-          p = 'app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt'
-          replace_exact(
-              p,
-              'icon = Icons.Rounded.AccountTree,\n                glyph = RouterGlyph.Mapping,',
-              'icon = Icons.Rounded.CompareArrows,\n                glyph = null,',
-          )
-          replace_exact(
-              p,
-              'RouterGlyphIcon(RouterGlyph.Connection, accent, Modifier.size(21.dp))',
-              '''Box(Modifier.size(23.dp)) {
-                    Icon(Icons.Rounded.Bolt, null, Modifier.align(Alignment.CenterStart).size(16.dp), tint = accent)
-                    Icon(Icons.Rounded.Bolt, null, Modifier.align(Alignment.CenterEnd).size(16.dp), tint = accent)
-                }''',
-          )
-          text = read(p).replace('shadowElevation = 2.dp', 'shadowElevation = 1.dp')
-          write(p, text)
-
-          # -----------------------------------------------------------------
-          # 4) IPv6 mapping: top breathing room + Router capitalization.
-          # -----------------------------------------------------------------
-          p = 'app/src/main/kotlin/com/labprobe/app/PortMapping.kt'
-          text = read(p)
-          text = text.replace('root.optString("router", "router")', 'root.optString("router", "Router")')
-          text = text.replace('PortMapAgentInfo(false, "router", "", 20000, 20020)', 'PortMapAgentInfo(false, "Router", "", 20000, 20020)')
-          write(p, text)
-          replace_exact(
-              p,
-              'DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true) {\n        PortMapAgentCard(agent, loading) { scope.launch { refresh() } }',
-              'DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true) {\n        Spacer(Modifier.height(8.dp))\n        PortMapAgentCard(agent, loading) { scope.launch { refresh() } }',
-          )
-          replace_exact(
-              p,
-              'Text(agent.router.ifBlank { "路由器" }, fontWeight = FontWeight.SemiBold, fontSize = LabTypography.CardTitle.fontSize, color = LabV2.Ink)',
-              'val routerName = agent.router.ifBlank { "Router" }.let { if (it.equals("router", ignoreCase = true)) "Router" else it }\n                Text(routerName, style = LabTypography.CardTitle.copy(color = LabV2.Ink))',
-          )
-
-          # -----------------------------------------------------------------
-          # 5) NAT/STUN layout: matching left/right columns and softer shadows.
-          # -----------------------------------------------------------------
-          p = 'app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt'
-          text = read(p)
-          text = text.replace('private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 7.dp)',
-                              'private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 2.dp)')
-          text = text.replace('.nativeCardShadow(shape, 5.dp)', '.nativeCardShadow(shape, 1.dp)')
-          text = text.replace('.nativeCardShadow(serverShape, 5.dp)', '.nativeCardShadow(serverShape, 1.dp)')
-          text = text.replace('.nativeCardShadow(RoundedCornerShape(14.dp), 7.dp)', '.nativeCardShadow(RoundedCornerShape(14.dp), 2.dp)')
-          text = text.replace('shadowElevation = 11.dp', 'shadowElevation = 4.dp')
-          text = text.replace('shadowElevation = 10.dp', 'shadowElevation = 4.dp')
-          text = text.replace('modifier = Modifier.fillMaxWidth().height(58.dp).nativeCardShadow(shape, 1.dp)',
-                              'modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(shape, 1.dp)')
-          text = text.replace('Box(Modifier.weight(1.65f)) {', 'Box(Modifier.weight(1.35f)) {', 1)
-          text = text.replace('modifier = Modifier.weight(.75f)', 'modifier = Modifier.weight(.85f)', 1)
-          write(p, text)
-          replace_regex(
-              p,
-              r'(label = "STUN 类型",.*?modifier = Modifier\.weight\()1f(\)\n\s*\))',
-              r'\g<1>1.35f\g<2>',
-          )
-          replace_regex(
-              p,
-              r'(label = "WAN 类型",.*?modifier = Modifier\.weight\()1f(\)\n\s*\))',
-              r'\g<1>.85f\g<2>',
-          )
-
-          # -----------------------------------------------------------------
-          # 6) Service access: TCP reachability is enough to let a user try
-          #    browser opening; HTTPS status remains independently reported.
-          # -----------------------------------------------------------------
-          p = 'app/src/main/kotlin/com/labprobe/app/ServiceAccess.kt'
-          replace_exact(p, 'private const val SERVICE_ACCESS_TIMEOUT_MS = 550L', 'private const val SERVICE_ACCESS_TIMEOUT_MS = 800L')
-          replace_exact(
-              p,
-              '    val result = withContext(Dispatchers.IO) {\n        if (endpoint.scheme == "http" || endpoint.scheme == "https") {',
-              '''    val browserScheme = endpoint.scheme == "http" || endpoint.scheme == "https"
-              val tcpReachableBeforeHttp = if (browserScheme) withContext(Dispatchers.IO) {
-                  candidates.any { address ->
-                      runCatching {
-                          Socket().use { it.connect(InetSocketAddress(address, endpoint.port), SERVICE_ACCESS_TIMEOUT_MS.toInt()) }
-                      }.isSuccess
+          fun OneUiTopNav''',
+              '''    ) {
+                  if (showHeader) {
+                      CompactPageHeader(
+                          title = title,
+                          subtitle = subtitle,
+                          onBack = onBack,
+                          compactTitle = compactHeader,
+                          titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
+                          subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
+                      )
                   }
-              } else false
+                  content()
+                  Spacer(Modifier.height(2.dp))
+              }
+          }
 
-              val result = withContext(Dispatchers.IO) {
-                  if (browserScheme) {''',
+          @Composable
+          fun OneUiTopNav'''
           )
-          replace_exact(
+
+          # Global top navigation: pale-blue rounded selected state, no gray
+          # rectangular elevation block.
+          old_nav = '''                val itemShape = RoundedCornerShape(12.dp)
+                          val itemModifier = Modifier
+                              .height(36.dp)
+                              .weight(1f)
+                              .then(
+                                  if (active) Modifier.shadow(
+                                      elevation = 2.dp,
+                                      shape = itemShape,
+                                      clip = false,
+                                      ambientColor = LabV2.ShadowAmbient,
+                                      spotColor = LabV2.ShadowSpot
+                                  ) else Modifier
+                              )
+                          Surface(
+                              onClick = { onSelect(i) },
+                              shape = itemShape,
+                              color = if (active) Color(0xFFF8FBFF) else Color.Transparent,
+                              shadowElevation = 0.dp,
+                              border = if (active) androidx.compose.foundation.BorderStroke(1.dp, techBlue.copy(alpha = .14f)) else null,
+                              modifier = itemModifier
+                          ) {'''
+          new_nav = '''                val itemShape = RoundedCornerShape(14.dp)
+                          Surface(
+                              onClick = { onSelect(i) },
+                              shape = itemShape,
+                              color = if (active) Color(0xFFE8F1FF) else Color.Transparent,
+                              tonalElevation = 0.dp,
+                              shadowElevation = 0.dp,
+                              border = if (active) androidx.compose.foundation.BorderStroke(1.dp, techBlue.copy(alpha = .12f)) else null,
+                              modifier = Modifier.height(36.dp).weight(1f)
+                          ) {'''
+          replace(p, old_nav, new_nav)
+
+          # Port mapping can now render as an embedded pager page without its
+          # own header, while standalone navigation remains unchanged.
+          p = 'app/src/main/kotlin/com/labprobe/app/PortMapping.kt'
+          replace(
               p,
-              '    val reachable = result.isSuccess || certificateWarning\n    val reason = when {\n        certificateWarning -> "服务可访问 · 证书校验异常"\n        else -> result.exceptionOrNull()?.let { failureReason(it, effectiveFamily, endpoint.scheme == "https") }.orEmpty()\n    }',
-              '''    val reachable = result.isSuccess || certificateWarning || (browserScheme && tcpReachableBeforeHttp)
-              val reason = when {
-                  certificateWarning -> "服务可访问 · 证书校验异常"
-                  endpoint.scheme == "https" && tcpReachableBeforeHttp && tlsHandshakeFailure -> "TCP 可达 · HTTPS 握手失败，可继续用浏览器尝试"
-                  endpoint.scheme == "https" && tcpReachableBeforeHttp && result.isFailure -> "TCP 可达 · HTTPS 检测未确认，可继续用浏览器尝试"
-                  endpoint.scheme == "http" && tcpReachableBeforeHttp && result.isFailure -> "TCP 可达 · HTTP 检测未确认，可继续用浏览器尝试"
-                  else -> result.exceptionOrNull()?.let { failureReason(it, effectiveFamily, endpoint.scheme == "https") }.orEmpty()
-              }''',
+              'fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit) {',
+              'fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = false) {'
           )
-
-          # Always preserve the user's right to try HTTP/HTTPS in a browser
-          # even when the fast probe cannot prove service reachability.
-          p = 'app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt'
-          replace_exact(
+          replace(
               p,
-              '                                    decision.endpoint?.let { openFavoriteEndpoint(context, it) }\n                                        ?: toast(context, decision.report.reason.ifBlank { "服务不可达" })',
-              '''                                    decision.endpoint?.let { openFavoriteEndpoint(context, it) } ?: run {
-                                          val fallbackEndpoint = if (mode == "wan") remoteEndpoint else resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices)
-                                          if (serviceType.equals("HTTP", true) || serviceType.equals("HTTPS", true)) {
-                                              if (fallbackEndpoint.isNotBlank()) {
-                                                  toast(context, decision.report.reason.ifBlank { "快速检测未确认，继续在浏览器尝试" })
-                                                  openFavoriteEndpoint(context, fallbackEndpoint)
-                                              } else {
-                                                  toast(context, decision.report.reason.ifBlank { "未配置可打开地址" })
-                                              }
-                                          } else {
-                                              toast(context, decision.report.reason.ifBlank { "服务不可达" })
-                                          }
-                                      }''',
+              'DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true) {',
+              'DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true, showHeader = !embedded) {'
           )
 
-          # Basic guardrails.
-          for path in [
-              'app/src/main/kotlin/com/labprobe/app/MainActivity.kt',
-              'app/src/main/kotlin/com/labprobe/app/PortMapping.kt',
-              'app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt',
-              'app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt',
-              'app/src/main/kotlin/com/labprobe/app/ServiceAccess.kt',
-              'app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt',
-              'app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt',
-          ]:
-              data = read(path)
-              if '\r\n' in data:
-                  raise RuntimeError(f'{path}: CRLF introduced')
+          p = 'app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt'
+          replace(
+              p,
+              '''@Composable
+          private fun LegacyIpv6MappingPage(prefs: AppPrefs, onBack: () -> Unit) {
+              Box(Modifier.fillMaxSize().clipToBounds()) {
+                  Box(Modifier.fillMaxSize().offset(y = (-62).dp)) {
+                      PortMappingScreen(prefs = prefs, onBack = onBack)
+                  }
+              }
+          }''',
+              '''@Composable
+          private fun LegacyIpv6MappingPage(prefs: AppPrefs, onBack: () -> Unit) {
+              PortMappingScreen(prefs = prefs, onBack = onBack, embedded = true)
+          }'''
+          )
+          replace(
+              p,
+              '''@Composable
+          private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
+              val titles = listOf("IPv6映射", "端口映射", "UPnP")
+              Row(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                  titles.forEachIndexed { index, title ->
+                      Box(Modifier.weight(1f).fillMaxHeight().clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
+                          Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = if (selected == index) FontWeight.SemiBold else FontWeight.SemiBold, color = if (selected == index) RouterBlue else RouterMuted)
+                          if (selected == index) Box(Modifier.align(Alignment.BottomCenter).width(30.dp).height(2.2.dp).background(RouterBlue, RoundedCornerShape(99.dp)))
+                      }
+                  }
+              }
+          }''',
+              '''@Composable
+          private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
+              val titles = listOf("IPv6映射", "端口映射", "UPnP")
+              Row(
+                  Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 12.dp, vertical = 3.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
+              ) {
+                  titles.forEachIndexed { index, title ->
+                      val active = selected == index
+                      Surface(
+                          onClick = { onSelect(index) },
+                          modifier = Modifier.weight(1f).fillMaxHeight(),
+                          shape = RoundedCornerShape(14.dp),
+                          color = if (active) Color(0xFFE8F1FF) else Color.Transparent,
+                          tonalElevation = 0.dp,
+                          shadowElevation = 0.dp,
+                          border = if (active) BorderStroke(1.dp, RouterBlue.copy(alpha = .12f)) else null
+                      ) {
+                          Box(contentAlignment = Alignment.Center) {
+                              Text(
+                                  title,
+                                  style = LabTypography.Value.copy(
+                                      fontWeight = FontWeight.SemiBold,
+                                      color = if (active) RouterBlue else RouterMuted
+                                  ),
+                                  maxLines = 1
+                              )
+                          }
+                      }
+                  }
+              }
+          }'''
+          )
 
-          print('Focused build181 UI/access patch applied.')
+          # Core cards stay opaque white; only a very light rounded elevation.
+          p = 'app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt'
+          replace(p, 'shadowElevation = 2.dp\n    ) {\n        Column(', 'shadowElevation = 1.dp\n    ) {\n        Column(')
+
+          print('embedded mapping and rounded tab patch applied')
           PY
 
           git diff --check
-          git status --short
-
-      - name: Commit fixes
-        shell: bash
-        run: |
-          git config user.name "OpenAI UI Fix"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
                   app/src/main/kotlin/com/labprobe/app/PortMapping.kt \
-                  app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt \
-                  app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt \
-                  app/src/main/kotlin/com/labprobe/app/ServiceAccess.kt \
-                  app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt \
+                  app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt \
                   app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          git commit -m "fix: finish build181 UI polish and browser access"
+          git config user.name "OpenAI UI Fix"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: remove mapping clipping and square tab feedback"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Verify source preparation is idempotent
+        shell: bash
+        run: |
+          python3 scripts/prepare_android_sources_build167.py
+          git diff --exit-code
+
+      - name: Unit test and compile debug APK
+        shell: bash
+        env:
+          LABPROBE_SKIP_SOURCE_PREPARE: '1'
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --console=plain
+
+      - name: Remove one-off workflow and publish validated fixes
+        shell: bash
+        run: |
+          git rm .github/workflows/oneoff-build181-ui-fix.yml
+          git commit -m "chore: remove one-off build181 UI workflow"
           git push origin HEAD:release/build180
