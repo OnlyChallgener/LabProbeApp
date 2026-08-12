@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build190 requested-only polish release pipeline.
+# v0.10.42 / build191 requested-only polish release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,23 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build190 requested-only polish
+      - name: Apply build191 requested-only polish
         run: |
           set -euo pipefail
-          python3 scripts/apply_build190_requested_polish.py
+          python3 scripts/apply_build191_requested_polish.py
 
-      - name: Persist build190 source changes
+      - name: Persist build191 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
-            app/src/main/kotlin/com/labprobe/app/PortMapping.kt \
-            app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+            app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: requested-only polish for build190'
+            git commit -m 'fix: requested-only polish for build191'
             git push origin HEAD:release/build180
           fi
 
@@ -65,10 +63,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build190 source
+      - name: Verify v0.10.42 build191 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 190' app/build.gradle.kts
+          grep -Fq 'versionCode = 191' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -87,27 +85,21 @@ jobs:
           test "$(grep -Fc 'fontSize = LabTypography.SectionTitle.fontSize' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt)" -ge 2
           grep -Fq 'android:icon="@drawable/labprobe_launcher_noglow"' app/src/main/AndroidManifest.xml
           grep -Fq 'android:roundIcon="@drawable/labprobe_launcher_noglow"' app/src/main/AndroidManifest.xml
-          grep -Fq 'android:pathData="M76,0 H436 C478,0 512,34 512,76 V436 C512,478 478,512 436,512 H76 C34,512 0,478 0,436 V76 C0,34 34,0 76,0 Z"' app/src/main/res/drawable/labprobe_launcher_noglow.xml
           grep -Fq 'settingsMint = Color(0xFF10A9C8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'verticalArrangement = Arrangement.spacedBy(0.75.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'verticalArrangement = Arrangement.spacedBy(2.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-
-          # build190: exactly this round's four adjustments.
-          grep -Fq 'compactValue: Boolean = false' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -Fq 'val valueStyle = if (compactValue) LabTypography.Body else LabTypography.Value' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          test "$(grep -Fc 'compactValue = true' app/src/main/kotlin/com/labprobe/app/PortMapping.kt)" -ge 10
-
           grep -Fq 'Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
-          grep -Fq 'fontSize = LabTypography.Body.fontSize' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq 'style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          test "$(grep -Fc 'LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt)" -ge 2
-
           grep -Fq 'if (index > 0) Spacer(Modifier.height(3.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'if (idx != rows.lastIndex) Spacer(Modifier.height(6.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
+          # build191: exactly this round's two adjustments.
+          ! grep -Fq "fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.Default" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'style = LabTypography.ValueStrong.copy(' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'fontFamily = FontFamily.Default' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'Text(deviceDisplayName(d)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+
           git diff --check
-          echo 'v0.10.42 build190 source verification passed'
+          echo 'v0.10.42 build191 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -126,14 +118,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='190' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='191' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build190 APK verified'
+          echo 'signed v0.10.42 build191 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build190-release-apk
+          name: LabProbe-v0.10.42-build191-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -141,15 +133,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build190'
+          TAG='v0.10.42-build191'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build190-release.apk'
+          ASSET='LabProbe-v0.10.42-build191-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build190' \
-              --notes 'build190 仅处理本轮 4 项：映射详情主信息卡右侧内容字号小一号；记录事件卡修复真实间距根因，将事件卡外层最小高度从 68dp 调整为 56dp；NAT 分析结果右侧内容与最近检测内容字号小一号并改为实色深字；首页“出口与路由”和“VPN / STUN 地址”卡片内部数据行间距轻微收紧。其他功能、UI 与字体未改。'
+              --title '极客网探 v0.10.42 build191' \
+              --notes 'build191 仅处理本轮 2 项：首页出口与路由、VPN/STUN 等地址值取消 IP 专用等宽字体，统一回默认系统字体，保持字号/粗细/颜色与换行不变；首页关注终端三行信息增加 2dp 行间距，缓解过度紧凑。其他功能、UI 与字体未改。'
           fi
