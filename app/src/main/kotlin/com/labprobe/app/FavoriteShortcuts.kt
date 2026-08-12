@@ -1013,8 +1013,7 @@ private fun FavoriteShortcutCard(
                 Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val status = accessReport?.let(::favoriteAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping, devices)
                 val statusLabel = when (status) {
-                    "内网" -> "内网可达"
-                    "外网" -> "外网可达"
+                    "内网", "外网" -> "可达"
                     else -> "不可达"
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
