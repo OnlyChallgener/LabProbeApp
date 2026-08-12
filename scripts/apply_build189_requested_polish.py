@@ -29,6 +29,23 @@ def replace_after(text: str, marker: str, old: str, new: str, label: str) -> str
     return text[:pos] + new + text[pos + len(old):]
 
 
+def replace_between(text: str, start_marker: str, end_marker: str, old: str, new: str, label: str) -> str:
+    start = text.find(start_marker)
+    if start < 0:
+        raise SystemExit(f"{label}: start marker not found")
+    end = text.find(end_marker, start)
+    if end < 0:
+        raise SystemExit(f"{label}: end marker not found")
+    segment = text[start:end]
+    if new in segment:
+        return text
+    count = segment.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly one old form in section, found {count}")
+    segment = segment.replace(old, new, 1)
+    return text[:start] + segment + text[end:]
+
+
 # 1) Launcher: keep the center network/radar artwork exactly unchanged.
 # Only extend the existing blue->mint rounded background to the viewport edges.
 icon = ICON.read_text(encoding="utf-8")
@@ -78,23 +95,27 @@ native = replace_after(
     "analysis value monospace",
 )
 history_marker = 'NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber)'
-native = replace_after(
+history_end = 'private const val ROUTER_BETA_SNAPSHOT_PREF'
+native = replace_between(
     native,
     history_marker,
+    history_end,
     'Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp)) {',
     'Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {',
     "recent detection title body gap",
 )
-native = replace_after(
+native = replace_between(
     native,
     history_marker,
+    history_end,
     'fontWeight = FontWeight.Bold,\n                            color = NativeInk,',
     'fontWeight = FontWeight.Bold,\n                            fontFamily = FontFamily.Monospace,\n                            color = NativeInk,',
     "recent detection title monospace",
 )
-native = replace_after(
+native = replace_between(
     native,
     history_marker,
+    history_end,
     'style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium)',
     'style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)',
     "recent detection body monospace",
