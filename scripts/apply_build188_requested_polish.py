@@ -106,8 +106,8 @@ native = replace_after(
 native = replace_after(
     native,
     'NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber)',
-    '                    fontSize = LabTypography.Caption.fontSize,\n                    color = NativeMuted\n',
-    '                    style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium)\n',
+    '                            fontSize = LabTypography.Caption.fontSize,\n                            color = NativeMuted\n',
+    '                            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium)\n',
     "recent detection content typography",
 )
 NATIVE.write_text(native, encoding="utf-8")
