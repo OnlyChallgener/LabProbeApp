@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build193 favorite reachability label release pipeline.
+# v0.10.42 / build194 favorite card alignment release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,12 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build193 favorite reachability label
+      - name: Apply build194 favorite card alignment
         run: |
           set -euo pipefail
-          python3 scripts/apply_build193_favorite_reachability_label.py
+          python3 scripts/apply_build194_favorite_card_alignment.py
 
-      - name: Persist build193 source changes
+      - name: Persist build194 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
@@ -36,7 +36,7 @@ jobs:
             app/build.gradle.kts \
             app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: show favorite reachability labels for build193'
+            git commit -m 'fix: align favorite cards and concise reachability for build194'
             git push origin HEAD:release/build180
           fi
 
@@ -63,10 +63,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build193 source
+      - name: Verify v0.10.42 build194 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 193' app/build.gradle.kts
+          grep -Fq 'versionCode = 194' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -79,21 +79,21 @@ jobs:
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
           # Prior requested behavior remains.
-          grep -Fq 'fontFamily = FontFamily.Default' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq '.combinedClickable(onClick = onOpen, onLongClick = {})' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           ! grep -Fq 'Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(30.dp)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
-          # build193: display explicit reachability without changing detection logic/layout.
-          grep -Fq 'val statusLabel = when (status) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq '"内网" -> "内网可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq '"外网" -> "外网可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          # build194: concise status, two-line cards, equal aligned height.
+          grep -Fq 'Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq '"内网", "外网" -> "可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'else -> "不可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'shortcut.serviceType.ifBlank { "网页入口" }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'statusLabel,' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          ! grep -Fq 'shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
           git diff --check
-          echo 'v0.10.42 build193 source verification passed'
+          echo 'v0.10.42 build194 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -112,14 +112,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='193' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='194' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build193 APK verified'
+          echo 'signed v0.10.42 build194 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build193-release-apk
+          name: LabProbe-v0.10.42-build194-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -127,15 +127,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build193'
+          TAG='v0.10.42-build194'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build193-release.apk'
+          ASSET='LabProbe-v0.10.42-build194-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build193' \
-              --notes 'build193 仅调整收藏卡片状态文案：内网显示“内网可达”、外网显示“外网可达”、不可达显示“不可达”。沿用 build192 的整卡点击和地址同步逻辑，不增加检测频率，不改变卡片尺寸、布局、功能、其他 UI 或字体。'
+              --title '极客网探 v0.10.42 build194' \
+              --notes 'build194 仅调整收藏卡片：状态统一显示“协议 · 可达/不可达”，不再显示内网/外网；移除映射收藏中重复的描述行，卡片固定为名称+协议状态两行；内容最小高度增加 4dp，使同一行卡片高度、标题、状态和更多按钮对齐。地址同步、整卡点击、检测逻辑与频率、其他功能/UI/字体均未改。'
           fi
