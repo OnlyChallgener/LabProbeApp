@@ -32,34 +32,18 @@ jobs:
               raise SystemExit(f'Expected exactly one initError state line, found {text.count(state_line)}')
           text = text.replace(state_line, '', 1)
 
-          old = '''    } else {
-              try {
-                  WifiRoamingTool(prefs)
-              } catch (t: Throwable) {
-                  initError = t.javaClass.simpleName + (t.message?.let { ": $it" } ?: "")
-                  ExpressiveCard("漫游测试初始化失败", initError ?: "未知错误", Icons.Rounded.ErrorOutline, Color(0xFFEF4444)) {
-                      Text(
-                          "页面已拦截异常，未让 APP 直接闪退。请把该错误信息发我继续定位。",
-                          fontSize = 12.sp,
-                          fontWeight = FontWeight.SemiBold,
-                          color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f),
-                          lineHeight = 17.sp
-                      )
-                      Spacer(Modifier.height(8.dp))
-                      Button(onClick = { ready = false; initError = null }, shape = RoundedCornerShape(16.dp)) {
-                          Text("重新初始化")
-                      }
-                  }
-              }
-          }
-          '''
-          new = '''    } else {
-              WifiRoamingTool(prefs)
-          }
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f'Expected exactly one invalid composable try/catch block, found {text.count(old)}')
-          text = text.replace(old, new, 1)
+          start_marker = '    } else {\n        try {\n            WifiRoamingTool(prefs)\n'
+          tail_marker = '\n    }\n}\n@Composable\nfun MtuScreen'
+          start = text.find(start_marker)
+          if start < 0:
+              raise SystemExit('WifiRoamingScreen invalid try/catch start marker not found')
+          tail = text.find(tail_marker, start)
+          if tail < 0:
+              raise SystemExit('WifiRoamingScreen end marker not found')
+          replacement = '    } else {\n        WifiRoamingTool(prefs)\n    }'
+          text = text[:start] + replacement + text[tail + len('\n    }'):]
+          if 'try {\n            WifiRoamingTool(prefs)' in text:
+              raise SystemExit('Invalid composable try/catch still present after patch')
           path.write_text(text, encoding='utf-8')
           PY
 
