@@ -615,35 +615,35 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         NativeCard {
             NativeTitle(Icons.Rounded.Analytics, "分析结果", NativeGreen)
-            NativeValueRow("检测状态", when {
+            NativeAnalysisValueRow("检测状态", when {
                 loading && result.status == "idle" -> "读取中"
                 running -> result.stageText.ifBlank { "检测中" }
                 result.completed -> "检测完成"
                 else -> natStatusZh(result.status)
             })
             if (result.mode == "5780") {
-                NativeValueRow("映射行为", natMappingBehaviorZh(result.mappingBehavior))
-                NativeValueRow("过滤行为", natFilteringBehaviorZh(result.filteringBehavior))
-                if (result.otherAddress.isNotBlank()) NativeValueRow("其他地址", result.otherAddress)
+                NativeAnalysisValueRow("映射行为", natMappingBehaviorZh(result.mappingBehavior))
+                NativeAnalysisValueRow("过滤行为", natFilteringBehaviorZh(result.filteringBehavior))
+                if (result.otherAddress.isNotBlank()) NativeAnalysisValueRow("其他地址", result.otherAddress)
             } else {
-                NativeValueRow("NAT类型", natTypeZh(result.natType))
+                NativeAnalysisValueRow("NAT类型", natTypeZh(result.natType))
             }
-            NativeValueRow("外网地址", result.externalAddress.ifBlank {
+            NativeAnalysisValueRow("外网地址", result.externalAddress.ifBlank {
                 if (result.externalIp.isBlank()) "--" else result.externalIp +
                     if (result.externalPort > 0) ":${result.externalPort}" else ""
             })
-            NativeValueRow("检测模式", if (result.mode == "5780") "RFC 5780" else "RFC 3489")
+            NativeAnalysisValueRow("检测模式", if (result.mode == "5780") "RFC 5780" else "RFC 3489")
             if (running) {
-                NativeValueRow("已耗时", "${result.elapsedSeconds} 秒")
+                NativeAnalysisValueRow("已耗时", "${result.elapsedSeconds} 秒")
             } else if (result.elapsedSeconds > 0L) {
-                NativeValueRow("检测耗时", "${result.elapsedSeconds} 秒")
+                NativeAnalysisValueRow("检测耗时", "${result.elapsedSeconds} 秒")
             }
             if (result.lastRouterResponseAt > 0L) {
                 if (running) {
                     val age = (System.currentTimeMillis() / 1000L - result.lastRouterResponseAt).coerceAtLeast(0L)
-                    NativeValueRow("路由器响应", if (age < 3L) "刚刚" else "${age} 秒前")
+                    NativeAnalysisValueRow("路由器响应", if (age < 3L) "刚刚" else "${age} 秒前")
                 } else {
-                    NativeValueRow("最终响应", "已收到")
+                    NativeAnalysisValueRow("最终响应", "已收到")
                 }
             }
         }
@@ -869,6 +869,25 @@ private fun NativeValueRow(label: String, value: String, stacked: Boolean = fals
             Text(label, Modifier.width(78.dp), style = LabTypography.Supporting.copy(color = NativeMuted))
             Text(value, Modifier.weight(1f), style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.SemiBold), maxLines = 3, overflow = TextOverflow.Clip)
         }
+    }
+}
+
+
+@Composable
+private fun NativeAnalysisValueRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(
+            label,
+            Modifier.width(78.dp),
+            style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.Bold)
+        )
+        Text(
+            value,
+            Modifier.weight(1f),
+            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium),
+            maxLines = 3,
+            overflow = TextOverflow.Clip
+        )
     }
 }
 

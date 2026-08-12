@@ -666,8 +666,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = f
         return
     }
 
-    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true, showHeader = !embedded) {
-        Spacer(Modifier.height(8.dp))
+    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true, showHeader = !embedded, sectionGap = 6.dp) {
         PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -876,7 +875,7 @@ private fun PortMapCompactMetric(label: String, value: String, color: Color, mod
     Surface(modifier = modifier.height(42.dp), shape = LabCoreSurface.InnerShape, color = LabCoreSurface.Inner, border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 5.dp), verticalArrangement = Arrangement.Center) {
             Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
-            Text(value, fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
+            Text(value, fontSize = 12.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
         }
     }
 }
@@ -1518,8 +1517,15 @@ private fun PortMapDetailPage(
             delay(10_000)
         }
     }
-    DetailShell(rule.name, "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}", onDismiss, unifiedTypography = true) {
-            Spacer(Modifier.height(6.dp))
+    DetailShell(
+        rule.name,
+        "${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }} · ${rule.transportProtocol.ifBlank { "TCP" }} · ${rule.modeText}${if (rule.targetMode == "ipv6_suffix") " · IPv6 后缀匹配" else ""}",
+        onDismiss,
+        unifiedTypography = true,
+        sectionGap = 6.dp,
+        titleStyleOverride = LabTypography.CardTitle,
+        subtitleStyleOverride = LabTypography.Caption
+    ) {
             LabCoreCard(compact = true) {
                 PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
                 PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")

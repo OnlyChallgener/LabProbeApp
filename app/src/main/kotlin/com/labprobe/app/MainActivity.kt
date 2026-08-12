@@ -2153,6 +2153,9 @@ fun DetailShell(
     compactHeader: Boolean = false,
     unifiedTypography: Boolean = false,
     showHeader: Boolean = true,
+    sectionGap: Dp = LabV2.SectionGap,
+    titleStyleOverride: androidx.compose.ui.text.TextStyle? = null,
+    subtitleStyleOverride: androidx.compose.ui.text.TextStyle? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
@@ -2160,7 +2163,7 @@ fun DetailShell(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
-        verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
+        verticalArrangement = Arrangement.spacedBy(sectionGap)
     ) {
         if (showHeader) {
             CompactPageHeader(
@@ -2168,8 +2171,8 @@ fun DetailShell(
                 subtitle = subtitle,
                 onBack = onBack,
                 compactTitle = compactHeader,
-                titleStyle = LabTypography.PageTitle.takeIf { unifiedTypography },
-                subtitleStyle = LabTypography.Supporting.takeIf { unifiedTypography }
+                titleStyle = titleStyleOverride ?: LabTypography.PageTitle.takeIf { unifiedTypography },
+                subtitleStyle = subtitleStyleOverride ?: LabTypography.Supporting.takeIf { unifiedTypography }
             )
         }
         content()
@@ -3485,11 +3488,11 @@ fun HealthCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().shadow(
-            2.dp,
+            5.dp,
             shape,
             clip = false,
-            ambientColor = LabV2.ShadowAmbient,
-            spotColor = LabV2.ShadowSpot,
+            ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f),
+            spotColor = LabV2.ShadowSpot.copy(alpha = .95f),
         ),
         shape = shape,
         color = Color.White,
@@ -3521,11 +3524,11 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val shape = HomeCardShape
     Surface(
         modifier = Modifier.fillMaxWidth().shadow(
-            2.dp,
+            5.dp,
             shape,
             clip = false,
-            ambientColor = LabV2.ShadowAmbient,
-            spotColor = LabV2.ShadowSpot,
+            ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f),
+            spotColor = LabV2.ShadowSpot.copy(alpha = .95f),
         ),
         shape = shape,
         color = Color.White,
@@ -4626,6 +4629,13 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
                 syncSummary,
                 Icons.Rounded.Devices,
                 Color(0xFFF59E0B),
+                modifier = Modifier.shadow(
+                    4.dp,
+                    LabCoreSurface.CardShape,
+                    clip = false,
+                    ambientColor = LabV2.ShadowAmbient,
+                    spotColor = LabV2.ShadowSpot
+                ),
                 coreSurface = true,
                 headerAction = {
                     Text(
@@ -4931,6 +4941,13 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         icon = profile.icon,
         accent = profile.accent,
         iconKey = profile.iconKey,
+        modifier = Modifier.shadow(
+            4.dp,
+            LabCoreSurface.CardShape,
+            clip = false,
+            ambientColor = LabV2.ShadowAmbient,
+            spotColor = LabV2.ShadowSpot
+        ),
         coreSurface = true,
         headerAction = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -8895,7 +8912,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
-        verticalArrangement = Arrangement.spacedBy(LabV2.ListGap)
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         item {
             CompactPageHeader(title = "记录", subtitle = "按天折叠 · 长按复制 · 左滑删除", action = {
@@ -9691,6 +9708,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var msg by remember { mutableStateOf("") }
+    val settingsMint = Color(0xFF28BFA3)
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
@@ -9748,7 +9766,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                     state.startRealtime()
                 }
                 toast(ctx, "已保存")
-            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) {
+            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint)) {
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Button(onClick = {
@@ -9779,7 +9797,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
     ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, LabV2.Cyan) {
-        PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = LabV2.Cyan) {
+        PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = settingsMint) {
             privacy = !privacy
             prefs.privacyMode = privacy
         }

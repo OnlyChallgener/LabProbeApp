@@ -10,8 +10,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:icon="@drawable/labprobe_launcher_1024"
+        android:roundIcon="@drawable/labprobe_launcher_1024"
         android:label="极客网探"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
