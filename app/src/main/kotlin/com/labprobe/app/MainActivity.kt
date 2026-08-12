@@ -9790,7 +9790,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                         toast(ctx, "数据校准完成")
                     }.onFailure { msg = "校准失败：${uiMessageZh(it.message.orEmpty())}" }
                 }
-            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
+            }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint)) {
                 Icon(Icons.Rounded.Sync, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即校准", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
