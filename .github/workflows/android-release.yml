@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build191 requested-only polish release pipeline.
+# v0.10.42 / build192 favorite endpoint sync + card interaction release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,21 +22,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build191 requested-only polish
+      - name: Apply build192 favorite sync and card polish
         run: |
           set -euo pipefail
-          python3 scripts/apply_build191_requested_polish.py
+          python3 scripts/apply_build192_favorite_sync_card.py
 
-      - name: Persist build191 source changes
+      - name: Persist build192 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+            app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
+            app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: requested-only polish for build191'
+            git commit -m 'fix: favorite endpoint sync and card layout for build192'
             git push origin HEAD:release/build180
           fi
 
@@ -63,10 +64,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build191 source
+      - name: Verify v0.10.42 build192 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 191' app/build.gradle.kts
+          grep -Fq 'versionCode = 192' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -78,28 +79,27 @@ jobs:
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Prior requested UI changes remain.
-          grep -Fq 'ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq '.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'sectionGap = 6.dp' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          test "$(grep -Fc 'fontSize = LabTypography.SectionTitle.fontSize' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt)" -ge 2
-          grep -Fq 'android:icon="@drawable/labprobe_launcher_noglow"' app/src/main/AndroidManifest.xml
-          grep -Fq 'android:roundIcon="@drawable/labprobe_launcher_noglow"' app/src/main/AndroidManifest.xml
-          grep -Fq 'settingsMint = Color(0xFF10A9C8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'verticalArrangement = Arrangement.spacedBy(0.75.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'if (index > 0) Spacer(Modifier.height(3.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'if (idx != rows.lastIndex) Spacer(Modifier.height(6.dp))' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
-          # build191: exactly this round's two adjustments.
-          ! grep -Fq "fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.Default" app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'style = LabTypography.ValueStrong.copy(' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          # Prior requested UI behavior remains.
           grep -Fq 'fontFamily = FontFamily.Default' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'Text(deviceDisplayName(d)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'settingsMint = Color(0xFF10A9C8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+
+          # build192: endpoint changes are event-driven, not polled.
+          grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'val previousRemote = old.remoteEndpoint.ifBlank { old.wanUrl }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'val liveFavoriteChanges = prefs.syncHomeVpnFavoriteShortcuts(liveVpnRows)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'val liveVpnRows = buildVpnRowsForHome(currentData, currentNasV6, events)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+
+          # build192: whole favorite card opens directly; no separate Open button.
+          grep -Fq '.combinedClickable(onClick = onOpen, onLongClick = {})' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'FavoriteIcon(shortcut.iconType, shortcut.iconValue, 40)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          ! grep -Fq 'Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(30.dp)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
           git diff --check
-          echo 'v0.10.42 build191 source verification passed'
+          echo 'v0.10.42 build192 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -118,14 +118,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='191' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='192' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build191 APK verified'
+          echo 'signed v0.10.42 build192 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build191-release-apk
+          name: LabProbe-v0.10.42-build192-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -133,15 +133,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build191'
+          TAG='v0.10.42-build192'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build191-release.apk'
+          ASSET='LabProbe-v0.10.42-build192-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build191' \
-              --notes 'build191 仅处理本轮 2 项：首页出口与路由、VPN/STUN 等地址值取消 IP 专用等宽字体，统一回默认系统字体，保持字号/粗细/颜色与换行不变；首页关注终端三行信息增加 2dp 行间距，缓解过度紧凑。其他功能、UI 与字体未改。'
+              --title '极客网探 v0.10.42 build192' \
+              --notes 'build192 仅处理收藏两项：当 Hub 成功同步导致首页 VPN/STUN 服务地址变化时，同名 Webhook 收藏的外网地址在同一次同步中更新，同时修复 remoteEndpoint 与 wanUrl 不一致导致编辑页仍显示旧地址的问题；收藏卡移除独立“打开”按钮，整卡点击直接打开，并将服务类型与当前访问状态合并为更紧凑的两行布局。无新增轮询，其他功能、UI 与字体未改。'
           fi
