@@ -27,6 +27,7 @@ jobs:
           set -euo pipefail
           python3 scripts/apply_build187_targeted_ui_polish.py
           python3 scripts/fix_build187_settings_calibrate.py
+          python3 scripts/fix_build187_device_modifier.py
 
       - name: Persist build187 source changes
         run: |
@@ -98,11 +99,10 @@ jobs:
           grep -Fq 'android:roundIcon="@drawable/labprobe_launcher_1024"' app/src/main/AndroidManifest.xml
           test -s app/src/main/res/drawable-nodpi/labprobe_launcher_1024.png
           grep -Fq 'ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'modifier = Modifier.shadow(' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq '.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'verticalArrangement = Arrangement.spacedBy(3.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'settingsMint = Color(0xFF28BFA3)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'Text("立即校准", fontSize = 11.5.sp' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'colors = ButtonDefaults.buttonColors(containerColor = settingsMint)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           test "$(grep -Fc 'colors = ButtonDefaults.buttonColors(containerColor = settingsMint)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt)" -ge 2
           grep -Fq 'accent = settingsMint' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'sectionGap = 6.dp' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
