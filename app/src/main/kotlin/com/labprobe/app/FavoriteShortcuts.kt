@@ -1012,6 +1012,11 @@ private fun FavoriteShortcutCard(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val status = accessReport?.let(::favoriteAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping, devices)
+                val statusLabel = when (status) {
+                    "内网" -> "内网可达"
+                    "外网" -> "外网可达"
+                    else -> "不可达"
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(
                         shortcut.serviceType.ifBlank { "网页入口" },
@@ -1024,7 +1029,7 @@ private fun FavoriteShortcutCard(
                     )
                     Box(Modifier.size(3.dp).clip(CircleShape).background(LabV2.InkMuted.copy(alpha = .45f)))
                     Text(
-                        status,
+                        statusLabel,
                         fontSize = 10.5.sp,
                         lineHeight = 13.sp,
                         fontWeight = FontWeight.SemiBold,
