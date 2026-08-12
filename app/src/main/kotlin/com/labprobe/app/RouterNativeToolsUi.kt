@@ -668,7 +668,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
             NativeCard {
                 NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber)
                 history.forEachIndexed { index, item ->
-                    Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
                             if (item.mode == "5780") {
                                 listOf(
@@ -679,6 +679,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             fontSize = LabTypography.Value.fontSize,
                             lineHeight = LabTypography.Value.lineHeight,
                             fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
                             color = NativeInk,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -878,12 +879,12 @@ private fun NativeAnalysisValueRow(label: String, value: String) {
         Text(
             label,
             Modifier.width(78.dp),
-            style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.Bold)
+            style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
         )
         Text(
             value,
             Modifier.weight(1f),
-            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium),
+            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace),
             maxLines = 3,
             overflow = TextOverflow.Clip
         )

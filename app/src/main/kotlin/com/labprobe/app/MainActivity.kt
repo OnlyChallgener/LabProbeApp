@@ -8913,7 +8913,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
-        verticalArrangement = Arrangement.spacedBy(1.5.dp)
+        verticalArrangement = Arrangement.spacedBy(0.75.dp)
     ) {
         item {
             CompactPageHeader(title = "记录", subtitle = "按天折叠 · 长按复制 · 左滑删除", action = {
@@ -9709,7 +9709,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var msg by remember { mutableStateOf("") }
-    val settingsMint = Color(0xFF28BFA3)
+    val settingsMint = Color(0xFF10A9C8)
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
