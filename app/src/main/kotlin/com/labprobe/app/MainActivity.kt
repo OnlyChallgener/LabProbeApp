@@ -4219,7 +4219,7 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
             modifier = Modifier.weight(1f),
             style = LabTypography.ValueStrong.copy(
                 color = accent,
-                fontFamily = if (shown.contains(':') || shown.count { it == '.' } >= 2) FontFamily.Monospace else FontFamily.Default
+                fontFamily = FontFamily.Default
             ),
             maxLines = 2,
             softWrap = true,
@@ -4309,7 +4309,7 @@ fun HealthDeviceLine(d: DeviceItem) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(deviceDisplayName(d), fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val info = listOf(d.ip, d.ssid, d.band, d.rxrate).map { cleanApiText(it) }.filter { it.isNotBlank() }.joinToString(" · ")
             Text(info.ifBlank { if (d.online) "在线信息待刷新" else "暂无历史详情" }, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
