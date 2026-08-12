@@ -4241,7 +4241,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
         }.filter { it.second.isNotBlank() }
         Spacer(Modifier.height(9.dp))
         addressRows.forEachIndexed { index, (label, value) ->
-            if (index > 0) Spacer(Modifier.height(5.dp))
+            if (index > 0) Spacer(Modifier.height(3.dp))
             HealthDataRowDisplay(label, value, maskAddressForUi(value, privacyMode))
         }
     }
@@ -4279,7 +4279,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
         } else {
             rows.forEachIndexed { idx, row ->
                 HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
-                if (idx != rows.lastIndex) Spacer(Modifier.height(9.dp))
+                if (idx != rows.lastIndex) Spacer(Modifier.height(6.dp))
             }
         }
     }
@@ -9123,7 +9123,7 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
         exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Box(Modifier.fillMaxWidth().heightIn(min = 68.dp)) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
             if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
                 Box(
                     Modifier

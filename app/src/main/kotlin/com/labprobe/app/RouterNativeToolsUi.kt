@@ -676,8 +676,8 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                     natFilteringBehaviorZh(item.filteringBehavior)
                                 ).filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
                             } else natTypeZh(item.natType),
-                            fontSize = LabTypography.Value.fontSize,
-                            lineHeight = LabTypography.Value.lineHeight,
+                            fontSize = LabTypography.Body.fontSize,
+                            lineHeight = LabTypography.Body.lineHeight,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             color = NativeInk,
@@ -690,7 +690,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 if (item.mode == "5780") "RFC5780" else "RFC3489",
                                 item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
                             ).filter(String::isNotBlank).joinToString(" · "),
-                            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)
+                            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)
                         )
                     }
                     if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)
@@ -884,7 +884,7 @@ private fun NativeAnalysisValueRow(label: String, value: String) {
         Text(
             value,
             Modifier.weight(1f),
-            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace),
+            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace),
             maxLines = 3,
             overflow = TextOverflow.Clip
         )

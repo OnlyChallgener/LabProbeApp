@@ -1527,16 +1527,16 @@ private fun PortMapDetailPage(
         subtitleStyleOverride = LabTypography.Caption
     ) {
             LabCoreCard(compact = true) {
-                PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
-                PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
-                PortMapDetailLine("监听", "[::]:${rule.listenPort}", copyable = true)
-                PortMapDetailLine("配置目标", rule.targetText, copyable = true)
-                if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue, copyable = true)
-                PortMapDetailLine("运行时间", portMapRunningText(rule))
-                PortMapDetailLine("剩余时间", portMapRemainingText(rule))
-                PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久")
-                PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt))
-                if (rule.revision > 0L) PortMapDetailLine("配置版本", "revision ${rule.revision}")
+                PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color, compactValue = true)
+                PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}", compactValue = true)
+                PortMapDetailLine("监听", "[::]:${rule.listenPort}", copyable = true, compactValue = true)
+                PortMapDetailLine("配置目标", rule.targetText, copyable = true, compactValue = true)
+                if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue, copyable = true, compactValue = true)
+                PortMapDetailLine("运行时间", portMapRunningText(rule), compactValue = true)
+                PortMapDetailLine("剩余时间", portMapRemainingText(rule), compactValue = true)
+                PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久", compactValue = true)
+                PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt), compactValue = true)
+                if (rule.revision > 0L) PortMapDetailLine("配置版本", "revision ${rule.revision}", compactValue = true)
             }
 
             LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
@@ -1685,19 +1685,20 @@ private fun PortMapDetailPage(
 }
 
 @Composable
-private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink, copyable: Boolean = false) {
+private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink, copyable: Boolean = false, compactValue: Boolean = false) {
     val context = LocalContext.current
+    val valueStyle = if (compactValue) LabTypography.Body else LabTypography.Value
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
         if (copyable && value.isNotBlank()) {
             SelectionContainer(Modifier.weight(1f)) {
-                Text(value, Modifier.fillMaxWidth(), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, color = color, fontWeight = FontWeight.SemiBold, softWrap = true)
+                Text(value, Modifier.fillMaxWidth(), fontSize = valueStyle.fontSize, lineHeight = valueStyle.lineHeight, color = color, fontWeight = FontWeight.SemiBold, softWrap = true)
             }
             IconButton(onClick = { copy(context, value) }, modifier = Modifier.size(28.dp)) {
                 Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(15.dp), tint = PortBlue)
             }
         } else {
-            Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, color = color, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
+            Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = valueStyle.fontSize, lineHeight = valueStyle.lineHeight, color = color, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
         }
     }
 }
