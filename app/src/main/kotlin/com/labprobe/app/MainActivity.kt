@@ -4941,13 +4941,6 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
         icon = profile.icon,
         accent = profile.accent,
         iconKey = profile.iconKey,
-        modifier = Modifier.shadow(
-            4.dp,
-            LabCoreSurface.CardShape,
-            clip = false,
-            ambientColor = LabV2.ShadowAmbient,
-            spotColor = LabV2.ShadowSpot
-        ),
         coreSurface = true,
         headerAction = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -4964,7 +4957,15 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
                 }
             }
         },
-        modifier = Modifier.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
+        modifier = Modifier
+            .shadow(
+                4.dp,
+                LabCoreSurface.CardShape,
+                clip = false,
+                ambientColor = LabV2.ShadowAmbient,
+                spotColor = LabV2.ShadowSpot
+            )
+            .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
     ) {
         DeviceSmartInfo(d, profile)
         if (!d.online && wolManaged) {
