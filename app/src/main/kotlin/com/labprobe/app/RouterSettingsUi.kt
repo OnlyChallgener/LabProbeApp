@@ -200,7 +200,14 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = LabTypography.CardTitle.copy(color = SettingsInk))
+                Text(
+                    title,
+                    style = LabTypography.CardTitle.copy(
+                        fontSize = LabTypography.SectionTitle.fontSize,
+                        lineHeight = LabTypography.SectionTitle.lineHeight,
+                        color = SettingsInk
+                    )
+                )
                 Text(detail, style = LabTypography.Supporting.copy(color = SettingsMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = accent)
@@ -244,7 +251,14 @@ private fun RouterSettingsTile(
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = LabTypography.CardTitle.copy(color = if (enabled) SettingsInk else SettingsMuted))
+                Text(
+                    title,
+                    style = LabTypography.CardTitle.copy(
+                        fontSize = LabTypography.SectionTitle.fontSize,
+                        lineHeight = LabTypography.SectionTitle.lineHeight,
+                        color = if (enabled) SettingsInk else SettingsMuted
+                    )
+                )
                 Text(subtitle, style = LabTypography.Supporting.copy(color = SettingsMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.ChevronRight, null, Modifier.size(19.dp), tint = actualColor.copy(alpha = if (enabled) 1f else .45f))

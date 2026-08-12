@@ -668,7 +668,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
             NativeCard {
                 NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber)
                 history.forEachIndexed { index, item ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp)) {
                         Text(
                             if (item.mode == "5780") {
                                 listOf(
@@ -689,8 +689,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 if (item.mode == "5780") "RFC5780" else "RFC3489",
                                 item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
                             ).filter(String::isNotBlank).joinToString(" · "),
-                            fontSize = LabTypography.Caption.fontSize,
-                            color = NativeMuted
+                            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium)
                         )
                     }
                     if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)
