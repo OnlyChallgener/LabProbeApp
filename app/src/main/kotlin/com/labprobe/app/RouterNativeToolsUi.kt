@@ -690,7 +690,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 if (item.mode == "5780") "RFC5780" else "RFC3489",
                                 item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
                             ).filter(String::isNotBlank).joinToString(" · "),
-                            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium)
+                            style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)
                         )
                     }
                     if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)
