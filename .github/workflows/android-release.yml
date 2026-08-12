@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build194 favorite card alignment release pipeline.
+# v0.10.42 / build194 favorite status-only release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build194 favorite card alignment
+      - name: Apply build194 favorite status label
         run: |
           set -euo pipefail
           python3 scripts/apply_build194_favorite_card_alignment.py
@@ -36,7 +36,7 @@ jobs:
             app/build.gradle.kts \
             app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: align favorite cards and concise reachability for build194'
+            git commit -m 'fix: simplify favorite reachability text for build194'
             git push origin HEAD:release/build180
           fi
 
@@ -78,19 +78,19 @@ jobs:
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Prior requested behavior remains.
+          # Prior requested behavior remains unchanged.
           grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq '.combinedClickable(onClick = onOpen, onLongClick = {})' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           ! grep -Fq 'Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(30.dp)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
-          # build194: concise status, two-line cards, equal aligned height.
-          grep -Fq 'Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          # build194: only simplify reachability text; keep description/layout/height intact.
           grep -Fq '"内网", "外网" -> "可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'else -> "不可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'shortcut.serviceType.ifBlank { "网页入口" }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'statusLabel,' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          ! grep -Fq 'shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          ! grep -Fq 'Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
           git diff --check
           echo 'v0.10.42 build194 source verification passed'
@@ -137,5 +137,5 @@ jobs:
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
               --title '极客网探 v0.10.42 build194' \
-              --notes 'build194 仅调整收藏卡片：状态统一显示“协议 · 可达/不可达”，不再显示内网/外网；移除映射收藏中重复的描述行，卡片固定为名称+协议状态两行；内容最小高度增加 4dp，使同一行卡片高度、标题、状态和更多按钮对齐。地址同步、整卡点击、检测逻辑与频率、其他功能/UI/字体均未改。'
+              --notes 'build194 仅调整收藏卡片状态文案：可达时统一显示“协议 · 可达”，不可达时显示“协议 · 不可达”，不再区分内网/外网。保留第三行描述，不改变卡片高度、布局、地址同步、整卡点击、检测逻辑/频率及其他功能/UI/字体。'
           fi
