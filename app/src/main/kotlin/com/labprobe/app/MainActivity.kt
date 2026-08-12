@@ -3387,7 +3387,6 @@ fun Ipv6TestScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("IPv6 可�
 @Composable
 fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线漫游", "RSSI / AP切换 / 网关延迟", onBack) {
     var ready by remember { mutableStateOf(false) }
-    var initError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         delay(360)
         ready = true
@@ -3402,24 +3401,7 @@ fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线
             )
         }
     } else {
-        try {
-            WifiRoamingTool(prefs)
-        } catch (t: Throwable) {
-            initError = t.javaClass.simpleName + (t.message?.let { ": $it" } ?: "")
-            ExpressiveCard("漫游测试初始化失败", initError ?: "未知错误", Icons.Rounded.ErrorOutline, Color(0xFFEF4444)) {
-                Text(
-                    "页面已拦截异常，未让 APP 直接闪退。请把该错误信息发我继续定位。",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f),
-                    lineHeight = 17.sp
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { ready = false; initError = null }, shape = RoundedCornerShape(16.dp)) {
-                    Text("重新初始化")
-                }
-            }
-        }
+        WifiRoamingTool(prefs)
     }
 }
 @Composable
