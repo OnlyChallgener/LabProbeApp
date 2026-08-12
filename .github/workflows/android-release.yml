@@ -26,6 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/apply_build187_targeted_ui_polish.py
+          python3 scripts/fix_build187_settings_calibrate.py
 
       - name: Persist build187 source changes
         run: |
@@ -100,6 +101,10 @@ jobs:
           grep -Fq 'modifier = Modifier.shadow(' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'verticalArrangement = Arrangement.spacedBy(3.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'settingsMint = Color(0xFF28BFA3)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'Text("立即校准", fontSize = 11.5.sp' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          grep -Fq 'colors = ButtonDefaults.buttonColors(containerColor = settingsMint)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
+          test "$(grep -Fc 'colors = ButtonDefaults.buttonColors(containerColor = settingsMint)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt)" -ge 2
+          grep -Fq 'accent = settingsMint' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'sectionGap = 6.dp' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -Fq 'titleStyleOverride = LabTypography.CardTitle' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -Fq 'fontSize = 12.5.sp, lineHeight = 16.sp' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
