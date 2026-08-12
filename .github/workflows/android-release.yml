@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build189 requested-only polish release pipeline.
+# v0.10.42 / build189 requested-only polish release pipeline. retry-1
 
 on:
   workflow_dispatch:
@@ -99,7 +99,7 @@ jobs:
           grep -Fq 'style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -Fq 'style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
           grep -Fq 'verticalArrangement = Arrangement.spacedBy(2.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq 'fontFamily = FontFamily.Monospace,' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          test "$(grep -Fc 'fontFamily = FontFamily.Monospace' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt)" -ge 4
 
           grep -Fq 'verticalArrangement = Arrangement.spacedBy(0.75.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
