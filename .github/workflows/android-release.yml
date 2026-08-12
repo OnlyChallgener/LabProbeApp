@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build188 requested-only polish release pipeline.
+# v0.10.42 / build188 requested-only polish release pipeline. retry-1
 
 on:
   workflow_dispatch:
