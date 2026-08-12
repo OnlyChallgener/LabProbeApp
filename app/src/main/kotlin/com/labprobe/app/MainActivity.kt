@@ -1520,7 +1520,16 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     }
 
     private fun finishSuccessfulSync(previousEventKeys: Set<String>, dataChanged: Boolean, silent: Boolean) {
-        if (dataChanged && prefs.syncWebhookFavoriteShortcuts(events) > 0) favoriteSyncVersion++
+        if (dataChanged) {
+            val webhookFavoriteChanges = prefs.syncWebhookFavoriteShortcuts(events)
+            val currentData = status?.optJSONObject("data") ?: status
+            val currentNas = currentData?.optJSONObject("nas")
+            val currentRouter = currentData?.optJSONObject("router")
+            val currentNasV6 = safeNasIpv6ForUi(currentNas, currentRouter)
+            val liveVpnRows = buildVpnRowsForHome(currentData, currentNasV6, events)
+            val liveFavoriteChanges = prefs.syncHomeVpnFavoriteShortcuts(liveVpnRows)
+            if (webhookFavoriteChanges + liveFavoriteChanges > 0) favoriteSyncVersion++
+        }
         CertificateReminderCenter.notifyDue(appContext, prefs)
         if (dataChanged && (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty())) {
             EventNotificationCenter.notifyNewEvents(
