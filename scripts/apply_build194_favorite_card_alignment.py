@@ -19,23 +19,9 @@ replace_once(
 
 replace_once(
     "app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt",
-    '''        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {''',
-    '''        Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {''',
-    "favorite card aligned min content height",
-)
-
-replace_once(
-    "app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt",
     '''                val statusLabel = when (status) {\n                    "内网" -> "内网可达"\n                    "外网" -> "外网可达"\n                    else -> "不可达"\n                }''',
     '''                val statusLabel = when (status) {\n                    "内网", "外网" -> "可达"\n                    else -> "不可达"\n                }''',
     "favorite reachability concise label",
 )
 
-replace_once(
-    "app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt",
-    '''                shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }?.let { description ->\n                    Text(description, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)\n                }\n''',
-    '''''',
-    "remove redundant favorite third description row",
-)
-
-print("build194 favorite card alignment applied")
+print("build194 favorite status label applied")
