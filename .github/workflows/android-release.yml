@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build192 favorite endpoint sync + card interaction release pipeline.
+# v0.10.42 / build193 favorite reachability label release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,22 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build192 favorite sync and card polish
+      - name: Apply build193 favorite reachability label
         run: |
           set -euo pipefail
-          python3 scripts/apply_build192_favorite_sync_card.py
+          python3 scripts/apply_build193_favorite_reachability_label.py
 
-      - name: Persist build192 source changes
+      - name: Persist build193 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
             app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: favorite endpoint sync and card layout for build192'
+            git commit -m 'fix: show favorite reachability labels for build193'
             git push origin HEAD:release/build180
           fi
 
@@ -64,10 +63,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build192 source
+      - name: Verify v0.10.42 build193 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 192' app/build.gradle.kts
+          grep -Fq 'versionCode = 193' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -79,27 +78,22 @@ jobs:
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Prior requested UI behavior remains.
+          # Prior requested behavior remains.
           grep -Fq 'fontFamily = FontFamily.Default' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'Box(Modifier.fillMaxWidth().heightIn(min = 56.dp)) {' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'settingsMint = Color(0xFF10A9C8)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
-          # build192: endpoint changes are event-driven, not polled.
           grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'val previousRemote = old.remoteEndpoint.ifBlank { old.wanUrl }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'val liveFavoriteChanges = prefs.syncHomeVpnFavoriteShortcuts(liveVpnRows)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'val liveVpnRows = buildVpnRowsForHome(currentData, currentNasV6, events)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-
-          # build192: whole favorite card opens directly; no separate Open button.
           grep -Fq '.combinedClickable(onClick = onOpen, onLongClick = {})' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'FavoriteIcon(shortcut.iconType, shortcut.iconValue, 40)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           ! grep -Fq 'Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(30.dp)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
+          # build193: display explicit reachability without changing detection logic/layout.
+          grep -Fq 'val statusLabel = when (status) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq '"内网" -> "内网可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq '"外网" -> "外网可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'else -> "不可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          grep -Fq 'statusLabel,' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+
           git diff --check
-          echo 'v0.10.42 build192 source verification passed'
+          echo 'v0.10.42 build193 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -118,14 +112,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='192' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='193' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build192 APK verified'
+          echo 'signed v0.10.42 build193 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build192-release-apk
+          name: LabProbe-v0.10.42-build193-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -133,15 +127,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build192'
+          TAG='v0.10.42-build193'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build192-release.apk'
+          ASSET='LabProbe-v0.10.42-build193-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build192' \
-              --notes 'build192 仅处理收藏两项：当 Hub 成功同步导致首页 VPN/STUN 服务地址变化时，同名 Webhook 收藏的外网地址在同一次同步中更新，同时修复 remoteEndpoint 与 wanUrl 不一致导致编辑页仍显示旧地址的问题；收藏卡移除独立“打开”按钮，整卡点击直接打开，并将服务类型与当前访问状态合并为更紧凑的两行布局。无新增轮询，其他功能、UI 与字体未改。'
+              --title '极客网探 v0.10.42 build193' \
+              --notes 'build193 仅调整收藏卡片状态文案：内网显示“内网可达”、外网显示“外网可达”、不可达显示“不可达”。沿用 build192 的整卡点击和地址同步逻辑，不增加检测频率，不改变卡片尺寸、布局、功能、其他 UI 或字体。'
           fi
