@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build187 targeted UI polish release pipeline.
+# v0.10.42 / build188 requested-only polish release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,14 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build187 targeted UI polish
+      - name: Apply build188 requested-only polish
         run: |
           set -euo pipefail
-          python3 scripts/apply_build187_targeted_ui_polish.py
-          python3 scripts/fix_build187_settings_calibrate.py
-          python3 scripts/fix_build187_device_modifier.py
+          python3 scripts/apply_build188_requested_polish.py
 
-      - name: Persist build187 source changes
+      - name: Persist build188 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
@@ -38,11 +36,11 @@ jobs:
             app/build.gradle.kts \
             app/src/main/AndroidManifest.xml \
             app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
-            app/src/main/kotlin/com/labprobe/app/PortMapping.kt \
             app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt \
-            app/src/main/res/drawable-nodpi/labprobe_launcher_1024.png
+            app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt \
+            app/src/main/res/drawable/labprobe_launcher_noglow.xml
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: targeted UI polish for build187'
+            git commit -m 'fix: requested-only polish for build188'
             git push origin HEAD:release/build180
           fi
 
@@ -69,51 +67,46 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build187 source
+      - name: Verify v0.10.42 build188 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 187' app/build.gradle.kts
+          grep -Fq 'versionCode = 188' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
-          # Security / stability fixes retained.
+          # Existing security / stability behavior must remain untouched.
           grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           ! grep -Fq 'aes128-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'fun deviceDisplayName(device: DeviceItem)' app/src/main/kotlin/com/labprobe/app/DeviceDisplayName.kt
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Previous UI fixes retained.
-          grep -Fq 'HomeMiniMetric = Metric.copy(fontSize = 22.sp, lineHeight = 25.sp, fontWeight = FontWeight.ExtraBold)' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          grep -Fq 'fontFamily = FontFamily.Default' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          ! grep -Fq 'FontFamily.SansSerif' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          ! grep -Fq 'Color(0xFF7C3AED)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'leadingIcon = Icons.Rounded.Tune' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq 'NativeFirmwareVersionRow(info.current.ifBlank { "--" })' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq '"connection closed" in lower' app/src/main/kotlin/com/labprobe/app/UiMessageZh.kt
-
-          # build187 requested-only changes.
-          grep -Fq 'android:icon="@drawable/labprobe_launcher_1024"' app/src/main/AndroidManifest.xml
-          grep -Fq 'android:roundIcon="@drawable/labprobe_launcher_1024"' app/src/main/AndroidManifest.xml
-          test -s app/src/main/res/drawable-nodpi/labprobe_launcher_1024.png
+          # Prior build187 requested changes remain.
           grep -Fq 'ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq '.combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'verticalArrangement = Arrangement.spacedBy(3.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'settingsMint = Color(0xFF28BFA3)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'Text("立即校准", fontSize = 11.5.sp' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          test "$(grep -Fc 'colors = ButtonDefaults.buttonColors(containerColor = settingsMint)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt)" -ge 2
-          grep -Fq 'accent = settingsMint' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'sectionGap = 6.dp' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -Fq 'titleStyleOverride = LabTypography.CardTitle' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
-          grep -Fq 'fontSize = 12.5.sp, lineHeight = 16.sp' app/src/main/kotlin/com/labprobe/app/PortMapping.kt
           grep -Fq 'private fun NativeAnalysisValueRow' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq 'NativeAnalysisValueRow("检测状态"' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
-          grep -Fq 'NativeAnalysisValueRow("NAT类型"' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+
+          # build188: only the four explicitly requested adjustments.
+          grep -Fq 'android:icon="@drawable/labprobe_launcher_noglow"' app/src/main/AndroidManifest.xml
+          grep -Fq 'android:roundIcon="@drawable/labprobe_launcher_noglow"' app/src/main/AndroidManifest.xml
+          test -s app/src/main/res/drawable/labprobe_launcher_noglow.xml
+          grep -Fq 'android:startColor="#1785B8"' app/src/main/res/drawable/labprobe_launcher_noglow.xml
+          grep -Fq 'android:endColor="#2FD0B7"' app/src/main/res/drawable/labprobe_launcher_noglow.xml
+          ! grep -Fq 'labprobe_launcher_1024' app/src/main/AndroidManifest.xml
+
+          grep -Fq 'padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+          grep -Fq 'style = LabTypography.Value.copy(color = NativeMuted, fontWeight = FontWeight.Medium)' app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt
+
+          test "$(grep -Fc 'fontSize = LabTypography.SectionTitle.fontSize' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt)" -ge 2
+          test "$(grep -Fc 'lineHeight = LabTypography.SectionTitle.lineHeight' app/src/main/kotlin/com/labprobe/app/RouterSettingsUi.kt)" -ge 2
+
+          grep -Fq 'verticalArrangement = Arrangement.spacedBy(1.5.dp)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
 
           git diff --check
-          echo 'v0.10.42 build187 source verification passed'
+          echo 'v0.10.42 build188 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -132,14 +125,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='187' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='188' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build187 APK verified'
+          echo 'signed v0.10.42 build188 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build187-release-apk
+          name: LabProbe-v0.10.42-build188-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -147,15 +140,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build187'
+          TAG='v0.10.42-build188'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build187-release.apk'
+          ASSET='LabProbe-v0.10.42-build188-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build187' \
-              --notes 'build187：切换为此前生成的 1024 图标；首页与设备页卡片增强悬浮层级；IPv6 映射详情字号与空白收紧；端口映射列表空白收紧；路由 NAT 分析结果改为黑体标题+淡色同字号内容；记录页卡片间距减半；设置页三个按钮统一薄荷绿。其他功能、页面和全局字体未改。已通过单元测试、Release 编译与 APK 签名校验。'
+              --title '极客网探 v0.10.42 build188' \
+              --notes 'build188 仅处理本轮 4 项：启动图标改为无右上光晕的蓝绿雷达网络矢量图；NAT 最近检测标题与内容间距轻微增加、第二行内容字号对齐分析结果；路由设置指定卡片标题小一号；记录页事件列表卡片间距从 3dp 减半到 1.5dp。其他功能、页面、UI 与字体未改。'
           fi
