@@ -4154,7 +4154,7 @@ fun HealthMiniCard(
     val cardModifier = if (onClick != null) modifier.clip(shape).clickable(onClick = onClick) else modifier
     HealthCard(cardModifier, verticalPadding = 11.dp, shape = shape) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f)).clip(HomeInnerShape).background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f)))), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
                 if (glyph != null) {
                     RouterGlyphIcon(glyph, accent, Modifier.size(19.dp))
                 } else {
@@ -4179,9 +4179,9 @@ fun HealthMiniCard(
 fun HealthSectionTitle(title: String, subtitle: String?, icon: ImageVector, accent: Color, onIconClick: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val iconModifier = if (onIconClick != null) {
-            Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f)).clip(HomeInnerShape).background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f)))).clickable { onIconClick() }
+            Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .10f)).clickable { onIconClick() }
         } else {
-            Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f)).clip(HomeInnerShape).background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f))))
+            Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .10f))
         }
         Box(iconModifier, contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = accent, modifier = Modifier.size(19.dp))
@@ -4264,8 +4264,7 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
                 Modifier
                     .size(36.dp)
                     .clip(HomeInnerShape)
-                    .shadow(5.dp, HomeInnerShape, clip = false, ambientColor = LabV2.Cyan.copy(alpha = .14f), spotColor = LabV2.Cyan.copy(alpha = .20f))
-                    .background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), LabV2.Cyan.copy(alpha = .22f), LabV2.Cyan.copy(alpha = .07f))))
+                    .background(LabV2.Cyan.copy(alpha = .10f))
                     .clickable { onTogglePrivacy() },
                 contentAlignment = Alignment.Center
             ) {
@@ -4974,6 +4973,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
                 ambientColor = LabV2.ShadowAmbient,
                 spotColor = LabV2.ShadowSpot
             )
+            .clip(LabCoreSurface.CardShape)
             .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
     ) {
         DeviceSmartInfo(d, profile)
@@ -5478,10 +5478,11 @@ fun NetworkStatusTile(
     onValueClick: (() -> Unit)? = null,
     scrollableValue: Boolean = false
 ) {
-    val m = if (clickable) modifier.clickable { onClick() } else modifier
+    val shape = RoundedCornerShape(14.dp)
+    val m = if (clickable) modifier.clip(shape).clickable { onClick() } else modifier
     Surface(
         modifier = m.height(56.dp),
-        shape = RoundedCornerShape(14.dp),
+        shape = shape,
         color = Color.White,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)
     ) {
@@ -5493,7 +5494,7 @@ fun NetworkStatusTile(
                 Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
             }
             Spacer(Modifier.width(8.dp))
-            val valueModifier = Modifier.weight(1f).let { base -> if (onValueClick != null) base.clickable { onValueClick() } else base }
+            val valueModifier = Modifier.weight(1f).let { base -> if (onValueClick != null) base.clip(RoundedCornerShape(8.dp)).clickable { onValueClick() } else base }
             Column(valueModifier) {
                 Text(label, fontSize = 10.2.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
                 val textModifier = if (scrollableValue) Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()) else Modifier
@@ -8636,6 +8637,7 @@ fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen:
                             }
                         )
                     }
+                    .clip(RoundedCornerShape(14.dp))
                     .combinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); expanded = !expanded }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -8845,6 +8847,7 @@ fun SshResultCard(item: SshResultEntry, openedSwipeId: Long?, onSwipeOpen: (Long
                             }
                         )
                     }
+                    .clip(RoundedCornerShape(14.dp))
                     .combinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); showDetail = true }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -9179,6 +9182,7 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                         )
                     }
                     .shadow(0.dp, RoundedCornerShape(14.dp), clip = false)
+                    .clip(RoundedCornerShape(14.dp))
                     .combinedClickable(
                         onClick = { targetOffsetPx = 0f; onSwipeClose() },
                         onLongClick = { targetOffsetPx = 0f; onSwipeClose(); showSelection = true }
@@ -11873,4 +11877,7 @@ private fun carrierFromAsnOrg(asText: String, isp: String, org: String): String 
 }
 
 
-fun copy(ctx: Context, text: String) { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("极客网探", text)); toast(ctx, "已复制") }
+fun copy(ctx: Context, text: String) {
+    (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+        .setPrimaryClip(ClipData.newPlainText("极客网探", text))
+}

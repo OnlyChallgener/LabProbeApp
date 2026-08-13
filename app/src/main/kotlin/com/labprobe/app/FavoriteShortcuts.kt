@@ -1004,6 +1004,7 @@ private fun FavoriteShortcutCard(
                     )
                 }
             }
+            .clip(LabV2.CompactCardShape)
             .combinedClickable(onClick = onOpen, onLongClick = {})
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
