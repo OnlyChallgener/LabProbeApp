@@ -240,7 +240,6 @@ fun LabV2Card(
     Box(
         modifier
             .fillMaxWidth()
-            .shadow(4.dp, shape, clip = false, ambientColor = LabV2.ShadowAmbient, spotColor = LabV2.ShadowSpot)
             .clip(shape)
             .background(Brush.linearGradient(listOf(LabV2.CardTop, LabV2.CardBottom)))
             .border(1.dp, Color.White.copy(alpha = .92f), shape)
@@ -507,9 +506,7 @@ fun LabV2SectionHeader(
                 Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .shadow(5.dp, RoundedCornerShape(14.dp), clip = false, ambientColor = accent.copy(alpha = .14f), spotColor = accent.copy(alpha = .20f))
-                    .background(Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), accent.copy(alpha = .22f), accent.copy(alpha = .07f))))
-                    .border(1.dp, Color.White.copy(alpha = .90f), RoundedCornerShape(14.dp)),
+                    .background(accent.copy(alpha = .10f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp))
@@ -552,21 +549,12 @@ fun LabV2ToolIcon(
     size: Int = 46,
     muted: Boolean = false
 ) {
-    val startAlpha = if (muted) .09f else .16f
-    val endAlpha = if (muted) .04f else .07f
+    val backgroundAlpha = if (muted) .07f else .12f
     Box(
         modifier
             .size(size.dp)
             .clip(RoundedCornerShape((size * .32f).dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        accent.copy(alpha = startAlpha),
-                        accent.copy(alpha = endAlpha)
-                    )
-                )
-            )
-            .border(1.dp, Color.White.copy(alpha = .88f), RoundedCornerShape((size * .32f).dp)),
+            .background(accent.copy(alpha = backgroundAlpha)),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, null, tint = accent, modifier = Modifier.size((size * .48f).dp))
