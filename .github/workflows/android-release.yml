@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build194 favorite status-only release pipeline.
+# v0.10.42 / build195 shared visual cleanup release pipeline.
 
 on:
   workflow_dispatch:
@@ -22,21 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build194 favorite status label
+      - name: Apply build195 shared visual cleanup
         run: |
           set -euo pipefail
-          python3 scripts/apply_build194_favorite_card_alignment.py
+          python3 scripts/apply_build195_flat_shared_surfaces.py
 
-      - name: Persist build194 source changes
+      - name: Persist build195 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+            app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: simplify favorite reachability text for build194'
+            git commit -m 'fix: remove generic square shadows and icon glow for build195'
             git push origin HEAD:release/build180
           fi
 
@@ -63,10 +63,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build194 source
+      - name: Verify v0.10.42 build195 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 194' app/build.gradle.kts
+          grep -Fq 'versionCode = 195' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -78,22 +78,23 @@ jobs:
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Prior requested behavior remains unchanged.
+          # Prior favorite behavior remains unchanged.
           grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq '.combinedClickable(onClick = onOpen, onLongClick = {})' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          ! grep -Fq 'Button(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(30.dp)' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-
-          # build194: only simplify reachability text; keep description/layout/height intact.
           grep -Fq '"内网", "外网" -> "可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'else -> "不可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'statusLabel,' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          ! grep -Fq 'Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+
+          # build195: only flatten shared legacy card/icon effects.
+          ! grep -Fq '.shadow(4.dp, shape, clip = false, ambientColor = LabV2.ShadowAmbient, spotColor = LabV2.ShadowSpot)' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          ! grep -Fq '.shadow(5.dp, RoundedCornerShape(14.dp), clip = false' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          grep -Fq '.background(accent.copy(alpha = .10f))' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          grep -Fq 'val backgroundAlpha = if (muted) .07f else .12f' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          grep -Fq '.background(accent.copy(alpha = backgroundAlpha))' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          grep -Fq 'shadowElevation = 2.dp' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
 
           git diff --check
-          echo 'v0.10.42 build194 source verification passed'
+          echo 'v0.10.42 build195 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -112,14 +113,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='194' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='195' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build194 APK verified'
+          echo 'signed v0.10.42 build195 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build194-release-apk
+          name: LabProbe-v0.10.42-build195-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -127,15 +128,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build194'
+          TAG='v0.10.42-build195'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build194-release.apk'
+          ASSET='LabProbe-v0.10.42-build195-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build194' \
-              --notes 'build194 仅调整收藏卡片状态文案：可达时统一显示“协议 · 可达”，不可达时显示“协议 · 不可达”，不再区分内网/外网。保留第三行描述，不改变卡片高度、布局、地址同步、整卡点击、检测逻辑/频率及其他功能/UI/字体。'
+              --title '极客网探 v0.10.42 build195' \
+              --notes 'build195 仅清理共享视觉效果：移除旧工具/记录页 LabV2Card 的自定义方形阴影；共享小图标与分组图标取消左上角渐变浮光和彩色阴影，保留原有圆角底盘与分类颜色。首页/设备页 LabCoreCard 悬浮阴影、功能、布局、字体、收藏逻辑及其他 UI 均未修改。'
           fi
