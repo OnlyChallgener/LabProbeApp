@@ -11880,4 +11880,5 @@ private fun carrierFromAsnOrg(asText: String, isp: String, org: String): String 
 fun copy(ctx: Context, text: String) {
     (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
         .setPrimaryClip(ClipData.newPlainText("极客网探", text))
+    toast(ctx, "已复制")
 }
