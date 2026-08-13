@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build196 focused home-icon and press-feedback cleanup.
+# v0.10.42 / build197 restore copy Toast while preserving rounded press feedback.
 
 on:
   workflow_dispatch:
@@ -22,22 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build196 focused visual fixes
+      - name: Apply build197 Toast correction
         run: |
           set -euo pipefail
-          python3 scripts/apply_build196_remove_real_glow_and_square_feedback.py
+          python3 scripts/apply_build197_restore_copy_toast.py
 
-      - name: Persist build196 source changes
+      - name: Persist build197 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
-            app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+            app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: remove remaining home glow and square press feedback for build196'
+            git commit -m 'fix: restore copy toast while keeping rounded press feedback for build197'
             git push origin HEAD:release/build180
           fi
 
@@ -64,10 +63,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build196 source
+      - name: Verify v0.10.42 build197 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 196' app/build.gradle.kts
+          grep -Fq 'versionCode = 197' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -91,21 +90,19 @@ jobs:
           fav = Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
           ui = Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
 
-          # build195 flat shared icons stay intact.
+          # Flat shared icons and build196 homepage icon cleanup stay intact.
           assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
           assert '.background(accent.copy(alpha = backgroundAlpha))' in ui
-
-          # build196: the actual homepage icon components no longer contain old glow/shadow treatment.
           assert 'Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f)' not in main
           assert '.shadow(5.dp, HomeInnerShape, clip = false, ambientColor = LabV2.Cyan.copy(alpha = .14f)' not in main
           assert 'Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .10f))' in main
           assert '.background(LabV2.Cyan.copy(alpha = .10f))' in main
 
-          # Copy still writes the clipboard, but the system text Toast square is gone.
+          # build197: keep clipboard behavior AND restore the user-visible copy Toast.
           assert 'setPrimaryClip(ClipData.newPlainText("极客网探", text))' in main
-          assert 'toast(ctx, "已复制")' not in main
+          assert 'toast(ctx, "已复制")' in main
 
-          # Press feedback follows the real rounded cards instead of a rectangular modifier layer.
+          # Keep build196 rounded press-feedback fixes: only rectangular click feedback is removed.
           assert '.clip(LabCoreSurface.CardShape)\n            .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)' in main
           assert 'val m = if (clickable) modifier.clip(shape).clickable { onClick() } else modifier' in main
           assert '.clip(LabV2.CompactCardShape)\n            .combinedClickable(onClick = onOpen, onLongClick = {})' in fav
@@ -113,7 +110,7 @@ jobs:
           PY
 
           git diff --check
-          echo 'v0.10.42 build196 source verification passed'
+          echo 'v0.10.42 build197 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -132,14 +129,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='196' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='197' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build196 APK verified'
+          echo 'signed v0.10.42 build197 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build196-release-apk
+          name: LabProbe-v0.10.42-build197-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -147,15 +144,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build196'
+          TAG='v0.10.42-build197'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build196-release.apk'
+          ASSET='LabProbe-v0.10.42-build197-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build196' \
-              --notes 'build196 针对视频中仍存在的视觉问题做定点修复：真正移除首页 HealthMiniCard/HealthSectionTitle/VPN-STUN 小图标的旧 5dp 彩色阴影与左上渐变浮光；复制功能保留但取消 Android 系统“已复制”Toast 方形浮层；设备卡、收藏卡、工具箱状态卡及同类记录卡的按压反馈按各自圆角裁剪。保留首页/设备卡正常悬浮阴影，未修改功能、布局、字体、地址同步和其他 UI。'
+              --title '极客网探 v0.10.42 build197' \
+              --notes 'build197 仅纠正复制反馈：恢复“已复制”Toast 提示；保留 build196 对视频中矩形点击阴影/按压反馈的圆角裁剪修复，以及首页小图标去浮光效果。未修改功能、布局、字体、地址同步、收藏逻辑或其他 UI。'
           fi
