@@ -1,5 +1,5 @@
 name: Android Release APK
-# v0.10.42 / build195 shared visual cleanup release pipeline.
+# v0.10.42 / build196 focused home-icon and press-feedback cleanup.
 
 on:
   workflow_dispatch:
@@ -22,21 +22,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply build195 shared visual cleanup
+      - name: Apply build196 focused visual fixes
         run: |
           set -euo pipefail
-          python3 scripts/apply_build195_flat_shared_surfaces.py
+          python3 scripts/apply_build196_remove_real_glow_and_square_feedback.py
 
-      - name: Persist build195 source changes
+      - name: Persist build196 source changes
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
             app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+            app/src/main/kotlin/com/labprobe/app/MainActivity.kt \
+            app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: remove generic square shadows and icon glow for build195'
+            git commit -m 'fix: remove remaining home glow and square press feedback for build196'
             git push origin HEAD:release/build180
           fi
 
@@ -63,10 +64,10 @@ jobs:
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
 
-      - name: Verify v0.10.42 build195 source
+      - name: Verify v0.10.42 build196 source
         run: |
           set -euo pipefail
-          grep -Fq 'versionCode = 195' app/build.gradle.kts
+          grep -Fq 'versionCode = 196' app/build.gradle.kts
           grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
 
           # Existing security / stability behavior must remain untouched.
@@ -78,23 +79,41 @@ jobs:
           grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
 
-          # Prior favorite behavior remains unchanged.
+          # Prior favorite/address behavior remains unchanged.
           grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq '.combinedClickable(onClick = onOpen, onLongClick = {})' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq '"内网", "外网" -> "可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           grep -Fq 'shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
-          # build195: only flatten shared legacy card/icon effects.
-          ! grep -Fq '.shadow(4.dp, shape, clip = false, ambientColor = LabV2.ShadowAmbient, spotColor = LabV2.ShadowSpot)' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          ! grep -Fq '.shadow(5.dp, RoundedCornerShape(14.dp), clip = false' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          grep -Fq '.background(accent.copy(alpha = .10f))' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          grep -Fq 'val backgroundAlpha = if (muted) .07f else .12f' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          grep -Fq '.background(accent.copy(alpha = backgroundAlpha))' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
-          grep -Fq 'shadowElevation = 2.dp' app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt
+          python3 - <<'PY'
+          from pathlib import Path
+          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
+          fav = Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
+          ui = Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
+
+          # build195 flat shared icons stay intact.
+          assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
+          assert '.background(accent.copy(alpha = backgroundAlpha))' in ui
+
+          # build196: the actual homepage icon components no longer contain old glow/shadow treatment.
+          assert 'Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f)' not in main
+          assert '.shadow(5.dp, HomeInnerShape, clip = false, ambientColor = LabV2.Cyan.copy(alpha = .14f)' not in main
+          assert 'Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .10f))' in main
+          assert '.background(LabV2.Cyan.copy(alpha = .10f))' in main
+
+          # Copy still writes the clipboard, but the system text Toast square is gone.
+          assert 'setPrimaryClip(ClipData.newPlainText("极客网探", text))' in main
+          assert 'toast(ctx, "已复制")' not in main
+
+          # Press feedback follows the real rounded cards instead of a rectangular modifier layer.
+          assert '.clip(LabCoreSurface.CardShape)\n            .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)' in main
+          assert 'val m = if (clickable) modifier.clip(shape).clickable { onClick() } else modifier' in main
+          assert '.clip(LabV2.CompactCardShape)\n            .combinedClickable(onClick = onOpen, onLongClick = {})' in fav
+          assert main.count('.clip(RoundedCornerShape(14.dp))\n                    .combinedClickable') >= 3
+          PY
 
           git diff --check
-          echo 'v0.10.42 build195 source verification passed'
+          echo 'v0.10.42 build196 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -113,14 +132,14 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='195' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='196' versionName='0.10.42'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build195 APK verified'
+          echo 'signed v0.10.42 build196 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build195-release-apk
+          name: LabProbe-v0.10.42-build196-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
@@ -128,15 +147,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build195'
+          TAG='v0.10.42-build196'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build195-release.apk'
+          ASSET='LabProbe-v0.10.42-build196-release.apk'
           cp "$APK" "$RUNNER_TEMP/$ASSET"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
             gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
               --target 'release/build180' \
-              --title '极客网探 v0.10.42 build195' \
-              --notes 'build195 仅清理共享视觉效果：移除旧工具/记录页 LabV2Card 的自定义方形阴影；共享小图标与分组图标取消左上角渐变浮光和彩色阴影，保留原有圆角底盘与分类颜色。首页/设备页 LabCoreCard 悬浮阴影、功能、布局、字体、收藏逻辑及其他 UI 均未修改。'
+              --title '极客网探 v0.10.42 build196' \
+              --notes 'build196 针对视频中仍存在的视觉问题做定点修复：真正移除首页 HealthMiniCard/HealthSectionTitle/VPN-STUN 小图标的旧 5dp 彩色阴影与左上渐变浮光；复制功能保留但取消 Android 系统“已复制”Toast 方形浮层；设备卡、收藏卡、工具箱状态卡及同类记录卡的按压反馈按各自圆角裁剪。保留首页/设备卡正常悬浮阴影，未修改功能、布局、字体、地址同步和其他 UI。'
           fi
