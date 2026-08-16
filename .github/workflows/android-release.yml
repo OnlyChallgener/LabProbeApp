@@ -1,17 +1,20 @@
-name: Android Release APK
-# v0.10.42 / build197 restore copy Toast while preserving rounded press feedback.
+name: Android Release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish or refresh the GitHub Release after a successful build'
+        required: false
+        type: boolean
+        default: false
   push:
-    branches:
-      - release/build180
-    paths:
-      - '.github/workflows/android-release.yml'
+    tags:
+      - 'v*-build*'
 
 concurrency:
   group: android-release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -21,24 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Apply build197 Toast correction
-        run: |
-          set -euo pipefail
-          python3 scripts/apply_build197_restore_copy_toast.py
-
-      - name: Persist build197 source changes
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            app/build.gradle.kts \
-            app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          if ! git diff --cached --quiet; then
-            git commit -m 'fix: restore copy toast while keeping rounded press feedback for build197'
-            git push origin HEAD:release/build180
-          fi
 
       - uses: actions/setup-java@v4
         with:
@@ -50,67 +35,71 @@ jobs:
           gradle-version: 9.5.1
 
       - name: Install Android SDK
+        shell: bash
         run: |
+          set -euo pipefail
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - name: Resolve app version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_CODE=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)
+          VERSION_NAME=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)
+          test -n "$VERSION_CODE"
+          test -n "$VERSION_NAME"
+          RELEASE_TAG="v${VERSION_NAME}-build${VERSION_CODE}"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "$GITHUB_REF_NAME" != "$RELEASE_TAG" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match source version $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+      - name: Verify release source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
+          fav = Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
+          ui = Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
+          secure = Path('app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt').read_text(encoding='utf-8')
+
+          required_main = [
+              'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1',
+              'cfg["StrictHostKeyChecking"]="ask"',
+              'AgentUpdateCoordinator.bind(prefs)',
+              'setPrimaryClip(ClipData.newPlainText("极客网探", text))',
+              'toast(ctx, "已复制")',
+          ]
+          for needle in required_main:
+              assert needle in main, f'missing MainActivity invariant: {needle}'
+          for forbidden in ('diffie-hellman-group1-sha1', '3des-cbc', 'aes128-cbc'):
+              assert forbidden not in main, f'forbidden SSH fallback restored: {forbidden}'
+          assert 'SecureSshPasswordStore' in secure
+          assert 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' in fav
+          assert 'remoteEndpoint = wanUrl' in fav
+          assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
+          PY
+          git diff --check
 
       - name: Prepare signing key
         env:
           LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
+        shell: bash
         run: |
           set -euo pipefail
           test -n "$LABPROBE_KEYSTORE_BASE64"
           printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
           echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
-
-      - name: Verify v0.10.42 build197 source
-        run: |
-          set -euo pipefail
-          grep -Fq 'versionCode = 197' app/build.gradle.kts
-          grep -Fq 'versionName = "0.10.42"' app/build.gradle.kts
-
-          # Existing security / stability behavior must remain untouched.
-          grep -Fq 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'cfg["StrictHostKeyChecking"]="ask"' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'diffie-hellman-group1-sha1' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq '3des-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          ! grep -Fq 'aes128-cbc' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'AgentUpdateCoordinator.bind(prefs)' app/src/main/kotlin/com/labprobe/app/MainActivity.kt
-          grep -Fq 'SecureSshPasswordStore' app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt
-
-          # Prior favorite/address behavior remains unchanged.
-          grep -Fq 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'remoteEndpoint = wanUrl' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq '"内网", "外网" -> "可达"' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-          grep -Fq 'shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }' app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
-
-          python3 - <<'PY'
-          from pathlib import Path
-          main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
-          fav = Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
-          ui = Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
-
-          # Flat shared icons and build196 homepage icon cleanup stay intact.
-          assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
-          assert '.background(accent.copy(alpha = backgroundAlpha))' in ui
-          assert 'Modifier.size(36.dp).shadow(5.dp, HomeInnerShape, clip = false, ambientColor = accent.copy(alpha = .14f)' not in main
-          assert '.shadow(5.dp, HomeInnerShape, clip = false, ambientColor = LabV2.Cyan.copy(alpha = .14f)' not in main
-          assert 'Modifier.size(36.dp).clip(HomeInnerShape).background(accent.copy(alpha = .10f))' in main
-          assert '.background(LabV2.Cyan.copy(alpha = .10f))' in main
-
-          # build197: keep clipboard behavior AND restore the user-visible copy Toast.
-          assert 'setPrimaryClip(ClipData.newPlainText("极客网探", text))' in main
-          assert 'toast(ctx, "已复制")' in main
-
-          # Keep build196 rounded press-feedback fixes: only rectangular click feedback is removed.
-          assert '.clip(LabCoreSurface.CardShape)\n            .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)' in main
-          assert 'val m = if (clickable) modifier.clip(shape).clickable { onClick() } else modifier' in main
-          assert '.clip(LabV2.CompactCardShape)\n            .combinedClickable(onClick = onOpen, onLongClick = {})' in fav
-          assert main.count('.clip(RoundedCornerShape(14.dp))\n                    .combinedClickable') >= 3
-          PY
-
-          git diff --check
-          echo 'v0.10.42 build197 source verification passed'
 
       - name: Test and build signed Release APK
         env:
@@ -118,41 +107,39 @@ jobs:
           LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
           LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
-          LABPROBE_SKIP_SOURCE_PREPARE: '1'
-        run: |
-          set -euo pipefail
-          gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
 
       - name: Verify signed APK
+        shell: bash
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='197' versionName='0.10.42'"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='${VERSION_CODE}' versionName='${VERSION_NAME}'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum "$APK"
-          echo 'signed v0.10.42 build197 APK verified'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LabProbe-v0.10.42-build197-release-apk
+          name: LabProbe-v${{ env.VERSION_NAME }}-build${{ env.VERSION_CODE }}-release-apk
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish GitHub Release
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish)
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           set -euo pipefail
-          TAG='v0.10.42-build197'
           APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET='LabProbe-v0.10.42-build197-release.apk'
+          ASSET="LabProbe-v${VERSION_NAME}-build${VERSION_CODE}-release.apk"
           cp "$APK" "$RUNNER_TEMP/$ASSET"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$RUNNER_TEMP/$ASSET" --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/$ASSET" --clobber
           else
-            gh release create "$TAG" "$RUNNER_TEMP/$ASSET" \
-              --target 'release/build180' \
-              --title '极客网探 v0.10.42 build197' \
-              --notes 'build197 仅纠正复制反馈：恢复“已复制”Toast 提示；保留 build196 对视频中矩形点击阴影/按压反馈的圆角裁剪修复，以及首页小图标去浮光效果。未修改功能、布局、字体、地址同步、收藏逻辑或其他 UI。'
+            gh release create "$RELEASE_TAG" "$RUNNER_TEMP/$ASSET" \
+              --target "$GITHUB_SHA" \
+              --title "极客网探 v${VERSION_NAME} build${VERSION_CODE}" \
+              --generate-notes
           fi
