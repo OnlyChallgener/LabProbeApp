@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -75,6 +77,32 @@ jobs:
           [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
           [[ "$VERSION_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "Validating LabProbe v${VERSION_NAME} build${VERSION_CODE}"
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --force --no-tags origin main:refs/remotes/origin/main
+            BASE_CODE=$(git show refs/remotes/origin/main:app/build.gradle.kts | sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' | head -n1)
+            BASE_NAME=$(git show refs/remotes/origin/main:app/build.gradle.kts | sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' | head -n1)
+
+            if [ "$VERSION_CODE" != "$BASE_CODE" ] || [ "$VERSION_NAME" != "$BASE_NAME" ]; then
+              if [ "$VERSION_CODE" -ne $((BASE_CODE + 1)) ]; then
+                echo "A release version change must increment versionCode by exactly 1: $BASE_CODE -> $VERSION_CODE" >&2
+                exit 1
+              fi
+
+              if [ "$VERSION_NAME" = "$BASE_NAME" ]; then
+                echo "versionName must change whenever versionCode changes for a formal release." >&2
+                exit 1
+              fi
+
+              python3 - "$BASE_NAME" "$VERSION_NAME" <<'PY'
+          import sys
+          old = tuple(map(int, sys.argv[1].split('.')))
+          new = tuple(map(int, sys.argv[2].split('.')))
+          if not new > old:
+              raise SystemExit(f'versionName must increase: {sys.argv[1]} -> {sys.argv[2]}')
+          PY
+            fi
+          fi
 
           for workflow in .github/workflows/*.yml; do
             [ "$workflow" = ".github/workflows/ci.yml" ] && continue
