@@ -45,15 +45,35 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+
+          test -f README.md
           test -f app/build.gradle.kts
           test -f app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           test -f app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           test -f app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
 
+          ROOT_MD=$(find . -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort)
+          if [ "$ROOT_MD" != "README.md" ]; then
+            echo "Root documentation must be consolidated into README.md only." >&2
+            printf '%s\n' "$ROOT_MD" >&2
+            exit 1
+          fi
+
+          WORKFLOWS=$(find .github/workflows -maxdepth 1 -type f -name '*.yml' -printf '%f\n' | sort)
+          EXPECTED_WORKFLOWS=$(printf '%s\n' android-release.yml ci.yml)
+          if [ "$WORKFLOWS" != "$EXPECTED_WORKFLOWS" ]; then
+            echo "Only CI and Android Release workflows are allowed." >&2
+            printf '%s\n' "$WORKFLOWS" >&2
+            exit 1
+          fi
+
           VERSION_CODE=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)
           VERSION_NAME=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)
+
           test -n "$VERSION_CODE"
           test -n "$VERSION_NAME"
+          [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
+          [[ "$VERSION_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "Validating LabProbe v${VERSION_NAME} build${VERSION_CODE}"
 
           for workflow in .github/workflows/*.yml; do
@@ -66,14 +86,20 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
+
           main = Path('app/src/main/kotlin/com/labprobe/app/MainActivity.kt').read_text(encoding='utf-8')
           secure = Path('app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt').read_text(encoding='utf-8')
+          readme = Path('README.md').read_text(encoding='utf-8')
+
           assert 'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1' in main
           assert 'cfg["StrictHostKeyChecking"]="ask"' in main
           assert 'diffie-hellman-group1-sha1' not in main
           assert '3des-cbc' not in main
           assert 'aes128-cbc' not in main
           assert 'SecureSshPasswordStore' in secure
+
+          for heading in ('## 版本号规则', '## CI 与 Release', '## 标准发版流程', '## 固定签名'):
+              assert heading in readme, f'missing README governance section: {heading}'
           PY
 
       - name: Unit tests and Release compile
