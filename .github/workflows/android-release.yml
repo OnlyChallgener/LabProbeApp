@@ -44,19 +44,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main:refs/remotes/origin/main --force --no-tags
+          git fetch --force --no-tags origin main:refs/remotes/origin/main
           MAIN_SHA=$(git rev-parse refs/remotes/origin/main)
 
-          if [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then
-            echo "Release source must be the current main HEAD." >&2
-            echo "workflow SHA: $GITHUB_SHA" >&2
-            echo "main HEAD:    $MAIN_SHA" >&2
-            exit 1
-          fi
-
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "main" ]; then
-            echo "Manual release validation must run from main." >&2
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF_NAME" != "main" ] || [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then
+              echo "Manual release validation must run from the current main HEAD." >&2
+              exit 1
+            fi
+          else
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" "$MAIN_SHA"; then
+              echo "Release tag must point to a commit that belongs to main history." >&2
+              exit 1
+            fi
           fi
 
       - name: Resolve app version
