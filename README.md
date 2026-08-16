@@ -1,6 +1,6 @@
 # LabProbe App
 
-极客网探 Android 客户端，Kotlin + Jetpack Compose。当前开发版为 `v0.10.38 build180`。
+极客网探 Android 客户端，Kotlin + Jetpack Compose。当前生产基线为 `v0.10.42 build197`。
 
 第三方首次部署请直接查看：[Hub 与 LabRelay 简明安装](THIRD_PARTY_INSTALL.md)。Hub 使用 `APP_TOKEN` 与 `HOOK_TOKEN`：APP 只填写 `APP_TOKEN`，LabRelay 只填写 `HOOK_TOKEN`。
 
@@ -38,15 +38,28 @@ APP 保留原入口、弹窗、忽略更新、下载目录和安装流程。
 - `sha256`、`sizeBytes`、`fallbackUrl` 向后兼容，可缺省
 - 存在 `sha256` 时下载完成后必须校验，通过后才允许安装
 
-## 构建
+## 构建与 CI
 
-本地构建命令：
+本地构建：
 
 ```bash
-gradle :app:assembleRelease --stacktrace
+gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace
 ```
 
-GitHub Actions 会生成 Release APK。固定签名仍使用仓库既有 Secrets/签名配置。
+仓库长期只保留两类 Actions：
+
+- `CI`：`main` push 和面向 `main` 的 Pull Request 自动执行单元测试、源码约束检查和 Release 编译。
+- `Android Release`：通过 `v<version>-build<code>` Tag 或手动运行构建签名 APK；只有发布步骤会创建/更新 GitHub Release。
+
+Workflow 不再修改源码，也不会自动 `git push` 回开发分支。版本号以 `app/build.gradle.kts` 为唯一来源。
+
+正式 Tag 示例：
+
+```text
+v0.10.42-build197
+```
+
+固定签名继续使用仓库已有 Secrets/签名配置。
 
 ## 发版文件
 
@@ -56,14 +69,14 @@ GitHub Actions 会生成 Release APK。固定签名仍使用仓库既有 Secrets
 cd D:\Github\labprobe-hub
 python scripts\build_update_bundle.py `
   --app-apk D:\Release\app-release.apk `
-  --app-version-name 0.10.38 `
-  --app-version-code 180 `
+  --app-version-name 0.10.42 `
+  --app-version-code 197 `
   --agent-arm64 D:\Release\labrelay-linux-arm64 `
-  --agent-version 0.2.20 `
+  --agent-version 0.2.23 `
   --output D:\Release\update-bundle
 ```
 
 需要上传到更新仓的 APP 文件：
 
 - `app/update.json`
-- `app/LabProbeApp-v0.10.38.apk`
+- `app/LabProbeApp-v0.10.42.apk`
