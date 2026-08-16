@@ -30,8 +30,8 @@ android {
         applicationId = "com.labprobe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 119
-        versionName = "0.9.17"
+        versionCode = 197
+        versionName = "0.10.42"
     }
 
     signingConfigs {
@@ -67,13 +67,12 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
     sourceSets {
         getByName("main") {
-            // GitHub 网页上传覆盖文件时，旧的 app/src/main/java 可能不会被删除。
-            // 这里强制只编译当前工程使用的 Kotlin 源码目录，避免旧 TestForegroundService.kt 等遗留文件参与编译。
             java.setSrcDirs(listOf("src/main/kotlin"))
         }
     }
@@ -98,4 +97,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.mwiede:jsch:0.2.21")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

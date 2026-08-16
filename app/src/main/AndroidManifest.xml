@@ -7,10 +7,11 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:icon="@drawable/labprobe_launcher_noglow"
+        android:roundIcon="@drawable/labprobe_launcher_noglow"
         android:label="极客网探"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">

@@ -1,17 +1,48 @@
 package com.labprobe.app
 
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Calendar
+import java.util.Date
+import java.util.IdentityHashMap
 import java.util.Locale
 
 private const val DEVICE_EVENT_OFFLINE_COOLDOWN_MS = 5 * 60 * 1000L
+private const val DEVICE_EVENT_MAX_DAYS = 15
+private val EVENT_DAY_PATTERN = Regex("""\d{4}-\d{2}-\d{2}""")
+private val EVENT_TIME_PATTERNS = listOf(
+    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ssXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    "yyyy-MM-dd HH:mm:ss",
+    "yyyy/MM/dd HH:mm:ss",
+    "MM-dd HH:mm:ss",
+    "HH:mm:ss"
+)
+
+private class EventTimestampCache {
+    private val values = IdentityHashMap<EventItem, Long?>()
+
+    fun get(event: EventItem): Long? {
+        if (values.containsKey(event)) return values[event]
+        return parseEventMillis(event.time).also { values[event] = it }
+    }
+}
 
 fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<DeviceItem> {
-    val oldByMac = old.associateBy { it.mac.lowercase(Locale.getDefault()) }
-    val freshKeys = fresh.map { it.mac.lowercase(Locale.getDefault()) }.toSet()
+    val oldByMac = old.associateBy { cleanMac(it.mac) }
+    val freshKeys = fresh.map { cleanMac(it.mac) }.toSet()
     val merged = fresh.map { n ->
-        val o = oldByMac[n.mac.lowercase(Locale.getDefault())]
+        val o = oldByMac[cleanMac(n.mac)]
         if (!n.online && o != null) {
+            val oldTodayValid = o.todayOnlineDate == LocalDate.now().toString()
+            val mergedIpv6 = mergeIpv6Candidates(
+                n.ipv6Candidates,
+                n.ipv6.map { Ipv6AddressCandidate(it) },
+                o.ipv6Candidates,
+                o.ipv6.map { Ipv6AddressCandidate(it) }
+            ).take(24)
             n.copy(
                 ip = n.ip.ifBlank { o.ip },
                 ssid = n.ssid.ifBlank { o.ssid },
@@ -21,8 +52,20 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 onlineSince = n.onlineSince.ifBlank { o.onlineSince },
                 offlineAt = n.offlineAt.ifBlank { o.offlineAt },
                 onlineDurationText = n.onlineDurationText.ifBlank { o.onlineDurationText },
+                todayOnlineDurationSec = when {
+                    n.todayOnlineDate.isNotBlank() -> n.todayOnlineDurationSec
+                    oldTodayValid -> o.todayOnlineDurationSec
+                    else -> 0L
+                },
+                todayOnlineDurationText = when {
+                    n.todayOnlineDate.isNotBlank() -> n.todayOnlineDurationText
+                    oldTodayValid -> o.todayOnlineDurationText
+                    else -> ""
+                },
+                todayOnlineDate = n.todayOnlineDate.ifBlank { o.todayOnlineDate.takeIf { oldTodayValid }.orEmpty() },
                 lastSeenAt = n.lastSeenAt.ifBlank { o.lastSeenAt },
-                ipv6 = if (n.ipv6.isNotEmpty()) n.ipv6 else o.ipv6,
+                ipv6 = mergedIpv6.map { it.address },
+                ipv6Candidates = mergedIpv6,
                 manufacture = n.manufacture.ifBlank { o.manufacture },
                 devType = n.devType.ifBlank { o.devType },
                 osType = n.osType.ifBlank { o.osType },
@@ -31,17 +74,26 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
                 connectType = n.connectType.ifBlank { o.connectType },
                 remark = n.remark.ifBlank { o.remark },
                 manualType = n.manualType.ifBlank { o.manualType },
-                wolEnabledOverride = n.wolEnabledOverride ?: o.wolEnabledOverride
+                wolEnabledOverride = n.wolEnabledOverride ?: o.wolEnabledOverride,
+                followedOverride = n.followedOverride ?: o.followedOverride,
+                todayUpload = n.todayUpload.ifBlank { o.todayUpload },
+                todayDownload = n.todayDownload.ifBlank { o.todayDownload },
+                totalUpload = n.totalUpload.ifBlank { o.totalUpload },
+                totalDownload = n.totalDownload.ifBlank { o.totalDownload }
             )
         } else n
     }.toMutableList()
-    old.filter { !it.online && it.mac.lowercase(Locale.getDefault()) !in freshKeys }.forEach { merged += it }
+    old.filter { !it.online && cleanMac(it.mac) !in freshKeys }.forEach { merged += it }
     return merged
 }
 
 fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
     if (raw.isEmpty()) return raw
-    val chronological = raw.sortedWith(compareBy<EventItem> { parseEventMillis(it.time) ?: Long.MAX_VALUE }.thenBy { it.id })
+    // One snapshot is sorted, normalized and retained below.  Cache its parsed
+    // timestamps for this pass so large history imports do not repeatedly
+    // allocate formatters while preserving the exact existing ordering rules.
+    val timestamps = EventTimestampCache()
+    val chronological = raw.sortedWith(compareBy<EventItem> { timestamps.get(it) ?: Long.MAX_VALUE }.thenBy { it.id })
     val stateByKey = mutableMapOf<String, String>()
     val onlineAtByKey = mutableMapOf<String, Long>()
     val lastOfflineAtByKey = mutableMapOf<String, Long>()
@@ -59,7 +111,7 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
             return@forEach
         }
 
-        val at = parseEventMillis(event.time)
+        val at = timestamps.get(event)
         val previousState = stateByKey[key]
         if (type == "device_online") {
             if (previousState == "online") return@forEach
@@ -83,9 +135,27 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
         if (at != null) lastOfflineAtByKey[key] = at
         onlineAtByKey.remove(key)
     }
-    return kept.sortedWith(compareByDescending<EventItem> { parseEventMillis(it.time) ?: 0L }.thenByDescending { it.id })
+    return trimDeviceEventsToRecentDays(
+        kept.sortedWith(compareByDescending<EventItem> { timestamps.get(it) ?: 0L }.thenByDescending { it.id }),
+        timestamps::get
+    )
 }
 
+private fun trimDeviceEventsToRecentDays(
+    events: List<EventItem>,
+    timestampOf: (EventItem) -> Long? = { parseEventMillis(it.time) }
+): List<EventItem> {
+    if (events.isEmpty()) return events
+    val days = events.mapNotNull { eventRetentionDay(it, timestampOf) }.distinct().sortedDescending().take(DEVICE_EVENT_MAX_DAYS).toSet()
+    if (days.isEmpty()) return events
+    return events.filter { eventRetentionDay(it, timestampOf)?.let { day -> day in days } ?: true }
+}
+
+private fun eventRetentionDay(event: EventItem, timestampOf: (EventItem) -> Long?): String? {
+    EVENT_DAY_PATTERN.find(event.time)?.value?.let { return it }
+    val millis = timestampOf(event) ?: return null
+    return SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(millis))
+}
 fun eventDeviceKey(e: EventItem): String {
     val mac = e.mac.trim().lowercase(Locale.getDefault())
     if (mac.isNotBlank() && mac != "null" && mac != "-") return "mac:$mac"
@@ -121,17 +191,7 @@ fun parseDurationSeconds(raw: String): Long? {
 fun parseEventMillis(raw: String): Long? {
     val s = raw.trim()
     if (s.isBlank() || s == "-") return null
-    val patterns = listOf(
-        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-        "yyyy-MM-dd'T'HH:mm:ssXXX",
-        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-        "yyyy-MM-dd'T'HH:mm:ss'Z'",
-        "yyyy-MM-dd HH:mm:ss",
-        "yyyy/MM/dd HH:mm:ss",
-        "MM-dd HH:mm:ss",
-        "HH:mm:ss"
-    )
-    for (pattern in patterns) {
+    for (pattern in EVENT_TIME_PATTERNS) {
         val parsed = runCatching { SimpleDateFormat(pattern, Locale.CHINA).parse(s) }.getOrNull() ?: continue
         val cal = Calendar.getInstance(Locale.CHINA)
         cal.time = parsed

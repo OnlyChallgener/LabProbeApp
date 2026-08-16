@@ -79,6 +79,7 @@ fun buildWolRuntimes(configs: List<WolDeviceConfig>, sharedDevices: List<DeviceI
             onlineDurationText = d?.onlineDurationText ?: "",
             lastSeenAt = d?.lastSeenAt ?: "",
             ipv6 = d?.ipv6 ?: emptyList(),
+            ipv6Candidates = d?.ipv6Candidates ?: emptyList(),
             manufacture = d?.manufacture ?: "",
             devType = d?.devType ?: "",
             osType = d?.osType ?: "",
@@ -87,7 +88,14 @@ fun buildWolRuntimes(configs: List<WolDeviceConfig>, sharedDevices: List<DeviceI
             connectType = d?.connectType ?: "",
             remark = cfg.remark,
             manualType = cfg.typeId,
-            wolEnabledOverride = cfg.enabled
+            wolEnabledOverride = cfg.enabled,
+            todayUpload = d?.todayUpload ?: "",
+            todayDownload = d?.todayDownload ?: "",
+            totalUpload = d?.totalUpload ?: "",
+            totalDownload = d?.totalDownload ?: "",
+            todayOnlineDurationSec = d?.todayOnlineDurationSec ?: 0L,
+            todayOnlineDurationText = d?.todayOnlineDurationText ?: "",
+            todayOnlineDate = d?.todayOnlineDate ?: ""
         )
         val profile = DeviceVisualProfile(
             type = type.id,
@@ -104,7 +112,7 @@ fun buildWolRuntimes(configs: List<WolDeviceConfig>, sharedDevices: List<DeviceI
             device = d,
             online = d?.online ?: false,
             ip = d?.ip.orEmpty(),
-            ipv6 = bestIpv6ForDisplay(d?.ipv6.orEmpty()),
+            ipv6 = d?.pickIpv6()?.best.orEmpty(),
             lastSeen = d?.lastSeenAt?.takeIf { it.isNotBlank() } ?: d?.offlineAt.orEmpty(),
             profile = profile
         )
@@ -125,7 +133,7 @@ fun wolCandidatesFromDevices(devices: List<DeviceItem>, existing: List<WolDevice
                 typeId = p.type,
                 enabled = false
             )
-            WolDeviceRuntime(cfg, d, d.online, d.ip, bestIpv6ForDisplay(d.ipv6), d.lastSeenAt.ifBlank { d.offlineAt }, p.copy(wolCandidate = false))
+            WolDeviceRuntime(cfg, d, d.online, d.ip, d.pickIpv6().best.orEmpty(), d.lastSeenAt.ifBlank { d.offlineAt }, p.copy(wolCandidate = false))
         }
     return candidates.take(8)
 }
