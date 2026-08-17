@@ -499,7 +499,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     DetailShell("路由 NAT 诊断", "路由器原生 RFC3489 / RFC5780", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
-            NativeTitle(Icons.Rounded.Radar, "检测参数", NativeBlue)
+            NativeTitle(Icons.Rounded.Radar, "检测参数", NativeBlue, FontWeight.SemiBold)
             val serverShape = RoundedCornerShape(14.dp)
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -604,9 +604,9 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 ) {
                     if (running) CircularProgressIndicator(
                         Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White, trackColor = Color.Transparent
-                    ) else Icon(Icons.Rounded.PlayCircle, null, Modifier.size(18.dp))
+                    ) else Icon(Icons.Rounded.Radar, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text(if (running) "检测中" else "开始检测", style = LabTypography.Button)
+                    Text(if (running) "检测中" else "开始检测", style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold))
                 }
             }
         }
@@ -614,7 +614,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
         if (error.isNotBlank()) NativeMessage(error, NativeRed)
 
         NativeCard {
-            NativeTitle(Icons.Rounded.Analytics, "分析结果", NativeGreen)
+            NativeTitle(Icons.Rounded.CheckCircle, "分析结果", NativeCyan, FontWeight.SemiBold)
             NativeAnalysisValueRow("检测状态", when {
                 loading && result.status == "idle" -> "读取中"
                 running -> result.stageText.ifBlank { "检测中" }
@@ -650,14 +650,15 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         if (result.log.isNotBlank()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan)
+                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold)
                 SelectionContainer {
                     Text(
                         natLogZh(result.log),
                         modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = LabTypography.Caption.fontSize,
-                        lineHeight = LabTypography.Caption.lineHeight,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.Normal,
                         color = NativeInk
                     )
                 }
@@ -666,7 +667,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         if (history.isNotEmpty()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber)
+                NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber, FontWeight.SemiBold)
                 history.forEachIndexed { index, item ->
                     Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
@@ -678,8 +679,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             } else natTypeZh(item.natType),
                             fontSize = LabTypography.Body.fontSize,
                             lineHeight = LabTypography.Body.lineHeight,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
                             color = NativeInk,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -690,7 +690,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 if (item.mode == "5780") "RFC5780" else "RFC3489",
                                 item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
                             ).filter(String::isNotBlank).joinToString(" · "),
-                            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)
+                            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Normal)
                         )
                     }
                     if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)
@@ -759,27 +759,42 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 versions = versions.distinct(),
                 checkedAt = data.optLong("checkedAt", task.updatedAt)
             )
-            if (latest.hasSnapshot) {
+            if (task.succeeded && latest.hasSnapshot) {
                 info = latest
                 saveRouterBetaSnapshot(context, latest)
             }
         }
     }
 
-    DetailShell("Beta 在线升级", "显示上次检查快照 · 仅手动检测", onBack, compactHeader = true, unifiedTypography = true) {
+    DetailShell("Beta 固件更新", "显示上次检测快照 · 仅手动检测", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
-            NativeTitle(Icons.Rounded.SystemUpdateAlt, "固件版本", NativeCyan)
+            NativeTitle(Icons.Rounded.Memory, "固件版本", NativeCyan, FontWeight.SemiBold)
             NativeFirmwareVersionRow(info.current.ifBlank { "--" })
-            NativeValueRow("可用版本", if (info.hasSnapshot) "${info.totalCount} 个" else "--")
-            Text(
+            val statusText = when {
+                task.active -> task.stageText.ifBlank { "正在检测固件版本" }
+                task.failed -> "检测失败：${uiMessageZh(task.message.ifBlank { task.stageText })}"
+                !info.hasSnapshot -> "尚未检测，点击下方按钮开始"
+                info.totalCount > 0 -> "发现 ${info.totalCount} 个可用版本"
+                else -> "已是最新版本"
+            }
+            val statusColor = when {
+                task.failed -> NativeRed
+                info.hasSnapshot && info.totalCount == 0 && !task.active -> NativeCyan
+                info.totalCount > 0 && !task.active -> NativeAmber
+                else -> NativeMuted
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 when {
-                    task.active -> task.stageText
-                    task.failed -> uiMessageZh(task.message.ifBlank { task.stageText })
-                    else -> uiMessageZh(info.message).ifBlank { "尚未检测，点击下方按钮开始" }
-                },
-                fontSize = LabTypography.Supporting.fontSize,
-                color = if (task.failed) NativeRed else NativeMuted
-            )
+                    task.active -> CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = NativeCyan)
+                    task.failed -> Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(18.dp), tint = NativeRed)
+                    info.hasSnapshot && info.totalCount == 0 -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = NativeCyan)
+                    info.totalCount > 0 -> Icon(Icons.Rounded.NewReleases, null, Modifier.size(18.dp), tint = NativeAmber)
+                }
+                Text(
+                    statusText,
+                    style = LabTypography.Supporting.copy(color = statusColor, fontWeight = FontWeight.Medium)
+                )
+            }
             if (task.active) {
                 NativeValueRow("已耗时", "${task.elapsedSeconds} 秒")
                 if (task.lastRouterResponseAt > 0L) NativeValueRow("路由器状态", "已返回响应")
@@ -804,11 +819,11 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 if (task.active) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
                 else Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(7.dp))
-                Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button)
+                Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold))
             }
         }
-        if (info.versions.isNotEmpty()) NativeCard {
-            NativeTitle(Icons.Rounded.NewReleases, "可用版本", NativeAmber)
+        if (!task.failed && info.versions.isNotEmpty()) NativeCard {
+            NativeTitle(Icons.Rounded.NewReleases, "可用版本", NativeAmber, FontWeight.SemiBold)
             info.versions.forEach { Text(it, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = NativeInk) }
         }
     }
@@ -828,30 +843,51 @@ private fun NativeCard(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun NativeTitle(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, color: Color) {
+private fun NativeTitle(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    color: Color,
+    titleWeight: FontWeight = FontWeight.ExtraBold
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(34.dp).shadow(5.dp, RoundedCornerShape(12.dp), clip = false, ambientColor = color.copy(alpha = .14f), spotColor = color.copy(alpha = .20f)).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), color.copy(alpha = .22f), color.copy(alpha = .07f))), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
             Icon(icon, null, Modifier.size(19.dp), tint = color)
         }
         Spacer(Modifier.width(9.dp))
-        Text(title, style = LabTypography.CardTitle.copy(color = NativeInk, fontWeight = FontWeight.ExtraBold))
+        Text(title, style = LabTypography.CardTitle.copy(color = NativeInk, fontWeight = titleWeight))
     }
 }
 
 @Composable
 private fun NativeFirmwareVersionRow(value: String) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        Text("当前版本", style = LabTypography.Supporting.copy(color = NativeMuted))
+    val raw = value.trim()
+    val semicolonParts = raw.split(';', limit = 2)
+    val first = semicolonParts.firstOrNull().orEmpty().trim()
+    val remainder = semicolonParts.getOrNull(1).orEmpty().trim()
+    val primary = when {
+        raw == "--" -> "--"
+        remainder.isNotBlank() -> remainder.substringBefore(',').trim().ifBlank { raw }
+        else -> raw
+    }
+    val release = remainder.substringAfter(',', "").trim()
+    val detail = listOf(first, release).filter { it.isNotBlank() && it != primary }.joinToString(" · ")
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("当前版本", style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.Medium))
         Text(
-            value,
-            style = LabTypography.Supporting.copy(
-                color = NativeInk,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 16.sp
-            ),
-            maxLines = 3,
+            primary,
+            style = LabTypography.ValueStrong.copy(color = NativeInk, fontWeight = FontWeight.SemiBold),
+            maxLines = 2,
             overflow = TextOverflow.Clip
         )
+        if (detail.isNotBlank()) {
+            Text(
+                detail,
+                style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.Normal, lineHeight = 17.sp),
+                maxLines = 2,
+                overflow = TextOverflow.Clip
+            )
+        }
     }
 }
 
@@ -879,12 +915,12 @@ private fun NativeAnalysisValueRow(label: String, value: String) {
         Text(
             label,
             Modifier.width(78.dp),
-            style = LabTypography.Value.copy(color = NativeInk, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.Medium)
         )
         Text(
             value,
             Modifier.weight(1f),
-            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace),
+            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium),
             maxLines = 3,
             overflow = TextOverflow.Clip
         )
