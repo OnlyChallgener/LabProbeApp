@@ -3,6 +3,7 @@ package com.labprobe.app
 import android.content.ClipData
 import android.content.ContextWrapper
 import android.app.Activity
+import com.labprobe.app.feature.router.ipv6.Ipv6Screen
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -2072,6 +2073,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
                         "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
                         "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
+                        "tool_router_ipv6" -> Ipv6Screen(prefs, backFromTool)
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool)
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
@@ -10033,6 +10035,8 @@ class HubApi(private val prefs: AppPrefs) {
                 HubRouterNoDataException(message.ifBlank { "Hub 在线，但没有路由器数据" })
             "LOGIN_FAILED", "AUTH_EXPIRED", "ROUTER_UNREACHABLE", "RPC_TIMEOUT", "RPC_HTTP_ERROR", "RPC_INVALID_RESPONSE", "RPC_PATH_NOT_FOUND" ->
                 HubRouterLoginException(message.ifBlank { "Hub 登录路由器失败" })
+            "INVALID_IPV6_CONFIG", "IPV6_SAVE_REJECTED", "IPV6_CONFIG_INVALID" ->
+                IllegalArgumentException(message.ifBlank { "IPv6 配置无效" })
             else -> null
         }
     }

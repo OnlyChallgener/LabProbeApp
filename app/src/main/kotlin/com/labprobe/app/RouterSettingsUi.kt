@@ -114,6 +114,16 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
     ) {
         RouterSettingsConnectionCard(statusResource) { onOpen("tool_router_login") }
 
+        RouterSettingsSection("网络与地址") {
+            RouterSettingsTile(
+                title = "IPv6 设置",
+                subtitle = "WAN、LAN 与 DHCPv6 客户端",
+                icon = Icons.Rounded.Public,
+                color = SettingsCyan,
+                enabled = capabilities.configured
+            ) { onOpen("tool_router_ipv6") }
+        }
+
         RouterSettingsSection("转发与安全") {
             RouterSettingsTile(
                 title = "映射与 UPnP",

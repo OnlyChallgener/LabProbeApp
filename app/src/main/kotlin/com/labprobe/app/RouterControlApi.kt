@@ -1,5 +1,11 @@
 package com.labprobe.app
 
+import com.labprobe.app.feature.router.ipv6.Dhcpv6Client
+import com.labprobe.app.feature.router.ipv6.Ipv6Config
+import com.labprobe.app.feature.router.ipv6.Ipv6Status
+import com.labprobe.app.feature.router.ipv6.parseDhcpv6Clients
+import com.labprobe.app.feature.router.ipv6.parseIpv6Config
+import com.labprobe.app.feature.router.ipv6.parseIpv6Status
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -221,6 +227,18 @@ class RouterControlApi(private val prefs: AppPrefs) {
     }
 
     suspend fun refreshLabProbeDdnsAddress(): Long = hubApi.requestRouterDashboardRefresh()
+
+    suspend fun ipv6Status(): Ipv6Status =
+        parseIpv6Status(get("/api/router/ipv6/status").optJSONObject("data") ?: JSONObject())
+
+    suspend fun ipv6Config(): Ipv6Config =
+        parseIpv6Config(get("/api/router/ipv6/config").optJSONObject("data") ?: JSONObject())
+
+    suspend fun dhcpv6Clients(): List<Dhcpv6Client> =
+        parseDhcpv6Clients(get("/api/router/ipv6/clients").optJSONObject("data") ?: JSONObject())
+
+    suspend fun saveIpv6Config(body: JSONObject): Ipv6Config =
+        parseIpv6Config(send("/api/router/ipv6/config", "PUT", body).optJSONObject("data") ?: JSONObject())
 
     suspend fun diagnostic(): RouterDiagnostic =
         parseDiagnostic(get("/api/router/diagnostic").optJSONObject("data") ?: JSONObject())
