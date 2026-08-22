@@ -50,6 +50,12 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.labprobe.app.feature.router.firewall.FirewallAutomationBinding
+import com.labprobe.app.feature.router.firewall.FirewallAutomationPage
+import com.labprobe.app.feature.router.firewall.FirewallAutomationRepository
+import com.labprobe.app.feature.router.firewall.FirewallAutomationTargets
+import com.labprobe.app.feature.router.firewall.firewallAutomationStatusColor
+import com.labprobe.app.feature.router.firewall.firewallAutomationStatusLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -586,7 +592,9 @@ private fun UpnpPage(prefs: AppPrefs) {
 @Composable
 fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val automationRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { FirewallAutomationRepository(prefs) }
     val resource by repository.firewall.collectAsState()
+    val automationResource by automationRepository.state.collectAsState()
     val state = resource.value ?: FirewallState()
     val scope = repository.commandScope
     var direction by remember { mutableStateOf("forward") }
@@ -594,8 +602,62 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var editing by remember { mutableStateOf<FirewallRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<FirewallRule?>(null) }
+    var followRule by remember { mutableStateOf<FirewallRule?>(null) }
+    var followTargets by remember { mutableStateOf(FirewallAutomationTargets()) }
+    var followTargetsLoading by remember { mutableStateOf(false) }
+    val bindings = automationResource.bindings.associateBy { it.firewallUuid }
     val visible = state.rules.filter { it.direction == direction }
-    val error = actionError.ifBlank { resource.error }
+    val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
+
+    LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
+    LaunchedEffect(followRule?.uuid) {
+        if (followRule != null) {
+            followTargetsLoading = true
+            followTargets = runCatching { automationRepository.loadTargets() }.getOrDefault(FirewallAutomationTargets())
+            followTargetsLoading = false
+        }
+    }
+
+    followRule?.let { selected ->
+        FirewallAutomationPage(
+            rule = selected,
+            binding = bindings[selected.uuid],
+            targets = followTargets,
+            targetsLoading = followTargetsLoading,
+            busy = automationResource.mutating,
+            externalError = automationResource.error,
+            onBack = { followRule = null; actionError = "" },
+            onRefreshTargets = {
+                scope.launch {
+                    followTargetsLoading = true
+                    followTargets = runCatching { automationRepository.loadTargets() }.getOrDefault(FirewallAutomationTargets())
+                    followTargetsLoading = false
+                }
+            },
+            onSave = { binding ->
+                scope.launch {
+                    automationRepository.save(binding)
+                        .onSuccess { actionError = ""; repository.refreshFirewall(true) }
+                        .onFailure { actionError = it.message.orEmpty() }
+                }
+            },
+            onStop = {
+                scope.launch {
+                    automationRepository.remove(selected.uuid)
+                        .onSuccess { followRule = null; actionError = "" }
+                        .onFailure { actionError = it.message.orEmpty() }
+                }
+            },
+            onSync = {
+                scope.launch {
+                    automationRepository.sync(selected.uuid)
+                        .onSuccess { actionError = ""; repository.refreshFirewall(true) }
+                        .onFailure { actionError = it.message.orEmpty() }
+                }
+            },
+        )
+        return
+    }
 
     if (adding || editing != null) {
         FirewallEditorPage(
@@ -621,17 +683,20 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { scope.launch { repository.refreshFirewall(false) } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
+                    IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
                     Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(19.dp)) } }
                 }
             }
             if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+            if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
             if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
             if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${when(direction){"inbound"->"入站";"outbound"->"出站";else->"转发"}}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
             items(visible, key = { it.uuid }) { rule ->
                 FirewallRuleCard(
                     rule,
+                    binding = bindings[rule.uuid],
                     onOpen = { editing = rule },
+                    onFollow = { followRule = rule },
                     onToggle = { scope.launch {
                         repository.setFirewallEnabled(rule.uuid, !rule.enabled)
                             .onSuccess { actionError = "" }
@@ -646,7 +711,11 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
         ConfirmDialog("删除防火墙规则？", "删除“${rule.ruleName}”可能立即影响远程访问。", "删除", {
             scope.launch {
                 repository.deleteFirewallRule(rule.uuid)
-                    .onSuccess { deleteTarget = null; actionError = "" }
+                    .onSuccess {
+                        if (bindings.containsKey(rule.uuid)) automationRepository.remove(rule.uuid)
+                        deleteTarget = null
+                        actionError = ""
+                    }
                     .onFailure { actionError = it.message.orEmpty() }
             }
         }) { deleteTarget = null }
@@ -654,7 +723,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable
-private fun FirewallRuleCard(rule: FirewallRule, onOpen: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
+private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBinding?, onOpen: () -> Unit, onFollow: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
     val accent = if (rule.target == "ACCEPT") RouterGreen else RouterRed
     PremiumCard(accent, Modifier.clickable(onClick = onOpen)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -667,6 +736,16 @@ private fun FirewallRuleCard(rule: FirewallRule, onOpen: () -> Unit, onToggle: (
                 val targetText = rule.destIP.ifBlank { rule.ipv6SuffixDest.ifBlank { "任意目标" } }
                 Text("${rule.inIface.ifBlank { "本机" }.uppercase()} → ${rule.outIface.ifBlank { "本机" }.uppercase()} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
+                val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
+                Text(
+                    if (binding == null) "设置目的地址自动跟随" else "自动跟随 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待目标" }}",
+                    modifier = Modifier.clickable(onClick = onFollow).padding(vertical = 1.dp),
+                    fontSize = LabTypography.Caption.fontSize,
+                    fontWeight = FontWeight.SemiBold,
+                    color = followColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Column(
                 modifier = Modifier.width(54.dp),
