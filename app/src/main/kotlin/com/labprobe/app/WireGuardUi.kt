@@ -262,10 +262,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     val isActive = runtime.running && runtime.profileId == profile.id
                     WireGuardProfileCard(
                         profile = profile,
-                        clientPublicKey = wireGuardPublicKey(store.privateKey(profile.id)),
                         active = isActive,
                         runtime = if (isActive) runtime else null,
-                        duplicateServerKey = profile.id in duplicateServerKeyIds,
                         onStart = { start(profile) },
                         onStop = {
                             scope.launch {
@@ -274,26 +272,6 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             }
                         },
                         onEdit = { editor = profile; editingExisting = true },
-
-                        onDelete = {
-                            scope.launch {
-                                if (runtime.profileId == profile.id) runtime = controller.stop()
-                                runCatching {
-                                    wireGuardHubApi.removeAutomaticProfile(profile, wireGuardPublicKey(store.privateKey(profile.id)))
-                                }.onSuccess {
-                                    store.delete(profile.id)
-                                    reload()
-                                    message = if (profile.endpointSource == WireGuardEndpointSource.MANUAL) {
-                                        "已删除本机手动配置 ${profile.name}"
-                                    } else {
-                                        "已删除 ${profile.name}，Agent 端 Peer 也已移除"
-                                    }
-                                }.onFailure {
-                                    message = "Agent 端清理失败，已保留本机配置：${it.message.orEmpty()}"
-                                }
-                            }
-                        },
-                        onCopyPublicKey = { copyWireGuard(context, "WireGuard 客户端公钥", wireGuardPublicKey(store.privateKey(profile.id))) },
                     )
                 }
             }
@@ -337,11 +315,35 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     editor?.let { profile ->
+        val clientPub = wireGuardPublicKey(store.privateKey(profile.id))
+        val isDuplicateKey = profile.serverPublicKey.isNotBlank() && profiles.count { it.serverPublicKey == profile.serverPublicKey && it.id != profile.id } > 0
         WireGuardEditorDialog(
             initial = profile,
             isExisting = editingExisting,
+            clientPublicKey = clientPub,
+            duplicateServerKey = isDuplicateKey,
             availableStunRules = stunRules,
             onDismiss = { editor = null },
+            onDelete = {
+                scope.launch {
+                    if (runtime.profileId == profile.id) runtime = controller.stop()
+                    runCatching {
+                        wireGuardHubApi.removeAutomaticProfile(profile, clientPub)
+                    }.onSuccess {
+                        store.delete(profile.id)
+                        reload()
+                        editor = null
+                        message = if (profile.endpointSource == WireGuardEndpointSource.MANUAL) {
+                            "已删除手动配置 ${profile.name}"
+                        } else {
+                            "已删除 ${profile.name}，Agent 端 Peer 也已移除"
+                        }
+                    }.onFailure {
+                        message = "Agent 端清理失败，已保留本机配置：${it.message.orEmpty()}"
+                    }
+                }
+            },
+            onCopyClientKey = { copyWireGuard(context, "WireGuard 客户端公钥", clientPub) },
             onSave = { edited ->
                 if (editingExisting) store.saveProfileEdit(edited) else store.create(edited)
                 reload()
@@ -379,28 +381,24 @@ private fun WireGuardCreateCard(source: WireGuardEndpointSource, onCreate: () ->
     ) {
         Icon(Icons.Rounded.Add, null, Modifier.size(17.dp))
         Spacer(Modifier.width(6.dp))
-        Text("创建 ${source.displayName} 配置", style = LabTypography.CompactButton)
+        Text("添加 ${source.displayName} 配置", style = LabTypography.CompactButton)
     }
 }
 
 @Composable
 private fun WireGuardProfileCard(
     profile: WireGuardProfile,
-    clientPublicKey: String,
     active: Boolean,
     runtime: WireGuardRuntimeStatus? = null,
-    duplicateServerKey: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onCopyPublicKey: () -> Unit,
 ) {
     val accent = wireGuardSourceColor(profile.endpointSource)
     val isHandshaked = active && runtime != null && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
     LabCoreCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-                LabV2ToolIcon(if (profile.endpointSource == WireGuardEndpointSource.STUN) Icons.Rounded.Key else Icons.Rounded.Public, accent, size = 34)
+            LabV2ToolIcon(if (profile.endpointSource == WireGuardEndpointSource.STUN) Icons.Rounded.Key else Icons.Rounded.Public, accent, size = 34)
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(profile.name, style = LabTypography.CardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -430,36 +428,66 @@ private fun WireGuardProfileCard(
         }
         Surface(color = LabCoreSurface.Inner, shape = LabCoreSurface.InnerShape, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(if (profile.endpoint.isBlank()) "等待 ${profile.endpointSource.displayName} 地址" else profile.endpoint, style = LabTypography.Value.copy(color = if (profile.endpoint.isBlank()) LabV2.InkMuted else LabV2.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (profile.endpoint.isBlank()) "等待 ${profile.endpointSource.displayName} 地址" else profile.endpoint,
+                    style = LabTypography.Value.copy(
+                        color = if (profile.endpoint.isBlank()) LabV2.InkMuted else LabV2.Ink,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     when (profile.endpointSource) {
-                        WireGuardEndpointSource.MANUAL -> "手动维护地址；DDNS 与 STUN 自动更新均不会修改此配置"
+                        WireGuardEndpointSource.MANUAL -> "手动维护地址；不参与自动更新"
                         WireGuardEndpointSource.DDNS -> "域名保持不变，DNS 自动解析最新 A 记录"
                         WireGuardEndpointSource.STUN -> "仅由 STUN 更新器写入动态公网 IP 与端口"
                     },
                     style = LabTypography.Caption.copy(color = LabV2.InkMuted),
-                    maxLines = 2,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        if (duplicateServerKey) Text("与其他配置使用相同服务端公钥；仅提示，不会合并或覆盖配置", style = LabTypography.Caption.copy(color = WireGuardAmber), maxLines = 2)
-        if (clientPublicKey.isNotBlank()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("客户端公钥", Modifier.weight(1f), style = LabTypography.Caption.copy(color = LabV2.InkMuted))
-                TextButton(onClick = onCopyPublicKey, modifier = Modifier.height(34.dp), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(15.dp)); Spacer(Modifier.width(4.dp)); Text("复制", style = LabTypography.CompactButton) }
-            }
-        }
         profile.endpointUpdateError.takeIf { it.isNotBlank() }?.let { Text(it, style = LabTypography.Caption.copy(color = WireGuardAmber), maxLines = 2) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, LabCoreSurface.Border), shape = LabCoreSurface.InnerShape) { Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("编辑", style = LabTypography.CompactButton) }
+            OutlinedButton(
+                onClick = onEdit,
+                modifier = Modifier.weight(1f),
+                border = BorderStroke(1.dp, LabCoreSurface.Border),
+                shape = LabCoreSurface.InnerShape
+            ) {
+                Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("编辑", style = LabTypography.CompactButton)
+            }
             if (active) {
-                OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, WireGuardRed.copy(alpha = .42f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardRed), shape = LabCoreSurface.InnerShape) { Icon(Icons.Rounded.Stop, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("停止", style = LabTypography.CompactButton) }
+                Button(
+                    onClick = onStop,
+                    modifier = Modifier.weight(1.2f),
+                    colors = ButtonDefaults.buttonColors(containerColor = WireGuardRed, contentColor = Color.White),
+                    shape = LabCoreSurface.InnerShape
+                ) {
+                    Icon(Icons.Rounded.Stop, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("停止连接", style = LabTypography.CompactButton)
+                }
             } else {
-                OutlinedButton(onClick = onStart, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, accent.copy(alpha = .48f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = accent), enabled = profile.isComplete, shape = LabCoreSurface.InnerShape) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("启动", style = LabTypography.CompactButton) }
+                Button(
+                    onClick = onStart,
+                    modifier = Modifier.weight(1.2f),
+                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.White),
+                    enabled = profile.isComplete,
+                    shape = LabCoreSurface.InnerShape
+                ) {
+                    Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("启动连接", style = LabTypography.CompactButton)
+                }
             }
         }
-        TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.End).height(34.dp), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp), colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)) { Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(15.dp)); Spacer(Modifier.width(4.dp)); Text("删除配置", style = LabTypography.Caption) }
     }
 }
 
@@ -467,8 +495,12 @@ private fun WireGuardProfileCard(
 private fun WireGuardEditorDialog(
     initial: WireGuardProfile,
     isExisting: Boolean,
+    clientPublicKey: String,
+    duplicateServerKey: Boolean,
     availableStunRules: List<StunRule>,
     onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+    onCopyClientKey: () -> Unit,
     onSave: (WireGuardProfile) -> Unit,
 ) {
     var name by remember(initial.id) { mutableStateOf(initial.name) }
@@ -499,6 +531,9 @@ private fun WireGuardEditorDialog(
                     if (source == WireGuardEndpointSource.MANUAL) "手动地址锁定，不参与 DDNS/STUN 自动更新。" else "自动配置只能由自己的地址来源更新；手动改地址需明确转为手动。",
                     style = LabTypography.Caption.copy(color = LabV2.InkMuted)
                 )
+                if (duplicateServerKey) {
+                    Text("提示：与其他配置使用相同服务端公钥；仅提示，不会合并或覆盖配置", style = LabTypography.Caption.copy(color = WireGuardAmber))
+                }
                 WireGuardField(name, { name = it }, "名称")
                 if (source != WireGuardEndpointSource.STUN) {
                     WireGuardField(host, { host = it }, if (source == WireGuardEndpointSource.MANUAL) "服务器地址" else "DDNS 域名")
@@ -542,6 +577,19 @@ private fun WireGuardEditorDialog(
                             Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
                             style = LabTypography.Caption.copy(color = LabV2.InkMuted),
                         )
+                    }
+                }
+                if (clientPublicKey.isNotBlank()) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("客户端公钥", style = LabTypography.Caption.copy(color = LabV2.InkMuted))
+                            Text(clientPublicKey.take(16) + "...", style = LabTypography.Caption.copy(fontFamily = FontFamily.Monospace, color = LabV2.Ink))
+                        }
+                        TextButton(onClick = onCopyClientKey, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                            Icon(Icons.Rounded.ContentCopy, null, Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("复制公钥", style = LabTypography.CompactButton)
+                        }
                     }
                 }
                 val isFullTunnel = allowedIps.contains("0.0.0.0/0")
@@ -596,11 +644,22 @@ private fun WireGuardEditorDialog(
                         if (error.isBlank()) onSave(next)
                     }, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .48f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue), shape = LabCoreSurface.InnerShape) { Text("保存", style = LabTypography.Button) }
                 }
-
+                if (isExisting) {
+                    TextButton(
+                        onClick = onDelete,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)
+                    ) {
+                        Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("删除此配置", style = LabTypography.CompactButton)
+                    }
+                }
             }
         }
     }
 }
+
 
 @Composable
 private fun WireGuardField(value: String, onValueChange: (String) -> Unit, label: String, keyboardType: KeyboardType = KeyboardType.Text) {
