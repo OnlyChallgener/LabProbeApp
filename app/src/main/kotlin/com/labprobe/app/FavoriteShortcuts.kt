@@ -197,6 +197,12 @@ private fun routerDdnsHostname(record: DdnsRecord): String? {
     return null
 }
 
+private fun favoriteDdnsSupportsIpv4(record: LabProbeDdnsRecord): Boolean =
+    record.enabled && record.recordTypes.any { it.equals("A", ignoreCase = true) }
+
+private fun favoriteDdnsSupportsIpv4(record: DdnsRecord): Boolean =
+    record.enabled && !record.useIpv6
+
 private fun favoriteDdnsHostname(
     id: String?,
     snapshot: LabProbeDdnsSnapshot?,
@@ -313,14 +319,34 @@ internal fun upsertMappingFavorite(
     return saved
 }
 
-/** A STUN shortcut is system-owned: it always follows the Relay's latest public endpoint. */
-internal fun upsertStunFavorite(prefs: AppPrefs, rule: StunRule): FavoriteShortcut? {
+/** A STUN shortcut is system-owned: it always follows the Agent's latest public endpoint. */
+internal fun upsertStunFavorite(
+    prefs: AppPrefs,
+    rule: StunRule,
+    ddnsSnapshot: LabProbeDdnsSnapshot? = null,
+    nativeDdnsRecords: List<DdnsRecord> = emptyList(),
+): FavoriteShortcut? {
     if (!rule.ready || rule.runtime.publicEndpoint.isBlank()) return null
     val current = prefs.favoriteShortcuts().toMutableList()
     val index = current.indexOfFirst { it.stunRuleId == rule.id }
     val scheme = favoriteServiceScheme(rule.serviceType)
     val local = "$scheme://${rule.targetIpv4}:${rule.targetPort}"
-    val remote = "$scheme://${rule.runtime.publicEndpoint}"
+    val existing = current.getOrNull(index)
+    val ddnsRecordId = existing?.ddnsRecordId
+    val hostname = favoriteDdnsHostname(ddnsRecordId, ddnsSnapshot, nativeDdnsRecords)
+    val publicPort = rule.runtime.publicPort.takeIf { it in 1..65535 }
+        ?: rule.runtime.publicEndpoint.substringAfterLast(':').toIntOrNull()?.takeIf { it in 1..65535 }
+    val publicEndpoint = "$scheme://${rule.runtime.publicEndpoint}"
+    val remote = if (hostname != null) {
+        replaceFavoriteUrlHost(
+            publicEndpoint,
+            hostname,
+            publicPort,
+            scheme,
+        ).orEmpty().ifBlank {
+            if (publicPort != null) "$scheme://$hostname:$publicPort" else "$scheme://$hostname"
+        }
+    } else publicEndpoint
     val generated = FavoriteShortcut(
         id = "stun-${rule.id}",
         title = rule.name.ifBlank { "STUN ${rule.serviceType}" },
@@ -332,6 +358,7 @@ internal fun upsertStunFavorite(prefs: AppPrefs, rule: StunRule): FavoriteShortc
         order = if (index >= 0) current[index].order else current.size,
         type = "stun",
         stunRuleId = rule.id,
+        ddnsRecordId = ddnsRecordId,
         localEndpoint = local,
         remoteEndpoint = remote,
         serviceType = rule.serviceType,
@@ -790,9 +817,11 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
         if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
         mappingRules = PortMappingRuleStore.load(context, prefs).rules
     }
-    LaunchedEffect(stunApi) {
+    LaunchedEffect(stunApi, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
         while (true) {
-            runCatching { stunApi.list() }.getOrNull()?.rules?.filter { it.ready }?.forEach { upsertStunFavorite(prefs, it) }
+            runCatching { stunApi.list() }.getOrNull()?.rules?.filter { it.ready }?.forEach {
+                upsertStunFavorite(prefs, it, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
+            }
             shortcuts = prefs.favoriteShortcuts()
             delay(5_000)
         }
@@ -1271,6 +1300,9 @@ private fun FavoriteEditorSheet(
         selectDdns(record?.id, record?.hostname)
     fun selectRouterDdns(record: DdnsRecord?) =
         selectDdns(record?.let(::routerDdnsId), record?.let(::routerDdnsHostname))
+    val stunFavorite = normalizeFavoriteType(draft.type) == "stun"
+    val selectableLabProbeDdns = if (stunFavorite) ddnsRecords.filter(::favoriteDdnsSupportsIpv4) else ddnsRecords
+    val selectableNativeDdns = if (stunFavorite) nativeDdnsRecords.filter(::favoriteDdnsSupportsIpv4) else nativeDdnsRecords
     val webhookManaged = existing?.id?.startsWith("webhook-") == true
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -1303,7 +1335,7 @@ private fun FavoriteEditorSheet(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FavoriteInlineField("服务类型", draft.serviceType, { draft = draft.copy(serviceType = it) }, "例如：HTTPS", Modifier.weight(1f))
         }
-        if (ddnsRecords.any { it.hostname.isNotBlank() } || nativeDdnsRecords.isNotEmpty()) {
+        if (selectableLabProbeDdns.any { it.hostname.isNotBlank() } || selectableNativeDdns.isNotEmpty()) {
             val selectedDdns = ddnsRecords.firstOrNull { it.id == draft.ddnsRecordId }
             val selectedRouterDdns = routerDdnsRecord(draft.ddnsRecordId, nativeDdnsRecords)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1330,8 +1362,8 @@ private fun FavoriteEditorSheet(
                     ) {
                         DropdownMenuItem(text = { Text("不关联", color = LabV2.Ink) }, onClick = { selectLabProbeDdns(null) })
                         if (ddnsRecords.any { it.hostname.isNotBlank() }) {
-                            Text("LabProbe DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            ddnsRecords.filter { it.hostname.isNotBlank() }.forEach { record ->
+                            Text(if (stunFavorite) "LabProbe DDNS · A / IPv4" else "LabProbe DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            selectableLabProbeDdns.filter { it.hostname.isNotBlank() }.forEach { record ->
                                 DropdownMenuItem(
                                     text = {
                                         Column {
@@ -1347,9 +1379,9 @@ private fun FavoriteEditorSheet(
                                 )
                             }
                         }
-                        if (nativeDdnsRecords.isNotEmpty()) {
-                            Text("路由器 DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            nativeDdnsRecords.filter { it.domain.isNotBlank() }.forEach { record ->
+                        if (selectableNativeDdns.isNotEmpty()) {
+                            Text(if (stunFavorite) "路由器 DDNS · A / IPv4" else "路由器 DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            selectableNativeDdns.filter { it.domain.isNotBlank() }.forEach { record ->
                                 DropdownMenuItem(
                                     text = {
                                         Column {
