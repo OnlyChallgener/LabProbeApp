@@ -512,8 +512,19 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
 @Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
     var draft by remember(initial.id) { mutableStateOf(initial) }
-    var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
-    var devicesLoading by remember { mutableStateOf(true) }
+    val cachedDevices = remember(prefs.cacheDevices, prefs.cacheOnlineDevices) {
+        val overrides = parseDeviceOverrides(prefs.deviceOverridesJson)
+        val mem = PortMappingMemoryCache.devices
+        if (mem.isNotEmpty()) {
+            mem.filter { it.ip.isNotBlank() }
+        } else {
+            val online = applyDeviceOverrides(parseDeviceArray(prefs.cacheOnlineDevices), overrides)
+            val all = applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), overrides)
+            (online + all).distinctBy { it.mac.ifBlank { "${it.name}-${it.ip}" } }.filter { it.ip.isNotBlank() }
+        }
+    }
+    var devices by remember { mutableStateOf(cachedDevices) }
+    var devicesLoading by remember { mutableStateOf(cachedDevices.isEmpty()) }
     var showDevicePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val template = stunTemplate(draft.serviceType)
@@ -521,14 +532,16 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     fun refreshDevices() {
         scope.launch {
             devicesLoading = true
-            // Match the IPv6 mapping picker: /api/devices defaults to watched
-            // devices, while the device page also includes the current online
-            // snapshot.  STUN targets must be able to select either source.
-            devices = runCatching { loadCanonicalPortMappingDevices(HubApi(prefs)) }.getOrDefault(devices)
+            val loaded = runCatching { loadCanonicalPortMappingDevices(HubApi(prefs)) }.getOrDefault(emptyList())
+            if (loaded.isNotEmpty()) {
+                devices = loaded
+                PortMappingMemoryCache.devices = loaded
+            }
             devicesLoading = false
         }
     }
     LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) { refreshDevices() }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(max = 680.dp),
@@ -706,9 +719,16 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 }
                 if (rows.isEmpty()) {
                     Column(Modifier.fillMaxWidth().heightIn(min = 150.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Text(if (loading) "正在读取终端列表" else "暂时没有可选终端", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                        if (loading) {
+                            CircularProgressIndicator(Modifier.size(24.dp), color = StunBlue, strokeWidth = 2.dp)
+                            Spacer(Modifier.height(10.dp))
+                            Text("正在读取终端列表…", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                        } else {
+                            Text("暂时没有可选终端", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                        }
                     }
                 } else {
+
                     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 470.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         items(rows, key = { it.mac.ifBlank { "${it.name}-${it.ip}" } }) { device ->
                             Surface(

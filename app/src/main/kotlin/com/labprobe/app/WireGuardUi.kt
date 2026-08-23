@@ -347,8 +347,12 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(6.dp))
             Text(if (syncing) "正在同步 Agent…" else "重新同步自动配置", style = LabTypography.CompactButton)
         }
+        if (message.isNotBlank()) Text(message, style = LabTypography.Caption.copy(color = if (message.contains("失败") || message.contains("不可用")) WireGuardRed else LabV2.InkMuted))
+    }
+
     if (showServerSettings) {
         WireGuardServerSettingsDialog(
+
             initial = serverConfig,
             onDismiss = { showServerSettings = false },
             onSave = { listenPort, mtu, address ->

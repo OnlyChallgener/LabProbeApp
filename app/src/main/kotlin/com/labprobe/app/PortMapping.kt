@@ -465,13 +465,32 @@ private object PortMappingMemoryCache {
  */
 internal suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceItem> = coroutineScope {
     val statusRequest = async { runCatching { api.getStatus() }.getOrNull() }
-    val watchedRequest = async { api.getDevices(false) }
-    val onlineRequest = async { api.getDevices(true) }
+    val watchedRequest = async { runCatching { api.getDevices(false) }.getOrDefault(emptyList()) }
+    val onlineRequest = async { runCatching { api.getDevices(true) }.getOrDefault(emptyList()) }
+    val syncSnapshotRequest = async { runCatching { api.sync(0L, 0L) }.getOrNull() }
+
     val status = statusRequest.await()
-    val watched = mergeIpv6NeighborsFromStatus(status, watchedRequest.await())
-    val online = mergeIpv6NeighborsFromStatus(status, onlineRequest.await())
-    mergeSharedDeviceState(watched, online)
+    val watchedList = watchedRequest.await()
+    val onlineList = onlineRequest.await()
+
+    val watched = mergeIpv6NeighborsFromStatus(status, watchedList)
+    val online = mergeIpv6NeighborsFromStatus(status, onlineList)
+    val merged = mergeSharedDeviceState(watched, online)
+    if (merged.isNotEmpty()) {
+        merged
+    } else {
+        val syncSnapshot = syncSnapshotRequest.await()
+        if (syncSnapshot != null) {
+            val syncWatched = mergeIpv6NeighborsFromStatus(status, syncSnapshot.watchedDevices)
+            val syncOnline = mergeIpv6NeighborsFromStatus(status, syncSnapshot.onlineDevices)
+            val syncMerged = mergeSharedDeviceState(syncWatched, syncOnline)
+            if (syncMerged.isNotEmpty()) syncMerged else syncSnapshot.offlineDevices
+        } else {
+            emptyList()
+        }
+    }
 }
+
 
 @Composable
 fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = false) {
