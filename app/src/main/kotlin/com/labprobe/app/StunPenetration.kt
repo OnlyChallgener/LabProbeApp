@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.History
@@ -243,7 +244,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     Surface(color = Color(0xFFF5F8FC), modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            CompactTopBar("STUN 穿透", onBack)
+            StunTopBar(onBack)
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(12.dp),
@@ -302,6 +303,18 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
             IconButton(onClick = onRefresh, enabled = !loading) { Icon(Icons.Rounded.Refresh, "刷新", tint = StunBlue) }
             Button(onClick = onAdd, contentPadding = PaddingValues(horizontal = 12.dp)) { Icon(Icons.Rounded.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("新建") }
+        }
+    }
+}
+
+@Composable private fun StunTopBar(onBack: () -> Unit) {
+    Surface(color = Color.White, shadowElevation = 1.dp) {
+        Row(
+            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "返回") }
+            Text("STUN 穿透", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -371,29 +384,60 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 @Composable private fun StunEditorDialog(initial: StunDraft, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
     var draft by remember(initial.id) { mutableStateOf(initial) }
     val template = stunTemplate(draft.serviceType)
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透") }, text = {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透") },
+        text = {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("服务", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PORT_MAP_SERVICE_TEMPLATES.take(5).forEach { item -> FilterChip(selected = draft.serviceType == item.serviceType, onClick = { draft = applyStunService(draft, item) }, label = { Text(item.label, fontSize = 11.sp) }) }
+                PORT_MAP_SERVICE_TEMPLATES.take(5).forEach { item ->
+                    FilterChip(selected = draft.serviceType == item.serviceType, onClick = { draft = applyStunService(draft, item) }, label = { Text(item.label, fontSize = 11.sp) })
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PORT_MAP_SERVICE_TEMPLATES.drop(5).forEach { item -> FilterChip(selected = draft.serviceType == item.serviceType, onClick = { draft = applyStunService(draft, item) }, label = { Text(item.label, fontSize = 11.sp) }) }
+                PORT_MAP_SERVICE_TEMPLATES.drop(5).forEach { item ->
+                    FilterChip(selected = draft.serviceType == item.serviceType, onClick = { draft = applyStunService(draft, item) }, label = { Text(item.label, fontSize = 11.sp) })
+                }
             }
-            if (template.protocols.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { template.protocols.sorted().forEach { protocol -> FilterChip(selected = draft.transportProtocol == protocol, onClick = { draft = draft.copy(transportProtocol = protocol) }, label = { Text(protocol) }) } }
+            if (template.protocols.size > 1) {
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    template.protocols.sorted().forEach { protocol ->
+                        FilterChip(selected = draft.transportProtocol == protocol, onClick = { draft = draft.copy(transportProtocol = protocol) }, label = { Text(protocol) })
+                    }
+                }
+            }
             OutlinedTextField(value = draft.targetIpv4, onValueChange = { draft = draft.copy(targetIpv4 = it) }, label = { Text("内网地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = draft.targetPort, onValueChange = { draft = draft.copy(targetPort = it.filter(Char::isDigit)) }, label = { Text("目标端口") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         }
-    }, confirmButton = { Button(onClick = { onSave(draft) }) { Text(if (draft.id.isBlank()) "开始穿透" else "保存") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+    },
+        confirmButton = { Button(onClick = { onSave(draft) }) { Text(if (draft.id.isBlank()) "开始穿透" else "保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable private fun StunAddressHistoryDialog(rule: StunRule, addresses: List<StunAddressRecord>, onDismiss: () -> Unit, onCopy: (String) -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("最近 STUN 地址") }, text = {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("最近 STUN 地址") },
+        text = {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text("仅保留最近 3 条；收藏页始终使用当前地址。", color = Color(0xFF718096), fontSize = 12.sp)
             val rows = addresses.ifEmpty { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { listOf(StunAddressRecord(it, rule.runtime.mappingUpdatedAt ?: 0L)) }.orEmpty() }
             if (rows.isEmpty()) Text("尚未获取到公网地址", color = Color(0xFF718096))
-            rows.take(3).forEach { row -> Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFF4F7FA), modifier = Modifier.fillMaxWidth().clickable { onCopy(row.endpoint) }) { Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(row.endpoint, fontWeight = FontWeight.SemiBold); Text(formatStunTime(row.updatedAt), color = Color(0xFF718096), fontSize = 11.sp) }; Icon(Icons.Rounded.ContentCopy, "复制", tint = StunBlue, modifier = Modifier.size(18.dp)) } }
+            rows.take(3).forEach { row ->
+                Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFF4F7FA), modifier = Modifier.fillMaxWidth().clickable { onCopy(row.endpoint) }) {
+                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(row.endpoint, fontWeight = FontWeight.SemiBold)
+                            Text(formatStunTime(row.updatedAt), color = Color(0xFF718096), fontSize = 11.sp)
+                        }
+                        Icon(Icons.Rounded.ContentCopy, "复制", tint = StunBlue, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
         }
-    }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+    },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
 }
