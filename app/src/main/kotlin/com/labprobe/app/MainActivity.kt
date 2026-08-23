@@ -5293,6 +5293,27 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
         reloadNetworkProfile(forceCarrier = true)
     }
 
+    Surface(
+        onClick = { open("ai_settings") },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFFF2FAFD),
+        border = BorderStroke(1.dp, LabV2.Cyan.copy(alpha = .32f)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LabV2ToolIcon(Icons.Rounded.SmartToy, LabV2.Cyan, size = 38, muted = true)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("AI 助手", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+                Text("对话、设备查询与确认操作", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
+            }
+            Icon(Icons.Rounded.ChevronRight, contentDescription = "打开 AI 助手", tint = LabV2.InkFaint)
+        }
+    }
+
     ToolStatusCard("网络状态", "本机接口 · 最近 NAT / 延迟结果", Icons.Rounded.Public, Color(0xFF2563EB)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("当前网络", fontSize = 13.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)

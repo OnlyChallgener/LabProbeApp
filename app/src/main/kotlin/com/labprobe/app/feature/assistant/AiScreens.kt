@@ -1,6 +1,7 @@
 package com.labprobe.app.feature.assistant
 
 import android.content.Context
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +28,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.labprobe.app.DetailShell
 import com.labprobe.app.LabTypography
 import com.labprobe.app.LabV2
@@ -55,8 +57,8 @@ fun AiPetEntry(onOpen: () -> Unit) {
     }
 }
 
-/** Small, edge-docked assistant entry. Vertical drag keeps it out of content while
- * the positive x offset leaves only a controlled edge peek instead of covering cards. */
+/** Small, edge-docked assistant entry. The first tap reveals the whole pet and the
+ * second opens the assistant. Vertical drag keeps its resting position user-controlled. */
 @Composable
 fun AiFloatingPet(onOpen: () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -65,6 +67,11 @@ fun AiFloatingPet(onOpen: () -> Unit) {
         val maxTravel = with(density) { (maxHeight - petSize - 24.dp).toPx().coerceAtLeast(0f) }
         var yPx by remember { mutableFloatStateOf(0f) }
         var initialized by remember { mutableStateOf(false) }
+        var expanded by remember { mutableStateOf(false) }
+        val xOffset by animateDpAsState(
+            targetValue = if (expanded) (-8).dp else 18.dp,
+            label = "assistant-pet-dock",
+        )
         LaunchedEffect(maxTravel) {
             if (!initialized) {
                 yPx = maxTravel * .36f
@@ -73,13 +80,22 @@ fun AiFloatingPet(onOpen: () -> Unit) {
                 yPx = yPx.coerceIn(0f, maxTravel)
             }
         }
+        LaunchedEffect(expanded) {
+            if (expanded) {
+                delay(4_000)
+                expanded = false
+            }
+        }
         val yDp = with(density) { yPx.coerceIn(0f, maxTravel).toDp() }
         Surface(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset(x = 8.dp, y = yDp)
+                .zIndex(20f)
+                .offset(x = xOffset, y = yDp)
                 .size(petSize)
-                .clickable(onClick = onOpen)
+                .clickable {
+                    if (expanded) onOpen() else expanded = true
+                }
                 .pointerInput(maxTravel) {
                     detectVerticalDragGestures(
                         onVerticalDrag = { change, dragAmount ->

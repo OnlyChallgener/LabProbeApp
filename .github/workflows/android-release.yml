@@ -95,6 +95,7 @@ jobs:
           fav = Path('app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt').read_text(encoding='utf-8')
           ui = Path('app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt').read_text(encoding='utf-8')
           secure = Path('app/src/main/kotlin/com/labprobe/app/SecureTokenStore.kt').read_text(encoding='utf-8')
+          assistant = Path('app/src/main/kotlin/com/labprobe/app/feature/assistant/AiScreens.kt').read_text(encoding='utf-8')
 
           required_main = [
               'diffie-hellman-group14-sha256,diffie-hellman-group14-sha1',
@@ -102,6 +103,8 @@ jobs:
               'AgentUpdateCoordinator.bind(prefs)',
               'setPrimaryClip(ClipData.newPlainText("极客网探", text))',
               'toast(ctx, "已复制")',
+              'AiFloatingPet { onNavigate("ai_settings") }',
+              'Text("AI 助手"',
           ]
           for needle in required_main:
               assert needle in main, f'missing MainActivity invariant: {needle}'
@@ -111,6 +114,8 @@ jobs:
           assert 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' in fav
           assert 'remoteEndpoint = wanUrl' in fav
           assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
+          assert 'fun AiFloatingPet(onOpen: () -> Unit)' in assistant
+          assert 'if (expanded) onOpen() else expanded = true' in assistant
           PY
           git diff --check
 
@@ -141,6 +146,22 @@ jobs:
           unzip -t "$APK" >/dev/null
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='${VERSION_CODE}' versionName='${VERSION_NAME}'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          apk = Path('app/build/outputs/apk/release/app-release.apk')
+          with ZipFile(apk) as archive:
+              dex = b''.join(
+                  archive.read(name)
+                  for name in archive.namelist()
+                  if name.startswith('classes') and name.endswith('.dex')
+              )
+
+          for marker in (b'AiFloatingPet', b'AiSettingsScreen', b'ai_settings', b'deepseek-v4-flash'):
+              assert marker in dex, f'AI assistant missing from packaged APK: {marker.decode()}'
+          print('AI assistant package verification passed.')
+          PY
           sha256sum "$APK"
 
       - uses: actions/upload-artifact@v4
