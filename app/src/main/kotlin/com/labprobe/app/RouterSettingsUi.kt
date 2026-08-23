@@ -134,6 +134,13 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 enabled = capabilities.nativePortMapping || capabilities.upnp
             ) { onOpen("tool_portmap") }
             RouterSettingsTile(
+                title = "STUN 穿透",
+                subtitle = "内网服务公网地址 · 自动联动 Hub 防火墙",
+                icon = Icons.Rounded.Public,
+                color = SettingsCyan,
+                enabled = capabilities.configured
+            ) { onOpen("tool_stun") }
+            RouterSettingsTile(
                 title = "防火墙",
                 subtitle = "入站、出站与转发规则",
                 icon = Icons.Rounded.Security,

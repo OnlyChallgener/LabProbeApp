@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -71,6 +72,7 @@ data class FavoriteShortcut(
     val order: Int,
     val type: String = "manual",
     val mappingId: String? = null,
+    val stunRuleId: String? = null,
     val ddnsRecordId: String? = null,
     val deviceId: String? = null,
     val localEndpoint: String = "",
@@ -78,8 +80,11 @@ data class FavoriteShortcut(
     val serviceType: String = "",
 )
 
-private fun normalizeFavoriteType(value: String?): String =
-    if (value?.trim()?.equals("mapping", ignoreCase = true) == true) "mapping" else "manual"
+private fun normalizeFavoriteType(value: String?): String = when {
+    value?.trim()?.equals("mapping", ignoreCase = true) == true -> "mapping"
+    value?.trim()?.equals("stun", ignoreCase = true) == true -> "stun"
+    else -> "manual"
+}
 
 private fun optionalFavoriteId(value: String?): String? = value?.trim()?.takeIf { it.isNotBlank() }
 
@@ -101,6 +106,7 @@ internal fun parseFavoriteShortcutsJson(raw: String): List<FavoriteShortcut> {
             order = item.optInt("order", index),
             type = normalizeFavoriteType(item.optString("type", "manual")),
             mappingId = if (item.has("mappingId") && !item.isNull("mappingId")) optionalFavoriteId(item.optString("mappingId")) else null,
+            stunRuleId = if (item.has("stunRuleId") && !item.isNull("stunRuleId")) optionalFavoriteId(item.optString("stunRuleId")) else null,
             ddnsRecordId = if (item.has("ddnsRecordId") && !item.isNull("ddnsRecordId")) optionalFavoriteId(item.optString("ddnsRecordId")) else null,
             deviceId = if (item.has("deviceId") && !item.isNull("deviceId")) optionalFavoriteId(item.optString("deviceId")) else null,
             localEndpoint = item.optString("localEndpoint").trim(),
@@ -124,6 +130,7 @@ internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): Stri
             .put("order", index)
             .put("type", normalizeFavoriteType(item.type))
         optionalFavoriteId(item.mappingId)?.let { json.put("mappingId", it) }
+        optionalFavoriteId(item.stunRuleId)?.let { json.put("stunRuleId", it) }
         optionalFavoriteId(item.ddnsRecordId)?.let { json.put("ddnsRecordId", it) }
         optionalFavoriteId(item.deviceId)?.let { json.put("deviceId", it) }
         item.localEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("localEndpoint", it) }
@@ -304,6 +311,47 @@ internal fun upsertMappingFavorite(
     }
     prefs.saveFavoriteShortcuts(current.mapIndexed { order, item -> item.copy(order = order) })
     return saved
+}
+
+/** A STUN shortcut is system-owned: it always follows the Relay's latest public endpoint. */
+internal fun upsertStunFavorite(prefs: AppPrefs, rule: StunRule): FavoriteShortcut? {
+    if (!rule.ready || rule.runtime.publicEndpoint.isBlank()) return null
+    val current = prefs.favoriteShortcuts().toMutableList()
+    val index = current.indexOfFirst { it.stunRuleId == rule.id }
+    val scheme = favoriteServiceScheme(rule.serviceType)
+    val local = "$scheme://${rule.targetIpv4}:${rule.targetPort}"
+    val remote = "$scheme://${rule.runtime.publicEndpoint}"
+    val generated = FavoriteShortcut(
+        id = "stun-${rule.id}",
+        title = rule.name.ifBlank { "STUN ${rule.serviceType}" },
+        description = "STUN 穿透 · ${rule.serviceType}",
+        iconType = "builtin",
+        iconValue = "server",
+        lanUrl = local,
+        wanUrl = remote,
+        order = if (index >= 0) current[index].order else current.size,
+        type = "stun",
+        stunRuleId = rule.id,
+        localEndpoint = local,
+        remoteEndpoint = remote,
+        serviceType = rule.serviceType,
+    )
+    val saved = if (index >= 0) {
+        current[index] = generated
+        generated
+    } else {
+        current += generated
+        generated
+    }
+    prefs.saveFavoriteShortcuts(current.mapIndexed { order, item -> item.copy(order = order) })
+    return saved
+}
+
+internal fun removeStunFavorite(prefs: AppPrefs, ruleId: String): Int {
+    val current = prefs.favoriteShortcuts()
+    val updated = current.filterNot { it.stunRuleId == ruleId }
+    if (updated.size != current.size) prefs.saveFavoriteShortcuts(updated.mapIndexed { order, item -> item.copy(order = order) })
+    return current.size - updated.size
 }
 
 internal fun resolveFavoriteLocalEndpoint(
@@ -497,6 +545,7 @@ private data class FavoriteDraft(
     val wanUrl: String = "",
     val type: String = "manual",
     val mappingId: String? = null,
+    val stunRuleId: String? = null,
     val ddnsRecordId: String? = null,
     val deviceId: String? = null,
     val localEndpoint: String = "",
@@ -719,6 +768,7 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
     var mappingRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
+    val stunApi = remember(prefs.hub, prefs.token, prefs.hubDns) { StunApi(prefs) }
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val ddnsSnapshot = ddnsResource.value
@@ -739,6 +789,13 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
     LaunchedEffect(syncVersion) {
         if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
         mappingRules = PortMappingRuleStore.load(context, prefs).rules
+    }
+    LaunchedEffect(stunApi) {
+        while (true) {
+            runCatching { stunApi.list() }.getOrNull()?.rules?.filter { it.ready }?.forEach { upsertStunFavorite(prefs, it) }
+            shortcuts = prefs.favoriteShortcuts()
+            delay(5_000)
+        }
     }
 
     fun persist(items: List<FavoriteShortcut>) {
@@ -1138,6 +1195,7 @@ private fun FavoriteEditorSheet(
                     wanUrl = it.wanUrl,
                     type = it.type,
                     mappingId = it.mappingId,
+                    stunRuleId = it.stunRuleId,
                     ddnsRecordId = it.ddnsRecordId,
                     deviceId = it.deviceId,
                     localEndpoint = it.localEndpoint.ifBlank { it.lanUrl },
@@ -1384,6 +1442,7 @@ private fun FavoriteEditorSheet(
                                 order = existing?.order ?: 0,
                                 type = normalizeFavoriteType(draft.type),
                                 mappingId = draft.mappingId,
+                                stunRuleId = draft.stunRuleId,
                                 ddnsRecordId = draft.ddnsRecordId,
                                 deviceId = draft.deviceId,
                                 localEndpoint = lan,
