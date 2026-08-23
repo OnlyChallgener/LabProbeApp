@@ -386,7 +386,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 @Composable private fun StunRuleCard(rule: StunRule, menuOpen: Boolean, onMenu: () -> Unit, onCopy: () -> Unit, onHistory: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
     val stateText = when {
         !rule.enabled -> "已停止"
-        rule.ready -> "运行中"
+        rule.ready -> "公网地址已获取"
         rule.actualState == "router_mapping_error" -> "路由器映射未就绪"
         rule.actualState == "router_mapping" -> "正在同步路由器映射"
         rule.actualState == "firewall_error" -> "防火墙未就绪"
