@@ -205,14 +205,14 @@ v<versionName>-build<versionCode>
 例如源码是：
 
 ```kotlin
-versionCode = 200
-versionName = "0.10.45"
+versionCode = 201
+versionName = "0.10.46"
 ```
 
 对应 Tag：
 
 ```text
-v0.10.45-build200
+v0.10.46-build201
 ```
 
 Release Workflow 会验证：

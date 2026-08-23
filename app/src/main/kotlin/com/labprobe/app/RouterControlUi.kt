@@ -48,6 +48,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.labprobe.app.feature.router.firewall.FirewallAutomationBinding
@@ -368,7 +369,16 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { CompactToolbar("路由器原生映射", "${rules.size} 条 · IPv4 NAT", false, { scope.launch { repository.refreshPortMappings(false) } }, { adding = true }) }
+        item {
+            CompactToolbar(
+                title = "路由器原生映射",
+                subtitle = "${rules.size} 条 · IPv4 NAT",
+                loading = resource.refreshing,
+                onRefresh = { scope.launch { repository.refreshPortMappings(false) } },
+                onAdd = { adding = true },
+                actionTouchSize = 44.dp,
+            )
+        }
         if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
         if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
         if (resource.value == null) item { CompactMessage("端口映射正在后台预加载，页面无需等待", RouterBlue) }
@@ -408,6 +418,8 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
 private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDelete: () -> Unit) {
     var menu by remember(rule.ruleName) { mutableStateOf(false) }
     val shape = LabCoreSurface.CompactShape
+    val protocol = rule.proto.uppercase(Locale.ROOT)
+    val protocolColor = if (protocol == "UDP") RouterCyan else RouterBlue
     Surface(
         onClick = onEdit,
         modifier = Modifier.fillMaxWidth(),
@@ -421,18 +433,18 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.size(38.dp).background(RouterBlue.copy(alpha = .10f), LabCoreSurface.InnerShape), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.CompareArrows, null, Modifier.size(20.dp), tint = RouterBlue)
+                Icon(Icons.Rounded.CompareArrows, "端口映射", Modifier.size(20.dp), tint = RouterBlue)
             }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(rule.ruleName, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    TinyBadge(rule.proto.uppercase(), RouterBlue)
+                    TinyBadge(protocol, protocolColor)
                 }
-                Text("WAN ${rule.srcPort}  →  ${rule.destIp}:${rule.destPort}", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                NativePortRouteSummary(rule)
             }
             Box {
-                IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, null, Modifier.size(17.dp), tint = RouterMuted) }
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(17.dp), tint = RouterMuted) }
                 DropdownMenu(
                     expanded = menu,
                     onDismissRequest = { menu = false },
@@ -446,6 +458,25 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NativePortRouteSummary(rule: NativePortMapRule) {
+    val sourcePort = rule.srcPort.ifBlank { "--" }
+    val destinationIp = rule.destIp.ifBlank { "--" }
+    val destinationPort = rule.destPort.takeIf { it.isNotBlank() }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("外网", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
+        Spacer(Modifier.width(3.dp))
+        Text("WAN:$sourcePort", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1)
+        Spacer(Modifier.width(5.dp))
+        Icon(Icons.Rounded.ArrowForward, null, Modifier.size(14.dp), tint = RouterMuted)
+        Spacer(Modifier.width(5.dp))
+        Text("内网", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
+        Spacer(Modifier.width(3.dp))
+        Text(destinationIp, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        destinationPort?.let { Text(":$it", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1) }
     }
 }
 
@@ -1661,18 +1692,81 @@ private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,topBarCo
 }
 
 @Composable
-private fun CompactToolbar(title:String,subtitle:String,loading:Boolean,onRefresh:(()->Unit)?,onAdd:(()->Unit)?){
-    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-        Column(Modifier.weight(1f)){Text(title,fontSize = LabTypography.Value.fontSize,fontWeight=FontWeight.SemiBold,color=RouterInk);Text(subtitle,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)}
-        if(onRefresh!=null) Surface(
-            onClick = onRefresh,
-            modifier = Modifier.size(36.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = LabCoreSurface.Card,
-            border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
-            shadowElevation = 1.dp
-        ) { Box(contentAlignment = Alignment.Center) { if(loading)CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)else Icon(Icons.Rounded.Refresh,null,Modifier.size(18.dp),tint=RouterBlue) } }
-        if(onAdd!=null) Surface(onClick=onAdd,shape=RoundedCornerShape(12.dp),color=RouterBlue,modifier=Modifier.size(36.dp),shadowElevation=2.dp){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(19.dp))}}
+private fun CompactToolbar(
+    title: String,
+    subtitle: String,
+    loading: Boolean,
+    onRefresh: (() -> Unit)?,
+    onAdd: (() -> Unit)?,
+    actionTouchSize: Dp = 36.dp,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
+            Text(subtitle, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+        }
+        if (onRefresh != null) {
+            CompactToolbarAction(
+                contentDescription = "刷新",
+                onClick = onRefresh,
+                enabled = !loading,
+                touchSize = actionTouchSize,
+                primary = false,
+                loading = loading,
+            )
+        }
+        if (onAdd != null) {
+            CompactToolbarAction(
+                contentDescription = "新增端口映射",
+                onClick = onAdd,
+                enabled = true,
+                touchSize = actionTouchSize,
+                primary = true,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactToolbarAction(
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    touchSize: Dp,
+    primary: Boolean,
+    loading: Boolean = false,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(touchSize),
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Surface(
+                modifier = Modifier.size(36.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = if (primary) RouterBlue else LabCoreSurface.Card,
+                border = if (primary) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
+                shadowElevation = if (primary) 2.dp else 1.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (loading) {
+                        CircularProgressIndicator(Modifier.size(16.dp), color = RouterBlue, strokeWidth = 2.dp)
+                    } else {
+                        Icon(
+                            if (primary) Icons.Rounded.Add else Icons.Rounded.Refresh,
+                            contentDescription,
+                            Modifier.size(if (primary) 19.dp else 18.dp),
+                            tint = if (primary) Color.White else RouterBlue,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
