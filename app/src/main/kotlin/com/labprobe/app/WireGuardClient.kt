@@ -22,6 +22,7 @@ import java.util.UUID
  * makes it impossible for the two automatic updaters to overwrite one config.
  */
 enum class WireGuardEndpointSource(val wireValue: String, val displayName: String) {
+    MANUAL("manual", "我的手动配置"),
     DDNS("ddns", "DDNS 固定端口"),
     STUN("stun", "STUN 动态地址");
 
@@ -99,7 +100,11 @@ data class WireGuardProfile(
 
         fun newProfile(source: WireGuardEndpointSource): WireGuardProfile = WireGuardProfile(
             id = "wg-${source.wireValue}-${UUID.randomUUID().toString().take(8)}",
-            name = if (source == WireGuardEndpointSource.DDNS) "家庭 WireGuard（DDNS）" else "家庭 WireGuard（STUN）",
+            name = when (source) {
+                WireGuardEndpointSource.MANUAL -> "我的 WireGuard"
+                WireGuardEndpointSource.DDNS -> "家庭 WireGuard（DDNS）"
+                WireGuardEndpointSource.STUN -> "家庭 WireGuard（STUN）"
+            },
             endpointSource = source,
             endpointHost = "",
         )
@@ -145,7 +150,7 @@ internal fun canApplyWireGuardEndpointUpdate(
     profile: WireGuardProfile,
     source: WireGuardEndpointSource,
     incomingEndpointRevision: Long,
-): Boolean = profile.endpointSource == source &&
+): Boolean = source != WireGuardEndpointSource.MANUAL && profile.endpointSource == source &&
     (incomingEndpointRevision <= 0L || incomingEndpointRevision > profile.endpointRevision)
 
 internal fun wireGuardProfileError(profile: WireGuardProfile, privateKey: String): String = when {
@@ -211,7 +216,9 @@ class WireGuardProfileStore(context: Context, private val prefs: AppPrefs) {
         now: Long = System.currentTimeMillis(),
     ): WireGuardProfile? {
         val existing = load().firstOrNull { it.id == profileId } ?: return null
-        if (!canApplyWireGuardEndpointUpdate(existing, source, endpointRevision)) return if (existing.endpointSource == source) existing else null
+        if (!canApplyWireGuardEndpointUpdate(existing, source, endpointRevision)) {
+            return if (source != WireGuardEndpointSource.MANUAL && existing.endpointSource == source) existing else null
+        }
         val parsed = parseWireGuardEndpoint(endpoint, existing.endpointPort) ?: return null
         val updated = existing.copy(
             endpointHost = parsed.first,

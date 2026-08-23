@@ -25,6 +25,19 @@ class WireGuardClientTest {
     }
 
     @Test
+    fun manualProfilesAreNeverEligibleForAutomaticEndpointUpdates() {
+        val manual = WireGuardProfile(
+            id = "manual",
+            name = "我的配置",
+            endpointSource = WireGuardEndpointSource.MANUAL,
+            endpointHost = "vpn.example.com",
+        )
+        assertFalse(canApplyWireGuardEndpointUpdate(manual, WireGuardEndpointSource.DDNS, 1))
+        assertFalse(canApplyWireGuardEndpointUpdate(manual, WireGuardEndpointSource.STUN, 1))
+        assertFalse(canApplyWireGuardEndpointUpdate(manual, WireGuardEndpointSource.MANUAL, 1))
+    }
+
+    @Test
     fun configRevisionAndEndpointRevisionStayIndependent() {
         val profile = WireGuardProfile(
             id = "stun",
