@@ -31,6 +31,7 @@ import com.labprobe.app.DetailShell
 import com.labprobe.app.LabTypography
 import com.labprobe.app.LabV2
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @Composable
 fun AiPetEntry(onOpen: () -> Unit) {
@@ -219,6 +220,19 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
             .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以帮你查看 Hub 状态、解释网络数据。") }
         loadingHistory = false
         runCatching { client.catalog() }.onSuccess { toolHints = it }
+    }
+    LaunchedEffect(Unit) {
+        while (loadingHistory) delay(100)
+        while (true) {
+            runCatching { client.notifications(store.lastNotificationId()) }
+                .onSuccess { rows ->
+                    rows.forEach { notification ->
+                        messages += AiMessage("assistant", "${notification.title}\n${notification.content}")
+                    }
+                    rows.maxOfOrNull { it.id }?.let(store::saveLastNotificationId)
+                }
+            delay(15_000)
+        }
     }
     Column(
         Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp),

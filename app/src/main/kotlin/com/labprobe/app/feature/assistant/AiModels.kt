@@ -37,6 +37,13 @@ data class AiToolConfirmation(
     val expiresAt: String,
 )
 
+data class AiNotification(
+    val id: Int,
+    val kind: String,
+    val title: String,
+    val content: String,
+)
+
 data class AiUsageSummary(
     val requests: Int = 0,
     val promptTokens: Int = 0,

@@ -34,6 +34,10 @@ class AiSettingsStore(context: Context) {
     }
 
     fun deleteKey() = prefs.edit().putBoolean("has_key", false).apply()
+
+    fun lastNotificationId(): Int = prefs.getInt("last_notification_id", 0).coerceAtLeast(0)
+
+    fun saveLastNotificationId(value: Int) = prefs.edit().putInt("last_notification_id", value.coerceAtLeast(0)).apply()
 }
 
 class AiApiClient(
@@ -139,6 +143,26 @@ class AiApiClient(
                         name = item.optString("name", example),
                         example = example,
                         risk = item.optString("risk", "read"),
+                    ))
+                }
+            }
+        }
+    }
+
+    suspend fun notifications(afterId: Int): List<AiNotification> = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/notifications?after=${afterId.coerceAtLeast(0)}", "GET", null).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            val rows = JSONObject(text).optJSONArray("notifications") ?: JSONArray()
+            buildList {
+                for (index in 0 until rows.length()) {
+                    val item = rows.optJSONObject(index) ?: continue
+                    add(AiNotification(
+                        id = item.optInt("id"),
+                        kind = item.optString("kind"),
+                        title = item.optString("title"),
+                        content = item.optString("content"),
                     ))
                 }
             }
