@@ -89,6 +89,28 @@ class AiApiClient(
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
             val root = JSONObject(text)
+            val recentRoot = root.optJSONArray("recent") ?: JSONArray()
+            val recent = buildList {
+                for (index in 0 until recentRoot.length()) {
+                    val item = recentRoot.optJSONObject(index) ?: continue
+                    add(AiUsageRecord(
+                        id = item.optInt("id"),
+                        conversationId = item.optString("conversation_id"),
+                        provider = item.optString("provider"),
+                        model = item.optString("model"),
+                        promptTokens = item.optInt("prompt_tokens"),
+                        completionTokens = item.optInt("completion_tokens"),
+                        totalTokens = item.optInt("total_tokens"),
+                        status = item.optString("status", "completed"),
+                        usageKnown = when (val known = item.opt("usage_known")) {
+                            is Boolean -> known
+                            is Number -> known.toInt() != 0
+                            else -> known?.toString()?.toBooleanStrictOrNull() ?: true
+                        },
+                        createdAt = item.optString("created_at"),
+                    ))
+                }
+            }
             AiUsageSummary(
                 requests = root.optInt("requests", 0),
                 promptTokens = root.optInt("prompt_tokens", 0),
@@ -96,6 +118,64 @@ class AiApiClient(
                 totalTokens = root.optInt("total_tokens", 0),
                 todayRequests = root.optInt("today_requests", 0),
                 todayTotalTokens = root.optInt("today_total_tokens", 0),
+                recent = recent,
+            )
+        }
+    }
+
+    suspend fun wechatStatus(): WeChatBridgeStatus = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/wechat/status", "GET", null).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            val root = JSONObject(text)
+            WeChatBridgeStatus(
+                available = root.optBoolean("available"),
+                version = root.optString("version"),
+                pluginInstalled = root.optBoolean("pluginInstalled"),
+                connected = root.optBoolean("connected"),
+                notificationTargetConfigured = root.optBoolean("notificationTargetConfigured"),
+                message = root.optString("message", "状态未知"),
+                installCommand = root.optString("installCommand", "npx -y @tencent-weixin/openclaw-weixin-cli install"),
+            )
+        }
+    }
+
+    suspend fun installWechatPlugin(): String = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val body = JSONObject().put("confirmation", "INSTALL_OPENCLAW_WEIXIN").toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/wechat/install", "POST", body).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(JSONObject(text).optString("error", "HTTP ${response.code}"))
+            JSONObject(text).optString("message", "插件安装完成")
+        }
+    }
+
+    suspend fun startWechatLogin(): WeChatLoginSession = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/wechat/login/start", "POST", "{}").use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(JSONObject(text).optString("error", "HTTP ${response.code}"))
+            val root = JSONObject(text)
+            WeChatLoginSession(
+                loginId = root.getString("loginId"),
+                qrContent = root.getString("qrContent"),
+                expiresInSeconds = root.optInt("expiresInSeconds", 300),
+                message = root.optString("message", "请扫码并确认"),
+            )
+        }
+    }
+
+    suspend fun waitWechatLogin(loginId: String): WeChatLoginState = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("loginId", loginId).toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/wechat/login/wait", "POST", body).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(JSONObject(text).optString("error", "HTTP ${response.code}"))
+            val root = JSONObject(text)
+            WeChatLoginState(
+                connected = root.optBoolean("connected"),
+                alreadyConnected = root.optBoolean("alreadyConnected"),
+                message = root.optString("message", "等待扫码确认"),
             )
         }
     }

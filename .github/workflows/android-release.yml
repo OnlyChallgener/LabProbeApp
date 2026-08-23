@@ -106,6 +106,7 @@ jobs:
               'AiFloatingPet { onNavigate("ai_settings") }',
               'Text("AI 助手"',
               '"配置 DeepSeek API"',
+              'AiWechatScreen(context, onBack = { route = "ai_settings" })',
           ]
           for needle in required_main:
               assert needle in main, f'missing MainActivity invariant: {needle}'
@@ -159,7 +160,7 @@ jobs:
                   if name.startswith('classes') and name.endswith('.dex')
               )
 
-          for marker in (b'AiFloatingPet', b'AiSettingsScreen', b'ai_settings', b'deepseek-v4-flash'):
+          for marker in (b'AiFloatingPet', b'AiSettingsScreen', b'AiWechatScreen', b'ai_settings', b'deepseek-v4-flash'):
               assert marker in dex, f'AI assistant missing from packaged APK: {marker.decode()}'
           print('AI assistant package verification passed.')
           PY

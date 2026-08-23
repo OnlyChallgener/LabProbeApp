@@ -7,7 +7,12 @@ data class AiSettings(
     val hasApiKey: Boolean = false
 )
 
-data class AiMessage(val role: String, val content: String, val createdAt: Long = System.currentTimeMillis())
+data class AiMessage(
+    val role: String,
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val qrContent: String? = null,
+)
 
 data class AiTokenSummary(val prompt: Int = 0, val completion: Int = 0) {
     val total: Int get() = prompt + completion
@@ -51,6 +56,43 @@ data class AiUsageSummary(
     val totalTokens: Int = 0,
     val todayRequests: Int = 0,
     val todayTotalTokens: Int = 0,
+    val recent: List<AiUsageRecord> = emptyList(),
+)
+
+data class AiUsageRecord(
+    val id: Int,
+    val conversationId: String,
+    val provider: String,
+    val model: String,
+    val promptTokens: Int,
+    val completionTokens: Int,
+    val totalTokens: Int,
+    val status: String,
+    val usageKnown: Boolean,
+    val createdAt: String,
+)
+
+data class WeChatBridgeStatus(
+    val available: Boolean = false,
+    val version: String = "",
+    val pluginInstalled: Boolean = false,
+    val connected: Boolean = false,
+    val notificationTargetConfigured: Boolean = false,
+    val message: String = "正在检查",
+    val installCommand: String = "npx -y @tencent-weixin/openclaw-weixin-cli install",
+)
+
+data class WeChatLoginSession(
+    val loginId: String,
+    val qrContent: String,
+    val expiresInSeconds: Int,
+    val message: String,
+)
+
+data class WeChatLoginState(
+    val connected: Boolean,
+    val alreadyConnected: Boolean,
+    val message: String,
 )
 
 sealed class AiConnectionState {

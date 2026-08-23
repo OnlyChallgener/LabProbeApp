@@ -1,8 +1,10 @@
 package com.labprobe.app.feature.assistant
 
 import android.content.Context
+import android.graphics.Bitmap
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -12,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -23,6 +26,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -32,6 +36,8 @@ import androidx.compose.ui.zIndex
 import com.labprobe.app.DetailShell
 import com.labprobe.app.LabTypography
 import com.labprobe.app.LabV2
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.MultiFormatWriter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
@@ -126,7 +132,7 @@ fun AiFloatingPet(onOpen: () -> Unit) {
 }
 
 @Composable
-fun AiSettingsScreen(context: Context, hubUrl: String, hubToken: String, onBack: () -> Unit, onChat: () -> Unit, onUsage: () -> Unit) {
+fun AiSettingsScreen(context: Context, hubUrl: String, hubToken: String, onBack: () -> Unit, onChat: () -> Unit, onUsage: () -> Unit, onWechat: () -> Unit) {
     val store = remember { AiSettingsStore(context) }
     var settings by remember { mutableStateOf(store.read()) }
     var model by remember { mutableStateOf(settings.model) }
@@ -180,9 +186,131 @@ fun AiSettingsScreen(context: Context, hubUrl: String, hubToken: String, onBack:
                 }) { Text("删除 API Key", color = LabV2.Red) }
                 Button(onClick = onChat, enabled = settings.enabled, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Chat, null); Spacer(Modifier.width(6.dp)); Text("打开对话") }
                 OutlinedButton(onClick = onUsage, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.DataUsage, null); Spacer(Modifier.width(6.dp)); Text("查看 Token 用量") }
+                OutlinedButton(onClick = onWechat, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Forum, null); Spacer(Modifier.width(6.dp)); Text("接入微信 ClawBot") }
             }
         }
     }
+}
+
+@Composable
+fun AiWechatScreen(context: Context, onBack: () -> Unit) {
+    val store = remember { AiSettingsStore(context) }
+    val appPrefs = remember { com.labprobe.app.AppPrefs(context) }
+    val client = remember { AiApiClient(store, appPrefs.hub, appPrefs.token) }
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf(WeChatBridgeStatus()) }
+    var loading by remember { mutableStateOf(true) }
+    var installing by remember { mutableStateOf(false) }
+    var showInstallConfirm by remember { mutableStateOf(false) }
+    var login by remember { mutableStateOf<WeChatLoginSession?>(null) }
+    var message by remember { mutableStateOf("正在检查 OpenClaw") }
+
+    suspend fun refresh() {
+        runCatching { client.wechatStatus() }
+            .onSuccess { status = it; message = it.message }
+            .onFailure { message = it.message ?: "状态读取失败" }
+        loading = false
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(login?.loginId) {
+        val current = login ?: return@LaunchedEffect
+        while (login?.loginId == current.loginId) {
+            val result = runCatching { client.waitWechatLogin(current.loginId) }
+                .onFailure { message = it.message ?: "扫码状态读取失败" }
+                .getOrNull() ?: break
+            message = result.message
+            if (result.connected || result.alreadyConnected) {
+                login = null
+                refresh()
+                break
+            }
+            delay(1_000)
+        }
+    }
+
+    if (showInstallConfirm) AlertDialog(
+        onDismissRequest = { if (!installing) showInstallConfirm = false },
+        title = { Text("安装微信插件") },
+        text = { Text("将在 OpenClaw 主机安装腾讯维护的微信插件、启用独立私聊会话并安全重启 Gateway。微信仍需你本人扫码确认。") },
+        confirmButton = {
+            Button(enabled = !installing, onClick = {
+                installing = true
+                scope.launch {
+                    runCatching { client.installWechatPlugin() }
+                        .onSuccess { message = it; showInstallConfirm = false; refresh() }
+                        .onFailure { message = it.message ?: "安装失败" }
+                    installing = false
+                }
+            }) { Text(if (installing) "正在安装" else "确认安装") }
+        },
+        dismissButton = { TextButton(enabled = !installing, onClick = { showInstallConfirm = false }) { Text("取消") } },
+    )
+
+    DetailShell("微信 ClawBot", "OpenClaw 官方微信通道", onBack) {
+        Surface(shape = LabV2.CardShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Forum, null, tint = if (status.connected) LabV2.Green else LabV2.Cyan)
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (status.connected) "微信已连接" else "微信连接", style = LabTypography.CardTitle)
+                        Text(message, style = LabTypography.Supporting)
+                    }
+                    if (loading || installing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                }
+                if (status.version.isNotBlank()) Text("OpenClaw ${status.version}", style = LabTypography.Caption)
+                if (status.connected) Text(
+                    if (status.notificationTargetConfigured) "每日记录与关注设备事件将同步推送到微信" else "微信对话已连接；如需主动推送，请在 Hub 配置 WECHAT_NOTIFY_TO",
+                    style = LabTypography.Caption,
+                )
+                if (!status.available) {
+                    Text("请先在运行 OpenClaw Gateway 的主机执行官方命令：", style = LabTypography.Body)
+                    Surface(shape = RoundedCornerShape(10.dp), color = LabV2.FieldSoft) {
+                        SelectionContainer { Text(status.installCommand, Modifier.padding(10.dp), style = LabTypography.Caption) }
+                    }
+                    Text("Hub 不会保存微信 bot token；扫码凭证只保存在 OpenClaw 状态目录。", style = LabTypography.Caption)
+                } else if (!status.pluginInstalled) {
+                    Button(onClick = { showInstallConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("安装腾讯微信插件") }
+                } else if (login == null) {
+                    Button(onClick = {
+                        loading = true
+                        scope.launch {
+                            runCatching { client.startWechatLogin() }
+                                .onSuccess { login = it; message = it.message }
+                                .onFailure { message = it.message ?: "二维码生成失败" }
+                            loading = false
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) { Text(if (status.connected) "重新扫码连接" else "生成微信二维码") }
+                }
+                OutlinedButton(onClick = { loading = true; scope.launch { refresh() } }, modifier = Modifier.fillMaxWidth()) { Text("刷新状态") }
+            }
+        }
+        login?.let { session ->
+            Surface(shape = LabV2.CardShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("使用手机微信扫码", style = LabTypography.CardTitle)
+                    WeChatQrCode(session.qrContent)
+                    Text("二维码约 ${session.expiresInSeconds / 60} 分钟有效；扫码后请在微信中确认。", style = LabTypography.Caption)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeChatQrCode(content: String) {
+    val image = remember(content) {
+        val size = 720
+        val matrix = MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
+        val pixels = IntArray(size * size) { index ->
+            if (matrix[index % size, index / size]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+        }
+        Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels, 0, size, 0, 0, size, size)
+        }.asImageBitmap()
+    }
+    Image(image, contentDescription = "微信扫码二维码", modifier = Modifier.size(250.dp).clip(RoundedCornerShape(14.dp)))
 }
 
 @Composable
@@ -208,8 +336,37 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 Text("输入 ${summary.promptTokens} · 输出 ${summary.completionTokens}", style = LabTypography.Supporting)
             }
         }
+        Surface(shape = LabV2.CardShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("最近单次任务", style = LabTypography.CardTitle)
+                if (summary.recent.isEmpty()) {
+                    Text("暂无任务记录", style = LabTypography.Supporting)
+                } else {
+                    summary.recent.forEachIndexed { index, record ->
+                        if (index > 0) Divider()
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(record.model.ifBlank { record.provider.ifBlank { "AI 请求" } }, style = LabTypography.Body)
+                                Text(formatAiUsageTime(record.createdAt), style = LabTypography.Caption)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(if (record.usageKnown) "${record.totalTokens} Token" else "用量未知", style = LabTypography.Body)
+                                Text("输入 ${record.promptTokens} · 输出 ${record.completionTokens}", style = LabTypography.Caption)
+                                if (record.status != "completed") Text("失败", color = LabV2.Red, style = LabTypography.Caption)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
+
+private fun formatAiUsageTime(value: String): String = runCatching {
+    java.time.OffsetDateTime.parse(value)
+        .atZoneSameInstant(java.time.ZoneId.of("Asia/Shanghai"))
+        .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss"))
+}.getOrElse { value.replace('T', ' ').removeSuffix("Z").take(19) }
 
 @Composable
 fun AiChatScreen(context: Context, onBack: () -> Unit) {
@@ -220,12 +377,23 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
     val messages = remember { mutableStateListOf<AiMessage>() }
     var toolHints by remember { mutableStateOf<List<AiToolHint>>(emptyList()) }
     var pendingConfirmation by remember { mutableStateOf<AiToolConfirmation?>(null) }
+    var pendingWechatInstall by remember { mutableStateOf(false) }
+    var wechatLoginId by remember { mutableStateOf<String?>(null) }
     var conversationId by remember { mutableStateOf<String?>(null) }
     var loadingHistory by remember { mutableStateOf(true) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var usage by remember { mutableStateOf(AiTokenSummary()) }
     val scope = rememberCoroutineScope()
+    suspend fun beginWechatLogin() {
+        val session = client.startWechatLogin()
+        wechatLoginId = session.loginId
+        messages += AiMessage(
+            role = "assistant",
+            content = session.message + "\n此连接操作未调用 AI，不消耗 Token。",
+            qrContent = session.qrContent,
+        )
+    }
     LaunchedEffect(Unit) {
         runCatching { client.latestConversation() }
             .onSuccess { (id, history) ->
@@ -236,6 +404,20 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
             .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以帮你查看 Hub 状态、解释网络数据。") }
         loadingHistory = false
         runCatching { client.catalog() }.onSuccess { toolHints = it }
+    }
+    LaunchedEffect(wechatLoginId) {
+        val loginId = wechatLoginId ?: return@LaunchedEffect
+        while (wechatLoginId == loginId) {
+            val result = runCatching { client.waitWechatLogin(loginId) }
+                .onFailure { messages += AiMessage("assistant", "微信扫码状态读取失败：${it.message ?: "未知错误"}") }
+                .getOrNull() ?: break
+            if (result.connected || result.alreadyConnected) {
+                messages += AiMessage("assistant", result.message)
+                wechatLoginId = null
+                break
+            }
+            delay(1_000)
+        }
     }
     LaunchedEffect(Unit) {
         while (loadingHistory) delay(100)
@@ -276,7 +458,34 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
                     }
                 }
             }
-            items(messages) { message -> Surface(shape = RoundedCornerShape(14.dp), color = if (message.role == "user") LabV2.Primary.copy(alpha = .1f) else Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border), modifier = Modifier.fillMaxWidth()) { Text(message.content, Modifier.padding(12.dp), style = LabTypography.Body) } }
+            items(messages) { message ->
+                Surface(shape = RoundedCornerShape(14.dp), color = if (message.role == "user") LabV2.Primary.copy(alpha = .1f) else Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp), horizontalAlignment = if (message.qrContent != null) Alignment.CenterHorizontally else Alignment.Start) {
+                        Text(message.content, Modifier.fillMaxWidth(), style = LabTypography.Body)
+                        message.qrContent?.let { WeChatQrCode(it) }
+                    }
+                }
+            }
+        }
+        if (pendingWechatInstall) {
+            Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF8E8), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF3C969))) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("确认安装腾讯微信插件", style = LabTypography.CardTitle)
+                    Text("将在 OpenClaw 主机安装官方插件并安全重启 Gateway；随后生成二维码，仍需你本人微信扫码确认。", style = LabTypography.Body)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { pendingWechatInstall = false }, enabled = !sending, modifier = Modifier.weight(1f)) { Text("取消") }
+                        Button(onClick = {
+                            sending = true
+                            scope.launch {
+                                runCatching { client.installWechatPlugin(); beginWechatLogin() }
+                                    .onSuccess { pendingWechatInstall = false }
+                                    .onFailure { messages += AiMessage("assistant", "微信插件安装失败：${it.message ?: "未知错误"}") }
+                                sending = false
+                            }
+                        }, enabled = !sending, modifier = Modifier.weight(1f)) { Text("确认安装") }
+                    }
+                }
+            }
         }
         pendingConfirmation?.let { confirmation ->
             Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF8E8), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF3C969))) {
@@ -308,10 +517,41 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
                 }
             }
         }
-        Text("Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）", style = LabTypography.Caption)
+        Text("本次任务 Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）", style = LabTypography.Caption)
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(input, { input = it }, Modifier.weight(1f), placeholder = { Text("输入消息…") }, maxLines = 4)
-            IconButton(enabled = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null, onClick = { val text = input.trim(); input = ""; messages += AiMessage("user", text); sending = true; scope.launch { runCatching { client.chat(messages.toList(), conversationId) }.onSuccess { conversationId = it.conversationId ?: conversationId; messages += AiMessage("assistant", it.content); usage = it.usage; pendingConfirmation = it.confirmation }.onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }; sending = false } }) { Icon(Icons.Rounded.Send, "发送", tint = LabV2.Primary) }
+            IconButton(enabled = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null && !pendingWechatInstall, onClick = {
+                val text = input.trim()
+                input = ""
+                messages += AiMessage("user", text)
+                sending = true
+                scope.launch {
+                    if (isWechatConnectIntent(text)) {
+                        runCatching { client.wechatStatus() }
+                            .onSuccess { wechat ->
+                                when {
+                                    !wechat.available -> messages += AiMessage("assistant", "OpenClaw 尚未安装。请在 Gateway 主机执行：\n${wechat.installCommand}")
+                                    !wechat.pluginInstalled -> pendingWechatInstall = true
+                                    else -> runCatching { beginWechatLogin() }
+                                        .onFailure { messages += AiMessage("assistant", "二维码生成失败：${it.message ?: "未知错误"}") }
+                                }
+                            }
+                            .onFailure { messages += AiMessage("assistant", "微信连接状态读取失败：${it.message ?: "未知错误"}") }
+                    } else {
+                        runCatching { client.chat(messages.toList(), conversationId) }
+                            .onSuccess { conversationId = it.conversationId ?: conversationId; messages += AiMessage("assistant", it.content); usage = it.usage; pendingConfirmation = it.confirmation }
+                            .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
+                    }
+                    sending = false
+                }
+            }) { Icon(Icons.Rounded.Send, "发送", tint = LabV2.Primary) }
         }
     }
+}
+
+private fun isWechatConnectIntent(text: String): Boolean {
+    val value = text.trim().lowercase()
+    val mentionsWechat = listOf("微信", "wechat", "clawbot", "openclaw").any(value::contains)
+    val asksToConnect = listOf("接入", "连接", "绑定", "扫码", "二维码", "配置").any(value::contains)
+    return mentionsWechat && asksToConnect
 }

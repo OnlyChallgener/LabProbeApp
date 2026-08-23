@@ -8,6 +8,7 @@ import com.labprobe.app.feature.assistant.AiFloatingPet
 import com.labprobe.app.feature.assistant.AiSettingsScreen
 import com.labprobe.app.feature.assistant.AiChatScreen
 import com.labprobe.app.feature.assistant.AiUsageScreen
+import com.labprobe.app.feature.assistant.AiWechatScreen
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1954,7 +1955,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
             route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
-            route == "ai_settings" || route == "ai_chat" || route == "ai_usage" -> "home"
+            route == "ai_settings" || route == "ai_chat" || route == "ai_usage" || route == "ai_wechat" -> "home"
             else -> route
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
@@ -1969,7 +1970,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             if (target == "ai_settings") aiReturnRoute = if (route in mainRoutes) route else normalized
             route = target
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage" || route == "ai_wechat") {
             route = when (route) {
                 "daily" -> dailyReturnRoute
                 "health_score" -> "home"
@@ -1983,6 +1984,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                 "ai_settings" -> aiReturnRoute
                 "ai_chat" -> "ai_settings"
                 "ai_usage" -> "ai_settings"
+                "ai_wechat" -> "ai_settings"
                 "tool_nat_history" -> "tool_nat"
                 "tool_ssh_history" -> "tool_ssh"
                 else -> toolReturnRoute ?: "tools"
@@ -2075,9 +2077,10 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onBack = { route = settingsReturnRoute },
                             onOpenAi = { aiReturnRoute = "settings"; route = "ai_settings" },
                         )
-                        "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = aiReturnRoute }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
+                        "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = aiReturnRoute }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" }, onWechat = { route = "ai_wechat" })
                         "ai_chat" -> AiChatScreen(context, onBack = { route = "ai_settings" })
                         "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
+                        "ai_wechat" -> AiWechatScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
                         "tool_port" -> PortProbeScreen(prefs, backFromTool)
