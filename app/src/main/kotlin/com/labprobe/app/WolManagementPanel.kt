@@ -72,26 +72,26 @@ fun WolManagementPanel(state: AppState) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         CompactListCard {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).clip(RoundedCornerShape(14.dp)).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), LabV2.Cyan.copy(alpha = .22f), LabV2.Cyan.copy(alpha = .07f)))), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Power, null, Modifier.size(19.dp), tint = LabV2.Cyan)
-                }
+                LabV2ToolIcon(Icons.Rounded.Power, LabV2.Primary, size = 36)
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text("WOL 设备", fontSize = 14.5.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                     Text("已添加 ${state.wolDevices.size} 台 · 启用 $enabledCount", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                 }
-                Button(
+                Surface(
                     onClick = { showAdd = true },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                    shape = CircleShape,
+                    color = LabV2.Primary,
+                    modifier = Modifier.size(34.dp),
+                    shadowElevation = 2.dp,
                 ) {
-                    Icon(Icons.Rounded.Add, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("添加", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Add, "添加 WOL 设备", tint = Color.White, modifier = Modifier.size(19.dp))
+                    }
                 }
             }
         }
+
         if (runtimes.isEmpty()) {
             CompactListCard { Text("暂无 WOL 设备，点右上角添加。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .48f), fontSize = 11.sp) }
         } else {

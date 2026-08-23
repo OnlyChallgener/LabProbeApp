@@ -41,6 +41,7 @@ data class WireGuardProfile(
     /** DDNS hostname or current STUN IPv4/IPv6 host; never combines host and port. */
     val endpointHost: String,
     val endpointPort: Int = DEFAULT_WIREGUARD_PORT,
+    val mtu: Int = DEFAULT_WIREGUARD_MTU,
     val interfaceAddresses: List<String> = listOf("10.77.0.2/32"),
     val dnsServers: List<String> = emptyList(),
     val serverPublicKey: String = "",
@@ -66,6 +67,7 @@ data class WireGuardProfile(
         put("endpointSource", endpointSource.wireValue)
         put("endpointHost", endpointHost)
         put("endpointPort", endpointPort)
+        put("mtu", mtu)
         put("interfaceAddresses", JSONArray(interfaceAddresses))
         put("dnsServers", JSONArray(dnsServers))
         put("serverPublicKey", serverPublicKey)
@@ -87,6 +89,7 @@ data class WireGuardProfile(
                 endpointSource = WireGuardEndpointSource.fromWireValue(value.optString("endpointSource")),
                 endpointHost = value.optString("endpointHost").trim(),
                 endpointPort = value.optInt("endpointPort", DEFAULT_WIREGUARD_PORT).coerceIn(1, 65535),
+                mtu = value.optInt("mtu", DEFAULT_WIREGUARD_MTU).coerceIn(1280, 1500),
                 interfaceAddresses = jsonStringList(value.optJSONArray("interfaceAddresses")).ifEmpty { listOf("10.77.0.2/32") },
                 dnsServers = jsonStringList(value.optJSONArray("dnsServers")),
                 serverPublicKey = value.optString("serverPublicKey").trim(),
@@ -119,7 +122,9 @@ data class WireGuardProfile(
 }
 
 const val DEFAULT_WIREGUARD_PORT = 51820
+const val DEFAULT_WIREGUARD_MTU = 1420
 const val DEFAULT_WIREGUARD_KEEPALIVE = 25
+
 
 private fun jsonStringList(array: JSONArray?): List<String> = buildList {
     if (array == null) return@buildList
@@ -259,6 +264,18 @@ class WireGuardProfileStore(context: Context, private val prefs: AppPrefs) {
         save(load().filterNot { it.id == updated.id } + updated)
         return updated
     }
+
+    fun applyServerConfig(listenPort: Int, mtu: Int) {
+        val current = load()
+        val updated = current.map { p ->
+            if (p.endpointSource == WireGuardEndpointSource.DDNS) {
+                p.copy(endpointPort = listenPort, mtu = mtu)
+            } else {
+                p.copy(mtu = mtu)
+            }
+        }
+        save(updated)
+    }
 }
 
 internal fun wireGuardPublicKey(privateKey: String): String = runCatching {
@@ -278,6 +295,7 @@ internal fun wireGuardQuickConfig(profile: WireGuardProfile, privateKey: String)
         appendLine("[Interface]")
         appendLine("PrivateKey = $safe")
         appendLine("Address = ${lines(profile.interfaceAddresses)}")
+        appendLine("MTU = ${profile.mtu.coerceIn(1280, 1500)}")
         profile.dnsServers.takeIf { it.isNotEmpty() }?.let { appendLine("DNS = ${lines(it)}") }
         appendLine()
         appendLine("[Peer]")
@@ -287,6 +305,7 @@ internal fun wireGuardQuickConfig(profile: WireGuardProfile, privateKey: String)
         if (profile.persistentKeepalive > 0) appendLine("PersistentKeepalive = ${profile.persistentKeepalive}")
     }
 }
+
 
 
 private class LabProbeTunnel(private val profileId: String) : Tunnel {
@@ -538,11 +557,52 @@ internal fun findRouterLanIpv4(vararg roots: JSONObject?): String {
     return roots.asSequence().flatMap { candidates(it).asSequence() }.map(::valid).firstOrNull { it.isNotBlank() }.orEmpty()
 }
 
+data class WireGuardServerConfig(
+    val listenPort: Int = DEFAULT_WIREGUARD_PORT,
+    val mtu: Int = DEFAULT_WIREGUARD_MTU,
+    val address: String = "10.77.0.1/24",
+    val serverPublicKey: String = "",
+    val revision: Long = 0L,
+)
+
 /** Real Hub/Agent control plane. Manual profiles intentionally never enter this class. */
 class WireGuardHubApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
 
     private fun getServer(): JSONObject = JSONObject(hubApi.requestText("/api/wireguard/server"))
+
+    suspend fun loadServerConfig(): WireGuardServerConfig = withContext(Dispatchers.IO) {
+        val root = getServer()
+        val server = root.optJSONObject("server")
+        val agentStatus = root.optJSONObject("agentStatus")
+        val serverPublicKey = agentStatus?.optString("publicKey").orEmpty().ifBlank {
+            server?.optString("serverPublicKey").orEmpty()
+        }
+        WireGuardServerConfig(
+            listenPort = server?.optInt("listenPort", DEFAULT_WIREGUARD_PORT) ?: DEFAULT_WIREGUARD_PORT,
+            mtu = server?.optInt("mtu", DEFAULT_WIREGUARD_MTU) ?: DEFAULT_WIREGUARD_MTU,
+            address = server?.optString("address", "10.77.0.1/24")?.ifBlank { "10.77.0.1/24" } ?: "10.77.0.1/24",
+            serverPublicKey = serverPublicKey,
+            revision = root.optLong("revision", 0L),
+        )
+    }
+
+    suspend fun updateServerConfig(listenPort: Int, mtu: Int, address: String = "10.77.0.1/24"): WireGuardServerConfig = withContext(Dispatchers.IO) {
+        val payload = JSONObject().apply {
+            put("listenPort", listenPort.coerceIn(1, 65535))
+            put("mtu", mtu.coerceIn(1280, 1500))
+            put("address", address.trim().ifBlank { "10.77.0.1/24" })
+        }
+        val saved = JSONObject(hubApi.requestText("/api/wireguard/server", "POST", payload.toString()))
+        val server = saved.optJSONObject("server")
+        WireGuardServerConfig(
+            listenPort = server?.optInt("listenPort", listenPort) ?: listenPort,
+            mtu = server?.optInt("mtu", mtu) ?: mtu,
+            address = server?.optString("address", address) ?: address,
+            revision = saved.optLong("revision", 0L),
+        )
+    }
+
 
     suspend fun ensureStunBinding(profile: WireGuardProfile): String = withContext(Dispatchers.IO) {
         require(profile.endpointSource == WireGuardEndpointSource.STUN)

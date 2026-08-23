@@ -628,7 +628,9 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val automationResource by automationRepository.state.collectAsState()
     val state = resource.value ?: FirewallState()
     val scope = repository.commandScope
-    var direction by remember { mutableStateOf("forward") }
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
+    val directions = listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站")
+    val currentDirection = directions[pagerState.currentPage].first
     var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<FirewallRule?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -637,8 +639,8 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var followTargets by remember { mutableStateOf(FirewallAutomationTargets()) }
     var followTargetsLoading by remember { mutableStateOf(false) }
     val bindings = automationResource.bindings.associateBy { it.firewallUuid }
-    val visible = state.rules.filter { it.direction == direction }
     val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
+
 
     LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
     LaunchedEffect(followRule?.uuid) {
@@ -692,7 +694,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     if (adding || editing != null) {
         FirewallEditorPage(
-            initial = editing ?: FirewallRule(direction = direction, inIface = if (direction == "outbound") "" else "wan", outIface = if (direction == "inbound") "" else "lan"),
+            initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else "wan", outIface = if (currentDirection == "inbound") "" else "lan"),
             managedByMapping = editing?.let { bindings.containsKey(it.uuid) } == true,
             onBack = { adding = false; editing = null },
             onSave = { rule -> scope.launch {
@@ -705,40 +707,61 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("防火墙", onBack, "${state.rules.count { it.enabled }} 条启用 · ${state.rules.size}/${state.maxRules}") }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站").forEach { (value, label) -> CompactSegment(label, direction == value, Modifier.weight(1f)) { direction = value } }
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                directions.forEachIndexed { index, (_, label) ->
+                    CompactSegment(label, pagerState.currentPage == index, Modifier.weight(1f)) {
+                        scope.launch { pagerState.animateScrollToPage(index) }
+                    }
                 }
             }
-            item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
-                    Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(19.dp)) } }
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val dir = directions[page].first
+                val visible = state.rules.filter { it.direction == dir }
+                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                            Spacer(Modifier.weight(1f))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) {
+                                    Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
+                                }
+                                Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+                    if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
+                    if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
+                    if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${directions[page].second}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
+                    items(visible, key = { it.uuid }) { rule ->
+                        FirewallRuleCard(
+                            rule,
+                            binding = bindings[rule.uuid],
+                            onOpen = { editing = rule },
+                            onFollow = { followRule = rule },
+                            onToggle = { scope.launch {
+                                repository.setFirewallEnabled(rule.uuid, !rule.enabled)
+                                    .onSuccess { actionError = "" }
+                                    .onFailure { actionError = it.message.orEmpty() }
+                            } },
+                            onDelete = { deleteTarget = rule }
+                        )
+                    }
+                    item { Spacer(Modifier.height(12.dp)) }
                 }
-            }
-            if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
-            if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
-            if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
-            if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${when(direction){"inbound"->"入站";"outbound"->"出站";else->"转发"}}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
-            items(visible, key = { it.uuid }) { rule ->
-                FirewallRuleCard(
-                    rule,
-                    binding = bindings[rule.uuid],
-                    onOpen = { editing = rule },
-                    onFollow = { followRule = rule },
-                    onToggle = { scope.launch {
-                        repository.setFirewallEnabled(rule.uuid, !rule.enabled)
-                            .onSuccess { actionError = "" }
-                            .onFailure { actionError = it.message.orEmpty() }
-                    } },
-                    onDelete = { deleteTarget = rule }
-                )
             }
         }
     }
+
     deleteTarget?.let { rule ->
         ConfirmDialog("删除防火墙规则？", "删除“${rule.ruleName}”可能立即影响远程访问。", "删除", {
             scope.launch {
@@ -852,25 +875,38 @@ private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean,
 
 @Composable
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    var area by rememberSaveable { mutableIntStateOf(0) }
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
+    val scope = rememberCoroutineScope()
     Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, "LabProbe DDNS · 路由器原生 DDNS · 证书监控") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                CompactSegment("LabProbe DDNS", area == 0, Modifier.weight(1f)) { area = 0 }
-                CompactSegment("路由器原生 DDNS", area == 1, Modifier.weight(1f)) { area = 1 }
-                CompactSegment("证书监控", area == 2, Modifier.weight(1f)) { area = 2 }
-            }
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (area) {
-                    0 -> LabProbeDdnsSection(prefs)
-                    1 -> DdnsRecordsSection(prefs)
-                    else -> CertificateExpirySection(prefs)
+                CompactSegment("LabProbe DDNS", pagerState.currentPage == 0, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(0) }
                 }
-                Spacer(Modifier.height(12.dp))
+                CompactSegment("路由器原生 DDNS", pagerState.currentPage == 1, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(1) }
+                }
+                CompactSegment("证书监控", pagerState.currentPage == 2, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(2) }
+                }
+            }
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (page) {
+                        0 -> LabProbeDdnsSection(prefs)
+                        1 -> DdnsRecordsSection(prefs)
+                        else -> CertificateExpirySection(prefs)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
             }
         }
     }
 }
+
 
 private val labProbeProviderIds = listOf("alidns", "dnspod", "cloudflare", "dynv6", "duckdns", "desec", "dynu", "ipv64")
 
@@ -1705,70 +1741,37 @@ private fun CompactToolbar(
             Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
             Text(subtitle, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         }
-        if (onRefresh != null) {
-            CompactToolbarAction(
-                contentDescription = "刷新",
-                onClick = onRefresh,
-                enabled = !loading,
-                touchSize = actionTouchSize,
-                primary = false,
-                loading = loading,
-            )
-        }
-        if (onAdd != null) {
-            CompactToolbarAction(
-                contentDescription = "新增端口映射",
-                onClick = onAdd,
-                enabled = true,
-                touchSize = actionTouchSize,
-                primary = true,
-            )
-        }
-    }
-}
-
-@Composable
-private fun CompactToolbarAction(
-    contentDescription: String,
-    onClick: () -> Unit,
-    enabled: Boolean,
-    touchSize: Dp,
-    primary: Boolean,
-    loading: Boolean = false,
-) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.size(touchSize),
-        shape = RoundedCornerShape(14.dp),
-        color = Color.Transparent,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.size(36.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = if (primary) RouterBlue else LabCoreSurface.Card,
-                border = if (primary) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
-                shadowElevation = if (primary) 2.dp else 1.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (onRefresh != null) {
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !loading,
+                    modifier = Modifier.size(34.dp)
+                ) {
                     if (loading) {
                         CircularProgressIndicator(Modifier.size(16.dp), color = RouterBlue, strokeWidth = 2.dp)
                     } else {
-                        Icon(
-                            if (primary) Icons.Rounded.Add else Icons.Rounded.Refresh,
-                            contentDescription,
-                            Modifier.size(if (primary) 19.dp else 18.dp),
-                            tint = if (primary) Color.White else RouterBlue,
-                        )
+                        Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
+                    }
+                }
+            }
+            if (onAdd != null) {
+                Surface(
+                    onClick = onAdd,
+                    shape = CircleShape,
+                    color = RouterBlue,
+                    modifier = Modifier.size(35.dp),
+                    shadowElevation = 2.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp))
                     }
                 }
             }
         }
     }
 }
+
 
 @Composable
 private fun PremiumCard(accent:Color,modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit){

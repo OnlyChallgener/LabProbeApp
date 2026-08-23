@@ -2171,6 +2171,7 @@ fun DetailShell(
     compactHeader: Boolean = false,
     unifiedTypography: Boolean = false,
     showHeader: Boolean = true,
+    action: (@Composable RowScope.() -> Unit)? = null,
     sectionGap: Dp = LabV2.SectionGap,
     titleStyleOverride: androidx.compose.ui.text.TextStyle? = null,
     subtitleStyleOverride: androidx.compose.ui.text.TextStyle? = null,
@@ -2188,6 +2189,7 @@ fun DetailShell(
                 title = title,
                 subtitle = subtitle,
                 onBack = onBack,
+                action = action,
                 compactTitle = compactHeader,
                 titleStyle = titleStyleOverride ?: LabTypography.PageTitle.takeIf { unifiedTypography },
                 subtitleStyle = subtitleStyleOverride ?: LabTypography.Supporting.takeIf { unifiedTypography }
@@ -2196,6 +2198,7 @@ fun DetailShell(
         content()
         Spacer(Modifier.height(2.dp))
     }
+
 }
 
 @Composable

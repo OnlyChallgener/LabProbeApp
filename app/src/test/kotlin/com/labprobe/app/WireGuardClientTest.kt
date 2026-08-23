@@ -67,13 +67,16 @@ class WireGuardClientTest {
         )
         val config = wireGuardQuickConfig(profile, "client-private-key")
         assertTrue(config.contains("192.168.5.0/24"))
+        assertTrue(config.contains("MTU = 1420"))
         assertFalse(config.contains("0.0.0.0/0"))
 
-        val fullTunnel = profile.copy(allowedIps = listOf("0.0.0.0/0", "::/0"))
+        val fullTunnel = profile.copy(allowedIps = listOf("0.0.0.0/0", "::/0"), mtu = 1380)
         val fullConfig = wireGuardQuickConfig(fullTunnel, "client-private-key")
         assertTrue(fullConfig.contains("AllowedIPs = 0.0.0.0/0, ::/0"))
+        assertTrue(fullConfig.contains("MTU = 1380"))
         assertEquals("", wireGuardProfileError(fullTunnel, "client-private-key"))
     }
+
 
 
     @Test

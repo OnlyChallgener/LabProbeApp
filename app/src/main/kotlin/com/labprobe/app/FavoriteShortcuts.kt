@@ -1323,8 +1323,8 @@ private fun FavoriteEditorSheet(
             IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(18.dp), tint = LabV2.InkMuted) }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FavoriteInlineField("名称", draft.title, { draft = draft.copy(title = it) }, "Home Assistant", Modifier.weight(1f), readOnly = webhookManaged)
-            FavoriteInlineField("描述", draft.description, { draft = draft.copy(description = it) }, "简短说明", Modifier.weight(1f))
+            FavoriteInlineField("名称", draft.title, { draft = draft.copy(title = it) }, "Home Assistant", Modifier.weight(1f), labelWidth = 48.dp, readOnly = webhookManaged)
+            FavoriteInlineField("描述", draft.description, { draft = draft.copy(description = it) }, "简短说明", Modifier.weight(1f), labelWidth = 28.dp)
         }
         Row(Modifier.fillMaxWidth()) {
             FavoriteInlineField("内网地址", draft.localEndpoint, { draft = draft.copy(localEndpoint = it) }, "192.168.5.10:8123", Modifier.weight(1f), uri = true)
@@ -1332,14 +1332,14 @@ private fun FavoriteEditorSheet(
         Row(Modifier.fillMaxWidth()) {
             FavoriteInlineField("外网地址", draft.remoteEndpoint, { draft = draft.copy(remoteEndpoint = it) }, "example.com/be72", Modifier.weight(1f), uri = true)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth()) {
             FavoriteInlineField("服务类型", draft.serviceType, { draft = draft.copy(serviceType = it) }, "例如：HTTPS", Modifier.weight(1f))
         }
         if (selectableLabProbeDdns.any { it.hostname.isNotBlank() } || selectableNativeDdns.isNotEmpty()) {
             val selectedDdns = ddnsRecords.firstOrNull { it.id == draft.ddnsRecordId }
             val selectedRouterDdns = routerDdnsRecord(draft.ddnsRecordId, nativeDdnsRecords)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("关联 DDNS", modifier = Modifier.width(48.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("关联", modifier = Modifier.width(48.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
                 Box(Modifier.weight(1f)) {
                     OutlinedButton(
                         onClick = { ddnsMenu = true },
@@ -1495,9 +1495,18 @@ private fun FavoriteEditorSheet(
 }
 
 @Composable
-private fun RowScope.FavoriteInlineField(label: String, value: String, onValueChange: (String) -> Unit, placeholder: String, modifier: Modifier, uri: Boolean = false, readOnly: Boolean = false) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(label, modifier = Modifier.width(if (label.length > 2) 48.dp else 28.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+private fun RowScope.FavoriteInlineField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier,
+    labelWidth: Dp = 48.dp,
+    uri: Boolean = false,
+    readOnly: Boolean = false
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, modifier = Modifier.width(labelWidth), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
         CompactTextField(
             value = value,
             onValueChange = onValueChange,
@@ -1508,6 +1517,7 @@ private fun RowScope.FavoriteInlineField(label: String, value: String, onValueCh
         )
     }
 }
+
 
 private suspend fun copyFavoriteImage(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {
     val mime = context.contentResolver.getType(uri).orEmpty().lowercase()

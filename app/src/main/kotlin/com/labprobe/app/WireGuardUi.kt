@@ -93,6 +93,12 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var message by remember { mutableStateOf("") }
     var syncing by remember { mutableStateOf(false) }
     var stunRules by remember { mutableStateOf<List<StunRule>>(emptyList()) }
+    var serverConfig by remember { mutableStateOf(WireGuardServerConfig()) }
+    var showServerSettings by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        runCatching { wireGuardHubApi.loadServerConfig() }.onSuccess { serverConfig = it }
+    }
 
     fun reload() { profiles = store.load() }
     suspend fun provisionManaged(original: WireGuardProfile, announce: Boolean = true): WireGuardProfile {
@@ -135,7 +141,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         message = "${profile.name} 已启动"
                         runtime = controller.status()
                     }
-                    is WireGuardStartResult.PermissionRequired -> message = "系统尚未授予 VPN 权限"
+                    is WireGuardStartResult.PermissionRequired -> message = "系统尚未授予 VPN权限"
                     is WireGuardStartResult.Failed -> message = result.message
                 }
             }
@@ -245,7 +251,36 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 "MVP 仅路由家庭内网网段；不会接管全部手机流量。切换配置时官方 WireGuard 后端会短暂重连。",
                 style = LabTypography.Caption.copy(color = LabV2.InkMuted),
             )
+            Surface(
+                color = LabCoreSurface.Inner,
+                shape = LabCoreSurface.InnerShape,
+                border = BorderStroke(1.dp, LabCoreSurface.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.Settings, null, Modifier.size(16.dp), tint = LabV2.InkMuted)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "网关参数: 端口 ${serverConfig.listenPort} · MTU ${serverConfig.mtu} · ${serverConfig.address}",
+                        style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    TextButton(
+                        onClick = { showServerSettings = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("修改", style = LabTypography.CompactButton.copy(color = LabV2.Primary))
+                    }
+                }
+            }
         }
+
 
         val duplicateServerKeyIds = profiles.filter { it.serverPublicKey.isNotBlank() }
             .groupBy { it.serverPublicKey }
@@ -312,7 +347,27 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(6.dp))
             Text(if (syncing) "正在同步 Agent…" else "重新同步自动配置", style = LabTypography.CompactButton)
         }
-        if (message.isNotBlank()) Text(message, style = LabTypography.Caption.copy(color = if (message.contains("失败") || message.contains("不可用")) WireGuardRed else LabV2.InkMuted))
+    if (showServerSettings) {
+        WireGuardServerSettingsDialog(
+            initial = serverConfig,
+            onDismiss = { showServerSettings = false },
+            onSave = { listenPort, mtu, address ->
+                scope.launch {
+                    syncing = true
+                    runCatching {
+                        val updated = wireGuardHubApi.updateServerConfig(listenPort, mtu, address)
+                        store.applyServerConfig(listenPort, mtu)
+                        serverConfig = updated
+                        reload()
+                        showServerSettings = false
+                        message = "网关参数已更新（端口 $listenPort · MTU $mtu），已同步至 Agent 并应用到全部客户端配置"
+                    }.onFailure {
+                        message = "更新网关参数失败：${it.message.orEmpty()}"
+                    }
+                    syncing = false
+                }
+            }
+        )
     }
 
     editor?.let { profile ->
@@ -402,7 +457,7 @@ private fun WireGuardProfileCard(
             LabV2ToolIcon(if (profile.endpointSource == WireGuardEndpointSource.STUN) Icons.Rounded.Key else Icons.Rounded.Public, accent, size = 34)
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(profile.name, style = LabTypography.CardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(profile.name, style = LabTypography.CardTitle.copy(fontSize = 14.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(profile.endpointSource.displayName, style = LabTypography.Caption.copy(color = accent), fontWeight = FontWeight.SemiBold)
             }
             if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = if (isHandshaked) WireGuardGreen else WireGuardAmber, modifier = Modifier.size(20.dp))
@@ -413,6 +468,7 @@ private fun WireGuardProfileCard(
                 shape = LabCoreSurface.InnerShape,
                 border = BorderStroke(1.dp, if (isHandshaked) WireGuardGreen.copy(alpha = .24f) else WireGuardAmber.copy(alpha = .24f)),
             ) {
+
                 Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         if (isHandshaked) "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)})" else "正在握手 (等待服务端响应…)",
@@ -602,7 +658,7 @@ private fun WireGuardEditorDialog(
                             onClick = {
                                 if (isFullTunnel) allowedIps = "10.77.0.0/24, 192.168.5.0/24"
                             },
-                            label = { Text("内网分流 (推荐)") },
+                            label = { Text("内网分流 (推荐)", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                             colors = FilterChipDefaults.filterChipColors(selectedContainerColor = WireGuardBlue.copy(alpha = .12f), selectedLabelColor = LabV2.Ink),
                         )
@@ -611,11 +667,12 @@ private fun WireGuardEditorDialog(
                             onClick = {
                                 allowedIps = "0.0.0.0/0, ::/0"
                             },
-                            label = { Text("全局代理 (0.0.0.0/0)") },
+                            label = { Text("全局代理 (0.0.0.0/0)", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                             colors = FilterChipDefaults.filterChipColors(selectedContainerColor = WireGuardAmber.copy(alpha = .14f), selectedLabelColor = LabV2.Ink),
                         )
                     }
+
                 }
                 WireGuardField(allowedIps, { allowedIps = it }, if (isFullTunnel) "路由网段（全局接管：0.0.0.0/0, ::/0）" else "路由网段，例如 10.77.0.0/24, 192.168.5.0/24")
                 WireGuardField(dns, { dns = it }, "隧道 DNS（可选）")
@@ -702,4 +759,61 @@ private fun copyWireGuard(context: Context, label: String, value: String) {
     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(label, value))
     toast(context, "已复制$label")
 }
+
+@Composable
+private fun WireGuardServerSettingsDialog(
+    initial: WireGuardServerConfig,
+    onDismiss: () -> Unit,
+    onSave: (listenPort: Int, mtu: Int, address: String) -> Unit,
+) {
+    var port by remember { mutableStateOf(initial.listenPort.toString()) }
+    var mtu by remember { mutableStateOf(initial.mtu.toString()) }
+    var address by remember { mutableStateOf(initial.address) }
+    var error by remember { mutableStateOf("") }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("WireGuard 网关设置", style = LabTypography.CardTitle)
+                Text(
+                    "配置 Agent 服务端监听端口与 MTU，保存后会自动同步到路由器内核与防火墙，并统一应用到所有客户端配置。",
+                    style = LabTypography.Caption.copy(color = LabV2.InkMuted)
+                )
+                WireGuardField(port, { port = it.filter(Char::isDigit) }, "服务端监听端口（默认 51820）", KeyboardType.Number)
+                WireGuardField(mtu, { mtu = it.filter(Char::isDigit) }, "接口 MTU（默认 1420，推荐 1280~1500）", KeyboardType.Number)
+                WireGuardField(address, { address = it }, "服务端虚拟网段（默认 10.77.0.1/24）")
+                if (error.isNotBlank()) Text(error, style = LabTypography.Caption.copy(color = WireGuardRed))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = LabCoreSurface.InnerShape) {
+                        Text("取消", style = LabTypography.Button)
+                    }
+                    Button(
+                        onClick = {
+                            val portInt = port.toIntOrNull()
+                            val mtuInt = mtu.toIntOrNull()
+                            when {
+                                portInt == null || portInt !in 1..65535 -> error = "端口必须在 1~65535 之间"
+                                mtuInt == null || mtuInt !in 1280..1500 -> error = "MTU 必须在 1280~1500 之间"
+                                address.isBlank() -> error = "请填写服务端虚拟网段"
+                                else -> {
+                                    error = ""
+                                    onSave(portInt, mtuInt, address)
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1.3f),
+                        colors = ButtonDefaults.buttonColors(containerColor = WireGuardBlue),
+                        shape = LabCoreSurface.InnerShape
+                    ) {
+                        Text("保存并同步", style = LabTypography.Button)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
