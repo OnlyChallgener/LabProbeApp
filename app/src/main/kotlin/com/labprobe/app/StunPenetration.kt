@@ -147,7 +147,7 @@ private fun parseStunRule(json: JSONObject): StunRule {
         serviceType = cleanApiText(json.optString("serviceType", "Custom")).ifBlank { "Custom" },
         transportProtocol = cleanApiText(json.optString("transportProtocol", "TCP")).uppercase(Locale.ROOT),
         forwardMode = cleanApiText(json.optString("forwardMode")).ifBlank {
-            if (cleanApiText(json.optString("transportProtocol", "TCP")).equals("TCP", true)) "router_native" else "relay_proxy"
+            "router_native"
         },
         actualState = cleanApiText(json.optString("actualState", runtime.optString("state", "stopped"))),
         firewallState = cleanApiText(json.optString("firewallState", "pending")),
@@ -349,7 +349,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("内网服务 STUN 穿透", style = LabTypography.SectionTitle)
-                val presenceText = if (agentOnline) "Agent 在线 · TCP 路由器直连，UDP 由 LabRelay 转发" else "Agent 状态暂未同步 · 设置可直接创建"
+                val presenceText = if (agentOnline) "Agent 在线 · 路由器原生映射，Agent 自动保活" else "Agent 状态暂未同步 · 设置可直接创建"
                 Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (agentLastSeenAt.isNotBlank() && !agentOnline) {
                     Text("最近上报 $agentLastSeenAt", style = LabTypography.Caption, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -386,7 +386,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 @Composable private fun StunRuleCard(rule: StunRule, menuOpen: Boolean, onMenu: () -> Unit, onCopy: () -> Unit, onHistory: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
     val stateText = when {
         !rule.enabled -> "已停止"
-        rule.ready -> "运行中"
+        rule.ready -> "公网地址已获取"
         rule.actualState == "router_mapping_error" -> "路由器映射未就绪"
         rule.actualState == "router_mapping" -> "正在同步路由器映射"
         rule.actualState == "firewall_error" -> "防火墙未就绪"
@@ -511,7 +511,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透", style = LabTypography.PageTitle)
-                Text("TCP 会自动建立路由器映射；UDP 使用 LabRelay 转发。", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                Text("自动建立路由器映射；Agent 用同端口保活并更新公网地址。", style = LabTypography.Supporting, color = LabV2.InkMuted)
                 Text("服务", style = LabTypography.SectionTitle)
                 PORT_MAP_SERVICE_TEMPLATES.chunked(3).forEach { group ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
