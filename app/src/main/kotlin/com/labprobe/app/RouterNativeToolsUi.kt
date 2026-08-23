@@ -820,7 +820,7 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
         }
     }
 
-    DetailShell("Beta 固件更新", "查看路由器可用版本 · 手动检测", onBack, compactHeader = true, unifiedTypography = true) {
+    DetailShell("Beta 固件更新", "显示上次检测快照 · 仅手动检测", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
             NativeTitle(Icons.Rounded.Memory, "固件版本", NativeCyan, FontWeight.SemiBold)
             NativeFirmwareVersionRow(info.current.ifBlank { "--" })
@@ -858,26 +858,28 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 fontSize = LabTypography.Caption.fontSize,
                 color = NativeMuted
             )
-            OutlinedButton(
+            Button(
                 onClick = { tasks.startBeta() },
                 enabled = !task.active,
-                modifier = Modifier.fillMaxWidth().height(42.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp).nativeCardShadow(RoundedCornerShape(14.dp), 2.dp),
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, NativeCyan.copy(alpha = if (task.active) .24f else .42f)),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = NativeCyan,
-                    disabledContentColor = NativeCyan.copy(alpha = .48f)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NativeCyan,
+                    contentColor = Color.White,
+                    disabledContainerColor = NativeCyan.copy(alpha = .72f),
+                    disabledContentColor = Color.White
                 )
             ) {
-                if (task.active) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = NativeCyan)
+                if (task.active) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
                 else Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(7.dp))
-                Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button.copy(color = NativeCyan, fontWeight = FontWeight.SemiBold))
+                Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold))
             }
         }
-        if (!task.failed && info.releases.isNotEmpty()) NativeCard {
+        if (!task.failed && (info.releases.isNotEmpty() || info.versions.isNotEmpty())) NativeCard {
             NativeTitle(Icons.Rounded.NewReleases, "可用版本", NativeAmber, FontWeight.SemiBold)
-            info.releases.forEachIndexed { index, release ->
+            val releases = info.releases.ifEmpty { info.versions.map(::RouterBetaRelease) }
+            releases.forEachIndexed { index, release ->
                 if (index > 0) HorizontalDivider(color = NativeBorder.copy(alpha = .8f))
                 NativeBetaRelease(release)
             }
@@ -888,32 +890,22 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
 @Composable
 private fun NativeBetaRelease(release: RouterBetaRelease) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                release.version,
-                modifier = Modifier.weight(1f),
-                style = LabTypography.CardTitle.copy(fontWeight = FontWeight.Bold, color = NativeInk),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Surface(
-                shape = RoundedCornerShape(9.dp),
-                color = NativeAmber.copy(alpha = .12f),
-                border = BorderStroke(1.dp, NativeAmber.copy(alpha = .22f))
-            ) {
-                Text("Beta", Modifier.padding(horizontal = 8.dp, vertical = 3.dp), style = LabTypography.Caption.copy(color = NativeAmber, fontWeight = FontWeight.SemiBold))
-            }
-        }
+        Text(
+            release.version,
+            style = LabTypography.Supporting.copy(color = NativeInk, fontWeight = FontWeight.SemiBold),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
         release.notes.take(3).forEach { note ->
             Text(
-                "• $note",
-                style = LabTypography.Body.copy(color = NativeMuted, fontWeight = FontWeight.Normal),
+                "更新说明：$note",
+                style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.Normal),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
         if (release.sizeBytes > 0L) {
-            Text("固件包 ${formatNativeBytes(release.sizeBytes)}", style = LabTypography.Caption.copy(color = NativeMuted))
+            Text("包大小：${formatNativeBytes(release.sizeBytes)}", style = LabTypography.Caption.copy(color = NativeMuted))
         }
     }
 }
