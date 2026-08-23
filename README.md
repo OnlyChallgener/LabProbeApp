@@ -220,7 +220,7 @@ v<versionName>-build<versionCode>
 
 ```kotlin
 versionCode = 204
-versionName = "0.10.49"
+versionName = "0.10.50"
 ```
 
 对应 Tag：
