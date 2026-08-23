@@ -123,62 +123,6 @@ class AiApiClient(
         }
     }
 
-    suspend fun wechatStatus(): WeChatBridgeStatus = withContext(Dispatchers.IO) {
-        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        request(hubUrl.trimEnd('/') + "/api/ai/wechat/status", "GET", null).use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val root = JSONObject(text)
-            WeChatBridgeStatus(
-                available = root.optBoolean("available"),
-                version = root.optString("version"),
-                pluginInstalled = root.optBoolean("pluginInstalled"),
-                connected = root.optBoolean("connected"),
-                notificationTargetConfigured = root.optBoolean("notificationTargetConfigured"),
-                installCommand = root.optString("installCommand"),
-                message = root.optString("message", "状态未知"),
-            )
-        }
-    }
-
-    suspend fun installWechatPlugin() = withContext(Dispatchers.IO) {
-        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        val body = JSONObject().put("confirmation", "INSTALL_OPENCLAW_WEIXIN").toString()
-        request(hubUrl.trimEnd('/') + "/api/ai/wechat/install", "POST", body).use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiFailure(response.code, text))
-        }
-    }
-
-    suspend fun startWechatLogin(): WeChatLoginSession = withContext(Dispatchers.IO) {
-        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        request(hubUrl.trimEnd('/') + "/api/ai/wechat/login/start", "POST", "{}").use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val root = JSONObject(text)
-            WeChatLoginSession(
-                loginId = root.getString("loginId"),
-                qrContent = root.getString("qrContent"),
-                expiresInSeconds = root.optInt("expiresInSeconds", 300),
-                message = root.optString("message", "请扫码并确认"),
-            )
-        }
-    }
-
-    suspend fun waitWechatLogin(loginId: String): WeChatLoginState = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("loginId", loginId).toString()
-        request(hubUrl.trimEnd('/') + "/api/ai/wechat/login/wait", "POST", body).use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val root = JSONObject(text)
-            WeChatLoginState(
-                connected = root.optBoolean("connected"),
-                alreadyConnected = root.optBoolean("alreadyConnected"),
-                message = root.optString("message", "等待扫码确认"),
-            )
-        }
-    }
-
     suspend fun latestConversation(): Pair<String?, List<AiMessage>> = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/conversations?limit=1", "GET", null).use { response ->

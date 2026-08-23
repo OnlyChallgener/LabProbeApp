@@ -11,7 +11,6 @@ data class AiMessage(
     val role: String,
     val content: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val qrContent: String? = null,
 )
 
 data class AiTokenSummary(val prompt: Int = 0, val completion: Int = 0) {
@@ -70,29 +69,6 @@ data class AiUsageRecord(
     val status: String,
     val usageKnown: Boolean,
     val createdAt: String,
-)
-
-data class WeChatBridgeStatus(
-    val available: Boolean = false,
-    val version: String = "",
-    val pluginInstalled: Boolean = false,
-    val connected: Boolean = false,
-    val notificationTargetConfigured: Boolean = false,
-    val installCommand: String = "",
-    val message: String = "正在检查",
-)
-
-data class WeChatLoginSession(
-    val loginId: String,
-    val qrContent: String,
-    val expiresInSeconds: Int,
-    val message: String,
-)
-
-data class WeChatLoginState(
-    val connected: Boolean,
-    val alreadyConnected: Boolean,
-    val message: String,
 )
 
 sealed class AiConnectionState {

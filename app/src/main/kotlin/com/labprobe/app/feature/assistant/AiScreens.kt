@@ -1,14 +1,12 @@
 package com.labprobe.app.feature.assistant
 
 import android.content.Context
-import android.graphics.Bitmap
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -44,9 +42,7 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SmartToy
@@ -74,7 +70,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -87,8 +82,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.MultiFormatWriter
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.LabTypography
 import kotlinx.coroutines.delay
@@ -376,7 +369,6 @@ fun AiSettingsScreen(
     onBack: () -> Unit,
     onChat: () -> Unit,
     onUsage: () -> Unit,
-    onWechat: () -> Unit,
 ) {
     val store = remember { AiSettingsStore(context) }
     var settings by remember { mutableStateOf(store.read()) }
@@ -462,157 +454,12 @@ fun AiSettingsScreen(
                 Text("对话可以查询 Hub 数据；涉及写入的指令会先展示确认内容。", color = AiTone.Muted, fontSize = 12.sp, lineHeight = 17.sp)
                 AiAction("打开对话", primary = true, icon = Icons.Rounded.ChatBubbleOutline, enabled = settings.enabled && settings.hasApiKey, onClick = onChat)
                 AiAction("查看 Token 用量", icon = Icons.Rounded.DataUsage, onClick = onUsage)
-                AiAction("接入微信 ClawBot", icon = Icons.Rounded.Forum, onClick = onWechat)
             }
         }
         Spacer(Modifier.height(8.dp))
     }
 }
 
-@Composable
-fun AiWechatScreen(context: Context, onBack: () -> Unit) {
-    val store = remember { AiSettingsStore(context) }
-    val prefs = remember { AppPrefs(context) }
-    val client = remember { AiApiClient(store, prefs.hub, prefs.token) }
-    val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf(WeChatBridgeStatus()) }
-    var loading by remember { mutableStateOf(true) }
-    var installing by remember { mutableStateOf(false) }
-    var installConfirmation by remember { mutableStateOf(false) }
-    var login by remember { mutableStateOf<WeChatLoginSession?>(null) }
-    var message by remember { mutableStateOf("正在检查微信连接") }
-
-    suspend fun refresh() {
-        runCatching { client.wechatStatus() }
-            .onSuccess { status = it; message = it.message }
-            .onFailure { message = it.message ?: "状态读取失败" }
-        loading = false
-    }
-
-    LaunchedEffect(Unit) { refresh() }
-    LaunchedEffect(login?.loginId) {
-        val current = login ?: return@LaunchedEffect
-        while (login?.loginId == current.loginId) {
-            val result = runCatching { client.waitWechatLogin(current.loginId) }
-                .onFailure { message = it.message ?: "扫码状态读取失败" }
-                .getOrNull() ?: break
-            message = result.message
-            if (result.connected || result.alreadyConnected) {
-                login = null
-                refresh()
-                break
-            }
-            delay(1_000)
-        }
-    }
-
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        AiHeader("微信 ClawBot", "官方通道与扫码绑定", onBack)
-        AiPanel(accent = if (status.connected) AiTone.Mint.copy(alpha = .42f) else AiTone.Border) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = CircleShape, color = AiTone.MintSoft, modifier = Modifier.size(40.dp), tonalElevation = 0.dp, shadowElevation = 0.dp) {
-                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Forum, null, tint = AiTone.MintDark) }
-                    }
-                    Spacer(Modifier.width(11.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(if (status.connected) "微信已绑定" else "绑定微信", style = LabTypography.CardTitle, color = AiTone.Ink)
-                        Text(message, color = AiTone.Muted, fontSize = 11.5.sp, lineHeight = 16.sp)
-                    }
-                    if (loading) CircularProgressIndicator(Modifier.size(22.dp), color = AiTone.Mint, strokeWidth = 2.dp)
-                }
-                if (status.connected) {
-                    Text(
-                        if (status.notificationTargetConfigured) "每日记录与关注设备事件会发送到微信。" else "微信已连接；如需主动推送，请在 Hub 配置微信私信接收方。",
-                        color = AiTone.Muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                    )
-                    if (status.version.isNotBlank()) Text("OpenClaw ${status.version}", color = AiTone.Muted, fontSize = 11.sp)
-                } else {
-                    when {
-                        !status.available -> {
-                            Text("微信 ClawBot 需要先在运行 Hub 的主机准备 OpenClaw。准备完成后可在这里生成二维码，扫码凭证仅由官方通道保存。", color = AiTone.Muted, fontSize = 12.sp, lineHeight = 17.sp)
-                            if (status.installCommand.isNotBlank()) {
-                                Surface(shape = RoundedCornerShape(18.dp), color = AiTone.MintSoft, border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
-                                    Text(status.installCommand, Modifier.padding(12.dp), color = AiTone.Ink, fontSize = 11.sp, lineHeight = 16.sp)
-                                }
-                            }
-                        }
-                        !status.pluginInstalled -> {
-                            Text("已检测到 OpenClaw。准备官方微信通道后即可发出二维码；此操作会在 Hub 主机启用插件并安全重启 Gateway。", color = AiTone.Muted, fontSize = 12.sp, lineHeight = 17.sp)
-                            if (installConfirmation) {
-                                AiPanel(accent = AiTone.Warning.copy(alpha = .55f)) {
-                                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                        Text("确认准备微信通道", style = LabTypography.CardTitle, color = AiTone.Ink)
-                                        Text("仅安装腾讯维护的微信插件、启用独立私聊会话并重启 Gateway；仍需你本人微信扫码确认。", color = AiTone.Muted, fontSize = 11.5.sp, lineHeight = 16.sp)
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                            AiAction("取消", Modifier.weight(1f), tone = AiTone.Danger, enabled = !installing) { installConfirmation = false }
-                                            AiAction("确认准备", Modifier.weight(1f), primary = true, enabled = !installing) {
-                                                installing = true
-                                                scope.launch {
-                                                    runCatching { client.installWechatPlugin() }
-                                                        .onSuccess { installConfirmation = false; refresh() }
-                                                        .onFailure { message = it.message ?: "准备微信通道失败" }
-                                                    installing = false
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                AiAction("准备官方微信通道", primary = true, enabled = !installing) { installConfirmation = true }
-                            }
-                        }
-                        login == null -> AiAction(if (status.connected) "重新扫码连接" else "生成微信二维码", primary = true, onClick = {
-                            loading = true
-                            scope.launch {
-                                runCatching { client.startWechatLogin() }
-                                    .onSuccess { login = it; message = it.message }
-                                    .onFailure { message = it.message ?: "二维码生成失败" }
-                                loading = false
-                            }
-                        })
-                    }
-                }
-                AiAction("刷新状态", icon = Icons.Rounded.Refresh, onClick = { loading = true; scope.launch { refresh() } })
-            }
-        }
-        login?.let { session ->
-            AiPanel(accent = AiTone.Mint.copy(alpha = .35f)) {
-                Column(
-                    Modifier.fillMaxWidth().padding(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("使用手机微信扫码", style = LabTypography.CardTitle, color = AiTone.Ink)
-                    WeChatQrCode(session.qrContent)
-                    Text("二维码约 ${session.expiresInSeconds / 60} 分钟有效，扫码后请在微信中确认。", color = AiTone.Muted, fontSize = 11.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WeChatQrCode(content: String) {
-    val image = remember(content) {
-        val size = 720
-        val matrix = MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
-        val pixels = IntArray(size * size) { index ->
-            if (matrix[index % size, index / size]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
-        }
-        Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
-            setPixels(pixels, 0, size, 0, 0, size, size)
-        }.asImageBitmap()
-    }
-    Surface(shape = RoundedCornerShape(20.dp), color = Color.White, border = BorderStroke(1.dp, AiTone.Border), tonalElevation = 0.dp, shadowElevation = 0.dp) {
-        Image(image, contentDescription = "微信扫码二维码", modifier = Modifier.size(238.dp).padding(10.dp))
-    }
-}
 
 @Composable
 fun AiUsageScreen(context: Context, onBack: () -> Unit) {
@@ -695,10 +542,9 @@ private fun AiChatBubble(message: AiMessage) {
         Column(
             Modifier.fillMaxWidth().background(if (user) AiTone.MintSoft else AiTone.Surface).padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
-            horizontalAlignment = if (message.qrContent != null) Alignment.CenterHorizontally else Alignment.Start,
+            horizontalAlignment = Alignment.Start,
         ) {
             Text(message.content, Modifier.fillMaxWidth(), color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp)
-            message.qrContent?.let { WeChatQrCode(it) }
         }
     }
 }
@@ -712,35 +558,12 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
     val messages = remember { mutableStateListOf<AiMessage>() }
     var toolHints by remember { mutableStateOf<List<AiToolHint>>(emptyList()) }
     var pendingConfirmation by remember { mutableStateOf<AiToolConfirmation?>(null) }
-    var pendingWechatInstall by remember { mutableStateOf(false) }
-    var wechatLoginId by remember { mutableStateOf<String?>(null) }
     var conversationId by remember { mutableStateOf<String?>(null) }
     var loadingHistory by remember { mutableStateOf(true) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var usage by remember { mutableStateOf(AiTokenSummary()) }
     val scope = rememberCoroutineScope()
-
-    suspend fun beginWechatLogin() {
-        val session = client.startWechatLogin()
-        wechatLoginId = session.loginId
-        messages += AiMessage("assistant", session.message + "\n此连接操作不调用 AI，不消耗 Token。", qrContent = session.qrContent)
-    }
-
-    suspend fun startWechatFlow() {
-        val status = client.wechatStatus()
-        when {
-            !status.available -> {
-                val command = status.installCommand.takeIf { it.isNotBlank() } ?: "请在 Hub 主机安装 OpenClaw"
-                messages += AiMessage("assistant", "需要先在运行 Hub 的主机准备 OpenClaw。\n$command\n完成后再说“接入微信”，我会继续生成二维码。")
-            }
-            !status.pluginInstalled -> {
-                pendingWechatInstall = true
-                messages += AiMessage("assistant", "微信官方插件尚未准备好。已在下方列出确认操作；确认后由 Hub 配置，随后继续扫码。")
-            }
-            else -> beginWechatLogin()
-        }
-    }
 
     LaunchedEffect(Unit) {
         runCatching { client.latestConversation() }
@@ -752,20 +575,6 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
             .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询 Hub 状态、设备与网络数据；涉及变更时会先请你确认。") }
         loadingHistory = false
         runCatching { client.catalog() }.onSuccess { toolHints = it }
-    }
-    LaunchedEffect(wechatLoginId) {
-        val loginId = wechatLoginId ?: return@LaunchedEffect
-        while (wechatLoginId == loginId) {
-            val result = runCatching { client.waitWechatLogin(loginId) }
-                .onFailure { messages += AiMessage("assistant", "微信扫码状态读取失败：${it.message ?: "未知错误"}") }
-                .getOrNull() ?: break
-            if (result.connected || result.alreadyConnected) {
-                messages += AiMessage("assistant", result.message)
-                wechatLoginId = null
-                break
-            }
-            delay(1_000)
-        }
     }
     LaunchedEffect(Unit) {
         while (loadingHistory) delay(100)
@@ -796,35 +605,6 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
         ) {
             if (loadingHistory) item { Text("正在恢复最近对话…", color = AiTone.Muted, fontSize = 12.sp) }
             items(messages) { message -> AiChatBubble(message) }
-            if (pendingWechatInstall) {
-                item {
-                    AiPanel(accent = AiTone.Warning.copy(alpha = .55f)) {
-                        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Security, null, tint = AiTone.Warning, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text("确认准备微信通道", style = LabTypography.CardTitle, color = AiTone.Ink)
-                            }
-                            Text("将在 Hub 主机安装腾讯维护的微信插件、启用独立私聊会话并安全重启 Gateway；仍需你本人微信扫码确认。", color = AiTone.Ink, fontSize = 12.5.sp, lineHeight = 18.sp)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                AiAction("取消", Modifier.weight(1f), tone = AiTone.Danger, enabled = !sending) {
-                                    pendingWechatInstall = false
-                                    messages += AiMessage("assistant", "已取消微信通道准备。")
-                                }
-                                AiAction("确认准备", Modifier.weight(1f), primary = true, enabled = !sending) {
-                                    sending = true
-                                    scope.launch {
-                                        runCatching { client.installWechatPlugin(); beginWechatLogin() }
-                                            .onSuccess { pendingWechatInstall = false }
-                                            .onFailure { messages += AiMessage("assistant", "微信通道准备失败：${it.message ?: "未知错误"}") }
-                                        sending = false
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             pendingConfirmation?.let { confirmation ->
                 item {
                     AiPanel(accent = AiTone.Warning.copy(alpha = .55f)) {
@@ -863,26 +643,21 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
             AiFormField("", input, { input = it }, Modifier.weight(1f), placeholder = "输入消息…", singleLine = false, maxLines = 4)
             Surface(
                 modifier = Modifier.size(50.dp).clip(CircleShape).aiTap(
-                    enabled = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null && !pendingWechatInstall,
+                    enabled = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null,
                 ) {
                     val text = input.trim()
                     input = ""
                     messages += AiMessage("user", text)
                     sending = true
                     scope.launch {
-                        if (isWechatConnectIntent(text)) {
-                            runCatching { startWechatFlow() }
-                                .onFailure { messages += AiMessage("assistant", "二维码生成失败：${it.message ?: "未知错误"}") }
-                        } else {
-                            runCatching { client.chat(messages.toList(), conversationId) }
-                                .onSuccess {
-                                    conversationId = it.conversationId ?: conversationId
-                                    messages += AiMessage("assistant", it.content)
-                                    usage = it.usage
-                                    pendingConfirmation = it.confirmation
-                                }
-                                .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
-                        }
+                        runCatching { client.chat(messages.toList(), conversationId) }
+                            .onSuccess {
+                                conversationId = it.conversationId ?: conversationId
+                                messages += AiMessage("assistant", it.content)
+                                usage = it.usage
+                                pendingConfirmation = it.confirmation
+                            }
+                            .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
                         sending = false
                     }
                 },
@@ -895,11 +670,4 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
             }
         }
     }
-}
-
-private fun isWechatConnectIntent(text: String): Boolean {
-    val value = text.trim().lowercase()
-    val mentionsWechat = listOf("微信", "wechat", "clawbot", "openclaw").any(value::contains)
-    val asksToConnect = listOf("接入", "连接", "绑定", "扫码", "二维码", "配置").any(value::contains)
-    return mentionsWechat && asksToConnect
 }
