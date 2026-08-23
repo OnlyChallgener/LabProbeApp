@@ -203,8 +203,8 @@ data class StunDraft(
     }
 }
 
-private fun stunTemplate(type: String): PortMapServiceTemplate = PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.serviceType.equals(type, true) } ?: PORT_MAP_SERVICE_TEMPLATES.last()
-private fun applyStunService(draft: StunDraft, template: PortMapServiceTemplate) = draft.copy(serviceType = template.serviceType, transportProtocol = template.defaultProtocol, targetPort = template.targetPort?.toString().orEmpty())
+internal fun stunTemplate(type: String): PortMapServiceTemplate = PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.serviceType.equals(type, true) } ?: PORT_MAP_SERVICE_TEMPLATES.last()
+internal fun applyStunService(draft: StunDraft, template: PortMapServiceTemplate) = draft.copy(serviceType = template.serviceType, transportProtocol = template.defaultProtocol, targetPort = template.targetPort?.toString().orEmpty())
 private fun formatStunBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
