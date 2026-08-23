@@ -25,10 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,13 +54,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.labprobe.app.DeviceItem
 import com.labprobe.app.FirewallRule
 import com.labprobe.app.LabCoreSurface
 import com.labprobe.app.LabTypography
-import com.labprobe.app.PortMapRule
-import com.labprobe.app.cleanMac
-import com.labprobe.app.deviceDisplayName
 
 private val FollowBlue = Color(0xFF2E6BE6)
 private val FollowGreen = Color(0xFF16A36A)
@@ -79,6 +73,8 @@ fun firewallAutomationStatusLabel(status: String): String = when (status.lowerca
     "waiting_target" -> "等待地址"
     "missing_rule" -> "原规则缺失"
     "unsupported" -> "规则已改变"
+    "manual_override" -> "人工修改优先"
+    "out_of_scope" -> "已停止接管"
     "disabled" -> "已暂停"
     else -> "自动跟随"
 }
@@ -86,7 +82,7 @@ fun firewallAutomationStatusLabel(status: String): String = when (status.lowerca
 fun firewallAutomationStatusColor(status: String): Color = when (status.lowercase()) {
     "synced" -> FollowGreen
     "pending" -> FollowBlue
-    "waiting_target", "unsupported" -> FollowAmber
+    "waiting_target", "unsupported", "manual_override", "out_of_scope" -> FollowAmber
     "missing_rule" -> FollowRed
     else -> FollowMuted
 }
@@ -95,6 +91,16 @@ private fun directionLabel(direction: String): String = when (direction) {
     "inbound" -> "入站"
     "outbound" -> "出站"
     else -> "转发"
+}
+
+private fun portContains(spec: String, target: String): Boolean {
+    val port = target.trim().toIntOrNull() ?: return false
+    return spec.replace('-', ':').split(',').any { item ->
+        val part = item.trim()
+        if (part.toIntOrNull() == port) return@any true
+        val range = part.split(':', limit = 2).mapNotNull(String::toIntOrNull)
+        range.size == 2 && port in range[0]..range[1]
+    }
 }
 
 @Composable
@@ -114,22 +120,25 @@ fun FirewallAutomationPage(
     BackHandler(onBack = onBack)
     val inferredField = if (rule.ipv6SuffixDest.isNotBlank()) "ipv6SuffixDest" else "destIP"
     var enabled by remember(rule.uuid, binding?.enabled) { mutableStateOf(binding?.enabled ?: true) }
-    var targetType by remember(rule.uuid, binding?.targetType) {
-        mutableStateOf(binding?.targetType ?: if (rule.direction == "inbound") "router" else "device")
-    }
-    var targetMac by remember(rule.uuid, binding?.targetMac) { mutableStateOf(binding?.targetMac.orEmpty()) }
+    var mappingKind by remember(rule.uuid, binding?.mappingKind) { mutableStateOf(binding?.mappingKind ?: "relay") }
     var mappingId by remember(rule.uuid, binding?.mappingId) { mutableStateOf(binding?.mappingId.orEmpty()) }
-    var picker by remember { mutableStateOf("") }
+    var picker by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf("") }
     val field = binding?.matchField?.ifBlank { inferredField } ?: inferredField
     val family = rule.ipVersion.lowercase()
     val existingAddress = if (field == "ipv6SuffixDest") rule.ipv6SuffixDest else rule.destIP
     val compatibleMappings = targets.mappings.filter { mapping ->
-        if (family == "ipv4") mapping.mode == "6to4" else mapping.mode != "6to4"
+        mapping.addressFamily == family &&
+            mapping.protocol.lowercase().replace("/", "+").split('+').contains(rule.proto.lowercase()) &&
+            portContains(rule.destPort, mapping.targetPort)
     }
-    val selectedDevice = targets.devices.firstOrNull { cleanMac(it.mac) == cleanMac(targetMac) }
-    val selectedMapping = compatibleMappings.firstOrNull { it.id == mappingId }
-    val modeValid = family in setOf("ipv4", "ipv6") && existingAddress.isNotBlank()
+    val selectedMapping = compatibleMappings.firstOrNull { it.kind == mappingKind && it.id == mappingId }
+    val modeValid = family in setOf("ipv4", "ipv6") &&
+        existingAddress.isNotBlank() &&
+        rule.target.equals("ACCEPT", true) &&
+        rule.direction == "forward" &&
+        rule.inIface.equals("wan", true) &&
+        rule.outIface.equals("lan", true)
     val error = localError.ifBlank { externalError }
 
     Scaffold(
@@ -198,41 +207,16 @@ fun FirewallAutomationPage(
             }
 
             item {
-                Text("跟随目标", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = FollowInk, modifier = Modifier.padding(start = 2.dp, top = 2.dp))
+                Text("关联的路由器映射", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = FollowInk, modifier = Modifier.padding(start = 2.dp, top = 2.dp))
             }
             item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FollowTargetChoice("终端设备", "device", Icons.Rounded.Devices, targetType, Modifier.weight(1f)) { targetType = it; localError = "" }
-                    FollowTargetChoice("路由器", "router", Icons.Rounded.Router, targetType, Modifier.weight(1f)) { targetType = it; localError = "" }
-                    FollowTargetChoice("映射规则", "mapping", Icons.Rounded.Link, targetType, Modifier.weight(1f)) { targetType = it; localError = "" }
-                }
-            }
-
-            if (targetType == "device") item {
-                TargetPickerCard(
-                    title = selectedDevice?.let(::deviceDisplayName) ?: "选择终端设备",
-                    subtitle = selectedDevice?.let { "${if (it.online) "在线" else "离线"} · ${cleanMac(it.mac)}" } ?: "以 MAC 作为稳定身份，地址由 HUB 实时确认",
-                    icon = Icons.Rounded.Devices,
-                    enabled = !busy,
-                ) { picker = "device" }
-            }
-            if (targetType == "mapping") item {
                 TargetPickerCard(
                     title = selectedMapping?.name ?: "选择映射规则",
-                    subtitle = selectedMapping?.let { "${it.modeText} · ${it.transportProtocol} · ${it.listenPort}" } ?: "使用现有映射运行时已确认的目标地址",
+                    subtitle = selectedMapping?.let { "${it.modeText} · ${it.protocol} · 外部 ${it.externalPort} → 目标 ${it.targetPort}" }
+                        ?: "仅显示与当前 IP 版本、协议和目的端口精确匹配的映射",
                     icon = Icons.Rounded.Link,
                     enabled = !busy,
-                ) { picker = "mapping" }
-            }
-            if (targetType == "router") item {
-                FollowCard(FollowBlue) {
-                    Text("跟随路由器本身", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.Bold, color = FollowInk)
-                    Text(
-                        if (family == "ipv6") "使用路由器当前 WAN IPv6；适合入站规则。" else "使用路由器当前 WAN IPv4；适合入站规则。",
-                        fontSize = LabTypography.Caption.fontSize,
-                        color = FollowMuted,
-                    )
-                }
+                ) { picker = true }
             }
 
             item {
@@ -252,7 +236,12 @@ fun FirewallAutomationPage(
                     }
                     if (!modeValid) {
                         Text(
-                            if (family == "dual") "双栈规则没有单一地址字段，请分别建立 IPv4 和 IPv6 规则。" else "请先在原规则中填写要跟随的目的地址或目的 IPv6 后缀。",
+                            when {
+                                family == "dual" -> "双栈规则没有单一地址字段，请分别建立 IPv4 和 IPv6 规则。"
+                                !rule.target.equals("ACCEPT", true) -> "丢弃规则不参与映射自动化。"
+                                rule.direction != "forward" || !rule.inIface.equals("wan", true) || !rule.outIface.equals("lan", true) -> "映射只能关联 WAN 到 LAN 的转发规则。"
+                                else -> "请先在原规则中填写要跟随的目的地址或目的 IPv6 后缀。"
+                            },
                             fontSize = LabTypography.Supporting.fontSize,
                             fontWeight = FontWeight.SemiBold,
                             color = FollowAmber,
@@ -272,8 +261,7 @@ fun FirewallAutomationPage(
                     onClick = {
                         localError = when {
                             !modeValid -> "原规则的地址匹配方式暂不支持自动跟随"
-                            targetType == "device" && targetMac.isBlank() -> "请选择终端设备"
-                            targetType == "mapping" && mappingId.isBlank() -> "请选择映射规则"
+                            mappingId.isBlank() -> "请选择映射规则"
                             else -> ""
                         }
                         if (localError.isBlank()) {
@@ -281,9 +269,9 @@ fun FirewallAutomationPage(
                                 FirewallAutomationBinding(
                                     firewallUuid = rule.uuid,
                                     enabled = enabled,
-                                    targetType = targetType,
-                                    targetMac = if (targetType == "device") cleanMac(targetMac) else "",
-                                    mappingId = if (targetType == "mapping") mappingId else "",
+                                    targetType = "mapping",
+                                    mappingKind = mappingKind,
+                                    mappingId = mappingId,
                                     addressFamily = family,
                                     matchField = field,
                                 ),
@@ -296,7 +284,15 @@ fun FirewallAutomationPage(
                     colors = ButtonDefaults.buttonColors(containerColor = FollowBlue),
                 ) {
                     if (busy) CircularProgressIndicator(Modifier.size(17.dp), color = Color.White, strokeWidth = 2.dp)
-                    else Text(if (binding == null) "开启并立即安全核对" else "保存自动跟随设置", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold)
+                    else Text(
+                        when {
+                            binding == null -> "建立映射联动并安全核对"
+                            binding.status == "manual_override" -> "确认当前规则并恢复联动"
+                            else -> "保存映射联动设置"
+                        },
+                        fontSize = LabTypography.Supporting.fontSize,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
             if (binding != null) item {
@@ -307,27 +303,16 @@ fun FirewallAutomationPage(
         }
     }
 
-    if (picker == "device") {
-        TargetDialog(
-            title = "选择终端设备",
-            emptyText = if (targetsLoading) "设备列表正在刷新" else "暂无可选设备",
-            onDismiss = { picker = "" },
-            rows = targets.devices,
-            key = { cleanMac(it.mac) },
-            headline = { deviceDisplayName(it) },
-            supporting = { "${if (it.online) "在线" else "离线"} · ${it.ip.ifBlank { "无 IPv4" }} · ${cleanMac(it.mac)}" },
-        ) { device -> targetMac = cleanMac(device.mac); picker = ""; localError = "" }
-    }
-    if (picker == "mapping") {
+    if (picker) {
         TargetDialog(
             title = "选择映射规则",
             emptyText = if (targetsLoading) "映射列表正在刷新" else "没有与 ${family.uppercase()} 匹配的映射",
-            onDismiss = { picker = "" },
+            onDismiss = { picker = false },
             rows = compatibleMappings,
-            key = { it.id },
+            key = { "${it.kind}:${it.id}" },
             headline = { it.name },
-            supporting = { "${it.modeText} · ${it.transportProtocol} · 外部端口 ${it.listenPort}" },
-        ) { mapping -> mappingId = mapping.id; picker = ""; localError = "" }
+            supporting = { "${it.modeText} · ${it.protocol} · 外部 ${it.externalPort} → 目标 ${it.targetPort}" },
+        ) { mapping -> mappingKind = mapping.kind; mappingId = mapping.id; picker = false; localError = "" }
     }
 }
 

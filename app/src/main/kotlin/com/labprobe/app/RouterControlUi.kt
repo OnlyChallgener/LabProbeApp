@@ -388,7 +388,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
                     val result = if (editing == null) repository.addPortMapping(saved)
                     else repository.updatePortMapping(editing!!.ruleName, saved)
                     result.onSuccess { adding = false; editing = null; actionError = "" }
-                        .onFailure { actionError = it.message.orEmpty().ifBlank { "DDNS 设置未生效，请稍后重试" } }
+                        .onFailure { actionError = it.message.orEmpty().ifBlank { "端口映射设置未生效，请稍后重试" } }
                 }
             }
         )
@@ -662,6 +662,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     if (adding || editing != null) {
         FirewallEditorPage(
             initial = editing ?: FirewallRule(direction = direction, inIface = if (direction == "outbound") "" else "wan", outIface = if (direction == "inbound") "" else "lan"),
+            managedByMapping = editing?.let { bindings.containsKey(it.uuid) } == true,
             onBack = { adding = false; editing = null },
             onSave = { rule -> scope.launch {
                 val result = if (editing == null) repository.addFirewallRule(rule) else repository.updateFirewallRule(rule)
@@ -732,20 +733,23 @@ private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBind
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(rule.ruleName, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val port = if (rule.proto in setOf("tcp", "udp")) rule.destPort.ifBlank { "任意端口" } else "不匹配端口"
-                Text("${rule.ipVersion.uppercase()} · ${rule.proto.uppercase()} · $port", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${firewallIpVersionLabel(rule.ipVersion)} · ${firewallProtocolLabel(rule.proto)} · $port", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val targetText = rule.destIP.ifBlank { rule.ipv6SuffixDest.ifBlank { "任意目标" } }
-                Text("${rule.inIface.ifBlank { "本机" }.uppercase()} → ${rule.outIface.ifBlank { "本机" }.uppercase()} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${firewallInterfaceLabel(rule.inIface)} → ${firewallInterfaceLabel(rule.outIface)} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
-                val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
-                Text(
-                    if (binding == null) "设置目的地址自动跟随" else "自动跟随 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待目标" }}",
-                    modifier = Modifier.clickable(onClick = onFollow).padding(vertical = 1.dp),
-                    fontSize = LabTypography.Caption.fontSize,
-                    fontWeight = FontWeight.SemiBold,
-                    color = followColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val automationEligible = rule.target.equals("ACCEPT", true) && rule.direction == "forward" && rule.ipVersion in setOf("ipv4", "ipv6") && rule.inIface.equals("wan", true) && rule.outIface.equals("lan", true)
+                if (binding != null || automationEligible) {
+                    val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
+                    Text(
+                        if (binding == null) "关联路由器映射" else "映射联动 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待映射" }}",
+                        modifier = Modifier.clickable(onClick = onFollow).padding(vertical = 1.dp),
+                        fontSize = LabTypography.Caption.fontSize,
+                        fontWeight = FontWeight.SemiBold,
+                        color = followColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Column(
                 modifier = Modifier.width(54.dp),
@@ -760,21 +764,28 @@ private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBind
     }
 }
 
+private fun firewallDirectionLabel(value: String): String = when (value.lowercase()) { "forward" -> "转发"; "inbound" -> "入站"; "outbound" -> "出站"; else -> value }
+private fun firewallIpVersionLabel(value: String): String = when (value.lowercase()) { "ipv4" -> "IPv4"; "ipv6" -> "IPv6"; "dual" -> "双栈"; else -> value }
+private fun firewallProtocolLabel(value: String): String = when (value.lowercase()) { "tcp" -> "TCP"; "udp" -> "UDP"; "icmp" -> "ICMP"; "any" -> "全部协议"; else -> value }
+private fun firewallActionLabel(value: String): String = when (value.uppercase()) { "ACCEPT" -> "允许"; "DROP" -> "丢弃"; else -> value }
+private fun firewallInterfaceLabel(value: String): String = when (value.lowercase()) { "wan" -> "外网（WAN）"; "lan" -> "内网（LAN）"; "" -> "路由器本机"; else -> value }
+
 @Composable
-private fun FirewallEditorPage(initial: FirewallRule, onBack: () -> Unit, onSave: (FirewallRule) -> Unit) {
+private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean, onBack: () -> Unit, onSave: (FirewallRule) -> Unit) {
     var rule by remember(initial.uuid) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
     val addressEnabled = rule.ipVersion != "dual"
     val portEnabled = rule.proto in setOf("tcp", "udp")
-    RouterFormPage(if (initial.uuid.isBlank()) "新增防火墙规则" else "编辑防火墙规则", "精确匹配 · 保存后同步路由器", onBack) {
+    RouterFormPage(if (initial.uuid.isBlank()) "新增防火墙规则" else "编辑防火墙规则", "精确匹配 · 保存后同步路由器", onBack, topBarColor = RouterPage) {
+        if (managedByMapping) CompactMessage("这条规则已关联路由器映射。保存人工修改后，自动联动会暂停且不会覆盖新设置。", RouterAmber)
         CompactField("规则名称", rule.ruleName, "例如 WireGuard") { rule = rule.copy(ruleName = it.take(24)) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactChoice("方向", rule.direction, listOf("forward", "inbound", "outbound"), Modifier.weight(1f)) { value -> rule = rule.copy(direction = value, inIface = if (value == "outbound") "" else rule.inIface.ifBlank { "wan" }, outIface = if (value == "inbound") "" else rule.outIface.ifBlank { "lan" }) }
-            CompactChoice("IP版本", rule.ipVersion, listOf("ipv4", "ipv6", "dual"), Modifier.weight(1f)) { rule = rule.copy(ipVersion = it) }
+            CompactChoice("方向", rule.direction, listOf("forward", "inbound", "outbound"), Modifier.weight(1f), ::firewallDirectionLabel) { value -> rule = rule.copy(direction = value, inIface = if (value == "outbound") "" else rule.inIface.ifBlank { "wan" }, outIface = if (value == "inbound") "" else rule.outIface.ifBlank { "lan" }) }
+            CompactChoice("IP版本", rule.ipVersion, listOf("ipv4", "ipv6", "dual"), Modifier.weight(1f), ::firewallIpVersionLabel) { rule = rule.copy(ipVersion = it) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactChoice("协议", rule.proto, listOf("tcp", "udp", "icmp", "any"), Modifier.weight(1f)) { rule = rule.copy(proto = it, srcPort = if (it in setOf("tcp","udp")) rule.srcPort else "", destPort = if (it in setOf("tcp","udp")) rule.destPort else "") }
-            CompactChoice("动作", rule.target, listOf("ACCEPT", "DROP"), Modifier.weight(1f)) { rule = rule.copy(target = it) }
+            CompactChoice("协议", rule.proto, listOf("tcp", "udp", "icmp", "any"), Modifier.weight(1f), ::firewallProtocolLabel) { rule = rule.copy(proto = it, srcPort = if (it in setOf("tcp","udp")) rule.srcPort else "", destPort = if (it in setOf("tcp","udp")) rule.destPort else "") }
+            CompactChoice("动作", rule.target, listOf("ACCEPT", "DROP"), Modifier.weight(1f), ::firewallActionLabel) { rule = rule.copy(target = it) }
         }
         AnimatedVisibility(addressEnabled) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -795,8 +806,8 @@ private fun FirewallEditorPage(initial: FirewallRule, onBack: () -> Unit, onSave
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (rule.direction != "outbound") CompactChoice("入接口", rule.inIface.ifBlank { "wan" }, listOf("wan", "lan"), Modifier.weight(1f)) { rule = rule.copy(inIface = it) }
-            if (rule.direction != "inbound") CompactChoice("出接口", rule.outIface.ifBlank { "lan" }, listOf("lan", "wan"), Modifier.weight(1f)) { rule = rule.copy(outIface = it) }
+            if (rule.direction != "outbound") CompactChoice("入接口", rule.inIface.ifBlank { "wan" }, listOf("wan", "lan"), Modifier.weight(1f), ::firewallInterfaceLabel) { rule = rule.copy(inIface = it) }
+            if (rule.direction != "inbound") CompactChoice("出接口", rule.outIface.ifBlank { "lan" }, listOf("lan", "wan"), Modifier.weight(1f), ::firewallInterfaceLabel) { rule = rule.copy(outIface = it) }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("保存后立即启用", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
@@ -1642,9 +1653,9 @@ private fun CompactTopBar(title:String,onBack:()->Unit,subtitle:String=""){
 }
 
 @Composable
-private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,content:@Composable ColumnScope.()->Unit){
+private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,topBarColor:Color=Color.White,content:@Composable ColumnScope.()->Unit){
     BackHandler(onBack=onBack)
-    Scaffold(containerColor=RouterPage,topBar={Surface(color=Color.White){CompactTopBar(title,onBack,subtitle)}}){padding->
+    Scaffold(containerColor=RouterPage,topBar={Surface(color=topBarColor){CompactTopBar(title,onBack,subtitle)}}){padding->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=13.dp,vertical=9.dp),verticalArrangement=Arrangement.spacedBy(8.dp),content=content)
     }
 }
@@ -1730,15 +1741,15 @@ private fun CompactPasswordField(label:String,value:String,hint:String,visible:B
 }
 
 @Composable
-private fun CompactChoice(label:String,value:String,options:List<String>,modifier:Modifier=Modifier,onPick:(String)->Unit){
+private fun CompactChoice(label:String,value:String,options:List<String>,modifier:Modifier=Modifier,display:(String)->String={it},onPick:(String)->Unit){
     var expanded by remember{mutableStateOf(false)}
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
         if(label.isNotBlank())Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Box{
             Surface(Modifier.fillMaxWidth().height(50.dp).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
-                Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(value,Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
+                Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(display(value),Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
-            DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(option,fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
+            DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(display(option),fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
         }
     }
 }

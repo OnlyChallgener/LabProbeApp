@@ -1,11 +1,9 @@
 package com.labprobe.app.feature.router.firewall
 
 import com.labprobe.app.AppPrefs
-import com.labprobe.app.DeviceItem
 import com.labprobe.app.HubApi
 import com.labprobe.app.PortMapApi
-import com.labprobe.app.PortMapRule
-import com.labprobe.app.cleanMac
+import com.labprobe.app.RouterControlApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -21,8 +19,8 @@ import org.json.JSONObject
 data class FirewallAutomationBinding(
     val firewallUuid: String = "",
     val enabled: Boolean = true,
-    val targetType: String = "device",
-    val targetMac: String = "",
+    val targetType: String = "mapping",
+    val mappingKind: String = "relay",
     val mappingId: String = "",
     val addressFamily: String = "ipv4",
     val matchField: String = "destIP",
@@ -33,11 +31,13 @@ data class FirewallAutomationBinding(
     val desiredAddress: String = "",
     val status: String = "",
     val statusMessage: String = "",
+    val suspended: Boolean = false,
+    val suspendedReason: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("enabled", enabled)
-        .put("targetType", targetType)
-        .put("targetMac", targetMac)
+        .put("targetType", "mapping")
+        .put("mappingKind", mappingKind)
         .put("mappingId", mappingId)
         .put("addressFamily", addressFamily)
         .put("matchField", matchField)
@@ -51,15 +51,25 @@ data class FirewallAutomationResource(
 )
 
 data class FirewallAutomationTargets(
-    val devices: List<DeviceItem> = emptyList(),
-    val mappings: List<PortMapRule> = emptyList(),
+    val mappings: List<FirewallMappingTarget> = emptyList(),
+)
+
+data class FirewallMappingTarget(
+    val kind: String,
+    val id: String,
+    val name: String,
+    val addressFamily: String,
+    val modeText: String,
+    val protocol: String,
+    val externalPort: String,
+    val targetPort: String,
 )
 
 private fun parseBinding(root: JSONObject): FirewallAutomationBinding = FirewallAutomationBinding(
     firewallUuid = root.optString("firewallUuid").trim(),
     enabled = root.optBoolean("enabled", true),
-    targetType = root.optString("targetType", "device").trim().lowercase(),
-    targetMac = cleanMac(root.optString("targetMac")),
+    targetType = root.optString("targetType", "mapping").trim().lowercase(),
+    mappingKind = root.optString("mappingKind", "relay").trim().lowercase(),
     mappingId = root.optString("mappingId").trim(),
     addressFamily = root.optString("addressFamily", "ipv4").trim().lowercase(),
     matchField = root.optString("matchField", "destIP").trim(),
@@ -70,6 +80,8 @@ private fun parseBinding(root: JSONObject): FirewallAutomationBinding = Firewall
     desiredAddress = root.optString("desiredAddress").trim(),
     status = root.optString("status").trim().lowercase(),
     statusMessage = root.optString("statusMessage").trim(),
+    suspended = root.optBoolean("suspended", false),
+    suspendedReason = root.optString("suspendedReason").trim(),
 )
 
 private class FirewallAutomationApi(prefs: AppPrefs) {
@@ -107,8 +119,8 @@ private class FirewallAutomationApi(prefs: AppPrefs) {
 /** Screen-scoped state only; Hub and the router remain the persistent authorities. */
 class FirewallAutomationRepository(private val prefs: AppPrefs) {
     private val api = FirewallAutomationApi(prefs)
-    private val hubApi = HubApi(prefs)
     private val portMapApi = PortMapApi(prefs)
+    private val routerApi = RouterControlApi(prefs)
     private val mutex = Mutex()
     private val _state = MutableStateFlow(FirewallAutomationResource())
     val state: StateFlow<FirewallAutomationResource> = _state.asStateFlow()
@@ -178,14 +190,32 @@ class FirewallAutomationRepository(private val prefs: AppPrefs) {
     }
 
     suspend fun loadTargets(): FirewallAutomationTargets = coroutineScope {
-        val watched = async { runCatching { hubApi.getDevices(false) }.getOrDefault(emptyList()) }
-        val online = async { runCatching { hubApi.getDevices(true) }.getOrDefault(emptyList()) }
-        val mappings = async { runCatching { portMapApi.list().rules }.getOrDefault(emptyList()) }
-        val onlineRows = online.await()
-        val deviceRows = (onlineRows + watched.await())
-            .filter { cleanMac(it.mac).isNotBlank() }
-            .distinctBy { cleanMac(it.mac) }
-            .sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.lowercase() })
-        FirewallAutomationTargets(deviceRows, mappings.await().sortedBy { it.name.lowercase() })
+        val relay = async { runCatching { portMapApi.list().rules }.getOrDefault(emptyList()) }
+        val native = async { runCatching { routerApi.nativePortMappings(false) }.getOrDefault(emptyList()) }
+        val relayRows = relay.await().map { rule ->
+            FirewallMappingTarget(
+                kind = "relay",
+                id = rule.id,
+                name = rule.name,
+                addressFamily = if (rule.mode == "6to4") "ipv4" else "ipv6",
+                modeText = "IPv6 映射 · ${rule.modeText}",
+                protocol = rule.transportProtocol,
+                externalPort = rule.listenPort.toString(),
+                targetPort = rule.targetPort.toString(),
+            )
+        }
+        val nativeRows = native.await().map { rule ->
+            FirewallMappingTarget(
+                kind = "native",
+                id = rule.ruleName,
+                name = rule.ruleName,
+                addressFamily = "ipv4",
+                modeText = "路由器端口映射",
+                protocol = rule.proto.uppercase(),
+                externalPort = rule.srcPort,
+                targetPort = rule.destPort,
+            )
+        }
+        FirewallAutomationTargets((relayRows + nativeRows).sortedWith(compareBy<FirewallMappingTarget> { it.kind }.thenBy { it.name.lowercase() }))
     }
 }
