@@ -4267,7 +4267,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
 
 @Composable
 fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
-    HealthCard(Modifier.clip(HomeCardShape)) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -4281,14 +4281,14 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("WireGuard", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "手动、DDNS 与 STUN 配置彼此独立，点击进入。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(13.dp))
         if (rows.isEmpty()) {
             Text(
-                "正在等待 STUN 地址同步，获取后会保留上次有效地址。",
+                "还没有公网入口记录，点击卡片创建 WireGuard 配置。",
                 fontSize = LabTypography.Value.fontSize,
                 fontWeight = FontWeight.SemiBold,
                 color = LabV2.InkMuted
