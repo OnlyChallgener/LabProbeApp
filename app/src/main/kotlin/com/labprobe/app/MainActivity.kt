@@ -4,6 +4,10 @@ import android.content.ClipData
 import android.content.ContextWrapper
 import android.app.Activity
 import com.labprobe.app.feature.router.ipv6.Ipv6Screen
+import com.labprobe.app.feature.assistant.AiPetEntry
+import com.labprobe.app.feature.assistant.AiSettingsScreen
+import com.labprobe.app.feature.assistant.AiChatScreen
+import com.labprobe.app.feature.assistant.AiUsageScreen
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1949,6 +1953,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
             route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
+            route == "ai_settings" || route == "ai_chat" || route == "ai_usage" -> "home"
             else -> route
         }
         val selected = mainRoutes.indexOf(normalized).let { if (it < 0) 0 else it }
@@ -1962,7 +1967,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
             route = target
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
             route = when (route) {
                 "daily" -> dailyReturnRoute
                 "health_score" -> "home"
@@ -1973,6 +1978,9 @@ fun LabProbeApp(prefs: AppPrefs) {
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
                 "settings" -> settingsReturnRoute
+                "ai_settings" -> "home"
+                "ai_chat" -> "ai_settings"
+                "ai_usage" -> "ai_settings"
                 "tool_nat_history" -> "tool_nat"
                 "tool_ssh_history" -> "tool_ssh"
                 else -> toolReturnRoute ?: "tools"
@@ -2054,6 +2062,9 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onBeforeOpenShortcut = {}
                         )
                         "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
+                        "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = "home" }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
+                        "ai_chat" -> AiChatScreen(context, onBack = { route = "ai_settings" })
+                        "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
                         "tool_port" -> PortProbeScreen(prefs, backFromTool)
@@ -3260,6 +3271,8 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         }
 
         topNav()
+
+        AiPetEntry { onNavigate("ai_settings") }
 
         if (showVersion) VersionInfoDialog(onDismiss = { showVersion = false }, onUpdateFound = onUpdateFound)
 
