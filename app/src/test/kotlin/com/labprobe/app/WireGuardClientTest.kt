@@ -55,7 +55,7 @@ class WireGuardClientTest {
     }
 
     @Test
-    fun generatedConfigRoutesOnlyTheHomeLan() {
+    fun generatedConfigRoutesHomeLanAndSupportsFullTunnel() {
         val profile = WireGuardProfile(
             id = "ddns",
             name = "家庭",
@@ -66,10 +66,15 @@ class WireGuardClientTest {
             allowedIps = listOf("192.168.5.0/24"),
         )
         val config = wireGuardQuickConfig(profile, "client-private-key")
-        assertTrue(config.contains("AllowedIPs = 192.168.5.0/24"))
+        assertTrue(config.contains("192.168.5.0/24"))
         assertFalse(config.contains("0.0.0.0/0"))
-        assertTrue(wireGuardProfileError(profile.copy(allowedIps = listOf("0.0.0.0/0")), "client-private-key").contains("MVP"))
+
+        val fullTunnel = profile.copy(allowedIps = listOf("0.0.0.0/0", "::/0"))
+        val fullConfig = wireGuardQuickConfig(fullTunnel, "client-private-key")
+        assertTrue(fullConfig.contains("AllowedIPs = 0.0.0.0/0, ::/0"))
+        assertEquals("", wireGuardProfileError(fullTunnel, "client-private-key"))
     }
+
 
     @Test
     fun automaticProfilePayloadRegistersClientPeerAndKeepsExistingServerRows() {
