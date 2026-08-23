@@ -212,6 +212,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         compactHeader = true,
         unifiedTypography = true,
     ) {
+        val isHandshaked = runtime.running && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
         LabCoreCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LabV2ToolIcon(Icons.Rounded.Shield, WireGuardBlue, size = 38)
@@ -219,14 +220,23 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("客户端连接", style = LabTypography.CardTitle)
                     Text(
-                        if (runtime.running) "已连接 · ${formatWireGuardBytes(runtime.receivedBytes)} 下行 / ${formatWireGuardBytes(runtime.sentBytes)} 上行" else "未连接 · 同一时间只启用一个配置",
-                        style = LabTypography.Caption.copy(color = if (runtime.running) WireGuardGreen else LabV2.InkMuted),
+                        when {
+                            !runtime.running -> "未连接 · 同一时间只启用一个配置"
+                            isHandshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)}) · ${formatWireGuardBytes(runtime.receivedBytes)} 下行 / ${formatWireGuardBytes(runtime.sentBytes)} 上行"
+                            else -> "正在尝试握手… (未收到服务端回包，请排查密钥/端口/网络) · 发送 ${formatWireGuardBytes(runtime.sentBytes)}"
+                        },
+                        style = LabTypography.Caption.copy(color = when {
+                            !runtime.running -> LabV2.InkMuted
+                            isHandshaked -> WireGuardGreen
+                            else -> WireGuardAmber
+                        }),
                         maxLines = 2,
                     )
                 }
                 if (runtime.running) {
-                    Surface(color = WireGuardGreen.copy(alpha = .10f), shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp)) {
-                        Text("运行中", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = WireGuardGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    val badgeColor = if (isHandshaked) WireGuardGreen else WireGuardAmber
+                    Surface(color = badgeColor.copy(alpha = .12f), shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp)) {
+                        Text(if (isHandshaked) "已握手" else "握手中", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = badgeColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -249,10 +259,12 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             if (group.isNotEmpty()) {
                 Text(title, style = LabTypography.SectionTitle, color = LabV2.Ink)
                 group.forEach { profile ->
+                    val isActive = runtime.running && runtime.profileId == profile.id
                     WireGuardProfileCard(
                         profile = profile,
                         clientPublicKey = wireGuardPublicKey(store.privateKey(profile.id)),
-                        active = runtime.running && runtime.profileId == profile.id,
+                        active = isActive,
+                        runtime = if (isActive) runtime else null,
                         duplicateServerKey = profile.id in duplicateServerKeyIds,
                         onStart = { start(profile) },
                         onStop = {
@@ -262,6 +274,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             }
                         },
                         onEdit = { editor = profile; editingExisting = true },
+
                         onDelete = {
                             scope.launch {
                                 if (runtime.profileId == profile.id) runtime = controller.stop()
@@ -375,6 +388,7 @@ private fun WireGuardProfileCard(
     profile: WireGuardProfile,
     clientPublicKey: String,
     active: Boolean,
+    runtime: WireGuardRuntimeStatus? = null,
     duplicateServerKey: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -383,6 +397,7 @@ private fun WireGuardProfileCard(
     onCopyPublicKey: () -> Unit,
 ) {
     val accent = wireGuardSourceColor(profile.endpointSource)
+    val isHandshaked = active && runtime != null && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
     LabCoreCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
                 LabV2ToolIcon(if (profile.endpointSource == WireGuardEndpointSource.STUN) Icons.Rounded.Key else Icons.Rounded.Public, accent, size = 34)
@@ -391,7 +406,27 @@ private fun WireGuardProfileCard(
                 Text(profile.name, style = LabTypography.CardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(profile.endpointSource.displayName, style = LabTypography.Caption.copy(color = accent), fontWeight = FontWeight.SemiBold)
             }
-            if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = WireGuardGreen, modifier = Modifier.size(20.dp))
+            if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = if (isHandshaked) WireGuardGreen else WireGuardAmber, modifier = Modifier.size(20.dp))
+        }
+        if (active && runtime != null) {
+            Surface(
+                color = if (isHandshaked) WireGuardGreen.copy(alpha = .08f) else WireGuardAmber.copy(alpha = .08f),
+                shape = LabCoreSurface.InnerShape,
+                border = BorderStroke(1.dp, if (isHandshaked) WireGuardGreen.copy(alpha = .24f) else WireGuardAmber.copy(alpha = .24f)),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (isHandshaked) "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)})" else "正在握手 (等待服务端响应…)",
+                        Modifier.weight(1f),
+                        style = LabTypography.Caption.copy(color = if (isHandshaked) WireGuardGreen else WireGuardAmber),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "${formatWireGuardBytes(runtime.receivedBytes)} ↓ / ${formatWireGuardBytes(runtime.sentBytes)} ↑",
+                        style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                    )
+                }
+            }
         }
         Surface(color = LabCoreSurface.Inner, shape = LabCoreSurface.InnerShape, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -407,6 +442,7 @@ private fun WireGuardProfileCard(
                 )
             }
         }
+
         if (duplicateServerKey) Text("与其他配置使用相同服务端公钥；仅提示，不会合并或覆盖配置", style = LabTypography.Caption.copy(color = WireGuardAmber), maxLines = 2)
         if (clientPublicKey.isNotBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -508,7 +544,31 @@ private fun WireGuardEditorDialog(
                         )
                     }
                 }
-                WireGuardField(allowedIps, { allowedIps = it }, "家庭内网网段，例如 192.168.5.0/24")
+                val isFullTunnel = allowedIps.contains("0.0.0.0/0")
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("路由网段与分流模式", style = LabTypography.Caption.copy(color = LabV2.InkMuted), fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !isFullTunnel,
+                            onClick = {
+                                if (isFullTunnel) allowedIps = "10.77.0.0/24, 192.168.5.0/24"
+                            },
+                            label = { Text("内网分流 (推荐)") },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = WireGuardBlue.copy(alpha = .12f), selectedLabelColor = LabV2.Ink),
+                        )
+                        FilterChip(
+                            selected = isFullTunnel,
+                            onClick = {
+                                allowedIps = "0.0.0.0/0, ::/0"
+                            },
+                            label = { Text("全局代理 (0.0.0.0/0)") },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = WireGuardAmber.copy(alpha = .14f), selectedLabelColor = LabV2.Ink),
+                        )
+                    }
+                }
+                WireGuardField(allowedIps, { allowedIps = it }, if (isFullTunnel) "路由网段（全局接管：0.0.0.0/0, ::/0）" else "路由网段，例如 10.77.0.0/24, 192.168.5.0/24")
                 WireGuardField(dns, { dns = it }, "隧道 DNS（可选）")
                 if (error.isNotBlank()) Text(error, style = LabTypography.Caption.copy(color = WireGuardRed))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -530,13 +590,13 @@ private fun WireGuardEditorDialog(
                             source != WireGuardEndpointSource.STUN && next.endpointHost.isBlank() -> "请填写服务器地址"
                             source == WireGuardEndpointSource.MANUAL && next.serverPublicKey.isBlank() -> "请填写服务端公钥"
                             next.interfaceAddresses.isEmpty() -> "请填写客户端隧道地址"
-                            next.allowedIps.isEmpty() -> "请填写家庭内网网段"
-                            next.allowedIps.any { it in setOf("0.0.0.0/0", "::/0") } -> "MVP 不支持全局流量，请填写家庭 LAN 网段"
+                            next.allowedIps.isEmpty() -> "请填写路由网段"
                             else -> ""
                         }
                         if (error.isBlank()) onSave(next)
                     }, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .48f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue), shape = LabCoreSurface.InnerShape) { Text("保存", style = LabTypography.Button) }
                 }
+
             }
         }
     }
@@ -566,8 +626,20 @@ private fun formatWireGuardBytes(bytes: Long): String = when {
     else -> String.format(java.util.Locale.US, "%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
 }
 
+private fun formatHandshakeTime(epochMillis: Long): String {
+    if (epochMillis <= 0L) return "尚未握手"
+    val diffSeconds = ((System.currentTimeMillis() - epochMillis) / 1000L).coerceAtLeast(0L)
+    return when {
+        diffSeconds < 5L -> "刚刚握手"
+        diffSeconds < 60L -> "${diffSeconds} 秒前握手"
+        diffSeconds < 3600L -> "${diffSeconds / 60L} 分钟前握手"
+        else -> "${diffSeconds / 3600L} 小时前握手"
+    }
+}
+
 private fun copyWireGuard(context: Context, label: String, value: String) {
     if (value.isBlank()) return
     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(label, value))
     toast(context, "已复制$label")
 }
+

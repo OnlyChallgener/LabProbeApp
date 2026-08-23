@@ -58,7 +58,7 @@ data class WireGuardProfile(
 ) {
     val endpoint: String get() = formatWireGuardEndpoint(endpointHost, endpointPort)
     val isComplete: Boolean get() = endpointHost.isNotBlank() && serverPublicKey.isNotBlank() && interfaceAddresses.isNotEmpty() &&
-        allowedIps.isNotEmpty() && allowedIps.none { it.trim() in setOf("0.0.0.0/0", "::/0") }
+        allowedIps.isNotEmpty()
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -164,11 +164,11 @@ internal fun wireGuardProfileError(profile: WireGuardProfile, privateKey: String
     profile.endpointHost.isBlank() -> "请填写 ${profile.endpointSource.displayName} 地址"
     profile.serverPublicKey.isBlank() -> "请填写 Agent 服务端公钥"
     profile.interfaceAddresses.isEmpty() -> "请填写客户端隧道地址"
-    profile.allowedIps.isEmpty() -> "请填写家庭内网网段"
-    profile.allowedIps.any { it.trim() in setOf("0.0.0.0/0", "::/0") } -> "MVP 仅支持家庭内网网段，不支持全局流量"
+    profile.allowedIps.isEmpty() -> "请选择或填写路由网段"
     privateKey.isBlank() -> "客户端私钥不可用，请重新创建配置"
     else -> ""
 }
+
 
 /** Metadata lives in AppPrefs; only private keys use SecureWireGuardKeyStore. */
 class WireGuardProfileStore(context: Context, private val prefs: AppPrefs) {
@@ -269,6 +269,11 @@ internal fun wireGuardQuickConfig(profile: WireGuardProfile, privateKey: String)
     val safe = privateKey.trim()
     require(wireGuardProfileError(profile, safe).isBlank()) { "WireGuard 配置不完整" }
     fun lines(values: List<String>) = values.map { it.trim() }.filter { it.isNotBlank() }.joinToString(", ")
+    val autoSubnet = profile.interfaceAddresses.firstOrNull()?.split('/')?.firstOrNull()?.let { ip ->
+        val parts = ip.split('.')
+        if (parts.size == 4) "${parts[0]}.${parts[1]}.${parts[2]}.0/24" else null
+    }
+    val effectiveAllowedIps = (profile.allowedIps + listOfNotNull(autoSubnet, "10.77.0.0/24")).distinct()
     return buildString {
         appendLine("[Interface]")
         appendLine("PrivateKey = $safe")
@@ -277,11 +282,12 @@ internal fun wireGuardQuickConfig(profile: WireGuardProfile, privateKey: String)
         appendLine()
         appendLine("[Peer]")
         appendLine("PublicKey = ${profile.serverPublicKey.trim()}")
-        appendLine("AllowedIPs = ${lines(profile.allowedIps)}")
+        appendLine("AllowedIPs = ${lines(effectiveAllowedIps)}")
         appendLine("Endpoint = ${profile.endpoint}")
         if (profile.persistentKeepalive > 0) appendLine("PersistentKeepalive = ${profile.persistentKeepalive}")
     }
 }
+
 
 private class LabProbeTunnel(private val profileId: String) : Tunnel {
     @Volatile var state: Tunnel.State = Tunnel.State.DOWN
