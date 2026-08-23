@@ -2079,6 +2079,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
                         "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
+                        "tool_stun" -> StunPenetrationScreen(prefs, backFromTool)
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)

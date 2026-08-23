@@ -299,11 +299,72 @@ private fun natResultFromTask(task: RouterTaskSnapshot): RouterNatResult {
     )
 }
 
+private data class RouterBetaRelease(
+    val version: String,
+    val notes: List<String> = emptyList(),
+    val sizeBytes: Long = 0L,
+    val downloadUrl: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("version", version)
+        put("notes", JSONArray().apply { notes.forEach(::put) })
+        put("sizeBytes", sizeBytes)
+        put("downloadUrl", downloadUrl)
+    }
+}
+
+private fun parseBetaRelease(item: Any?): RouterBetaRelease? {
+    if (item == null) return null
+    if (item !is JSONObject) return item.toString().trim().takeIf(String::isNotBlank)?.let(::RouterBetaRelease)
+    val version = item.optString("version").ifBlank { item.optString("versionCode") }.trim()
+    if (version.isBlank()) return null
+    val notesValue = item.opt("releaseNotes") ?: item.opt("release_notes") ?: item.opt("notes")
+    val notes = when (notesValue) {
+        is JSONArray -> (0 until notesValue.length()).mapNotNull { index ->
+            notesValue.optString(index).trim().takeIf(String::isNotBlank)
+        }
+        is String -> notesValue.lines().map { it.trim() }.filter(String::isNotBlank)
+        else -> emptyList()
+    }
+    return RouterBetaRelease(
+        version = version,
+        notes = notes,
+        sizeBytes = item.optLong("size", item.optLong("sizeBytes", 0L)).coerceAtLeast(0L),
+        downloadUrl = item.optString("downloadUrl").trim(),
+    )
+}
+
+private fun parseBetaReleases(next: JSONObject): List<RouterBetaRelease> {
+    val rawFirmware = next.opt("firmwareList")
+    val firmware = if (rawFirmware is String) {
+        runCatching { JSONArray(rawFirmware) }.getOrElse {
+            runCatching { JSONObject(rawFirmware) }.getOrNull() ?: rawFirmware
+        }
+    } else rawFirmware
+    val releases = mutableListOf<RouterBetaRelease>()
+    when (firmware) {
+        is JSONArray -> for (index in 0 until firmware.length()) {
+            parseBetaRelease(firmware.opt(index))?.let(releases::add)
+        }
+        is JSONObject -> {
+            val keys = firmware.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val parsed = parseBetaRelease(firmware.opt(key))
+                if (parsed != null) releases += parsed
+                else if (key.isNotBlank()) releases += RouterBetaRelease(key)
+            }
+        }
+    }
+    return releases.distinctBy { it.version }
+}
+
 private data class RouterBetaInfo(
     val current: String = "",
     val totalCount: Int = 0,
     val message: String = "",
     val versions: List<String> = emptyList(),
+    val releases: List<RouterBetaRelease> = emptyList(),
     val checkedAt: Long = 0L
 ) {
     val hasSnapshot: Boolean get() = checkedAt > 0L || current.isNotBlank() || message.isNotBlank() || versions.isNotEmpty()
@@ -313,6 +374,7 @@ private data class RouterBetaInfo(
         .put("totalCount", totalCount)
         .put("message", message)
         .put("versions", JSONArray().apply { versions.forEach(::put) })
+        .put("releases", JSONArray().apply { releases.forEach { put(it.toJson()) } })
         .put("checkedAt", checkedAt)
 }
 
@@ -372,32 +434,15 @@ private class RouterNativeApi(private val prefs: AppPrefs) {
 suspend fun betaInfo(): RouterBetaInfo {
         val data = request("/api/router/beta-upgrade?force=1").optJSONObject("data") ?: JSONObject()
         val next = data.optJSONObject("new") ?: JSONObject()
-        val versions = mutableListOf<String>()
-        when (val firmware = next.opt("firmwareList")) {
-            is JSONArray -> for (i in 0 until firmware.length()) {
-                val item = firmware.opt(i)
-                when (item) {
-                    is JSONObject -> versions += item.optString("version").ifBlank { item.toString() }
-                    null -> Unit
-                    else -> versions += item.toString()
-                }
-            }
-            is JSONObject -> {
-                val keys = firmware.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    val item = firmware.opt(key)
-                    versions += if (item is JSONObject) item.optString("version").ifBlank { key } else key
-                }
-            }
-        }
+        val releases = parseBetaReleases(next)
         return RouterBetaInfo(
             current = data.optString("cur").trim(),
-            totalCount = next.optInt("totalCount", versions.size),
+            totalCount = next.optInt("totalCount", releases.size),
             message = next.optString("msg").ifBlank {
-                if (versions.isEmpty()) "当前没有可用 Beta 版本" else "发现可用 Beta 版本"
+                if (releases.isEmpty()) "当前没有可用 Beta 版本" else "发现可用 Beta 版本"
             },
-            versions = versions.distinct(),
+            versions = releases.map { it.version },
+            releases = releases,
             checkedAt = data.optLong("checkedAt", data.optLong("updatedAt", System.currentTimeMillis() / 1000L))
         )
     }
@@ -650,7 +695,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         if (result.log.isNotBlank()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold)
+                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 14.sp)
                 SelectionContainer {
                     Text(
                         natLogZh(result.log),
@@ -711,6 +756,21 @@ private fun loadRouterBetaSnapshot(context: Context): RouterBetaInfo {
     return runCatching {
         val root = JSONObject(raw)
         val versions = root.optJSONArray("versions") ?: JSONArray()
+        val releaseArray = root.optJSONArray("releases") ?: JSONArray()
+        val releases = (0 until releaseArray.length()).mapNotNull { index ->
+            val item = releaseArray.optJSONObject(index) ?: return@mapNotNull null
+            val notes = item.optJSONArray("notes")?.let { values ->
+                (0 until values.length()).mapNotNull { noteIndex ->
+                    values.optString(noteIndex).trim().takeIf(String::isNotBlank)
+                }
+            }.orEmpty()
+            RouterBetaRelease(
+                version = item.optString("version").trim().takeIf(String::isNotBlank) ?: return@mapNotNull null,
+                notes = notes,
+                sizeBytes = item.optLong("sizeBytes", 0L).coerceAtLeast(0L),
+                downloadUrl = item.optString("downloadUrl").trim(),
+            )
+        }
         RouterBetaInfo(
             current = root.optString("current"),
             totalCount = root.optInt("totalCount", versions.length()),
@@ -718,6 +778,7 @@ private fun loadRouterBetaSnapshot(context: Context): RouterBetaInfo {
             versions = (0 until versions.length()).mapNotNull { index ->
                 versions.optString(index).trim().takeIf(String::isNotBlank)
             },
+            releases = releases,
             checkedAt = root.optLong("checkedAt", 0L)
         )
     }.getOrDefault(RouterBetaInfo())
@@ -743,20 +804,13 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
         val data = task.result
         if (data.length() > 0) {
             val next = data.optJSONObject("new") ?: JSONObject()
-            val firmware = next.optJSONArray("firmwareList") ?: JSONArray()
-            val versions = (0 until firmware.length()).mapNotNull { index ->
-                val item = firmware.opt(index)
-                when (item) {
-                    is JSONObject -> item.optString("version").ifBlank { item.toString() }
-                    null -> null
-                    else -> item.toString()
-                }
-            }
+            val releases = parseBetaReleases(next)
             val latest = RouterBetaInfo(
                 current = data.optString("cur"),
-                totalCount = next.optInt("totalCount", versions.size),
+                totalCount = next.optInt("totalCount", releases.size),
                 message = task.message.ifBlank { next.optString("msg") }.let(::taskMessageZh),
-                versions = versions.distinct(),
+                versions = releases.map { it.version },
+                releases = releases,
                 checkedAt = data.optLong("checkedAt", task.updatedAt)
             )
             if (task.succeeded && latest.hasSnapshot) {
@@ -822,11 +876,45 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold))
             }
         }
-        if (!task.failed && info.versions.isNotEmpty()) NativeCard {
+        if (!task.failed && (info.releases.isNotEmpty() || info.versions.isNotEmpty())) NativeCard {
             NativeTitle(Icons.Rounded.NewReleases, "可用版本", NativeAmber, FontWeight.SemiBold)
-            info.versions.forEach { Text(it, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = NativeInk) }
+            val releases = info.releases.ifEmpty { info.versions.map(::RouterBetaRelease) }
+            releases.forEachIndexed { index, release ->
+                if (index > 0) HorizontalDivider(color = NativeBorder.copy(alpha = .8f))
+                NativeBetaRelease(release)
+            }
         }
     }
+}
+
+@Composable
+private fun NativeBetaRelease(release: RouterBetaRelease) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(
+            release.version,
+            style = LabTypography.Supporting.copy(color = NativeInk, fontWeight = FontWeight.SemiBold),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        release.notes.take(3).forEach { note ->
+            Text(
+                "更新说明：$note",
+                style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.Normal),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (release.sizeBytes > 0L) {
+            Text("包大小：${formatNativeBytes(release.sizeBytes)}", style = LabTypography.Caption.copy(color = NativeMuted))
+        }
+    }
+}
+
+private fun formatNativeBytes(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
+    bytes < 1024L * 1024L * 1024L -> "${bytes / (1024L * 1024L)} MB"
+    else -> "${bytes / (1024L * 1024L * 1024L)} GB"
 }
 
 @Composable
@@ -847,14 +935,15 @@ private fun NativeTitle(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     color: Color,
-    titleWeight: FontWeight = FontWeight.ExtraBold
+    titleWeight: FontWeight = FontWeight.ExtraBold,
+    titleSize: androidx.compose.ui.unit.TextUnit = LabTypography.CardTitle.fontSize,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(34.dp).shadow(5.dp, RoundedCornerShape(12.dp), clip = false, ambientColor = color.copy(alpha = .14f), spotColor = color.copy(alpha = .20f)).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), color.copy(alpha = .22f), color.copy(alpha = .07f))), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
             Icon(icon, null, Modifier.size(19.dp), tint = color)
         }
         Spacer(Modifier.width(9.dp))
-        Text(title, style = LabTypography.CardTitle.copy(color = NativeInk, fontWeight = titleWeight))
+        Text(title, style = LabTypography.CardTitle.copy(color = NativeInk, fontWeight = titleWeight, fontSize = titleSize))
     }
 }
 
