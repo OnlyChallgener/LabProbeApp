@@ -307,6 +307,11 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("favorite_shortcuts_v1", v).apply()
     var favoriteNetworkMode: String get() = sp.getString("favorite_network_mode", "lan") ?: "lan"
         set(v) = sp.edit().putString("favorite_network_mode", v).apply()
+    /** WireGuard profile metadata only. Private keys are stored separately in Android Keystore. */
+    var wireGuardProfilesJson: String get() = sp.getString("wireguard_profiles_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("wireguard_profiles_v1", v).apply()
+    var wireGuardActiveProfileId: String get() = sp.getString("wireguard_active_profile_v1", "") ?: ""
+        set(v) = sp.edit().putString("wireguard_active_profile_v1", v.trim()).apply()
     var routerLanUrl: String get() = sp.getString("router_lan_url_v1", "") ?: ""
         set(v) = sp.edit().putString("router_lan_url_v1", v.trim()).apply()
     var routerWanUrl: String get() = sp.getString("router_wan_url_v1", "") ?: ""
@@ -2069,6 +2074,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
                         "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
                         "tool_stun" -> StunPenetrationScreen(prefs, backFromTool)
+                        "tool_wireguard" -> WireGuardScreen(prefs, backFromTool)
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
@@ -3321,7 +3327,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             privacyMode = !privacyMode
                             prefs.privacyMode = privacyMode
                         },
-                        onClick = { onNavigate("tool_router_ddns") }
+                        onClick = { onNavigate("tool_wireguard") }
                     )
                     "devices" -> HealthDevicesCard(state) { onNavigate("devices") }
                     "today" -> HealthTodayCard(prefs, state, prefs.lastRefresh) { onNavigate("daily") }

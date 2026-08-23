@@ -97,6 +97,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.mwiede:jsch:0.2.21")
+    // Official WireGuard tunnel backend. The app owns configuration UX only;
+    // cryptography and Android's VPN service stay in the upstream library.
+    implementation("com.wireguard.android:tunnel:1.0.20260102")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

@@ -10,6 +10,19 @@ LabProbe 由三部分协作：
 - **LabProbe Hub**：中心服务，负责状态聚合、同步、更新与远程访问接口。
 - **LabRelay**：运行在适配路由器上的采集/控制代理，通过 `HOOK_TOKEN` 与 Hub 通信。
 
+## WireGuard 客户端（MVP）
+
+APP 使用 [WireGuard 官方 Android tunnel 库](https://www.wireguard.com/embedding/)，不自行实现 VPN、加密或握手。路由器 Agent 作为 WireGuard 服务端，Hub 只负责后续的配置和状态协调，不承载 VPN 流量。
+
+为避免动态地址冲突，APP 始终保存两份彼此独立的 profile：
+
+- **DDNS 模式**：Endpoint 保持 `域名:固定 UDP 端口`；DDNS 的 A 记录更新由 DNS 解析自然生效。
+- **STUN 模式**：Endpoint 只由对应 STUN 规则的最新 `公网 IP:端口` 更新；暂时取不到地址时保留上一条可用地址。
+
+两种更新器会检查 `endpointSource` 与独立的 `endpointRevision`，不能覆盖另一份 profile；用户编辑使用独立的 `profileRevision`。客户端私钥按 profile 用 Android Keystore 加密保存，Hub 不保存或回传私钥。
+
+MVP 仅支持家庭 LAN 网段，例如 `192.168.5.0/24`，不接受 `0.0.0.0/0` 或 `::/0` 全局流量路由。Android 同一时间只启动一个官方 `GoBackend` 隧道；切换 DDNS/STUN profile 会短暂重连。
+
 ## 数据连接
 
 APP 的数据连接采用“首次全量 + 后续增量 + 定期校准”：
