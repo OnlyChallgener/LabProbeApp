@@ -458,7 +458,12 @@ private object PortMappingMemoryCache {
 }
 
 /** Uses the same status/NDP plus watched/online merge as the device page. */
-private suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceItem> = coroutineScope {
+/**
+ * Loads the same watched + online device snapshot used by the device page and
+ * the IPv6 mapping picker.  Keeping this as the shared source prevents feature
+ * pickers from accidentally using the watched-only /api/devices default view.
+ */
+internal suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceItem> = coroutineScope {
     val statusRequest = async { runCatching { api.getStatus() }.getOrNull() }
     val watchedRequest = async { api.getDevices(false) }
     val onlineRequest = async { api.getDevices(true) }
