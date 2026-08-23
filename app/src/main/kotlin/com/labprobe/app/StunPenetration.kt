@@ -324,29 +324,30 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable private fun StunIntro(agentOnline: Boolean, agentLastSeenAt: String, loading: Boolean, onRefresh: () -> Unit, onAdd: () -> Unit) {
-    LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)) {
+    LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LabV2ToolIcon(Icons.Rounded.Public, StunBlue, size = 46)
-            Spacer(Modifier.width(12.dp))
+            LabV2ToolIcon(Icons.Rounded.Public, StunBlue, size = 40)
+            Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text("内网服务 STUN 穿透", style = LabTypography.CardTitle)
+                Text("内网服务 STUN 穿透", style = LabTypography.SectionTitle)
                 val presenceText = if (agentOnline) "Agent 在线 · LabRelay 自动转发至内网终端" else "Agent 状态暂未同步 · 设置可直接创建"
-                Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Supporting, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (agentLastSeenAt.isNotBlank() && !agentOnline) {
                     Text("最近上报 $agentLastSeenAt", style = LabTypography.Caption, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            IconButton(onClick = onRefresh, enabled = !loading) {
-                if (loading) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp, color = StunBlue)
-                else Icon(Icons.Rounded.Refresh, "刷新", tint = StunBlue)
+            IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(34.dp)) {
+                if (loading) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = StunBlue)
+                else Icon(Icons.Rounded.Refresh, "刷新", tint = StunBlue, modifier = Modifier.size(20.dp))
             }
-            Button(
+            OutlinedButton(
                 onClick = onAdd,
-                shape = LabV2.ButtonShape,
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = StunBlue),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
+                modifier = Modifier.height(36.dp),
             ) {
-                Icon(Icons.Rounded.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("新建", style = LabTypography.Button)
+                Icon(Icons.Rounded.Add, null, Modifier.size(16.dp), tint = StunBlue); Spacer(Modifier.width(3.dp)); Text("新建", style = LabTypography.CompactButton.copy(color = StunBlue))
             }
         }
     }
@@ -504,8 +505,13 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onDismiss, shape = LabV2.ButtonShape, modifier = Modifier.weight(1f)) { Text("取消", style = LabTypography.Button) }
-                    Button(onClick = { onSave(draft) }, shape = LabV2.ButtonShape, modifier = Modifier.weight(1.35f), colors = ButtonDefaults.buttonColors(containerColor = StunBlue)) {
-                        Text(if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button)
+                    OutlinedButton(
+                        onClick = { onSave(draft) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1.35f),
+                        border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
+                    ) {
+                        Text(if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button.copy(color = StunBlue))
                     }
                 }
             }
