@@ -695,7 +695,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         if (result.log.isNotBlank()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 14.sp)
+                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 13.sp)
                 SelectionContainer {
                     Text(
                         natLogZh(result.log),
