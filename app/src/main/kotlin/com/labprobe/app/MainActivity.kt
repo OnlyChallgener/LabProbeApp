@@ -307,6 +307,11 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("favorite_shortcuts_v1", v).apply()
     var favoriteNetworkMode: String get() = sp.getString("favorite_network_mode", "lan") ?: "lan"
         set(v) = sp.edit().putString("favorite_network_mode", v).apply()
+    /** WireGuard profile metadata only. Private keys are stored separately in Android Keystore. */
+    var wireGuardProfilesJson: String get() = sp.getString("wireguard_profiles_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("wireguard_profiles_v1", v).apply()
+    var wireGuardActiveProfileId: String get() = sp.getString("wireguard_active_profile_v1", "") ?: ""
+        set(v) = sp.edit().putString("wireguard_active_profile_v1", v.trim()).apply()
     var routerLanUrl: String get() = sp.getString("router_lan_url_v1", "") ?: ""
         set(v) = sp.edit().putString("router_lan_url_v1", v.trim()).apply()
     var routerWanUrl: String get() = sp.getString("router_wan_url_v1", "") ?: ""
@@ -2069,6 +2074,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
                         "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
                         "tool_stun" -> StunPenetrationScreen(prefs, backFromTool)
+                        "tool_wireguard" -> WireGuardScreen(prefs, backFromTool)
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
@@ -3321,7 +3327,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             privacyMode = !privacyMode
                             prefs.privacyMode = privacyMode
                         },
-                        onClick = { onNavigate("tool_router_ddns") }
+                        onClick = { onNavigate("tool_wireguard") }
                     )
                     "devices" -> HealthDevicesCard(state) { onNavigate("devices") }
                     "today" -> HealthTodayCard(prefs, state, prefs.lastRefresh) { onNavigate("daily") }
@@ -4261,7 +4267,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
 
 @Composable
 fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
-    HealthCard(Modifier.clip(HomeCardShape)) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -4275,14 +4281,14 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("WireGuard", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "手动、DDNS 与 STUN 配置彼此独立，点击进入。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(13.dp))
         if (rows.isEmpty()) {
             Text(
-                "正在等待 STUN 地址同步，获取后会保留上次有效地址。",
+                "还没有公网入口记录，点击卡片创建 WireGuard 配置。",
                 fontSize = LabTypography.Value.fontSize,
                 fontWeight = FontWeight.SemiBold,
                 color = LabV2.InkMuted

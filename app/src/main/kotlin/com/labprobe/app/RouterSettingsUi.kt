@@ -151,6 +151,13 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
 
         RouterSettingsSection("远程访问") {
             RouterSettingsTile(
+                title = "WireGuard",
+                subtitle = "APP 客户端 · DDNS 与 STUN 独立配置",
+                icon = Icons.Rounded.Shield,
+                color = SettingsBlue,
+                enabled = capabilities.configured
+            ) { onOpen("tool_wireguard") }
+            RouterSettingsTile(
                 title = "DDNS",
                 subtitle = "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
                 icon = Icons.Rounded.CloudSync,

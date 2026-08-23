@@ -401,7 +401,12 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Box(Modifier.size(7.dp).background(stateColor, androidx.compose.foundation.shape.CircleShape))
                 Spacer(Modifier.width(7.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(rule.name, style = LabTypography.CardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        rule.name,
+                        style = LabTypography.CardTitle.copy(fontSize = 14.sp, lineHeight = 19.sp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Text("${rule.serviceType} · ${rule.transportProtocol}", style = LabTypography.Supporting, color = LabV2.InkMuted)
                 }
                 Surface(shape = RoundedCornerShape(99.dp), color = stateColor.copy(alpha = .10f)) {
@@ -446,7 +451,16 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(if (endpoint.isBlank()) "公网地址获取中" else endpoint, fontWeight = FontWeight.Bold, color = if (endpoint.isBlank()) LabV2.InkMuted else StunGreen, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Text(
+                                if (endpoint.isBlank()) "公网地址获取中" else endpoint,
+                                fontWeight = FontWeight.Bold,
+                                color = if (endpoint.isBlank()) LabV2.InkMuted else StunGreen,
+                                fontSize = 14.sp,
+                                lineHeight = 19.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
                             if (endpoint.isNotBlank()) Surface(shape = RoundedCornerShape(99.dp), color = StunAmber.copy(alpha = .12f)) {
                                 Text("动态地址", color = StunAmber, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
                             }
@@ -471,7 +485,21 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     Spacer(Modifier.width(16.dp)); StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onHistory, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp), shape = LabV2.ButtonShape) { Icon(Icons.Rounded.History, null, Modifier.size(16.dp)); Spacer(Modifier.width(3.dp)); Text("地址记录", fontSize = 12.sp) }
+                Surface(
+                    modifier = Modifier.clickable(onClick = onHistory),
+                    shape = RoundedCornerShape(12.dp),
+                    color = StunBlue.copy(alpha = .06f),
+                    border = BorderStroke(1.dp, StunBlue.copy(alpha = .14f)),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.History, null, tint = StunBlue, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("地址记录", style = LabTypography.Caption.copy(color = StunBlue, fontWeight = FontWeight.SemiBold))
+                    }
+                }
             }
             rule.runtime.lastError.takeIf { it.isNotBlank() && !rule.ready }?.let { Text(it, color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
         }
