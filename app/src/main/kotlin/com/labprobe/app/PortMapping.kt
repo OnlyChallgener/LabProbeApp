@@ -448,7 +448,7 @@ internal fun portMapValidationField(message: String): String = when {
     else -> "general"
 }
 
-private object PortMappingMemoryCache {
+internal object PortMappingMemoryCache {
     var rules: List<PortMapRule> = emptyList()
     var rulesRevision: Long = 0L
     var rulesUpdatedAt: String = ""
@@ -467,7 +467,7 @@ internal suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceIt
     val statusRequest = async { runCatching { api.getStatus() }.getOrNull() }
     val watchedRequest = async { runCatching { api.getDevices(false) }.getOrDefault(emptyList()) }
     val onlineRequest = async { runCatching { api.getDevices(true) }.getOrDefault(emptyList()) }
-    val syncSnapshotRequest = async { runCatching { api.sync(0L, 0L) }.getOrNull() }
+    val syncSnapshotRequest = async { runCatching { api.getSyncSnapshot() }.getOrNull() }
 
     val status = statusRequest.await()
     val watchedList = watchedRequest.await()
@@ -490,6 +490,7 @@ internal suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceIt
         }
     }
 }
+
 
 
 @Composable
