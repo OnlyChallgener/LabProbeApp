@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PauseCircleOutline
@@ -41,6 +44,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenuItemDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -323,7 +327,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
         }
     }
-    editor?.let { draft -> StunEditorDialog(draft, onDismiss = { editor = null }) { saved ->
+    editor?.let { draft -> StunEditorDialog(draft, prefs, onDismiss = { editor = null }) { saved ->
         scope.launch {
             val result = if (saved.id.isBlank()) runCatching { api.create(saved) } else runCatching { api.update(saved.id, saved) }
             result.onSuccess { editor = null; refresh() }.onFailure { error = it.message ?: "保存失败" }
@@ -333,11 +337,11 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable private fun StunIntro(agentOnline: Boolean, agentLastSeenAt: String, loading: Boolean, onRefresh: () -> Unit, onAdd: () -> Unit) {
-    LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
+    LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             LabV2ToolIcon(Icons.Rounded.Public, StunBlue, size = 40)
             Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("内网服务 STUN 穿透", style = LabTypography.SectionTitle)
                 val presenceText = if (agentOnline) "Agent 在线 · LabRelay 自动转发至内网终端" else "Agent 状态暂未同步 · 设置可直接创建"
                 Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -395,11 +399,37 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Surface(shape = RoundedCornerShape(99.dp), color = stateColor.copy(alpha = .10f)) {
                     Text(stateText, color = stateColor, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
                 }
-                Box { IconButton(onClick = onMenu) { Icon(Icons.Rounded.MoreVert, "更多") }; DropdownMenu(expanded = menuOpen, onDismissRequest = onMenu) {
-                    DropdownMenuItem(text = { Text("编辑") }, onClick = onEdit)
-                    DropdownMenuItem(text = { Text(if (rule.enabled) "停止穿透" else "开始穿透") }, leadingIcon = { Icon(if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline, null) }, onClick = onToggle)
-                    DropdownMenuItem(text = { Text("删除", color = StunRed) }, leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, tint = StunRed) }, onClick = onDelete)
-                } }
+                Box {
+                    IconButton(onClick = onMenu) { Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted) }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = onMenu,
+                        modifier = Modifier.width(154.dp),
+                        shape = LabV2.CompactCardShape,
+                        containerColor = Color.White,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 8.dp,
+                        border = BorderStroke(1.dp, LabV2.Border),
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("编辑", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
+                            onClick = onEdit,
+                            colors = DropdownMenuItemDefaults.colors(textColor = LabV2.Ink),
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (rule.enabled) "停止穿透" else "开始穿透", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
+                            leadingIcon = { Icon(if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline, null, tint = LabV2.InkMuted) },
+                            onClick = onToggle,
+                            colors = DropdownMenuItemDefaults.colors(textColor = LabV2.Ink, leadingIconColor = LabV2.InkMuted),
+                        )
+                        DropdownMenuItem(
+                            text = { Text("删除", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, color = StunRed) },
+                            leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, tint = StunRed) },
+                            onClick = onDelete,
+                            colors = DropdownMenuItemDefaults.colors(textColor = StunRed, leadingIconColor = StunRed),
+                        )
+                    }
+                }
             }
             val endpoint = rule.runtime.publicEndpoint
             Surface(
@@ -436,9 +466,22 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = color, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(3.dp)); Text("$label ${formatStunBytes(bytes)}", color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize) }
 }
 
-@Composable private fun StunEditorDialog(initial: StunDraft, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
+@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
     var draft by remember(initial.id) { mutableStateOf(initial) }
+    var devices by remember { mutableStateOf<List<DeviceItem>>(emptyList()) }
+    var devicesLoading by remember { mutableStateOf(true) }
+    var showDevicePicker by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val template = stunTemplate(draft.serviceType)
+    val selectedDevice = devices.firstOrNull { it.ip == draft.targetIpv4 }
+    fun refreshDevices() {
+        scope.launch {
+            devicesLoading = true
+            devices = runCatching { HubApi(prefs).getDevices(false) }.getOrDefault(devices)
+            devicesLoading = false
+        }
+    }
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) { refreshDevices() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(max = 680.dp),
@@ -482,6 +525,13 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                     }
                 }
+                Text("内网终端", style = LabTypography.SectionTitle)
+                StunSelectedDevice(
+                    device = selectedDevice,
+                    loading = devicesLoading,
+                    onClick = { showDevicePicker = true },
+                )
+                Text("从终端列表带入 IPv4；也可以继续手动填写。", style = LabTypography.Caption, color = LabV2.InkMuted)
                 OutlinedTextField(
                     value = draft.targetIpv4,
                     onValueChange = { draft = draft.copy(targetIpv4 = it) },
@@ -522,6 +572,119 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     ) {
                         Text(if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button.copy(color = StunBlue))
                     }
+                }
+            }
+        }
+    }
+    if (showDevicePicker) {
+        StunDevicePickerDialog(
+            devices = devices,
+            loading = devicesLoading,
+            onRefresh = ::refreshDevices,
+            onDismiss = { showDevicePicker = false },
+            onPick = { device ->
+                draft = draft.copy(targetIpv4 = device.ip)
+                showDevicePicker = false
+            },
+        )
+    }
+}
+
+@Composable private fun StunSelectedDevice(device: DeviceItem?, loading: Boolean, onClick: () -> Unit) {
+    val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { "已选终端" } }
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = LabV2.FieldShape,
+        color = LabCoreSurface.Inner,
+        border = BorderStroke(1.dp, LabCoreSurface.Border),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            LabV2ToolIcon(Icons.Rounded.Devices, StunBlue, size = 34, muted = device == null)
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    deviceLabel ?: if (loading) "正在读取终端列表" else "从终端列表选择",
+                    style = LabTypography.Value,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LabV2.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    device?.let { "${if (it.online) "在线" else "离线"} · ${it.ip}" } ?: "选择后会自动填入内网地址",
+                    style = LabTypography.Caption,
+                    color = if (device?.online == true) StunGreen else LabV2.InkMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            OutlinedButton(
+                onClick = onClick,
+                enabled = !loading,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                border = BorderStroke(1.dp, StunBlue.copy(alpha = .28f)),
+                modifier = Modifier.height(32.dp),
+            ) { Text("选择", style = LabTypography.CompactButton.copy(color = StunBlue)) }
+        }
+    }
+}
+
+@Composable private fun StunDevicePickerDialog(
+    devices: List<DeviceItem>,
+    loading: Boolean,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+    onPick: (DeviceItem) -> Unit,
+) {
+    val rows = remember(devices) { devices.filter { it.ip.isNotBlank() } }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
+            shape = RoundedCornerShape(26.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, LabV2.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("选择内网终端", style = LabTypography.PageTitle)
+                        Text("仅展示已获得 IPv4 地址的终端", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                    }
+                    TextButton(onClick = onRefresh, enabled = !loading, shape = LabV2.ButtonShape) {
+                        Text(if (loading) "读取中" else "刷新", style = LabTypography.CompactButton.copy(color = StunBlue))
+                    }
+                }
+                if (rows.isEmpty()) {
+                    Column(Modifier.fillMaxWidth().heightIn(min = 150.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Text(if (loading) "正在读取终端列表" else "暂时没有可选终端", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                    }
+                } else {
+                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 470.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        items(rows, key = { it.mac.ifBlank { "${it.name}-${it.ip}" } }) { device ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
+                                shape = LabCoreSurface.InnerShape,
+                                color = LabCoreSurface.Inner,
+                                border = BorderStroke(1.dp, LabCoreSurface.Border),
+                            ) {
+                                Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    LabV2ToolIcon(Icons.Rounded.Devices, StunBlue, size = 32, muted = !device.online)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, style = LabTypography.Value, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("${if (device.online) "在线" else "离线"} · ${device.ip}", style = LabTypography.Caption, color = if (device.online) StunGreen else LabV2.InkMuted)
+                                    }
+                                    Text("带入", style = LabTypography.CompactButton.copy(color = StunBlue))
+                                }
+                            }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss, shape = LabV2.ButtonShape) { Text("取消", style = LabTypography.Button) }
                 }
             }
         }
