@@ -219,8 +219,8 @@ v<versionName>-build<versionCode>
 例如源码是：
 
 ```kotlin
-versionCode = 202
-versionName = "0.10.47"
+versionCode = 203
+versionName = "0.10.48"
 ```
 
 对应 Tag：

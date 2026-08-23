@@ -493,7 +493,10 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     fun refreshDevices() {
         scope.launch {
             devicesLoading = true
-            devices = runCatching { HubApi(prefs).getDevices(false) }.getOrDefault(devices)
+            // Match the IPv6 mapping picker: /api/devices defaults to watched
+            // devices, while the device page also includes the current online
+            // snapshot.  STUN targets must be able to select either source.
+            devices = runCatching { loadCanonicalPortMappingDevices(HubApi(prefs)) }.getOrDefault(devices)
             devicesLoading = false
         }
     }
