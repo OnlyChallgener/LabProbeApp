@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,6 +21,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +48,60 @@ fun AiPetEntry(onOpen: () -> Unit) {
                 drawRoundRect(body, topLeft = Offset(1f, size.height * .2f), size = Size(size.width - 2f, size.height * .68f), cornerRadius = CornerRadius(size.width * .28f))
                 drawCircle(LabV2.Cyan, 3.2f, Offset(size.width * .36f, size.height * .52f))
                 drawCircle(LabV2.Cyan, 3.2f, Offset(size.width * .64f, size.height * .52f))
+            }
+        }
+    }
+}
+
+/** Small, edge-docked assistant entry. Vertical drag keeps it out of content while
+ * the positive x offset leaves only a controlled edge peek instead of covering cards. */
+@Composable
+fun AiFloatingPet(onOpen: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val petSize = 54.dp
+        val maxTravel = with(density) { (maxHeight - petSize - 24.dp).toPx().coerceAtLeast(0f) }
+        var yPx by remember { mutableFloatStateOf(0f) }
+        var initialized by remember { mutableStateOf(false) }
+        LaunchedEffect(maxTravel) {
+            if (!initialized) {
+                yPx = maxTravel * .36f
+                initialized = true
+            } else {
+                yPx = yPx.coerceIn(0f, maxTravel)
+            }
+        }
+        val yDp = with(density) { yPx.coerceIn(0f, maxTravel).toDp() }
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 8.dp, y = yDp)
+                .size(petSize)
+                .clickable(onClick = onOpen)
+                .pointerInput(maxTravel) {
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            yPx = (yPx + dragAmount).coerceIn(0f, maxTravel)
+                        },
+                    )
+                },
+            shape = CircleShape,
+            color = Color.White,
+            border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border),
+            shadowElevation = 5.dp,
+        ) {
+            Canvas(Modifier.fillMaxSize().padding(9.dp)) {
+                val body = Color(0xFF17263D)
+                val cyan = LabV2.Cyan
+                drawCircle(cyan.copy(alpha = .12f), size.minDimension * .48f, Offset(size.width * .5f, size.height * .55f))
+                drawLine(cyan, Offset(size.width * .5f, 0f), Offset(size.width * .5f, size.height * .19f), 2.4f)
+                drawCircle(cyan, 2.4f, Offset(size.width * .5f, 0f))
+                drawRoundRect(body, topLeft = Offset(1f, size.height * .19f), size = Size(size.width - 2f, size.height * .68f), cornerRadius = CornerRadius(size.width * .3f))
+                drawRoundRect(cyan.copy(alpha = .42f), topLeft = Offset(1f, size.height * .19f), size = Size(size.width - 2f, size.height * .68f), cornerRadius = CornerRadius(size.width * .3f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.3f))
+                drawCircle(cyan, 3.3f, Offset(size.width * .36f, size.height * .52f))
+                drawCircle(cyan, 3.3f, Offset(size.width * .64f, size.height * .52f))
+                drawRoundRect(Color.White.copy(alpha = .16f), topLeft = Offset(size.width * .28f, size.height * .71f), size = Size(size.width * .44f, 1.6f), cornerRadius = CornerRadius(1f))
             }
         }
     }

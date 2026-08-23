@@ -3236,6 +3236,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
     val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
 
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
@@ -3271,8 +3272,6 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         }
 
         topNav()
-
-        AiPetEntry { onNavigate("ai_settings") }
 
         if (showVersion) VersionInfoDialog(onDismiss = { showVersion = false }, onUpdateFound = onUpdateFound)
 
@@ -3341,6 +3340,8 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                 }
             }
         }
+    }
+    AiFloatingPet { onNavigate("ai_settings") }
     }
 }
 
