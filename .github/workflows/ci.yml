@@ -53,6 +53,7 @@ jobs:
           test -f app/src/main/kotlin/com/labprobe/app/MainActivity.kt
           test -f app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           test -f app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
+          test -f docs/AI_ASSISTANT_UI_CONSTRAINTS.md
 
           ROOT_MD=$(find . -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort)
           if [ "$ROOT_MD" != "README.md" ]; then

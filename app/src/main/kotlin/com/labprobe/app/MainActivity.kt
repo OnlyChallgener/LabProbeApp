@@ -3358,7 +3358,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             }
         }
     }
-    AiFloatingPet { onNavigate("ai_settings") }
+    AiFloatingPet { onNavigate("ai_chat") }
     }
 }
 

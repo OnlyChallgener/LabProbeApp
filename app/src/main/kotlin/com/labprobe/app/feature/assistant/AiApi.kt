@@ -56,7 +56,7 @@ class AiApiClient(
         if (!apiKey.isNullOrBlank()) payload.put("apiKey", apiKey)
         request(hubUrl.trimEnd('/') + "/api/ai/config", "PUT", payload.toString()).use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${body.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
             val root = JSONObject(body)
             AiSettings(
                 enabled = root.optBoolean("enabled", config.enabled),
@@ -71,7 +71,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/test", "POST", "{}").use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${body.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
             "连接成功"
         }
     }
@@ -87,7 +87,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/usage", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val root = JSONObject(text)
             val recentRoot = root.optJSONArray("recent") ?: JSONArray()
             val recent = buildList {
@@ -127,7 +127,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/wechat/status", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val root = JSONObject(text)
             WeChatBridgeStatus(
                 available = root.optBoolean("available"),
@@ -135,19 +135,18 @@ class AiApiClient(
                 pluginInstalled = root.optBoolean("pluginInstalled"),
                 connected = root.optBoolean("connected"),
                 notificationTargetConfigured = root.optBoolean("notificationTargetConfigured"),
+                installCommand = root.optString("installCommand"),
                 message = root.optString("message", "状态未知"),
-                installCommand = root.optString("installCommand", "npx -y @tencent-weixin/openclaw-weixin-cli install"),
             )
         }
     }
 
-    suspend fun installWechatPlugin(): String = withContext(Dispatchers.IO) {
+    suspend fun installWechatPlugin() = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val body = JSONObject().put("confirmation", "INSTALL_OPENCLAW_WEIXIN").toString()
         request(hubUrl.trimEnd('/') + "/api/ai/wechat/install", "POST", body).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(JSONObject(text).optString("error", "HTTP ${response.code}"))
-            JSONObject(text).optString("message", "插件安装完成")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
         }
     }
 
@@ -155,7 +154,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/wechat/login/start", "POST", "{}").use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(JSONObject(text).optString("error", "HTTP ${response.code}"))
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val root = JSONObject(text)
             WeChatLoginSession(
                 loginId = root.getString("loginId"),
@@ -170,7 +169,7 @@ class AiApiClient(
         val body = JSONObject().put("loginId", loginId).toString()
         request(hubUrl.trimEnd('/') + "/api/ai/wechat/login/wait", "POST", body).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(JSONObject(text).optString("error", "HTTP ${response.code}"))
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val root = JSONObject(text)
             WeChatLoginState(
                 connected = root.optBoolean("connected"),
@@ -184,13 +183,13 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/conversations?limit=1", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val rows = JSONObject(text).optJSONArray("conversations")
             val id = rows?.optJSONObject(0)?.optString("id")?.takeIf { !it.isNullOrBlank() }
             if (id == null) return@withContext null to emptyList()
             request(hubUrl.trimEnd('/') + "/api/ai/conversations/${java.net.URLEncoder.encode(id, "UTF-8")}/messages", "GET", null).use { messagesResponse ->
                 val messagesText = messagesResponse.body?.string().orEmpty()
-                if (!messagesResponse.isSuccessful) error("HTTP ${messagesResponse.code}: ${messagesText.take(180)}")
+                if (!messagesResponse.isSuccessful) error(apiFailure(messagesResponse.code, messagesText))
                 val raw = JSONObject(messagesText).optJSONArray("messages") ?: JSONArray()
                 val messages = buildList {
                     for (index in 0 until raw.length()) {
@@ -211,7 +210,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/catalog", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val rows = JSONObject(text).optJSONArray("tools") ?: JSONArray()
             buildList {
                 for (index in 0 until rows.length()) {
@@ -233,7 +232,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/notifications?after=${afterId.coerceAtLeast(0)}", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val rows = JSONObject(text).optJSONArray("notifications") ?: JSONArray()
             buildList {
                 for (index in 0 until rows.length()) {
@@ -261,7 +260,7 @@ class AiApiClient(
         }.toString()
         request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val root = JSONObject(text)
             val content = root.optJSONObject("message")?.optString("content").orEmpty()
             require(content.isNotBlank()) { "AI 返回为空" }
@@ -301,7 +300,7 @@ class AiApiClient(
         val payload = JSONObject().put("confirmationId", confirmationId).toString()
         request(hubUrl.trimEnd('/') + "/api/ai/tools/confirm", "POST", payload).use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
             val result = JSONObject(text).optJSONObject("result") ?: JSONObject()
             result.optString("message").ifBlank { "操作已完成" }
         }
@@ -338,6 +337,14 @@ class AiApiClient(
         }
         return http.newCall(builder.build()).execute()
     }
+}
+
+private fun apiFailure(code: Int, body: String): String {
+    val detail = runCatching { JSONObject(body).optString("error") }.getOrNull()
+        ?.takeIf { it.isNotBlank() }
+        ?: body.take(180).takeIf { it.isNotBlank() }
+        ?: "请求失败"
+    return "HTTP $code：$detail"
 }
 
 private fun defaultAiHttpClient() = OkHttpClient.Builder()

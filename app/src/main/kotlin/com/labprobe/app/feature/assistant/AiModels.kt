@@ -3,7 +3,7 @@ package com.labprobe.app.feature.assistant
 data class AiSettings(
     val enabled: Boolean = false,
     val model: String = "deepseek-v4-flash",
-    val baseUrl: String = "",
+    val baseUrl: String = "https://api.deepseek.com",
     val hasApiKey: Boolean = false
 )
 
@@ -78,8 +78,8 @@ data class WeChatBridgeStatus(
     val pluginInstalled: Boolean = false,
     val connected: Boolean = false,
     val notificationTargetConfigured: Boolean = false,
+    val installCommand: String = "",
     val message: String = "正在检查",
-    val installCommand: String = "npx -y @tencent-weixin/openclaw-weixin-cli install",
 )
 
 data class WeChatLoginSession(

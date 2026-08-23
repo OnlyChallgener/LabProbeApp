@@ -103,7 +103,7 @@ jobs:
               'AgentUpdateCoordinator.bind(prefs)',
               'setPrimaryClip(ClipData.newPlainText("极客网探", text))',
               'toast(ctx, "已复制")',
-              'AiFloatingPet { onNavigate("ai_settings") }',
+              'AiFloatingPet { onNavigate("ai_chat") }',
               'Text("AI 助手"',
               '"配置 DeepSeek API"',
               'AiWechatScreen(context, onBack = { route = "ai_settings" })',
@@ -117,7 +117,9 @@ jobs:
           assert 'remoteEndpoint = wanUrl' in fav
           assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
           assert 'fun AiFloatingPet(onOpen: () -> Unit)' in assistant
-          assert 'if (expanded) onOpen() else expanded = true' in assistant
+          assert 'if (revealed) onOpen() else revealed = true' in assistant
+          assert 'shadowElevation = 0.dp' in assistant
+          assert 'OutlinedTextField' not in assistant
           PY
           git diff --check
 
