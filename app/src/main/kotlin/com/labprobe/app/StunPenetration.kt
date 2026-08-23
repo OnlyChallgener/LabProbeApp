@@ -299,7 +299,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("内网服务 STUN 穿透", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(if (agentOnline) "Relay 在线 · 创建后自动放行 Hub 防火墙" else "等待 Relay 在线后开始穿透", color = if (agentOnline) StunGreen else StunAmber, fontSize = 12.sp)
+                Text(if (agentOnline) "Relay 在线 · 自动转发至内网终端并放行防火墙" else "等待 Relay 在线后开始穿透", color = if (agentOnline) StunGreen else StunAmber, fontSize = 12.sp)
             }
             IconButton(onClick = onRefresh, enabled = !loading) { Icon(Icons.Rounded.Refresh, "刷新", tint = StunBlue) }
             Button(onClick = onAdd, contentPadding = PaddingValues(horizontal = 12.dp)) { Icon(Icons.Rounded.Add, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("新建") }
@@ -359,7 +359,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(if (endpoint.isBlank()) "正在获取公网地址…" else endpoint, fontWeight = FontWeight.Bold, color = if (endpoint.isBlank()) Color(0xFF718096) else Color(0xFF147D50), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("内网 ${rule.targetIpv4}:${rule.targetPort}", color = Color(0xFF718096), fontSize = 11.sp)
+                        Text("Relay 自动转发至 ${rule.targetIpv4}:${rule.targetPort}", color = Color(0xFF718096), fontSize = 11.sp)
                     }
                     if (endpoint.isNotBlank()) IconButton(onClick = onCopy) { Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(19.dp)) }
                 }
