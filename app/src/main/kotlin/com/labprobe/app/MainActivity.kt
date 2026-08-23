@@ -4,7 +4,7 @@ import android.content.ClipData
 import android.content.ContextWrapper
 import android.app.Activity
 import com.labprobe.app.feature.router.ipv6.Ipv6Screen
-import com.labprobe.app.feature.assistant.AiPetEntry
+import com.labprobe.app.feature.assistant.AiFloatingPet
 import com.labprobe.app.feature.assistant.AiSettingsScreen
 import com.labprobe.app.feature.assistant.AiChatScreen
 import com.labprobe.app.feature.assistant.AiUsageScreen
