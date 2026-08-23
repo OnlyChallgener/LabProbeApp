@@ -197,6 +197,12 @@ private fun routerDdnsHostname(record: DdnsRecord): String? {
     return null
 }
 
+private fun favoriteDdnsSupportsIpv4(record: LabProbeDdnsRecord): Boolean =
+    record.enabled && record.recordTypes.any { it.equals("A", ignoreCase = true) }
+
+private fun favoriteDdnsSupportsIpv4(record: DdnsRecord): Boolean =
+    record.enabled && !record.useIpv6
+
 private fun favoriteDdnsHostname(
     id: String?,
     snapshot: LabProbeDdnsSnapshot?,
@@ -1294,6 +1300,9 @@ private fun FavoriteEditorSheet(
         selectDdns(record?.id, record?.hostname)
     fun selectRouterDdns(record: DdnsRecord?) =
         selectDdns(record?.let(::routerDdnsId), record?.let(::routerDdnsHostname))
+    val stunFavorite = normalizeFavoriteType(draft.type) == "stun"
+    val selectableLabProbeDdns = if (stunFavorite) ddnsRecords.filter(::favoriteDdnsSupportsIpv4) else ddnsRecords
+    val selectableNativeDdns = if (stunFavorite) nativeDdnsRecords.filter(::favoriteDdnsSupportsIpv4) else nativeDdnsRecords
     val webhookManaged = existing?.id?.startsWith("webhook-") == true
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -1326,7 +1335,7 @@ private fun FavoriteEditorSheet(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FavoriteInlineField("服务类型", draft.serviceType, { draft = draft.copy(serviceType = it) }, "例如：HTTPS", Modifier.weight(1f))
         }
-        if (ddnsRecords.any { it.hostname.isNotBlank() } || nativeDdnsRecords.isNotEmpty()) {
+        if (selectableLabProbeDdns.any { it.hostname.isNotBlank() } || selectableNativeDdns.isNotEmpty()) {
             val selectedDdns = ddnsRecords.firstOrNull { it.id == draft.ddnsRecordId }
             val selectedRouterDdns = routerDdnsRecord(draft.ddnsRecordId, nativeDdnsRecords)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1353,8 +1362,8 @@ private fun FavoriteEditorSheet(
                     ) {
                         DropdownMenuItem(text = { Text("不关联", color = LabV2.Ink) }, onClick = { selectLabProbeDdns(null) })
                         if (ddnsRecords.any { it.hostname.isNotBlank() }) {
-                            Text("LabProbe DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            ddnsRecords.filter { it.hostname.isNotBlank() }.forEach { record ->
+                            Text(if (stunFavorite) "LabProbe DDNS · A / IPv4" else "LabProbe DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            selectableLabProbeDdns.filter { it.hostname.isNotBlank() }.forEach { record ->
                                 DropdownMenuItem(
                                     text = {
                                         Column {
@@ -1370,9 +1379,9 @@ private fun FavoriteEditorSheet(
                                 )
                             }
                         }
-                        if (nativeDdnsRecords.isNotEmpty()) {
-                            Text("路由器 DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            nativeDdnsRecords.filter { it.domain.isNotBlank() }.forEach { record ->
+                        if (selectableNativeDdns.isNotEmpty()) {
+                            Text(if (stunFavorite) "路由器 DDNS · A / IPv4" else "路由器 DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            selectableNativeDdns.filter { it.domain.isNotBlank() }.forEach { record ->
                                 DropdownMenuItem(
                                     text = {
                                         Column {
