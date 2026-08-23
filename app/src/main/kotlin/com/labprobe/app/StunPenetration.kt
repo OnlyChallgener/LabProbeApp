@@ -44,7 +44,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenuItemDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -423,19 +422,16 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         DropdownMenuItem(
                             text = { Text("编辑", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
                             onClick = onEdit,
-                            colors = DropdownMenuItemDefaults.colors(textColor = LabV2.Ink),
                         )
                         DropdownMenuItem(
                             text = { Text(if (rule.enabled) "停止穿透" else "开始穿透", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
                             leadingIcon = { Icon(if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline, null, tint = LabV2.InkMuted) },
                             onClick = onToggle,
-                            colors = DropdownMenuItemDefaults.colors(textColor = LabV2.Ink, leadingIconColor = LabV2.InkMuted),
                         )
                         DropdownMenuItem(
                             text = { Text("删除", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, color = StunRed) },
                             leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, tint = StunRed) },
                             onClick = onDelete,
-                            colors = DropdownMenuItemDefaults.colors(textColor = StunRed, leadingIconColor = StunRed),
                         )
                     }
                 }
