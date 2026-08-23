@@ -17,6 +17,24 @@ data class AiReply(
     val content: String,
     val usage: AiTokenSummary = AiTokenSummary(),
     val conversationId: String? = null,
+    val confirmation: AiToolConfirmation? = null,
+)
+
+data class AiToolHint(
+    val id: String,
+    val name: String,
+    val example: String,
+    val risk: String,
+)
+
+data class AiToolConfirmation(
+    val confirmationId: String,
+    val toolId: String,
+    val title: String,
+    val summary: String,
+    val executor: String,
+    val arguments: Map<String, String>,
+    val expiresAt: String,
 )
 
 data class AiUsageSummary(

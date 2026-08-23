@@ -1,6 +1,8 @@
 package com.labprobe.app.feature.assistant
 
 import android.content.Context
+import com.labprobe.app.AppPrefs
+import com.labprobe.app.favoriteShortcuts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -39,6 +41,7 @@ class AiApiClient(
     private val hubUrl: String,
     private val hubToken: String,
     private val http: OkHttpClient = defaultAiHttpClient(),
+    private val appPrefs: AppPrefs? = null,
 ) {
     suspend fun saveConfig(config: AiSettings, apiKey: String? = null): AiSettings = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
@@ -120,13 +123,38 @@ class AiApiClient(
         }
     }
 
+    suspend fun catalog(): List<AiToolHint> = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/catalog", "GET", null).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            val rows = JSONObject(text).optJSONArray("tools") ?: JSONArray()
+            buildList {
+                for (index in 0 until rows.length()) {
+                    val item = rows.optJSONObject(index) ?: continue
+                    val examples = item.optJSONArray("examples")
+                    val example = examples?.optString(0).orEmpty()
+                    if (example.isNotBlank()) add(AiToolHint(
+                        id = item.optString("id"),
+                        name = item.optString("name", example),
+                        example = example,
+                        risk = item.optString("risk", "read"),
+                    ))
+                }
+            }
+        }
+    }
+
     suspend fun chat(messages: List<AiMessage>, conversationId: String? = null): AiReply = withContext(Dispatchers.IO) {
         val current = settings.read()
         require(current.enabled) { "请先启用 Hub AI" }
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val body = JSONObject().put("messages", JSONArray().apply {
             messages.forEach { put(JSONObject().put("role", it.role).put("content", it.content)) }
-        }).apply { if (!conversationId.isNullOrBlank()) put("conversationId", conversationId) }.toString()
+        }).apply {
+            if (!conversationId.isNullOrBlank()) put("conversationId", conversationId)
+            localContext()?.let { put("clientContext", it) }
+        }.toString()
         request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
@@ -134,6 +162,25 @@ class AiApiClient(
             val content = root.optJSONObject("message")?.optString("content").orEmpty()
             require(content.isNotBlank()) { "AI 返回为空" }
             val usage = root.optJSONObject("usage")
+            val confirmation = root.optJSONObject("confirmation")?.let { confirmationRoot ->
+                val preview = confirmationRoot.optJSONObject("preview") ?: JSONObject()
+                val arguments = preview.optJSONObject("arguments") ?: JSONObject()
+                AiToolConfirmation(
+                    confirmationId = confirmationRoot.optString("confirmationId"),
+                    toolId = preview.optString("toolId"),
+                    title = preview.optString("title", "需要确认"),
+                    summary = preview.optString("summary"),
+                    executor = preview.optString("executor", "hub"),
+                    arguments = buildMap {
+                        val keys = arguments.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            put(key, arguments.opt(key)?.toString().orEmpty())
+                        }
+                    },
+                    expiresAt = confirmationRoot.optString("expiresAt"),
+                )
+            }
             AiReply(
                 content,
                 AiTokenSummary(
@@ -141,8 +188,39 @@ class AiApiClient(
                     completion = usage?.optInt("completion_tokens", 0) ?: 0,
                 ),
                 conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
+                confirmation = confirmation,
             )
         }
+    }
+
+    suspend fun confirmHubTool(confirmationId: String): String = withContext(Dispatchers.IO) {
+        val payload = JSONObject().put("confirmationId", confirmationId).toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/tools/confirm", "POST", payload).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            val result = JSONObject(text).optJSONObject("result") ?: JSONObject()
+            result.optString("message").ifBlank { "操作已完成" }
+        }
+    }
+
+    private fun localContext(): JSONObject? = appPrefs?.let { prefs ->
+        JSONObject()
+            .put("schemaVersion", 1)
+            .put("settings", JSONObject()
+                .put("privacyMode", prefs.privacyMode)
+                .put("favoriteNetworkMode", prefs.favoriteNetworkMode)
+                .put("routerDisplayName", prefs.routerDisplayName))
+            .put("favorites", JSONArray().apply {
+                prefs.favoriteShortcuts().take(100).forEach { item ->
+                    put(JSONObject()
+                        .put("id", item.id)
+                        .put("title", item.title)
+                        .put("description", item.description)
+                        .put("localUrl", item.localEndpoint.ifBlank { item.lanUrl })
+                        .put("remoteUrl", item.remoteEndpoint.ifBlank { item.wanUrl })
+                        .put("serviceType", item.serviceType))
+                }
+            })
     }
 
     private fun request(url: String, method: String, json: String?): okhttp3.Response {

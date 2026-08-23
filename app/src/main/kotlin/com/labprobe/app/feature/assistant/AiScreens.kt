@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -197,8 +198,11 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
 fun AiChatScreen(context: Context, onBack: () -> Unit) {
     val store = remember { AiSettingsStore(context) }
     val appPrefs = remember { com.labprobe.app.AppPrefs(context) }
-    val client = remember { AiApiClient(store, appPrefs.hub, appPrefs.token) }
+    val client = remember { AiApiClient(store, appPrefs.hub, appPrefs.token, appPrefs = appPrefs) }
+    val localTools = remember { AiLocalToolExecutor(appPrefs) }
     val messages = remember { mutableStateListOf<AiMessage>() }
+    var toolHints by remember { mutableStateOf<List<AiToolHint>>(emptyList()) }
+    var pendingConfirmation by remember { mutableStateOf<AiToolConfirmation?>(null) }
     var conversationId by remember { mutableStateOf<String?>(null) }
     var loadingHistory by remember { mutableStateOf(true) }
     var input by remember { mutableStateOf("") }
@@ -214,16 +218,70 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
             }
             .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以帮你查看 Hub 状态、解释网络数据。") }
         loadingHistory = false
+        runCatching { client.catalog() }.onSuccess { toolHints = it }
     }
-    DetailShell("AI 对话", "快捷命令 · /status  /devices  /help", onBack) {
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink) }
+            Column(Modifier.weight(1f)) {
+                Text("AI 对话", style = LabTypography.PageTitle)
+                Text("常用指令会跟随 Hub 能力自动更新", style = LabTypography.Supporting)
+            }
+        }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
-            item { Text(if (loadingHistory) "正在恢复最近对话…" else "快捷命令：/status · /devices · /help", style = LabTypography.Supporting) }
+            item {
+                if (loadingHistory) Text("正在恢复最近对话…", style = LabTypography.Supporting)
+                else if (toolHints.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(toolHints, key = { it.id }) { hint ->
+                        SuggestionChip(
+                            onClick = { input = hint.example },
+                            label = { Text(hint.name, maxLines = 1) },
+                            icon = if (hint.risk == "write") {
+                                { Icon(Icons.Rounded.Lock, null, Modifier.size(14.dp)) }
+                            } else null,
+                        )
+                    }
+                }
+            }
             items(messages) { message -> Surface(shape = RoundedCornerShape(14.dp), color = if (message.role == "user") LabV2.Primary.copy(alpha = .1f) else Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border), modifier = Modifier.fillMaxWidth()) { Text(message.content, Modifier.padding(12.dp), style = LabTypography.Body) } }
+        }
+        pendingConfirmation?.let { confirmation ->
+            Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFFFFF8E8), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF3C969))) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Security, null, tint = Color(0xFFB56A00), modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(confirmation.title, style = LabTypography.CardTitle)
+                    }
+                    Text(confirmation.summary, style = LabTypography.Body)
+                    Text("确认后仅执行以上操作；确认 5 分钟内有效。", style = LabTypography.Caption)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = {
+                            pendingConfirmation = null
+                            messages += AiMessage("assistant", "已取消操作。")
+                        }, enabled = !sending, modifier = Modifier.weight(1f)) { Text("取消") }
+                        Button(onClick = {
+                            sending = true
+                            scope.launch {
+                                runCatching {
+                                    client.confirmHubTool(confirmation.confirmationId)
+                                    if (confirmation.executor == "app") localTools.execute(confirmation) else "操作已完成"
+                                }.onSuccess { messages += AiMessage("assistant", it); pendingConfirmation = null }
+                                    .onFailure { messages += AiMessage("assistant", "执行失败：${it.message ?: "未知错误"}") }
+                                sending = false
+                            }
+                        }, enabled = !sending, modifier = Modifier.weight(1f)) { Text("确认执行") }
+                    }
+                }
+            }
         }
         Text("Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）", style = LabTypography.Caption)
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(input, { input = it }, Modifier.weight(1f), placeholder = { Text("输入消息…") }, maxLines = 4)
-            IconButton(enabled = input.isNotBlank() && !sending && !loadingHistory, onClick = { val text = input.trim(); input = ""; messages += AiMessage("user", text); sending = true; scope.launch { runCatching { client.chat(messages.toList(), conversationId) }.onSuccess { conversationId = it.conversationId ?: conversationId; messages += AiMessage("assistant", it.content); usage = it.usage }.onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }; sending = false } }) { Icon(Icons.Rounded.Send, "发送", tint = LabV2.Primary) }
+            IconButton(enabled = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null, onClick = { val text = input.trim(); input = ""; messages += AiMessage("user", text); sending = true; scope.launch { runCatching { client.chat(messages.toList(), conversationId) }.onSuccess { conversationId = it.conversationId ?: conversationId; messages += AiMessage("assistant", it.content); usage = it.usage; pendingConfirmation = it.confirmation }.onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }; sending = false } }) { Icon(Icons.Rounded.Send, "发送", tint = LabV2.Primary) }
         }
     }
 }
