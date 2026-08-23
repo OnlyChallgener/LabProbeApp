@@ -141,20 +141,32 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
     val store = remember { AiSettingsStore(context) }
     val appPrefs = remember { com.labprobe.app.AppPrefs(context) }
     val client = remember { AiApiClient(store, appPrefs.hub, appPrefs.token) }
-    val messages = remember { mutableStateListOf(AiMessage("assistant", "你好，我可以帮你查看 Hub 状态、解释网络数据。")) }
+    val messages = remember { mutableStateListOf<AiMessage>() }
+    var conversationId by remember { mutableStateOf<String?>(null) }
+    var loadingHistory by remember { mutableStateOf(true) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var usage by remember { mutableStateOf(AiTokenSummary()) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        runCatching { client.latestConversation() }
+            .onSuccess { (id, history) ->
+                conversationId = id
+                messages.clear()
+                if (history.isEmpty()) messages += AiMessage("assistant", "你好，我可以帮你查看 Hub 状态、解释网络数据。") else messages.addAll(history)
+            }
+            .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以帮你查看 Hub 状态、解释网络数据。") }
+        loadingHistory = false
+    }
     DetailShell("AI 对话", "快捷命令 · /status  /devices  /help", onBack) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
-            item { Text("快捷命令：/status · /devices · /help", style = LabTypography.Supporting) }
+            item { Text(if (loadingHistory) "正在恢复最近对话…" else "快捷命令：/status · /devices · /help", style = LabTypography.Supporting) }
             items(messages) { message -> Surface(shape = RoundedCornerShape(14.dp), color = if (message.role == "user") LabV2.Primary.copy(alpha = .1f) else Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border), modifier = Modifier.fillMaxWidth()) { Text(message.content, Modifier.padding(12.dp), style = LabTypography.Body) } }
         }
         Text("Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）", style = LabTypography.Caption)
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(input, { input = it }, Modifier.weight(1f), placeholder = { Text("输入消息…") }, maxLines = 4)
-            IconButton(enabled = input.isNotBlank() && !sending, onClick = { val text = input.trim(); input = ""; messages += AiMessage("user", text); sending = true; scope.launch { runCatching { client.chat(messages.toList()) }.onSuccess { messages += AiMessage("assistant", it.content); usage = it.usage }.onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }; sending = false } }) { Icon(Icons.Rounded.Send, "发送", tint = LabV2.Primary) }
+            IconButton(enabled = input.isNotBlank() && !sending && !loadingHistory, onClick = { val text = input.trim(); input = ""; messages += AiMessage("user", text); sending = true; scope.launch { runCatching { client.chat(messages.toList(), conversationId) }.onSuccess { conversationId = it.conversationId ?: conversationId; messages += AiMessage("assistant", it.content); usage = it.usage }.onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }; sending = false } }) { Icon(Icons.Rounded.Send, "发送", tint = LabV2.Primary) }
         }
     }
 }

@@ -93,13 +93,40 @@ class AiApiClient(
         }
     }
 
-    suspend fun chat(messages: List<AiMessage>): AiReply = withContext(Dispatchers.IO) {
+    suspend fun latestConversation(): Pair<String?, List<AiMessage>> = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations?limit=1", "GET", null).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
+            val rows = JSONObject(text).optJSONArray("conversations")
+            val id = rows?.optJSONObject(0)?.optString("id")?.takeIf { !it.isNullOrBlank() }
+            if (id == null) return@withContext null to emptyList()
+            request(hubUrl.trimEnd('/') + "/api/ai/conversations/${java.net.URLEncoder.encode(id, "UTF-8")}/messages", "GET", null).use { messagesResponse ->
+                val messagesText = messagesResponse.body?.string().orEmpty()
+                if (!messagesResponse.isSuccessful) error("HTTP ${messagesResponse.code}: ${messagesText.take(180)}")
+                val raw = JSONObject(messagesText).optJSONArray("messages") ?: JSONArray()
+                val messages = buildList {
+                    for (index in 0 until raw.length()) {
+                        val item = raw.optJSONObject(index) ?: continue
+                        val role = item.optString("role")
+                        val content = item.optString("content")
+                        if (role in setOf("user", "assistant", "system") && content.isNotBlank()) {
+                            add(AiMessage(role, content))
+                        }
+                    }
+                }
+                id to messages
+            }
+        }
+    }
+
+    suspend fun chat(messages: List<AiMessage>, conversationId: String? = null): AiReply = withContext(Dispatchers.IO) {
         val current = settings.read()
         require(current.enabled) { "请先启用 Hub AI" }
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val body = JSONObject().put("messages", JSONArray().apply {
             messages.forEach { put(JSONObject().put("role", it.role).put("content", it.content)) }
-        }).toString()
+        }).apply { if (!conversationId.isNullOrBlank()) put("conversationId", conversationId) }.toString()
         request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("HTTP ${response.code}: ${text.take(180)}")
@@ -113,6 +140,7 @@ class AiApiClient(
                     prompt = usage?.optInt("prompt_tokens", 0) ?: 0,
                     completion = usage?.optInt("completion_tokens", 0) ?: 0,
                 ),
+                conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
             )
         }
     }

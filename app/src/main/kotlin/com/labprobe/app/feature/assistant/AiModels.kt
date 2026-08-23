@@ -13,7 +13,11 @@ data class AiTokenSummary(val prompt: Int = 0, val completion: Int = 0) {
     val total: Int get() = prompt + completion
 }
 
-data class AiReply(val content: String, val usage: AiTokenSummary = AiTokenSummary())
+data class AiReply(
+    val content: String,
+    val usage: AiTokenSummary = AiTokenSummary(),
+    val conversationId: String? = null,
+)
 
 data class AiUsageSummary(
     val requests: Int = 0,
