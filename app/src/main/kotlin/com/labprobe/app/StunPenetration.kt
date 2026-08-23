@@ -112,11 +112,14 @@ data class StunRule(
     val targetPort: Int,
     val serviceType: String,
     val transportProtocol: String,
+    val forwardMode: String,
     val actualState: String,
     val firewallState: String,
+    val nativeMappingState: String,
     val runtime: StunRuntime,
 ) {
-    val ready: Boolean get() = actualState == "mapped" && firewallState == "ready" && runtime.publicEndpoint.isNotBlank()
+    val usesRouterNativeMapping: Boolean get() = forwardMode == "router_native"
+    val ready: Boolean get() = actualState == "mapped" && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
 }
 
 data class StunAddressRecord(val endpoint: String, val updatedAt: Long)
@@ -144,8 +147,12 @@ private fun parseStunRule(json: JSONObject): StunRule {
         targetPort = json.optInt("targetPort"),
         serviceType = cleanApiText(json.optString("serviceType", "Custom")).ifBlank { "Custom" },
         transportProtocol = cleanApiText(json.optString("transportProtocol", "TCP")).uppercase(Locale.ROOT),
+        forwardMode = cleanApiText(json.optString("forwardMode")).ifBlank {
+            if (cleanApiText(json.optString("transportProtocol", "TCP")).equals("TCP", true)) "router_native" else "relay_proxy"
+        },
         actualState = cleanApiText(json.optString("actualState", runtime.optString("state", "stopped"))),
         firewallState = cleanApiText(json.optString("firewallState", "pending")),
+        nativeMappingState = cleanApiText(json.optString("nativeMappingState", "pending")),
         runtime = StunRuntime(
             state = cleanApiText(runtime.optString("state", "stopped")),
             resolvedTarget = cleanApiText(runtime.optString("resolvedTarget")),
@@ -343,7 +350,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("内网服务 STUN 穿透", style = LabTypography.SectionTitle)
-                val presenceText = if (agentOnline) "Agent 在线 · LabRelay 自动转发至内网终端" else "Agent 状态暂未同步 · 设置可直接创建"
+                val presenceText = if (agentOnline) "Agent 在线 · TCP 路由器直连，UDP 由 LabRelay 转发" else "Agent 状态暂未同步 · 设置可直接创建"
                 Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (agentLastSeenAt.isNotBlank() && !agentOnline) {
                     Text("最近上报 $agentLastSeenAt", style = LabTypography.Caption, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -381,12 +388,14 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val stateText = when {
         !rule.enabled -> "已停止"
         rule.ready -> "运行中"
+        rule.actualState == "router_mapping_error" -> "路由器映射未就绪"
+        rule.actualState == "router_mapping" -> "正在同步路由器映射"
         rule.actualState == "firewall_error" -> "防火墙未就绪"
         rule.actualState == "waiting_agent" -> "命令待 Agent 同步"
         rule.actualState == "mapped" || rule.actualState == "mapping" -> "正在校验公网地址"
         else -> "正在同步"
     }
-    val stateColor = when { rule.ready -> StunGreen; !rule.enabled -> LabV2.InkMuted; rule.actualState == "firewall_error" -> StunRed; else -> StunAmber }
+    val stateColor = when { rule.ready -> StunGreen; !rule.enabled -> LabV2.InkMuted; rule.actualState == "firewall_error" || rule.actualState == "router_mapping_error" -> StunRed; else -> StunAmber }
     LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -446,14 +455,25 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 Text("动态地址", color = StunAmber, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
                             }
                         }
-                        Text("LabRelay 转发至 ${rule.targetIpv4}:${rule.targetPort}", color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize)
+                        Text(
+                            if (rule.usesRouterNativeMapping) "路由器直连至 ${rule.targetIpv4}:${rule.targetPort} · 地址变化无需改映射"
+                            else "LabRelay 转发至 ${rule.targetIpv4}:${rule.targetPort}",
+                            color = LabV2.InkMuted,
+                            fontSize = LabTypography.Caption.fontSize,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     if (endpoint.isNotBlank()) IconButton(onClick = onCopy) { Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(19.dp)) }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
-                Spacer(Modifier.width(16.dp)); StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
+                if (rule.usesRouterNativeMapping) {
+                    Text("路由器直连 · 流量不经过 LabRelay", color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize)
+                } else {
+                    StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
+                    Spacer(Modifier.width(16.dp)); StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
+                }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onHistory, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp), shape = LabV2.ButtonShape) { Icon(Icons.Rounded.History, null, Modifier.size(16.dp)); Spacer(Modifier.width(3.dp)); Text("地址记录", fontSize = 12.sp) }
             }
@@ -495,7 +515,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透", style = LabTypography.PageTitle)
-                Text("只需填写服务协议和内网目标，Agent 会自动同步 LabRelay。", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                Text("TCP 会自动建立路由器映射；UDP 使用 LabRelay 转发。", style = LabTypography.Supporting, color = LabV2.InkMuted)
                 Text("服务", style = LabTypography.SectionTitle)
                 PORT_MAP_SERVICE_TEMPLATES.chunked(3).forEach { group ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
