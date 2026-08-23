@@ -313,14 +313,34 @@ internal fun upsertMappingFavorite(
     return saved
 }
 
-/** A STUN shortcut is system-owned: it always follows the Relay's latest public endpoint. */
-internal fun upsertStunFavorite(prefs: AppPrefs, rule: StunRule): FavoriteShortcut? {
+/** A STUN shortcut is system-owned: it always follows the Agent's latest public endpoint. */
+internal fun upsertStunFavorite(
+    prefs: AppPrefs,
+    rule: StunRule,
+    ddnsSnapshot: LabProbeDdnsSnapshot? = null,
+    nativeDdnsRecords: List<DdnsRecord> = emptyList(),
+): FavoriteShortcut? {
     if (!rule.ready || rule.runtime.publicEndpoint.isBlank()) return null
     val current = prefs.favoriteShortcuts().toMutableList()
     val index = current.indexOfFirst { it.stunRuleId == rule.id }
     val scheme = favoriteServiceScheme(rule.serviceType)
     val local = "$scheme://${rule.targetIpv4}:${rule.targetPort}"
-    val remote = "$scheme://${rule.runtime.publicEndpoint}"
+    val existing = current.getOrNull(index)
+    val ddnsRecordId = existing?.ddnsRecordId
+    val hostname = favoriteDdnsHostname(ddnsRecordId, ddnsSnapshot, nativeDdnsRecords)
+    val publicPort = rule.runtime.publicPort.takeIf { it in 1..65535 }
+        ?: rule.runtime.publicEndpoint.substringAfterLast(':').toIntOrNull()?.takeIf { it in 1..65535 }
+    val publicEndpoint = "$scheme://${rule.runtime.publicEndpoint}"
+    val remote = if (hostname != null) {
+        replaceFavoriteUrlHost(
+            publicEndpoint,
+            hostname,
+            publicPort,
+            scheme,
+        ).orEmpty().ifBlank {
+            if (publicPort != null) "$scheme://$hostname:$publicPort" else "$scheme://$hostname"
+        }
+    } else publicEndpoint
     val generated = FavoriteShortcut(
         id = "stun-${rule.id}",
         title = rule.name.ifBlank { "STUN ${rule.serviceType}" },
@@ -332,6 +352,7 @@ internal fun upsertStunFavorite(prefs: AppPrefs, rule: StunRule): FavoriteShortc
         order = if (index >= 0) current[index].order else current.size,
         type = "stun",
         stunRuleId = rule.id,
+        ddnsRecordId = ddnsRecordId,
         localEndpoint = local,
         remoteEndpoint = remote,
         serviceType = rule.serviceType,
@@ -790,9 +811,11 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
         if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
         mappingRules = PortMappingRuleStore.load(context, prefs).rules
     }
-    LaunchedEffect(stunApi) {
+    LaunchedEffect(stunApi, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
         while (true) {
-            runCatching { stunApi.list() }.getOrNull()?.rules?.filter { it.ready }?.forEach { upsertStunFavorite(prefs, it) }
+            runCatching { stunApi.list() }.getOrNull()?.rules?.filter { it.ready }?.forEach {
+                upsertStunFavorite(prefs, it, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
+            }
             shortcuts = prefs.favoriteShortcuts()
             delay(5_000)
         }

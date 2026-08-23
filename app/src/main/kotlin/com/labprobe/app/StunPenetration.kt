@@ -225,7 +225,12 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { StunApi(prefs) }
     val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
+    val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val liveAgent by presenceStore.state.collectAsState()
+    val ddnsResource by routerRepository.labProbeDdns.collectAsState()
+    val nativeDdnsResource by routerRepository.ddns.collectAsState()
+    val ddnsSnapshot = ddnsResource.value
+    val nativeDdnsRecords = nativeDdnsResource.value.orEmpty()
     var snapshot by remember { mutableStateOf(StunSnapshot()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
@@ -242,7 +247,9 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { it.agentLastSeenAt } ?: it.agentLastSeenAt,
             )
             error = ""
-            it.rules.filter { rule -> rule.ready }.forEach { rule -> upsertStunFavorite(prefs, rule) }
+            it.rules.filter { rule -> rule.ready }.forEach { rule ->
+                upsertStunFavorite(prefs, rule, ddnsSnapshot, nativeDdnsRecords)
+            }
         }.onFailure {
             error = if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
                 "Agent 在线，状态暂未同步；已保留全部穿透设置"
@@ -253,6 +260,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
         loading = false
     }
     LaunchedEffect(Unit) {
+        routerRepository.refreshLabProbeDdns(false)
+        routerRepository.refreshDdns(false)
         refresh()
     }
     LaunchedEffect(liveAgent?.lastSeenAt, snapshot.agentOnline) {
