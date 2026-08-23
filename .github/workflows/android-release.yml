@@ -105,6 +105,7 @@ jobs:
               'toast(ctx, "已复制")',
               'AiFloatingPet { onNavigate("ai_settings") }',
               'Text("AI 助手"',
+              'Text("配置 DeepSeek API"',
           ]
           for needle in required_main:
               assert needle in main, f'missing MainActivity invariant: {needle}'

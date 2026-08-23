@@ -1802,6 +1802,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("favorites") }
     var dailyReturnRoute by remember { mutableStateOf("events") }
+    var aiReturnRoute by remember { mutableStateOf("home") }
     var autoRefresh by remember { mutableStateOf("实时") }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
@@ -1965,6 +1966,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
+            if (target == "ai_settings") aiReturnRoute = if (route in mainRoutes) route else normalized
             route = target
         }
         BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
@@ -1978,7 +1980,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
                 "settings" -> settingsReturnRoute
-                "ai_settings" -> "home"
+                "ai_settings" -> aiReturnRoute
                 "ai_chat" -> "ai_settings"
                 "ai_usage" -> "ai_settings"
                 "tool_nat_history" -> "tool_nat"
@@ -2049,7 +2051,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenPortMap = { toolReturnRoute = "device_detail"; route = "tool_portmap" },
                             onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" }
                         )
-                        "tools" -> ToolsHomeScreen(prefs, topNav) { toolReturnRoute = null; route = it }
+                        "tools" -> ToolsHomeScreen(prefs, topNav) {
+                            toolReturnRoute = null
+                            if (it == "ai_settings") aiReturnRoute = "tools"
+                            route = it
+                        }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll(forceFull = true) } }, { dailyReturnRoute = "events"; route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = dailyReturnRoute }
                         "favorites" -> FavoritesScreen(
@@ -2061,8 +2067,15 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" },
                             onBeforeOpenShortcut = {}
                         )
-                        "settings" -> SettingsScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }) { route = settingsReturnRoute }
-                        "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = "home" }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
+                        "settings" -> SettingsScreen(
+                            prefs = prefs,
+                            state = state,
+                            autoRefresh = autoRefresh,
+                            onAuto = { autoRefresh = it; prefs.autoRefresh = it },
+                            onBack = { route = settingsReturnRoute },
+                            onOpenAi = { aiReturnRoute = "settings"; route = "ai_settings" },
+                        )
+                        "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = aiReturnRoute }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
                         "ai_chat" -> AiChatScreen(context, onBack = { route = "ai_settings" })
                         "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)
@@ -9755,7 +9768,14 @@ private fun realtimeFailureText(raw: String): String {
 }
 
 @Composable
-fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
+fun SettingsScreen(
+    prefs: AppPrefs,
+    state: AppState,
+    autoRefresh: String,
+    onAuto: (String) -> Unit,
+    onBack: () -> Unit,
+    onOpenAi: () -> Unit,
+) = DetailShell("我的 / 设置", "连接、AI、通知、隐私与关于", onBack) {
     var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
@@ -9846,6 +9866,9 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 Icon(Icons.Rounded.Sync, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("立即校准", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
+    }
+    ExpressiveCard("AI 与模型", "配置 DeepSeek 模型、API 地址与密钥；密钥交由 Hub 加密托管。", Icons.Rounded.SmartToy, LabV2.Cyan) {
+        PillButton("配置 DeepSeek API", Icons.Rounded.Key, accent = settingsMint, onClick = onOpenAi)
     }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
     ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, LabV2.Cyan) {
