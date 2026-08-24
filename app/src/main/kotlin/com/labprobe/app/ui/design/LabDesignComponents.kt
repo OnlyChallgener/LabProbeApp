@@ -29,6 +29,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+val LAB_POPUP_SURFACE = Color(0xFFFAFCFF)
+val LAB_POPUP_SUBTLE = Color(0xFFF3F7FC)
+val LAB_POPUP_BORDER = Color(0xFFDDE7F2)
+val LAB_POPUP_SCRIM = Color(0xFF0F172A)
+val LAB_POPUP_HANDLE = Color(0xFF1E293B)
+
 @Composable
 fun LabCard(
     modifier: Modifier = Modifier,
