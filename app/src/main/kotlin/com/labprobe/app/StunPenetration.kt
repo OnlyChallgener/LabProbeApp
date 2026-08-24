@@ -652,8 +652,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable private fun StunSelectedDevice(device: DeviceItem?, loading: Boolean, onClick: () -> Unit) {
-    val profile = device?.let(::inferDeviceProfile)
     val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { "已选设备" } }
+    val profile = if (device != null) inferDeviceProfile(device) else null
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = LabV2.FieldShape,
@@ -661,7 +661,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
         border = BorderStroke(1.dp, LabCoreSurface.Border),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (device != null && profile != null) {
+            if (profile != null) {
                 LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 34)
             } else {
                 LabV2ToolIcon(Icons.Rounded.Devices, StunBlue, size = 34, muted = device == null)

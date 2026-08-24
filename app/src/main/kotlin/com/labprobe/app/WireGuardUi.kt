@@ -815,7 +815,7 @@ private fun WireGuardServerSettingsDialog(
                                 checkedThumbColor = Color.White,
                                 checkedTrackColor = WireGuardBlue,
                                 uncheckedThumbColor = Color.White,
-                                uncheckedTrackColor = LabV2.InkDisabled
+                                uncheckedTrackColor = LabV2.BorderStrong
                             )
                         )
                     }
