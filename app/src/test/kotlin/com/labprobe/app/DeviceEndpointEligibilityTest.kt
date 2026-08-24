@@ -31,6 +31,7 @@ class DeviceEndpointEligibilityTest {
         assertFalse(isDeviceUsableForPublicEndpoint(device("iQOO Neo3")))
         assertFalse(isDeviceUsableForPublicEndpoint(device("华为Mate60")))
         assertFalse(isDeviceUsableForPublicEndpoint(device("Honor V40", devType = "phone")))
+        assertFalse(isDeviceUsableForPublicEndpoint(device("android-client", devType = "mobile")))
     }
 
     @Test
