@@ -184,29 +184,12 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 字体、色彩、排版与中文提示统一优化" to listOf(
-                "启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点",
-                "SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法",
-                "下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色",
-                "首页、设备页和详情卡统一优先显示用户备注名称",
-                "已安装版本高于旧更新清单时，最新版本不再倒退显示",
-                "Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报",
-                "区分更新请求超时和已下发后的状态轮询超时",
-                "Relay 版本检查与更新任务移到应用级作用域，离开页面仍会继续",
-                "更新后持续监测 Agent 心跳，版本号和最后上报时间自动刷新",
-                "离线列表保持独立权威数据，关注列表只引用在线或离线最新记录",
-                "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
-                "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
-                "设备一级页面按返回键回到 APP 首页，不再直接退出到桌面",
-                "离线事件会校正旧归档时间，避免通知与离线卡片不一致",
-                "每日设备排行保留 Hub 返回的当天在线时长与流量数据",
-                "Agent 更新检查改为 Hub 后台任务，502 不再显示原始 HTML",
-                "SSH 小卡片改为浅灰色，今日概览同步状态移到右上角",
-                "首页卡片拖动响应加快，点击反馈按卡片圆角裁剪",
-                "终端实时栏的速率与连接数改为固定间距",
-                "NAT 任务完成后耗时和路由器响应停止累计，保留最终结果",
-                "路由状态、DDNS 与网络自检刷新保留上次有效数据，不再白屏",
-                "统一 Hub、WSS 与路由器数据状态，避免实时正常却显示 Hub 断开"
+            "v$NAME build$CODE · Router Core 设置与更新信息修复" to listOf(
+                "APP 设置页可通过 Hub 修改路由器名称、管理地址、账号和密码",
+                "路由器密码不回显，留空保存时保留 Hub 中已配置的密码",
+                "检查更新会从 JSON 清单中提取可读发布说明，不再显示原始 JSON",
+                "版本弹窗仅展示当前版本对应的本次更新内容",
+                "设置页标题调整为 APP 设置并缩小一级"
             )
         )
 }
@@ -2786,6 +2769,37 @@ private fun updateHttpClient() = OkHttpClient.Builder()
     .readTimeout(10, TimeUnit.SECONDS)
     .build()
 
+/** Converts manifest/release-note variants to readable text; never exposes raw JSON to UI. */
+internal fun normalizeReleaseNotes(root: JSONObject): String {
+    fun valueText(value: Any?): String {
+        return when (value) {
+            is JSONArray -> (0 until value.length()).mapNotNull { index -> valueText(value.opt(index)).takeIf { it.isNotBlank() } }.joinToString("\n")
+            is JSONObject -> {
+                val preferred = listOf("text", "content", "body", "message", "description", "notes", "items", "changes", "features", "fixes")
+                    .asSequence().mapNotNull { key -> value.opt(key)?.let(::valueText) }.firstOrNull { it.isNotBlank() }
+                preferred ?: value.keys().asSequence()
+                    .filterNot { it in setOf("version", "versionName", "versionCode", "downloadUrl", "sha256", "sizeBytes") }
+                    .mapNotNull { key -> valueText(value.opt(key)).takeIf { it.isNotBlank() } }
+                    .joinToString("\n")
+            }
+            null, JSONObject.NULL -> ""
+            is String -> {
+                val text = value.trim()
+                when {
+                    text.startsWith("{") -> runCatching { valueText(JSONObject(text)) }.getOrDefault("")
+                    text.startsWith("[") -> runCatching { valueText(JSONArray(text)) }.getOrDefault("")
+                    else -> cleanApiText(text)
+                }
+            }
+            else -> cleanApiText(value.toString())
+        }
+    }
+    val keys = listOf("releaseNotes", "release_notes", "changelog", "notes", "body", "message")
+    return keys.asSequence().mapNotNull { key -> root.opt(key)?.let(::valueText) }
+        .map { it.trim() }.firstOrNull { it.isNotBlank() && !it.trim().matches(Regex("^[\\[{].*[\\]}]$", RegexOption.DOT_MATCHES_ALL)) }
+        .orEmpty()
+}
+
 private fun fetchLuckyUpdateInfo(client: OkHttpClient): GitHubUpdateInfo {
     val req = Request.Builder()
         .url(UpdateRepository.APP_MANIFEST)
@@ -2803,11 +2817,7 @@ private fun fetchLuckyUpdateInfo(client: OkHttpClient): GitHubUpdateInfo {
         }
         val sha256 = json.optString("sha256").trim().lowercase(Locale.ROOT)
         if (sha256.isNotBlank() && !sha256.matches(Regex("[0-9a-f]{64}"))) error("Lucky update.json 的 sha256 无效")
-        val rawChangelog = json.opt("changelog")
-        val changelog = when (rawChangelog) {
-            is JSONArray -> (0 until rawChangelog.length()).joinToString("\n") { rawChangelog.optString(it) }
-            else -> cleanApiText(rawChangelog?.toString())
-        }
+        val changelog = normalizeReleaseNotes(json)
         val apkName = Uri.parse(downloadUrl).lastPathSegment.orEmpty().ifBlank { "LabProbeApp-v$versionName.apk" }
         return GitHubUpdateInfo(
             tag = versionName,
@@ -2838,7 +2848,7 @@ private fun fetchGitHubReleaseInfo(client: OkHttpClient): GitHubUpdateInfo {
         val json = JSONObject(bodyText)
         val tag = json.optString("tag_name", "")
         val name = json.optString("name", tag.ifBlank { "未知版本" })
-        val body = json.optString("body", "")
+        val body = normalizeReleaseNotes(json)
         val htmlUrl = json.optString("html_url", AppVersion.GITHUB)
         val assets = json.optJSONArray("assets") ?: JSONArray()
         var apkName = ""
@@ -9735,14 +9745,63 @@ private fun realtimeFailureText(raw: String): String {
     }
 }
 
+data class RouterConfigSnapshot(
+    val name: String = "",
+    val username: String = "",
+    val address: String = "",
+    val passwordConfigured: Boolean = false,
+    val sessionSeconds: Int = 0,
+    val verifyTls: Boolean = false,
+    val connected: Boolean = false,
+    val state: String = "",
+    val message: String = "",
+) {
+    companion object {
+        fun fromJson(root: JSONObject): RouterConfigSnapshot = RouterConfigSnapshot(
+            name = root.optString("name", ""), username = root.optString("username", ""),
+            address = root.optString("address", ""), passwordConfigured = root.optBoolean("passwordConfigured", false),
+            sessionSeconds = root.optInt("sessionSeconds", 0), verifyTls = root.optBoolean("verifyTls", false),
+            connected = root.optBoolean("connected", false), state = root.optString("state", ""),
+            message = root.optString("message", ""),
+        )
+    }
+}
+
+data class RouterConfigUpdate(val name: String, val username: String, val address: String, val password: String? = null) {
+    fun toJson(): JSONObject = JSONObject().put("name", name).put("username", username).put("address", address).put("test", true)
+        .also { root -> password?.takeIf { it.isNotBlank() }?.let { root.put("password", it) } }
+}
+
 @Composable
-fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell("我的 / 设置", "连接、通知、隐私与关于", onBack) {
+fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onBack: () -> Unit) = DetailShell(
+    title = "APP 设置", subtitle = "连接、通知、隐私与关于", onBack = onBack,
+    titleStyleOverride = LabTypography.PageTitle.copy(
+        fontSize = (LabTypography.PageTitle.fontSize.value - 1f).coerceAtLeast(1f).sp,
+        lineHeight = (LabTypography.PageTitle.lineHeight.value - 1f).coerceAtLeast(1f).sp,
+    )
+) {
     var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
+    var routerName by remember { mutableStateOf("") }
+    var routerUsername by remember { mutableStateOf("") }
+    var routerAddress by remember { mutableStateOf("") }
+    var routerPassword by remember { mutableStateOf("") }
+    var routerPasswordConfigured by remember { mutableStateOf(false) }
+    var routerConfigLoading by remember { mutableStateOf(false) }
+    var routerConfigSaving by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
     val settingsMint = Color(0xFF10A9C8)
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
+    LaunchedEffect(prefs.hub, prefs.token) {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
+        routerConfigLoading = true
+        runCatching { HubApi(prefs).getRouterConfig() }.onSuccess { config ->
+            routerName = config.name; routerUsername = config.username; routerAddress = config.address
+            routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
+        }.onFailure { msg = "路由器配置读取失败：${uiMessageZh(it.message.orEmpty())}" }
+        routerConfigLoading = false
+    }
     ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
@@ -9768,6 +9827,14 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                 }
             }
         }
+        Text("路由器配置", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
+        LabeledInput("名称", "例如：BE72", routerName, { routerName = it })
+        LabeledInput("管理地址", "例如：http://192.168.5.1", routerAddress, { routerAddress = it })
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) { LabeledInput("账号", "路由器管理账号", routerUsername, { routerUsername = it }) }
+            Column(Modifier.weight(1f)) { LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, { routerPassword = it }, password = true) }
+        }
+        if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
         val liveConnectionMessage = when (val realtime = state.mqttState) {
             HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时同步正常" else "实时链路已连接，等待首帧数据"
             HubRealtimeState.Connecting -> if (state.hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
@@ -9798,9 +9865,19 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                     if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)
                     state.startRealtime()
                 }
-                toast(ctx, "已保存")
+                scope.launch {
+                    routerConfigSaving = true
+                    runCatching { HubApi(prefs).putRouterConfig(RouterConfigUpdate(routerName.trim(), routerUsername.trim(), routerAddress.trim(), routerPassword.trim().takeIf { it.isNotBlank() })) }
+                        .onSuccess { config ->
+                            routerName = config.name; routerUsername = config.username; routerAddress = config.address
+                            routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
+                            prefs.routerDisplayName = config.name; prefs.routerLanUrl = config.address
+                            msg = "路由器配置已同步到 Hub"; toast(ctx, "已保存并同步路由器配置")
+                        }.onFailure { msg = "路由器配置保存失败：${uiMessageZh(it.message.orEmpty())}" }
+                    routerConfigSaving = false
+                }
             }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint)) {
-                Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text(if (routerConfigSaving) "保存中" else "保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Button(onClick = {
                 val cleanHub = normalizeHubAddressForDisplay(hub)
@@ -9933,6 +10010,12 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun requestRouterCredentialsRefresh(): Long = withContext(Dispatchers.IO) {
         requireRouterStatus(requestJson("/api/router/dashboard/credentials/refresh", "POST", JSONObject()))
             .optLong("refreshNonce", 0L)
+    }
+    suspend fun getRouterConfig(): RouterConfigSnapshot = withContext(Dispatchers.IO) {
+        RouterConfigSnapshot.fromJson(requireRouterStatus(requestJson("/api/router/config")))
+    }
+    suspend fun putRouterConfig(config: RouterConfigUpdate): RouterConfigSnapshot = withContext(Dispatchers.IO) {
+        RouterConfigSnapshot.fromJson(requireRouterStatus(requestJson("/api/router/config", "PUT", config.toJson())))
     }
     suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) {
         val path = if (online) "/api/devices?view=online" else "/api/devices"
