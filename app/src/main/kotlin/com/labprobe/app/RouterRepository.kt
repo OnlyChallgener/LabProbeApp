@@ -124,8 +124,13 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                     val old = _ddns.value
                     if (old.mutating && source != "command") return@launch
                     if (source != "command" && old.updatedAt > frameAt) return@launch
+                    // A realtime config frame can be emitted while the router
+                    // driver is still rebuilding its DDNS snapshot. Never let
+                    // that transient empty frame erase a known-good list.
+                    val parsed = parseDdnsList(data)
+                    if (source != "command" && parsed.isEmpty() && !old.value.isNullOrEmpty()) return@launch
                     val seq = sequence("ddns").incrementAndGet()
-                    applyDdnsRead(seq, parseDdnsList(data))
+                    applyDdnsRead(seq, parsed)
                 }
                 "upnp" -> {
                     val old = _upnp.value
@@ -299,7 +304,23 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.SETTINGS_TTL_MS)) return
         _ddns.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.ddns(force) } }
-            .onSuccess { latest -> applyDdnsRead(seq, latest) }
+            .onSuccess { latest ->
+                if (latest.isEmpty() && !old.value.isNullOrEmpty()) {
+                    // Hub may answer during a router reconnect before the
+                    // native DDNS list is repopulated. Keep the last snapshot
+                    // visible and mark it stale instead of showing zero rows.
+                    if (sequence(key).get() == seq) {
+                        _ddns.value = old.copy(
+                            refreshing = false,
+                            stale = true,
+                            error = "路由器 DDNS 正在同步，已保留上次数据",
+                            generation = seq,
+                        )
+                    }
+                } else {
+                    applyDdnsRead(seq, latest)
+                }
+            }
             .onFailure { failure -> if (sequence(key).get() == seq) _ddns.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "DDNS 同步失败"), generation = seq) }
     }
 

@@ -9,6 +9,8 @@ class DeviceEndpointEligibilityTest {
         name: String,
         manufacture: String = "",
         devType: String = "",
+        hostName: String = "",
+        remark: String = "",
     ) = DeviceItem(
         name = name,
         mac = "02:00:00:00:00:01",
@@ -24,6 +26,8 @@ class DeviceEndpointEligibilityTest {
         lastSeenAt = "",
         manufacture = manufacture,
         devType = devType,
+        hostName = hostName,
+        remark = remark,
     )
 
     @Test
@@ -52,5 +56,10 @@ class DeviceEndpointEligibilityTest {
         assertTrue(isDeviceUsableForPublicEndpoint(device("Lab NAS", devType = "nas")))
         assertTrue(isDeviceUsableForPublicEndpoint(device("home-server", devType = "server")))
         assertTrue(isDeviceUsableForPublicEndpoint(device("unrecognised-host")))
+    }
+
+    @Test
+    fun unnamedMacOnlyDevicesAreNotOffered() {
+        assertFalse(isDeviceUsableForPublicEndpoint(device("")))
     }
 }
