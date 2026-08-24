@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -59,8 +60,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private val PortBlue = Color(0xFF1677F2)
-private val PortCyan = Color(0xFF13B8D4)
+private val PortBlue = Color(0xFF0284C7)
+private val PortCyan = Color(0xFF0EA5E9)
 private val PortGreen = Color(0xFF12B981)
 private val PortRed = Color(0xFFEF5350)
 private val PortSlate = Color(0xFF718096)
@@ -879,7 +880,7 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 @Composable
 private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
     val status = portMapStatus(rule)
-    LabCoreCard(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
+    LabCoreCard(modifier = Modifier.clip(LabCoreSurface.CardShape).clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(7.dp).background(status.color, CircleShape))
@@ -1009,7 +1010,7 @@ private fun PortMapEditorSheet(
                         PORT_MAP_SERVICE_TEMPLATES.forEach { template ->
                             val selected = selectedTemplateLabel == template.label || (selectedTemplateLabel == null && draft.serviceType == template.serviceType)
                             Surface(
-                                modifier = Modifier.clickable {
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable {
                                     selectedTemplateLabel = template.label
                                     draft = applyPortMapServiceTemplate(draft, template)
                                 },
@@ -1110,7 +1111,7 @@ private fun PortMapEditorSheet(
 
                 val advancedSummary = "${draft.duration} · 最多 ${draft.maxConnections.ifBlank { "—" }} 连接 · 空闲 ${draft.idleTimeoutSec.ifBlank { "—" }} 秒"
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { advancedExpanded = !advancedExpanded },
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { advancedExpanded = !advancedExpanded },
                     shape = LabCoreSurface.InnerShape,
                     color = LabCoreSurface.Inner,
                     border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
@@ -1260,7 +1261,7 @@ private fun PortMapV2ReadOnly(
             tonalElevation = 0.dp
         ) {
             Row(
-                Modifier.fillMaxSize().padding(horizontal = 13.dp).horizontalScroll(rememberScrollState()).clickable(enabled = copyable) { copy(ctx, value) },
+                Modifier.fillMaxSize().padding(horizontal = 13.dp).horizontalScroll(rememberScrollState()).clickable(enabled = copyable, interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(ctx, value) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(value, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = accent, maxLines = 1, overflow = TextOverflow.Clip)
@@ -1331,7 +1332,7 @@ private fun PortMapSelectedDevice(
     }
     val profile = device?.let(::inferDeviceProfile)
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onClick() },
         shape = RoundedCornerShape(18.dp),
         color = LabV2.Field,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
@@ -1493,7 +1494,7 @@ private fun PortMapDevicePickerDialog(
                             val selected = cleanMac(device.mac).equals(cleanMac(selectedMac), ignoreCase = true)
                             val expanded = expandedMac == cleanMac(device.mac)
                             Surface(
-                                modifier = Modifier.fillMaxWidth().clickable(enabled = recommended.isNotBlank()) {
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = recommended.isNotBlank()) {
                                     onPick(if (mode == "6to6") device.copy(ipv6 = listOf(recommended), ipv6Candidates = listOf(Ipv6AddressCandidate(recommended, primary = true))) else device)
                                 },
                                 shape = RoundedCornerShape(18.dp),

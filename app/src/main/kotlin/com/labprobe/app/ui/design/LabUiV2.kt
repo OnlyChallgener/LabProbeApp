@@ -65,9 +65,9 @@ import androidx.compose.ui.window.DialogProperties
  * device identification, Hub APIs, charts and router logic must not depend on it.
  */
 object LabV2 {
-    val Primary = Color(0xFF1769E0)
-    val PrimaryStrong = Color(0xFF0E5BD8)
-    val Cyan = Color(0xFF10A9C8)
+    val Primary = Color(0xFF0284C7)
+    val PrimaryStrong = Color(0xFF0369A1)
+    val Cyan = Color(0xFF0EA5E9)
     val Green = Color(0xFF16A36A)
     val Purple = Cyan
     val Amber = Color(0xFFF09A3E)
@@ -77,8 +77,8 @@ object LabV2 {
     val InkMuted = Color(0xFF6B778A)
     val InkFaint = Color(0xFF95A1B3)
     // Shared cool-blue elevation: very light depth without grey square shadows.
-    val ShadowAmbient = Color(0x0C3B82C4)
-    val ShadowSpot = Color(0x123B82C4)
+    val ShadowAmbient = Color(0x083B82C4)
+    val ShadowSpot = Color(0x0C3B82C4)
 
     val BackgroundTop = Color(0xFFE8F4FF)
     val BackgroundMid = Color(0xFFF5FAFF)

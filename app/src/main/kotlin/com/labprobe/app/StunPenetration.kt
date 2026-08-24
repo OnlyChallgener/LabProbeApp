@@ -486,7 +486,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 }
                 Spacer(Modifier.weight(1f))
                 Surface(
-                    modifier = Modifier.clickable(onClick = onHistory),
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onHistory),
                     shape = RoundedCornerShape(12.dp),
                     color = StunBlue.copy(alpha = .06f),
                     border = BorderStroke(1.dp, StunBlue.copy(alpha = .14f)),
@@ -655,7 +655,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { "已选设备" } }
     val profile = if (device != null) inferDeviceProfile(device) else null
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().clip(LabV2.FieldShape).clickable(onClick = onClick),
         shape = LabV2.FieldShape,
         color = LabCoreSurface.Inner,
         border = BorderStroke(1.dp, LabCoreSurface.Border),
@@ -731,7 +731,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         items(rows, key = { it.mac.ifBlank { "${it.name}-${it.ip}" } }) { device ->
                             val profile = inferDeviceProfile(device)
                             Surface(
-                                modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
+                                modifier = Modifier.fillMaxWidth().clip(LabCoreSurface.InnerShape).clickable { onPick(device) },
                                 shape = LabCoreSurface.InnerShape,
                                 color = LabCoreSurface.Inner,
                                 border = BorderStroke(1.dp, LabCoreSurface.Border),
@@ -778,7 +778,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         shape = LabCoreSurface.InnerShape,
                         color = LabCoreSurface.Inner,
                         border = BorderStroke(1.dp, LabCoreSurface.Border),
-                        modifier = Modifier.fillMaxWidth().clickable { onCopy(row.endpoint) },
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onCopy(row.endpoint) },
                     ) {
                         Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {

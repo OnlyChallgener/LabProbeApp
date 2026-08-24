@@ -1194,7 +1194,7 @@ private fun FavoriteIcon(type: String, iconValue: String, size: Int) {
 private fun favoriteBuiltinIcon(value: String): Pair<ImageVector, Color> = when (value) {
     "router" -> Icons.Rounded.Router to Color(0xFF2563EB)
     "server" -> Icons.Rounded.Storage to Color(0xFF64748B)
-    "media" -> Icons.Rounded.PlayCircle to Color(0xFF7C3AED)
+    "media" -> Icons.Rounded.PlayCircle to Color(0xFF0EA5E9)
     "cloud" -> Icons.Rounded.Cloud to Color(0xFF0EA5E9)
     "home" -> Icons.Rounded.Home to Color(0xFF16A34A)
     "download" -> Icons.Rounded.Download to Color(0xFF14B8A6)

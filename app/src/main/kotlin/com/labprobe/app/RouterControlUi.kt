@@ -63,8 +63,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
-private val RouterBlue = Color(0xFF2E6BE6)
-private val RouterCyan = Color(0xFF0AA6C7)
+private val RouterBlue = Color(0xFF0284C7)
+private val RouterCyan = Color(0xFF0EA5E9)
 private val RouterGreen = Color(0xFF16A36A)
 private val RouterAmber = Color(0xFFF59E0B)
 private val RouterRed = Color(0xFFE94B55)
@@ -72,7 +72,7 @@ private val RouterInk = Color(0xFF17233A)
 private val RouterMuted = Color(0xFF687890)
 private val RouterField = Color(0xFFFBFDFF)
 private val RouterBorder = Color(0xFFD9E8F7)
-private val RouterPage = Color(0xFFF2F8FF)
+private val RouterPage = Color(0xFFF8FBFF)
 
 private const val ROUTER_DIAGNOSTIC_CACHE_PREF = "router_diagnostic_cache_v1"
 
@@ -182,7 +182,7 @@ enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port, Connec
 @Composable
 private fun RouterFeatureCard(title: String, status: String, accent: Color, glyph: RouterGlyph, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.width(104.dp).height(72.dp).clickable(onClick = onClick),
+        modifier = Modifier.width(104.dp).height(72.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
         shape = LabCoreSurface.CompactShape,
         color = LabCoreSurface.Card,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
@@ -780,7 +780,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
 @Composable
 private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBinding?, onOpen: () -> Unit, onFollow: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
     val accent = if (rule.target == "ACCEPT") RouterGreen else RouterRed
-    PremiumCard(accent, Modifier.clickable(onClick = onOpen)) {
+    PremiumCard(accent, Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onOpen)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(6.dp).background(if (rule.enabled) accent else RouterMuted.copy(alpha=.45f), CircleShape))
             Spacer(Modifier.width(7.dp))
@@ -796,7 +796,7 @@ private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBind
                     val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
                     Text(
                         if (binding == null) "关联路由器映射" else "映射联动 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待映射" }}",
-                        modifier = Modifier.clickable(onClick = onFollow).padding(vertical = 1.dp),
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFollow).padding(vertical = 1.dp),
                         fontSize = LabTypography.Caption.fontSize,
                         fontWeight = FontWeight.SemiBold,
                         color = followColor,
@@ -1170,7 +1170,7 @@ private fun LabProbeDdnsCard(
         if (record.recordTypes.contains("CNAME")) add("CNAME ${record.publishedValues["CNAME"].orEmpty().ifBlank { "—" }}")
         if (record.recordTypes.contains("TXT")) add("TXT ${record.publishedValues["TXT"].orEmpty().ifBlank { "—" }}")
     }.joinToString(" · ").ifBlank { "—" }
-    PremiumCard(accent, Modifier.clickable(onClick = onClick)) {
+    PremiumCard(accent, Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(30.dp))
             Spacer(Modifier.width(9.dp))
@@ -1556,7 +1556,7 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
     PremiumCard(accent){
         Row(verticalAlignment=Alignment.CenterVertically){
             Row(
-                modifier=Modifier.weight(1f).clickable(onClick=onEdit),
+                modifier=Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(onClick=onEdit),
                 verticalAlignment=Alignment.CenterVertically,
             ){
                 RouterGlyphIcon(RouterGlyph.Ddns,accent,Modifier.size(27.dp))
@@ -1843,7 +1843,7 @@ private fun CompactChoice(label:String,value:String,options:List<String>,modifie
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
         if(label.isNotBlank())Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Box{
-            Surface(Modifier.fillMaxWidth().height(50.dp).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
+            Surface(Modifier.fillMaxWidth().height(50.dp).clip(LabCoreSurface.InnerShape).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
                 Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(display(value),Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
             DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(display(option),fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}

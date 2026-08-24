@@ -58,14 +58,14 @@ import com.labprobe.app.FirewallRule
 import com.labprobe.app.LabCoreSurface
 import com.labprobe.app.LabTypography
 
-private val FollowBlue = Color(0xFF2E6BE6)
+private val FollowBlue = Color(0xFF0284C7)
 private val FollowGreen = Color(0xFF16A36A)
 private val FollowAmber = Color(0xFFF59E0B)
 private val FollowRed = Color(0xFFE94B55)
 private val FollowInk = Color(0xFF17233A)
 private val FollowMuted = Color(0xFF687890)
 private val FollowBorder = Color(0xFFD9E8F7)
-private val FollowPage = Color(0xFFF2F8FF)
+private val FollowPage = Color(0xFFF8FBFF)
 
 fun firewallAutomationStatusLabel(status: String): String = when (status.lowercase()) {
     "synced" -> "已同步"
@@ -344,7 +344,7 @@ private fun AddressCompare(label: String, value: String) {
 private fun FollowTargetChoice(label: String, value: String, icon: ImageVector, selected: String, modifier: Modifier, onPick: (String) -> Unit) {
     val active = value == selected
     Surface(
-        modifier = modifier.clickable { onPick(value) },
+        modifier = modifier.clip(RoundedCornerShape(12.dp)).clickable { onPick(value) },
         shape = RoundedCornerShape(12.dp),
         color = if (active) FollowBlue.copy(alpha = .1f) else Color.White,
         border = BorderStroke(1.dp, if (active) FollowBlue.copy(alpha = .3f) else FollowBorder),
@@ -359,7 +359,7 @@ private fun FollowTargetChoice(label: String, value: String, icon: ImageVector, 
 @Composable
 private fun TargetPickerCard(title: String, subtitle: String, icon: ImageVector, enabled: Boolean, onClick: () -> Unit) {
     Surface(
-        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick),
+        Modifier.fillMaxWidth().clip(LabCoreSurface.CompactShape).clickable(enabled = enabled, onClick = onClick),
         shape = LabCoreSurface.CompactShape,
         color = Color.White,
         border = BorderStroke(1.dp, FollowBorder),
@@ -404,7 +404,7 @@ private fun <T> TargetDialog(
                     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(rows, key = key) { row ->
                             Surface(
-                                Modifier.fillMaxWidth().clickable { onPick(row) },
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).clickable { onPick(row) },
                                 shape = RoundedCornerShape(13.dp),
                                 color = FollowPage,
                                 border = BorderStroke(1.dp, FollowBorder),

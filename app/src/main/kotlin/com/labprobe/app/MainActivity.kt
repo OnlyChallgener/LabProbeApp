@@ -2207,7 +2207,7 @@ fun DetailShell(
 
 @Composable
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
-    val techBlue = Color(0xFF2D63D8)
+    val techBlue = Color(0xFF0284C7)
     Surface(
         color = Color.White,
         shape = HomeCardShape,
@@ -2336,7 +2336,7 @@ fun InfoRow(label: String, value: String?, copyable: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(76.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (copyable && value?.isNotBlank() == true) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable { copy(ctx, value) }, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(ctx, value) }, verticalAlignment = Alignment.CenterVertically) {
                 Text(text, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1)
             }
         } else {
@@ -2441,9 +2441,9 @@ private val ParamFieldHeight = 48.dp
 private val ParamFieldRadius = 15.dp
 
 @Composable
-fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+fun ParamFrame(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
     Surface(
-        modifier = modifier.height(ParamFieldHeight),
+        modifier = modifier.height(ParamFieldHeight).then(if (onClick != null) Modifier.clip(RoundedCornerShape(ParamFieldRadius)).clickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(ParamFieldRadius),
         color = LabV2.Field,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
@@ -2501,7 +2501,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                 maxLines = 1,
                 modifier = Modifier.padding(start = 2.dp)
             )
-            ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
+            ParamFrame(modifier = Modifier.fillMaxWidth(), onClick = { expanded = true }) {
                 Text(
                     value + "ms",
                     fontSize = 13.8.sp,
@@ -2588,7 +2588,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
     Box(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
-            ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
+            ParamFrame(modifier = Modifier.fillMaxWidth(), onClick = { expanded = true }) {
                 FieldIconBox(icon)
                 Text(
                     value + suffix,
@@ -3018,7 +3018,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
                     },
                     enabled = !checking,
                     shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                     modifier = Modifier.fillMaxWidth().height(42.dp)
                 ) {
                     Icon(Icons.Rounded.SystemUpdate, null, Modifier.size(17.dp), tint = Color.White)
@@ -3105,11 +3105,11 @@ fun UpdateDialogCard(
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (state.phase == "done" && state.filePath.isNotBlank()) {
-                    Button(onClick = onInstall, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("安装", fontWeight = FontWeight.Black) }
+                    Button(onClick = onInstall, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("安装", fontWeight = FontWeight.Black) }
                 } else if (state.phase == "error") {
-                    Button(onClick = onRetry, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("重新下载", fontWeight = FontWeight.Black) }
+                    Button(onClick = onRetry, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("重新下载", fontWeight = FontWeight.Black) }
                 } else {
-                    Button(onClick = onImmediate, enabled = state.phase != "downloading" && !checking, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("立即更新", fontWeight = FontWeight.Black) }
+                    Button(onClick = onImmediate, enabled = state.phase != "downloading" && !checking, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("立即更新", fontWeight = FontWeight.Black) }
                 }
             }
         },
@@ -3563,7 +3563,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(124.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(124.dp).clip(CircleShape).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
                     Box(
                         Modifier
                             .size(184.dp)
@@ -4636,7 +4636,7 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
         }
         item { topNav() }
         item {
-            val syncChipBlue = Color(0xFF2563EB)
+            val syncChipBlue = Color(0xFF0284C7)
             val syncChipColors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
                 selectedContainerColor = syncChipBlue.copy(alpha = .12f),
                 selectedLabelColor = syncChipBlue,
@@ -5299,7 +5299,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             Surface(
                 onClick = { reloadNetworkProfile(forceCarrier = true) },
                 shape = CircleShape,
-                color = Color(0xFF2563EB).copy(alpha = .10f),
+                color = Color(0xFF0284C7).copy(alpha = .10f),
                 modifier = Modifier.size(34.dp)
             ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Refresh, null, tint = Color(0xFF2563EB), modifier = Modifier.size(18.dp)) } }
         }
@@ -5877,7 +5877,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     }
                 },
                 shape = RoundedCornerShape(15.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
+                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF0284C7)),
                 modifier = Modifier.weight(1f).height(42.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
             ) {
@@ -6075,7 +6075,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
     var running by remember { mutableStateOf(false) }
     var rows by remember { mutableStateOf<List<Ipv6TestRow>>(emptyList()) }
     var summary by remember { mutableStateOf("等待检测") }
-    val blue = Color(0xFF2563EB)
+    val blue = Color(0xFF0284C7)
     ExpressiveCard("IPv6 配置", "对标 test-ipv6：IPv4/IPv6公网出口、双栈、大包、AAAA 与 ASN 分项检测。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TinyInfoParam("目标", "test-ipv6", Icons.Rounded.Dns, blue, Modifier.weight(1f))
@@ -6100,7 +6100,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
         rows.forEach { row ->
             val c = when (row.ok) { true -> Color(0xFF16A34A); false -> Color(0xFFEF4444); null -> Color(0xFFF59E0B) }
             Surface(
-                modifier = Modifier.fillMaxWidth().then(if (row.route.isNotBlank()) Modifier.clickable { } else Modifier),
+                modifier = Modifier.fillMaxWidth().then(if (row.route.isNotBlank()) Modifier.clip(RoundedCornerShape(18.dp)).clickable { } else Modifier),
                 shape = RoundedCornerShape(18.dp),
                 color = c.copy(alpha = .07f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, c.copy(alpha = .10f))
@@ -6138,7 +6138,7 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
     var samples by remember { mutableStateOf<List<SpeedSample>>(emptyList()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val blue = Color(0xFF2563EB)
+    val blue = Color(0xFF0284C7)
     fun applyTemplate(name: String) {
         template = name
         templates.firstOrNull { it.name == name }?.let { if (it.url.isNotBlank()) url = it.url }
@@ -6400,7 +6400,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
             }
         }
         Surface(
-            modifier = Modifier.fillMaxWidth().clickable { advancedOpen = !advancedOpen },
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable { advancedOpen = !advancedOpen },
             shape = RoundedCornerShape(17.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = .90f),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f))
@@ -6482,7 +6482,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                     }
                 },
                 shape = RoundedCornerShape(17.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
+                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF0284C7)),
                 modifier = Modifier.weight(1.22f).height(46.dp)
             ) {
                 Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(17.dp))
@@ -6634,9 +6634,9 @@ private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, 
 @Composable
 private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
-        modifier = modifier.height(42.dp).clickable(onClick = onClick),
+        modifier = modifier.height(42.dp).clip(RoundedCornerShape(15.dp)).clickable(onClick = onClick),
         shape = RoundedCornerShape(15.dp),
-        color = if (selected) Color(0xFF2563EB).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+        color = if (selected) Color(0xFF0284C7).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
         border = BorderStroke(1.dp, if (selected) Color(0xFF2563EB).copy(alpha = .38f) else MaterialTheme.colorScheme.outline.copy(alpha = .14f))
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -6783,7 +6783,7 @@ fun PingTool(prefs: AppPrefs) {
     var showHistory by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val blue = Color(0xFF2563EB)
+    val blue = Color(0xFF0284C7)
     val showPort = protocol.startsWith("TCP") || protocol.startsWith("HTTP")
 
     if (showHistory) {
@@ -6905,7 +6905,7 @@ fun PingLatencyCard(points: List<PingPoint>, accent: Color, onHistory: () -> Uni
 @Composable
 fun PingRatePillCompact(points: List<PingPoint>) {
     val rate = formatRate(points)
-    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF0284C7).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Speed, null, Modifier.size(12.dp), tint = Color(0xFF2563EB))
             Spacer(Modifier.width(3.dp))
@@ -6931,7 +6931,7 @@ fun PingLossPillCompact(points: List<PingPoint>) {
 @Composable
 fun PingRatePill(points: List<PingPoint>) {
     val rate = formatRate(points)
-    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF0284C7).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
         Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Speed, null, Modifier.size(13.dp), tint = Color(0xFF2563EB))
             Spacer(Modifier.width(4.dp))
@@ -6955,7 +6955,7 @@ fun PingHistoryDialog(history: List<PingHistoryEntry>, bytes: Int, onClear: () -
                     Text("暂无历史。完成一次测试后自动保存最近 10 条汇总。", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
                 }
                 history.forEach { item -> PingHistoryItem(item) }
-                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF2563EB).copy(alpha = .07f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .10f))) {
+                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF2563EB).copy(alpha = .07f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = .10f))) {
                     Text("历史记录占用：约 ${formatBytes(bytes)} · 最多 10 条", Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB))
                 }
             }
@@ -8173,7 +8173,7 @@ fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
         color = MaterialTheme.colorScheme.surface,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
         tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth().clickable { onCopy() }
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable { onCopy() }
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -8192,7 +8192,7 @@ fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
 
 @Composable
 fun DnsResultRow(r: DnsRecord, onCopy: () -> Unit) {
-    Surface(shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .06f), modifier = Modifier.fillMaxWidth().clickable { onCopy() }) {
+    Surface(shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .06f), modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable { onCopy() }) {
         Column(Modifier.padding(11.dp)) {
             Text("${r.value} (${r.type})", fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOf(r.operator, r.source).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -8317,7 +8317,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
         FilterChip(selected = mode == "RFC5780", onClick = { mode = "RFC5780"; prefs.natMode = mode }, label = { Text("RFC5780 / 8489", fontSize = 12.sp, fontWeight = FontWeight.Black) }, colors = natChipColors)
         FilterChip(selected = mode == "RFC3489", onClick = { mode = "RFC3489"; prefs.natMode = mode }, label = { Text("RFC3489 TEST", fontSize = 12.sp, fontWeight = FontWeight.Black) }, colors = natChipColors)
         Spacer(Modifier.weight(1f))
-        Surface(onClick = openHistory, shape = CircleShape, color = Color(0xFF2563EB).copy(alpha = .10f), modifier = Modifier.size(38.dp)) {
+        Surface(onClick = openHistory, shape = CircleShape, color = Color(0xFF0284C7).copy(alpha = .10f), modifier = Modifier.size(38.dp)) {
             Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, tint = Color(0xFF2563EB), modifier = Modifier.size(19.dp)) }
         }
     }
@@ -8337,7 +8337,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = if (item.host == host && item.port.toString() == port) accent.copy(alpha = .10f) else MaterialTheme.colorScheme.onSurface.copy(alpha = .035f),
-                        modifier = Modifier.fillMaxWidth().clickable { selected = item; host = item.host; port = item.port.toString() }
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { selected = item; host = item.host; port = item.port.toString() }
                     ) {
                         Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.Dns, null, tint = accent, modifier = Modifier.size(18.dp))
@@ -8460,7 +8460,7 @@ fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Uni
     LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 92.dp)) {
-            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { targetOffsetPx = 0f; pendingDelete = true }, contentAlignment = Alignment.Center) {
+            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Color(0xFFEF4444)).clickable { targetOffsetPx = 0f; pendingDelete = true }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp)); Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp) }
             }
             Surface(
@@ -8471,7 +8471,8 @@ fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Uni
                         onDragCancel = { dragging = false; targetOffsetPx = 0f },
                         onHorizontalDrag = { _, dragAmount -> targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
                     )
-                }.shadow(4.dp, RoundedCornerShape(24.dp), clip = false).clickable { onToggle() },
+                }.shadow(4.dp, RoundedCornerShape(24.dp), clip = false),
+                onClick = onToggle,
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
             ) {
@@ -8580,7 +8581,7 @@ fun TraceTool(prefs: AppPrefs) {
         }
     }
     ExpressiveCard("追踪结果", if (running) "正在追踪，逐跳追加。点击结果可复制。" else "点击结果可复制。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
-        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .045f), modifier = Modifier.fillMaxWidth().clickable { copy(ctx, result) }) {
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .045f), modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { copy(ctx, result) }) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
                 Text(result, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 17.sp)
             }
@@ -8624,7 +8625,7 @@ fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen:
             if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
                 Box(
                     Modifier.align(Alignment.CenterEnd).width(88.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
-                        .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                        .background(Color(0xFFEF4444))
                         .clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true },
                     contentAlignment = Alignment.Center
                 ) {
@@ -8829,7 +8830,7 @@ fun SshResultCard(item: SshResultEntry, openedSwipeId: Long?, onSwipeOpen: (Long
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 106.dp)) {
             if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
-                Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true }, contentAlignment = Alignment.Center) {
+                Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Color(0xFFEF4444)).clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true }, contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
                         Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
@@ -9159,7 +9160,7 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                         .width(78.dp)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(18.dp))
-                        .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                        .background(Color(0xFFEF4444))
                         .clickable {
                             targetOffsetPx = 0f
                             onSwipeClose()
@@ -9658,7 +9659,7 @@ fun DailyAddressSummaryRow(o: JSONObject) {
         }
         if (address.isNotBlank()) {
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).clickable { copy(ctx, address) },
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(ctx, address) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(address, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary, maxLines = 1)

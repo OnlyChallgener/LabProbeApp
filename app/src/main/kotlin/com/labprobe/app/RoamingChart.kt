@@ -102,7 +102,7 @@ fun LabRoamCharts(
             events = events,
             running = running,
             accent = Color(0xFF2563EB),
-            secondaryAccent = Color(0xFF7C3AED),
+            secondaryAccent = Color(0xFF0EA5E9),
             emptyText = "等待延迟样本",
             defaultRange = 0.0 to 100.0,
             floor = 0.0,
@@ -126,7 +126,7 @@ private fun PingStyleRoamChart(
     yFormatter: (Double) -> String,
     subtitle: String = "",
     secondaryValues: List<RoamChartValue> = emptyList(),
-    secondaryAccent: Color = Color(0xFF7C3AED)
+    secondaryAccent: Color = Color(0xFF0EA5E9)
 ) {
     val scrollState = rememberScrollState()
     val scheme = MaterialTheme.colorScheme
@@ -257,7 +257,7 @@ private fun PingStyleRoamChart(
                                 "bad" -> Color(0xFFEF4444)
                                 "warn" -> Color(0xFFF59E0B)
                                 "good" -> Color(0xFF16A34A)
-                                else -> Color(0xFF7C3AED)
+                                else -> Color(0xFF0EA5E9)
                             }
                             val bottom = plotBottom - 2.dp.toPx()
                             val top = point.y.coerceIn(plotTop + 2.dp.toPx(), plotBottom - 3.dp.toPx())

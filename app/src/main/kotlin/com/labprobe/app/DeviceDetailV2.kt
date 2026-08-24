@@ -2,6 +2,7 @@ package com.labprobe.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -148,7 +149,7 @@ fun DeviceDetailScreen(
             }
             DeviceActionButton(Icons.Rounded.SwapHoriz, "端口映射", Color(0xFF0EA5E9), Modifier.weight(1f), onClick = onOpenPortMap)
             DeviceActionButton(Icons.Rounded.Terminal, "SSH", Color(0xFF64748B), Modifier.weight(1f), onClick = onOpenSsh)
-            DeviceActionButton(Icons.Rounded.MoreHoriz, "更多", Color(0xFF7C3AED), Modifier.weight(1f)) { editing = true }
+            DeviceActionButton(Icons.Rounded.MoreHoriz, "更多", Color(0xFF0284C7), Modifier.weight(1f)) { editing = true }
         }
     }
 
@@ -168,7 +169,7 @@ private fun DeviceDetailMetric(label: String, value: String, color: Color, modif
 @Composable
 private fun DeviceDetailAddress(label: String, value: String, color: Color, allowTwoLines: Boolean = false) {
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().clickable(enabled = value != "--") { copy(context, value) }, verticalAlignment = Alignment.Top) {
+    Row(Modifier.fillMaxWidth().clickable(enabled = value != "--", interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(context, value) }, verticalAlignment = Alignment.Top) {
         Text(label, Modifier.width(54.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
         Text(value, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else color, maxLines = if (allowTwoLines) 2 else 1, overflow = TextOverflow.Clip)
         if (value != "--") Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp), tint = color.copy(alpha = .55f))

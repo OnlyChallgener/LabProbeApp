@@ -10,6 +10,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -585,7 +586,7 @@ private fun RouterHeroCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.weight(.98f).height(160.dp).clickable(onClick = onOpenRouter),
+                Modifier.weight(.98f).height(160.dp).clip(RoundedCornerShape(20.dp)).clickable(onClick = onOpenRouter),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(Modifier.fillMaxSize()) {
@@ -671,7 +672,7 @@ private fun RouterHeroCard(
                         Icon(
                             Icons.Rounded.Edit,
                             null,
-                            Modifier.size(15.dp).clickable(onClick = onEdit),
+                            Modifier.size(15.dp).clip(CircleShape).clickable(onClick = onEdit),
                             tint = Color(0xFF8B99B2)
                         )
                     }
@@ -695,7 +696,7 @@ private fun RouterHeroCard(
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ConnectionCountChip("IPv4 连接数", ui.ipv4Connections, LabV2.Primary, Modifier.weight(1f))
-                    ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF7C3AED), Modifier.weight(1f))
+                    ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF0EA5E9), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
                     Text("实时数据暂时未变化，已保留上次结果", fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
@@ -720,11 +721,11 @@ private fun RouterHeroCard(
                     "连接数",
                     "${ui.onlineDevices} 台",
                     Color(0xFF22C9B5),
-                    Modifier.weight(1f).clickable(onClick = onOpenDevices)
+                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(onClick = onOpenDevices)
                 )
                 HeroDivider()
                 Row(
-                    Modifier.weight(1f).clickable(enabled = !refreshing, onClick = onRefresh),
+                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled = !refreshing, onClick = onRefresh),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -807,7 +808,7 @@ private fun RouterRealtimeCard(ui: RouterDashboardUi) {
         ) {
             RealtimeMetric(Icons.Rounded.Wifi, "2.4G", temperatureText(ui.temperature2g), LabV2.Green, ui.temperature2g / 100.0, Modifier.width(82.dp))
             RealtimeMetric(Icons.Rounded.Wifi, "5G", temperatureText(ui.temperature5g), LabV2.Primary, ui.temperature5g / 100.0, Modifier.width(82.dp))
-            RealtimeMetric(Icons.Rounded.Memory, "CPU", percentText(ui.cpu), Color(0xFF7C3AED), ui.cpu / 100.0, Modifier.width(82.dp))
+            RealtimeMetric(Icons.Rounded.Memory, "CPU", percentText(ui.cpu), Color(0xFF0284C7), ui.cpu / 100.0, Modifier.width(82.dp))
             RealtimeMetric(Icons.Rounded.DeveloperBoard, "内存", percentText(ui.memory), Color(0xFFFF8A00), ui.memory / 100.0, Modifier.width(82.dp))
             RealtimeMetric(Icons.Rounded.Storage, "存储", percentText(ui.storage), Color(0xFF0EA5E9), ui.storage.coerceAtLeast(0.0) / 100.0, Modifier.width(82.dp))
         }
@@ -954,7 +955,7 @@ private fun ExpandableNetworkRow(
     onToggle: () -> Unit,
     expandedContent: @Composable () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 5.dp)) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onToggle).padding(vertical = 5.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1.04f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -992,7 +993,7 @@ private fun RouterInfoGrid(context: android.content.Context, items: List<RouterI
                 row.forEach { item ->
                     val canCopy = item.copyValue.isNotBlank() && item.copyValue != "--"
                     Surface(
-                        modifier = Modifier.weight(1f).clickable(enabled = canCopy) { copy(context, item.copyValue) },
+                        modifier = Modifier.weight(1f).clickable(enabled = canCopy, interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(context, item.copyValue) },
                         shape = RoundedCornerShape(14.dp),
                         color = Color.White.copy(alpha = .88f),
                         border = BorderStroke(1.dp, Color(0xFFE7EEF7))
@@ -1031,7 +1032,7 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
     RouterGlassCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("端口状态", Modifier.weight(1f), fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
-            Icon(Icons.Rounded.HelpOutline, null, Modifier.size(22.dp).clickable(onClick = onShowLegend), tint = Color(0xFF8392AA))
+            Icon(Icons.Rounded.HelpOutline, null, Modifier.size(22.dp).clip(CircleShape).clickable(onClick = onShowLegend), tint = Color(0xFF8392AA))
         }
         val ports = if (ui.ports.isEmpty()) (1..9).map { RouterPortUi("LAN$it", false, false, false, false) } else ui.ports.sortedBy { portSortKey(it.name) }
         Column(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1048,8 +1049,8 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
             Icon(Icons.Rounded.North, null, Modifier.size(16.dp), tint = LabV2.Primary)
             Text(formatBitRate(ui.uploadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary)
             Spacer(Modifier.width(12.dp))
-            Icon(Icons.Rounded.South, null, Modifier.size(16.dp), tint = Color(0xFF7C3AED))
-            Text(formatBitRate(ui.downloadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF7C3AED))
+            Icon(Icons.Rounded.South, null, Modifier.size(16.dp), tint = LabV2.Green)
+            Text(formatBitRate(ui.downloadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Green)
         }
     }
 }
@@ -1058,7 +1059,7 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
 private fun RouterPortItem(port: RouterPortUi) {
     val color = when {
         !port.connected -> Color(0xFF9AA5B5)
-        port.isWan -> Color(0xFF7651E8)
+        port.isWan -> Color(0xFF0284C7)
         port.isGame -> Color(0xFFFFB400)
         port.isHybrid -> Color(0xFF0EA5E9)
         else -> Color(0xFF05C858)
@@ -1120,11 +1121,11 @@ private fun PortLegendDialog(onDismiss: () -> Unit) {
                 PortLegendRow(Color(0xFF9AA5B5), "灰色", "未连接 / 空闲端口")
                 PortLegendRow(Color(0xFFFFB400), "黄色", "GAME 口或低速连接")
                 PortLegendRow(Color(0xFF0EA5E9), "蓝色", "双WAN / 聚合口 / 特殊复用口")
-                PortLegendRow(Color(0xFF7651E8), "紫色", "WAN 主口")
+                PortLegendRow(Color(0xFF0284C7), "蓝色", "WAN 主口")
                 PortLegendRow(Color(0xFF05C858), "绿色", "普通 LAN 已连接")
             }
         },
-        confirmButton = { Button(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("知道了", style = LabTypography.Button) } },
+        confirmButton = { Button(onClick = onDismiss, shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)) { Text("知道了", style = LabTypography.Button) } },
         shape = RoundedCornerShape(28.dp),
         containerColor = LAB_POPUP_SURFACE,
         tonalElevation = 0.dp
