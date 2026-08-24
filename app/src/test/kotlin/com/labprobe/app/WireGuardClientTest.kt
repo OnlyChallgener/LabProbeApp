@@ -130,4 +130,14 @@ class WireGuardClientTest {
             findRouterLanIpv4(JSONObject().put("details", JSONObject().put("lan", JSONObject().put("ipv4", "10.0.0.1")))),
         )
     }
+
+    @Test
+    fun testServerConfigDefaultsAndCustomParsing() {
+        val config = WireGuardServerConfig(listenPort = 51826, mtu = 1380, enabled = false)
+        assertEquals(51826, config.listenPort)
+        assertEquals(1380, config.mtu)
+        assertFalse(config.enabled)
+        assertEquals("10.77.0.1/24", config.address)
+    }
 }
+

@@ -1111,6 +1111,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
     init {
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         stateScope.launch {
             for (firstSignal in foregroundRecoverySignals) {
                 var forceFull = firstSignal
@@ -1227,6 +1228,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (fresh != onlineDevices) onlineDevices = fresh
         if (updatedWatched != devices) devices = updatedWatched
         refreshOfflineDevices(offlineDevices + disappeared, fresh)
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         persistCachesAsync()
     }
 
@@ -1408,6 +1410,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (devicesChanged) devices = merged
         if (onlineChanged) onlineDevices = online
         if (eventsChanged) events = normalizedEvents
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || offlineChanged || eventsChanged, silent = silent)
     }
 
@@ -1636,6 +1639,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (devicesChanged) devices = mergedDevices
         if (onlineChanged) onlineDevices = devOnlineWithIpv6
         if (eventsChanged) events = evs
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || offlineChanged || eventsChanged, silent = silent)
     }
 

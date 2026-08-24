@@ -563,6 +563,7 @@ data class WireGuardServerConfig(
     val address: String = "10.77.0.1/24",
     val serverPublicKey: String = "",
     val revision: Long = 0L,
+    val enabled: Boolean = true,
 )
 
 /** Real Hub/Agent control plane. Manual profiles intentionally never enter this class. */
@@ -584,22 +585,32 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
             address = server?.optString("address", "10.77.0.1/24")?.ifBlank { "10.77.0.1/24" } ?: "10.77.0.1/24",
             serverPublicKey = serverPublicKey,
             revision = root.optLong("revision", 0L),
+            enabled = server?.optBoolean("enabled", true) ?: true,
         )
     }
 
-    suspend fun updateServerConfig(listenPort: Int, mtu: Int, address: String = "10.77.0.1/24"): WireGuardServerConfig = withContext(Dispatchers.IO) {
+    suspend fun updateServerConfig(
+        listenPort: Int,
+        mtu: Int,
+        address: String = "10.77.0.1/24",
+        enabled: Boolean = true,
+    ): WireGuardServerConfig = withContext(Dispatchers.IO) {
+        val current = runCatching { getServer() }.getOrNull()
         val payload = JSONObject().apply {
+            current?.optLong("revision")?.let { put("expectedRevision", it) }
             put("listenPort", listenPort.coerceIn(1, 65535))
             put("mtu", mtu.coerceIn(1280, 1500))
             put("address", address.trim().ifBlank { "10.77.0.1/24" })
+            put("enabled", enabled)
         }
-        val saved = JSONObject(hubApi.requestText("/api/wireguard/server", "POST", payload.toString()))
+        val saved = JSONObject(hubApi.requestText("/api/wireguard/server", "PUT", payload.toString()))
         val server = saved.optJSONObject("server")
         WireGuardServerConfig(
             listenPort = server?.optInt("listenPort", listenPort) ?: listenPort,
             mtu = server?.optInt("mtu", mtu) ?: mtu,
             address = server?.optString("address", address) ?: address,
             revision = saved.optLong("revision", 0L),
+            enabled = server?.optBoolean("enabled", enabled) ?: enabled,
         )
     }
 

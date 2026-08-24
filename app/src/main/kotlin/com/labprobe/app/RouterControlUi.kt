@@ -627,7 +627,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val resource by repository.firewall.collectAsState()
     val automationResource by automationRepository.state.collectAsState()
     val state = resource.value ?: FirewallState()
-    val scope = repository.commandScope
+    val scope = rememberCoroutineScope()
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
     val directions = listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站")
     val currentDirection = directions[pagerState.currentPage].first

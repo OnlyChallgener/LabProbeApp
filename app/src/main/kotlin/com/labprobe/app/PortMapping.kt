@@ -454,20 +454,49 @@ internal object PortMappingMemoryCache {
     var rulesUpdatedAt: String = ""
     var snapshotRevision: Long = 0L
     var devices: List<DeviceItem> = emptyList()
+    var devicesUpdatedAt: Long = 0L
     var agent: PortMapAgentInfo? = null
+
+    fun isDevicesFresh(maxAgeMs: Long = 60_000L): Boolean {
+        return devices.isNotEmpty() && (System.currentTimeMillis() - devicesUpdatedAt < maxAgeMs)
+    }
+
+    fun updateFromApp(watched: List<DeviceItem>, online: List<DeviceItem>, offline: List<DeviceItem> = emptyList()) {
+        val merged = mergeSharedDeviceState(watched + offline, online)
+        if (merged.isNotEmpty()) {
+            devices = merged
+            devicesUpdatedAt = System.currentTimeMillis()
+        }
+    }
 }
 
-/** Uses the same status/NDP plus watched/online merge as the device page. */
 /**
  * Loads the same watched + online device snapshot used by the device page and
- * the IPv6 mapping picker.  Keeping this as the shared source prevents feature
- * pickers from accidentally using the watched-only /api/devices default view.
+ * the IPv6 mapping picker. Reuses warm memory cache for 0ms load time and
+ * queries single-snapshot fast path when network refresh is needed.
  */
-internal suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceItem> = coroutineScope {
+internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, forceRefresh: Boolean = false): List<DeviceItem> = coroutineScope {
+    if (!forceRefresh && PortMappingMemoryCache.isDevicesFresh()) {
+        return@coroutineScope PortMappingMemoryCache.devices
+    }
+
+    // Fast-path: 1 single snapshot HTTP request to fetch status + watched + online + offline devices.
+    val snapshot = runCatching { api.getSyncSnapshot() }.getOrNull()
+    if (snapshot != null) {
+        val syncWatched = mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.watchedDevices)
+        val syncOnline = mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.onlineDevices)
+        val syncMerged = mergeSharedDeviceState(syncWatched, syncOnline).ifEmpty { snapshot.offlineDevices }
+        if (syncMerged.isNotEmpty()) {
+            PortMappingMemoryCache.devices = syncMerged
+            PortMappingMemoryCache.devicesUpdatedAt = System.currentTimeMillis()
+            return@coroutineScope syncMerged
+        }
+    }
+
+    // Fallback path: concurrent status + watched + online devices query for older Hub versions.
     val statusRequest = async { runCatching { api.getStatus() }.getOrNull() }
     val watchedRequest = async { runCatching { api.getDevices(false) }.getOrDefault(emptyList()) }
     val onlineRequest = async { runCatching { api.getDevices(true) }.getOrDefault(emptyList()) }
-    val syncSnapshotRequest = async { runCatching { api.getSyncSnapshot() }.getOrNull() }
 
     val status = statusRequest.await()
     val watchedList = watchedRequest.await()
@@ -477,17 +506,11 @@ internal suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceIt
     val online = mergeIpv6NeighborsFromStatus(status, onlineList)
     val merged = mergeSharedDeviceState(watched, online)
     if (merged.isNotEmpty()) {
+        PortMappingMemoryCache.devices = merged
+        PortMappingMemoryCache.devicesUpdatedAt = System.currentTimeMillis()
         merged
     } else {
-        val syncSnapshot = syncSnapshotRequest.await()
-        if (syncSnapshot != null) {
-            val syncWatched = mergeIpv6NeighborsFromStatus(status, syncSnapshot.watchedDevices)
-            val syncOnline = mergeIpv6NeighborsFromStatus(status, syncSnapshot.onlineDevices)
-            val syncMerged = mergeSharedDeviceState(syncWatched, syncOnline)
-            if (syncMerged.isNotEmpty()) syncMerged else syncSnapshot.offlineDevices
-        } else {
-            emptyList()
-        }
+        PortMappingMemoryCache.devices
     }
 }
 
@@ -755,7 +778,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = f
             initial = editDraft!!,
             devices = devices,
             portRange = agent.portMin..agent.portMax,
-            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi) },
+            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi, forceRefresh = true) },
             onDismiss = { editDraft = null },
             onSave = { draft ->
                 val saveDraft = portMapDraftForSave(draft)

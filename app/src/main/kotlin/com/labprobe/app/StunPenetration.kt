@@ -27,7 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Devices
@@ -529,18 +529,19 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val template = stunTemplate(draft.serviceType)
     val selectedDevice = devices.firstOrNull { it.ip == draft.targetIpv4 }
-    fun refreshDevices() {
+    fun refreshDevices(force: Boolean = false) {
         scope.launch {
-            devicesLoading = true
-            val loaded = runCatching { loadCanonicalPortMappingDevices(HubApi(prefs)) }.getOrDefault(emptyList())
+            if (devices.isEmpty() || force) {
+                devicesLoading = true
+            }
+            val loaded = runCatching { loadCanonicalPortMappingDevices(HubApi(prefs), forceRefresh = force) }.getOrDefault(emptyList())
             if (loaded.isNotEmpty()) {
                 devices = loaded
-                PortMappingMemoryCache.devices = loaded
             }
             devicesLoading = false
         }
     }
-    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) { refreshDevices() }
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) { refreshDevices(force = false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -591,7 +592,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     loading = devicesLoading,
                     onClick = { showDevicePicker = true },
                 )
-                Text("从终端列表带入 IPv4；也可以继续手动填写。", style = LabTypography.Caption, color = LabV2.InkMuted)
+                Text("从在线设备选择 IPv4；也可以继续手动填写。", style = LabTypography.Caption, color = LabV2.InkMuted)
                 OutlinedTextField(
                     value = draft.targetIpv4,
                     onValueChange = { draft = draft.copy(targetIpv4 = it) },
@@ -640,7 +641,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
         StunDevicePickerDialog(
             devices = devices,
             loading = devicesLoading,
-            onRefresh = ::refreshDevices,
+            onRefresh = { refreshDevices(force = true) },
             onDismiss = { showDevicePicker = false },
             onPick = { device ->
                 draft = draft.copy(targetIpv4 = device.ip)
@@ -651,7 +652,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable private fun StunSelectedDevice(device: DeviceItem?, loading: Boolean, onClick: () -> Unit) {
-    val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { "已选终端" } }
+    val profile = device?.let(::inferDeviceProfile)
+    val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { "已选设备" } }
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = LabV2.FieldShape,
@@ -659,11 +661,15 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
         border = BorderStroke(1.dp, LabCoreSurface.Border),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            LabV2ToolIcon(Icons.Rounded.Devices, StunBlue, size = 34, muted = device == null)
+            if (device != null && profile != null) {
+                LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 34)
+            } else {
+                LabV2ToolIcon(Icons.Rounded.Devices, StunBlue, size = 34, muted = device == null)
+            }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    deviceLabel ?: if (loading) "正在读取终端列表" else "从终端列表选择",
+                    deviceLabel ?: if (loading) "正在读取设备列表…" else "从在线设备填充",
                     style = LabTypography.Value,
                     fontWeight = FontWeight.SemiBold,
                     color = LabV2.Ink,
@@ -671,21 +677,14 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    device?.let { "${if (it.online) "在线" else "离线"} · ${it.ip}" } ?: "选择后会自动填入内网地址",
+                    device?.let { "${if (it.online) "在线" else "离线"} · ${it.ip}" } ?: "显示设备 IPv4 与 MAC",
                     style = LabTypography.Caption,
                     color = if (device?.online == true) StunGreen else LabV2.InkMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            OutlinedButton(
-                onClick = onClick,
-                enabled = !loading,
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-                border = BorderStroke(1.dp, StunBlue.copy(alpha = .28f)),
-                modifier = Modifier.height(32.dp),
-            ) { Text("选择", style = LabTypography.CompactButton.copy(color = StunBlue)) }
+            Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -728,9 +727,9 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                     }
                 } else {
-
                     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 470.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         items(rows, key = { it.mac.ifBlank { "${it.name}-${it.ip}" } }) { device ->
+                            val profile = inferDeviceProfile(device)
                             Surface(
                                 modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
                                 shape = LabCoreSurface.InnerShape,
@@ -738,13 +737,12 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 border = BorderStroke(1.dp, LabCoreSurface.Border),
                             ) {
                                 Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    LabV2ToolIcon(Icons.Rounded.Devices, StunBlue, size = 32, muted = !device.online)
-                                    Spacer(Modifier.width(8.dp))
+                                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 34)
+                                    Spacer(Modifier.width(9.dp))
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                         Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, style = LabTypography.Value, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text("${if (device.online) "在线" else "离线"} · ${device.ip}", style = LabTypography.Caption, color = if (device.online) StunGreen else LabV2.InkMuted)
                                     }
-                                    Text("带入", style = LabTypography.CompactButton.copy(color = StunBlue))
                                 }
                             }
                         }

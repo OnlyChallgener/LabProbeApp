@@ -42,6 +42,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -263,11 +265,11 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Settings, null, Modifier.size(16.dp), tint = LabV2.InkMuted)
+                    Icon(Icons.Rounded.Settings, null, Modifier.size(16.dp), tint = if (serverConfig.enabled) LabV2.InkMuted else WireGuardAmber)
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        "网关参数: 端口 ${serverConfig.listenPort} · MTU ${serverConfig.mtu} · ${serverConfig.address}",
-                        style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                        "网关: ${if (serverConfig.enabled) "已启用" else "已停用"} · 端口 ${serverConfig.listenPort} · MTU ${serverConfig.mtu} · ${serverConfig.address}",
+                        style = LabTypography.Caption.copy(color = if (serverConfig.enabled) LabV2.InkMuted else WireGuardAmber),
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -354,19 +356,18 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     if (showServerSettings) {
         WireGuardServerSettingsDialog(
-
             initial = serverConfig,
             onDismiss = { showServerSettings = false },
-            onSave = { listenPort, mtu, address ->
+            onSave = { listenPort, mtu, address, enabled ->
                 scope.launch {
                     syncing = true
                     runCatching {
-                        val updated = wireGuardHubApi.updateServerConfig(listenPort, mtu, address)
+                        val updated = wireGuardHubApi.updateServerConfig(listenPort, mtu, address, enabled)
                         store.applyServerConfig(listenPort, mtu)
                         serverConfig = updated
                         reload()
                         showServerSettings = false
-                        message = "网关参数已更新（端口 $listenPort · MTU $mtu），已同步至 Agent 并应用到全部客户端配置"
+                        message = "网关参数已更新（${if (enabled) "已启用" else "已停用"} · 端口 $listenPort · MTU $mtu），已同步至 Agent"
                     }.onFailure {
                         message = "更新网关参数失败：${it.message.orEmpty()}"
                     }
@@ -770,8 +771,9 @@ private fun copyWireGuard(context: Context, label: String, value: String) {
 private fun WireGuardServerSettingsDialog(
     initial: WireGuardServerConfig,
     onDismiss: () -> Unit,
-    onSave: (listenPort: Int, mtu: Int, address: String) -> Unit,
+    onSave: (listenPort: Int, mtu: Int, address: String, enabled: Boolean) -> Unit,
 ) {
+    var enabled by remember { mutableStateOf(initial.enabled) }
     var port by remember { mutableStateOf(initial.listenPort.toString()) }
     var mtu by remember { mutableStateOf(initial.mtu.toString()) }
     var address by remember { mutableStateOf(initial.address) }
@@ -788,6 +790,37 @@ private fun WireGuardServerSettingsDialog(
                     "配置 Agent 服务端监听端口与 MTU，保存后会自动同步到路由器内核与防火墙，并统一应用到所有客户端配置。",
                     style = LabTypography.Caption.copy(color = LabV2.InkMuted)
                 )
+
+                Surface(
+                    shape = LabCoreSurface.InnerShape,
+                    color = if (enabled) WireGuardBlue.copy(alpha = .06f) else WireGuardAmber.copy(alpha = .08f),
+                    border = BorderStroke(1.dp, if (enabled) WireGuardBlue.copy(alpha = .18f) else WireGuardAmber.copy(alpha = .24f))
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("启用 WireGuard 服务端", style = LabTypography.FieldValue, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (enabled) "Agent 隧道内核运行中 (labwg0)" else "已停用，可避免与官方或其它服务端冲突",
+                                style = LabTypography.Caption.copy(color = if (enabled) LabV2.InkMuted else WireGuardAmber)
+                            )
+                        }
+                        Switch(
+                            checked = enabled,
+                            onCheckedChange = { enabled = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = WireGuardBlue,
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = LabV2.InkDisabled
+                            )
+                        )
+                    }
+                }
+
                 WireGuardField(port, { port = it.filter(Char::isDigit) }, "服务端监听端口（默认 51820）", KeyboardType.Number)
                 WireGuardField(mtu, { mtu = it.filter(Char::isDigit) }, "接口 MTU（默认 1420，推荐 1280~1500）", KeyboardType.Number)
                 WireGuardField(address, { address = it }, "服务端虚拟网段（默认 10.77.0.1/24）")
@@ -806,7 +839,7 @@ private fun WireGuardServerSettingsDialog(
                                 address.isBlank() -> error = "请填写服务端虚拟网段"
                                 else -> {
                                     error = ""
-                                    onSave(portInt, mtuInt, address)
+                                    onSave(portInt, mtuInt, address, enabled)
                                 }
                             }
                         },
