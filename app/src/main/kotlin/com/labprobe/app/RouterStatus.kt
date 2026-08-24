@@ -732,7 +732,7 @@ private fun RouterHeroCard(
                     if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LabV2.Primary)
                     else Icon(Icons.Rounded.Refresh, null, Modifier.size(22.dp), tint = LabV2.Primary)
                     Spacer(Modifier.width(5.dp))
-                    Text(if (refreshing) "刷新中" else "刷新", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+                    Text(if (refreshing) "刷新中" else "刷新", fontSize = (LabTypography.Value.fontSize.value - 1f).sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
                 }
             }
         }
@@ -789,8 +789,8 @@ private fun HeroMetric(icon: ImageVector, label: String, value: String, color: C
         Icon(icon, null, Modifier.size(22.dp), tint = color)
         Spacer(Modifier.width(6.dp))
         Column {
-            Text(label, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
-            Text(value, fontSize = LabTypography.Value.fontSize, color = Color(0xFF10264F), fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(label, fontSize = (LabTypography.Caption.fontSize.value - .5f).sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+            Text(value, fontSize = (LabTypography.Value.fontSize.value - 1f).sp, color = Color(0xFF10264F), fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
@@ -828,9 +828,9 @@ private fun RealtimeMetric(icon: ImageVector, label: String, value: String, colo
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, Modifier.size(18.dp), tint = color)
                 Spacer(Modifier.width(4.dp))
-                Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+                Text(label, fontSize = (LabTypography.Caption.fontSize.value - .5f).sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             }
-            Text(value, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 1)
+            Text(value, fontSize = (LabTypography.SectionTitle.fontSize.value - 1f).sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 1)
             LinearProgressIndicator(
                 progress = { animated },
                 modifier = Modifier.fillMaxWidth().height(3.5.dp).clip(RoundedCornerShape(99.dp)),
