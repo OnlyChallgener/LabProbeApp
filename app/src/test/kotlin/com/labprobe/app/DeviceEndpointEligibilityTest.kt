@@ -35,10 +35,16 @@ class DeviceEndpointEligibilityTest {
     }
 
     @Test
+    fun camerasPrintersAndRouterManagementPagesRemainSelectable() {
+        assertTrue(isDeviceUsableForPublicEndpoint(device("客厅摄像头")))
+        assertTrue(isDeviceUsableForPublicEndpoint(device("办公室打印机", devType = "printer")))
+        assertTrue(isDeviceUsableForPublicEndpoint(device("BE72 Web", devType = "router")))
+    }
+
+    @Test
     fun smartHomeAndConsumerMediaDevicesAreNotOffered() {
-        assertFalse(isDeviceUsableForPublicEndpoint(device("TP-LINK", manufacture = "TP-LINK")))
+        assertFalse(isDeviceUsableForPublicEndpoint(device("客厅智能灯")))
         assertFalse(isDeviceUsableForPublicEndpoint(device("TCL电视")))
-        assertFalse(isDeviceUsableForPublicEndpoint(device("客厅摄像头")))
     }
 
     @Test

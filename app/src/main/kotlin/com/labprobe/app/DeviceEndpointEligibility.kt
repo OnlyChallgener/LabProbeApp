@@ -11,11 +11,10 @@ private val UNSUITABLE_ENDPOINT_DEVICE_TYPES = setOf(
     // Personal/mobile clients and wearables.
     "phone", "iphone", "huawei_phone", "tablet", "watch", "child_watch",
     "smart_ring", "wireless_earbuds", "headphones",
-    // Network infrastructure is managed by Hub/Relay, not as a target host.
-    "router", "soft_router", "ap", "network_switch", "network_device", "ont",
-    // TVs, cameras, printers and other consumer endpoints are not service hosts.
-    "camera", "doorbell", "tv", "smart_display", "tv_box", "set_top_box",
-    "projector", "game_console", "speaker", "soundbar", "printer",
+    // Cameras, printers and router management pages remain valid targets.
+    // TVs and other media clients generally do not expose a user-managed service.
+    "tv", "smart_display", "tv_box", "set_top_box", "projector", "game_console",
+    "speaker", "soundbar",
     // Smart-home and appliance categories.
     "lock", "sensor", "switch", "socket", "power_strip", "light", "ceiling_light",
     "living_room_light", "bedside_lamp", "desk_lamp", "floor_lamp", "light_strip",
@@ -31,11 +30,15 @@ private val UNSUITABLE_ENDPOINT_DEVICE_TYPES = setOf(
 
 private val UNSUITABLE_ENDPOINT_NAME_TOKENS = listOf(
     "手机", "平板", "手表", "手环", "儿童手表", "phone", "smartphone", "mobile", "android", "iphone", "ipad", "tablet",
-    "摄像头", "相机", "camera", "ipc", "nvr",
-    "电视", "电视盒", "机顶盒", "投影", "音箱", "音响", "speaker", "打印机", "printer",
+    "电视", "电视盒", "机顶盒", "投影", "音箱", "音响", "speaker",
     "智能家居", "智能设备", "smart home", "smart device", "iot", "家居", "门锁", "门铃",
     "传感器", "插座", "开关", "灯", "窗帘", "空调", "冰箱", "洗衣机", "热水器", "扫地",
-    "吸尘", "路由器", "网关", "交换机", "光猫", "access point", "wireless ap"
+    "吸尘"
+)
+
+private val SERVICE_MANAGEMENT_DEVICE_TYPES = setOf(
+    "camera", "doorbell", "printer", "router", "soft_router", "ap", "network_switch",
+    "network_device", "ont"
 )
 
 private fun normalizedEndpointText(value: String): String =
@@ -49,6 +52,7 @@ private fun normalizedEndpointText(value: String): String =
 internal fun isDeviceUsableForPublicEndpoint(device: DeviceItem): Boolean {
     val inferredType = inferDeviceTypeRule(device).id
     if (inferredType in UNSUITABLE_ENDPOINT_DEVICE_TYPES) return false
+    if (inferredType in SERVICE_MANAGEMENT_DEVICE_TYPES) return true
 
     // Manual classification is authoritative for filtering. Hub's devType is
     // also honoured when it explicitly names a known unsuitable category.
@@ -56,6 +60,7 @@ internal fun isDeviceUsableForPublicEndpoint(device: DeviceItem): Boolean {
         .map(::normalizeDeviceTypeToken)
         .filter { it.isNotBlank() }
     if (explicitTypes.any { it in UNSUITABLE_ENDPOINT_DEVICE_TYPES }) return false
+    if (explicitTypes.any { it in SERVICE_MANAGEMENT_DEVICE_TYPES }) return true
 
     val identity = listOf(device.remark, device.name, device.hostName, device.osType, device.devType)
         .joinToString(" ", transform = ::normalizedEndpointText)
