@@ -1418,6 +1418,7 @@ private fun PortMapDevicePickerDialog(
     }
     val rows = remember(currentDevices, mode, query) {
         currentDevices.filter { d ->
+            if (!isDeviceUsableForPublicEndpoint(d)) return@filter false
             val addresses = if (mode == "6to4") listOf(cleanApiText(d.ip)) else ipv6Candidates(d)
             val text = "${d.remark} ${d.name} ${d.hostName} ${d.mac} ${addresses.joinToString(" ")}".lowercase(Locale.getDefault())
             query.isBlank() || text.contains(query.lowercase(Locale.getDefault()))
@@ -1437,7 +1438,7 @@ private fun PortMapDevicePickerDialog(
                     Column(Modifier.weight(1f)) {
                         Text("选择目标设备", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
                         Text(
-                            if (mode == "6to4") "当前显示设备 IPv4 地址" else if (targetMode == "ipv6_suffix") "当前显示全局 IPv6 与后 64 位" else "当前显示设备完整 IPv6 地址",
+                            if (mode == "6to4") "当前显示适合映射的设备 IPv4 地址" else if (targetMode == "ipv6_suffix") "当前显示适合映射的全局 IPv6 与后 64 位" else "当前显示适合映射的完整 IPv6 地址",
                             fontSize = LabTypography.Supporting.fontSize,
                             fontWeight = FontWeight.SemiBold,
                             color = LabV2.InkMuted

@@ -698,7 +698,9 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     onDismiss: () -> Unit,
     onPick: (DeviceItem) -> Unit,
 ) {
-    val rows = remember(devices) { devices.filter { it.ip.isNotBlank() } }
+    val rows = remember(devices) {
+        devices.filter { it.ip.isNotBlank() && isDeviceUsableForPublicEndpoint(it) }
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
@@ -712,7 +714,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("选择内网终端", style = LabTypography.PageTitle)
-                        Text("仅展示已获得 IPv4 地址的终端", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                        Text("仅展示适合公网访问的 IPv4 终端", style = LabTypography.Supporting, color = LabV2.InkMuted)
                     }
                     TextButton(onClick = onRefresh, enabled = !loading, shape = LabV2.ButtonShape) {
                         Text(if (loading) "读取中" else "刷新", style = LabTypography.CompactButton.copy(color = StunBlue))
