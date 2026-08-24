@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import androidx.compose.ui.draw.clip
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
