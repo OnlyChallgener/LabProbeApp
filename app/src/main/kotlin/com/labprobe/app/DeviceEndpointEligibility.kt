@@ -45,11 +45,15 @@ private fun normalizedEndpointText(value: String): String =
     value.trim().lowercase(Locale.getDefault())
 
 /**
- * Returns false only when the device is confidently classified as unsuitable.
- * Unknown devices remain selectable so a valid server/NAS with an unrecognised
- * hostname is not accidentally hidden.
+ * Unknown devices without any human-readable identity are not actionable in a
+ * mapping form. Named servers/NAS devices remain selectable even when their
+ * vendor type is not recognised.
  */
 internal fun isDeviceUsableForPublicEndpoint(device: DeviceItem): Boolean {
+    val hasUsableName = listOf(device.remark, device.name, device.hostName)
+        .any { it.trim().isNotBlank() }
+    if (!hasUsableName) return false
+
     val inferredType = inferDeviceTypeRule(device).id
     if (inferredType in UNSUITABLE_ENDPOINT_DEVICE_TYPES) return false
     if (inferredType in SERVICE_MANAGEMENT_DEVICE_TYPES) return true

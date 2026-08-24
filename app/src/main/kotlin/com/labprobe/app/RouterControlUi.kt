@@ -356,14 +356,30 @@ private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
 @Composable
 private fun NativePortMappingPage(prefs: AppPrefs) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val resource by repository.portMappings.collectAsState()
     val rules = resource.value.orEmpty()
     val scope = repository.commandScope
+    var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
+    var devicesLoading by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<NativePortMapRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<NativePortMapRule?>(null) }
     val error = actionError.ifBlank { resource.error }
+
+    suspend fun refreshDevices(force: Boolean = false): List<DeviceItem> {
+        if (devices.isNotEmpty() && !force) return devices
+        devicesLoading = true
+        return runCatching { loadCanonicalPortMappingDevices(deviceApi, forceRefresh = force) }
+            .getOrElse { devices }
+            .also {
+                if (it.isNotEmpty()) devices = it
+                devicesLoading = false
+            }
+    }
+
+    LaunchedEffect(Unit) { refreshDevices() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -393,6 +409,9 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
         NativePortEditorSheet(
             initial = editing ?: NativePortMapRule(),
             existingNames = rules.map { it.ruleName }.toSet(),
+            devices = devices,
+            devicesLoading = devicesLoading,
+            refreshDevices = { refreshDevices(force = true) },
             onDismiss = { adding = false; editing = null },
             onSave = { saved ->
                 scope.launch {
@@ -483,9 +502,19 @@ private fun NativePortRouteSummary(rule: NativePortMapRule) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set<String>, onDismiss: () -> Unit, onSave: (NativePortMapRule) -> Unit) {
+private fun NativePortEditorSheet(
+    initial: NativePortMapRule,
+    existingNames: Set<String>,
+    devices: List<DeviceItem>,
+    devicesLoading: Boolean,
+    refreshDevices: suspend () -> List<DeviceItem>,
+    onDismiss: () -> Unit,
+    onSave: (NativePortMapRule) -> Unit,
+) {
     var draft by remember(initial) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
+    var showDevicePicker by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -513,7 +542,21 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
                 CompactField("外部端口", draft.srcPort, "80 或 1000-2000", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(srcPort = it.take(32)) }
                 CompactField("内部端口", draft.destPort, "80", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destPort = it.take(32)) }
             }
-            CompactField("内部设备 / IP", draft.destIp, "192.168.5.46", keyboardType = KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
+                CompactField("内部设备 / IP", draft.destIp, "192.168.5.46", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
+                OutlinedButton(
+                    onClick = { showDevicePicker = true },
+                    modifier = Modifier.height(50.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    contentPadding = PaddingValues(horizontal = 11.dp),
+                    border = BorderStroke(1.dp, RouterBlue.copy(alpha = .35f)),
+                ) {
+                    Icon(Icons.Rounded.Devices, "选择终端", Modifier.size(17.dp), tint = RouterBlue)
+                    Spacer(Modifier.width(4.dp))
+                    Text("选择", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterBlue)
+                }
+            }
+            Text("可手动填写地址，也可从终端列表关联路由器内网设备。", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
             AnimatedVisibility(draft.srcIp.isNotBlank() || draft.src.isBlank()) {
                 CompactField("允许来源IP", draft.srcIp, "例如 10.0.0.8", keyboardType = KeyboardType.Ascii) { draft = draft.copy(src = "", srcIp = it.take(64)) }
             }
@@ -538,6 +581,85 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
                 ) { Text("保存并同步", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
             }
             Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+
+    if (showDevicePicker) {
+        NativePortDevicePickerDialog(
+            devices = devices,
+            loading = devicesLoading,
+            selectedIp = draft.destIp,
+            onRefresh = {
+                scope.launch { refreshDevices() }
+            },
+            onDismiss = { showDevicePicker = false },
+            onPick = { device ->
+                draft = draft.copy(destIp = device.ip)
+                showDevicePicker = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun NativePortDevicePickerDialog(
+    devices: List<DeviceItem>,
+    loading: Boolean,
+    selectedIp: String,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+    onPick: (DeviceItem) -> Unit,
+) {
+    val rows = remember(devices) {
+        devices.filter { it.ip.isNotBlank() && isDeviceUsableForPublicEndpoint(it) }
+            .sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.ifBlank { it.hostName }.lowercase(Locale.ROOT) })
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
+            shape = RoundedCornerShape(26.dp),
+            color = Color.White,
+            shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("选择目标设备", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.Bold, color = RouterInk)
+                        Text("仅展示适合原生端口映射的已命名设备", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                    }
+                    TextButton(onClick = onRefresh, enabled = !loading) {
+                        Text(if (loading) "读取中" else "刷新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = RouterBlue)
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(19.dp)) }
+                }
+                if (rows.isEmpty()) {
+                    CompactEmpty("暂无可关联设备", "请先在设备页为终端设置名称，或直接手动填写 IP", RouterGlyph.Port) { onRefresh() }
+                } else {
+                    LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+                        items(rows, key = { it.mac.ifBlank { it.ip } }) { device ->
+                            val title = device.remark.ifBlank { device.name }.ifBlank { device.hostName }.ifBlank { "未命名设备" }
+                            Surface(
+                                onClick = { onPick(device) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(15.dp),
+                                color = if (device.ip == selectedIp) RouterBlue.copy(alpha = .10f) else LabCoreSurface.Inner,
+                                border = BorderStroke(1.dp, if (device.ip == selectedIp) RouterBlue.copy(alpha = .35f) else LabCoreSurface.Border),
+                            ) {
+                                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.Devices, null, Modifier.size(24.dp), tint = RouterBlue)
+                                    Spacer(Modifier.width(9.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("${if (device.online) "在线" else "离线"} · ${device.ip}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = if (device.online) RouterGreen else RouterMuted)
+                                    }
+                                    if (device.ip == selectedIp) Icon(Icons.Rounded.Check, "已选择", Modifier.size(18.dp), tint = RouterBlue)
+                                }
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("取消", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = RouterBlue) }
             }
         }
     }
