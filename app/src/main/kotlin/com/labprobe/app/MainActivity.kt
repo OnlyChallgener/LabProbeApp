@@ -982,6 +982,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
     private val cacheWriteVersion = AtomicLong(0L)
+    private var cachePersistJob: Job? = null
     private val liteRealtimeApi = LiteRealtimeApi(prefs)
     private val realtimeSmoother = RealtimeDisplaySmoother()
     private var liteRenderJob: Job? = null
@@ -1227,6 +1228,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     private suspend fun calibrateRealtimeCache() {
         if (!foregroundActive || prefs.hub.isBlank() || prefs.token.isBlank()) return
+        if (mqttConnected && realtimeDataFresh) return
         supervisorScope {
             val router = async { runCatching { liteRealtimeApi.router() }.getOrNull() }
             val devicesRuntime = async { runCatching { liteRealtimeApi.devices() }.getOrNull() }
@@ -1559,7 +1561,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val onlineSnapshot = onlineDevices.toList()
         val offlineSnapshot = offlineDevices.toList()
         val eventSnapshot = events.toList()
-        cacheScope.launch {
+        cachePersistJob?.cancel()
+        cachePersistJob = cacheScope.launch {
+            delay(2_000L)
             val devicesText = JSONArray(deviceSnapshot.map { it.toJson() }).toString()
             val onlineText = JSONArray(onlineSnapshot.map { it.toJson() }).toString()
             val offlineText = JSONArray(offlineSnapshot.map { it.toJson() }).toString()

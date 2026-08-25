@@ -192,7 +192,8 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
 
     private fun beginInitialPreload() {
         if (!preloadStarted.compareAndSet(false, true)) return
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
+            delay(1_200L)
             preload()
             if (_status.value.value == null || _ddns.value.value == null) {
                 delay(5_000L)

@@ -331,8 +331,8 @@ class RealtimeDisplaySmoother {
         val high = max(previous, target)
         val ratio = high / low
         val weight = when {
-            ratio >= 8.0 -> 0.88
-            ratio >= 3.0 -> 0.80
+            ratio >= 8.0 -> 0.75
+            ratio >= 3.0 -> 0.68
             abs(target - previous) < 512.0 -> 0.58
             else -> baseWeight
         }
