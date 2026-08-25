@@ -1023,7 +1023,7 @@ private fun NativeAnalysisValueRow(label: String, value: String) {
         Text(
             value,
             Modifier.weight(1f),
-            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Bold),
+            style = LabTypography.Supporting.copy(fontSize = 12.sp, lineHeight = 16.sp, color = NativeInk, fontWeight = FontWeight.SemiBold),
             maxLines = 3,
             overflow = TextOverflow.Clip
         )

@@ -654,7 +654,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable private fun StunSelectedDevice(device: DeviceItem?, loading: Boolean, onClick: () -> Unit) {
-    val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { "已选设备" } }
+    val deviceLabel = device?.let { it.remark.ifBlank { it.name }.ifBlank { it.hostName }.ifBlank { "已选设备" } }
     val profile = if (device != null) inferDeviceProfile(device) else null
     Surface(
         modifier = Modifier.fillMaxWidth().clip(LabV2.FieldShape).clickable(onClick = onClick),
@@ -679,7 +679,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    device?.let { "${if (it.online) "在线" else "离线"} · ${it.ip}" } ?: "显示设备 IPv4 与 MAC",
+                    device?.let { "${if (it.online) "在线" else "离线"} · ${it.ip}${if (it.mac.isNotBlank()) " · ${it.mac}" else ""}" } ?: "显示设备 IPv4 与 MAC",
                     style = LabTypography.Caption,
                     color = if (device?.online == true) StunGreen else LabV2.InkMuted,
                     maxLines = 1,
@@ -700,6 +700,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
 ) {
     val rows = remember(devices) {
         devices.filter { it.ip.isNotBlank() && isDeviceUsableForPublicEndpoint(it) }
+            .sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.ifBlank { it.hostName }.lowercase(Locale.ROOT) })
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -744,8 +745,17 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                     LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 34)
                                     Spacer(Modifier.width(9.dp))
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(device.remark.ifBlank { device.name }.ifBlank { device.mac }, style = LabTypography.Value, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text("${if (device.online) "在线" else "离线"} · ${device.ip}", style = LabTypography.Caption, color = if (device.online) StunGreen else LabV2.InkMuted)
+                                        Text(device.remark.ifBlank { device.name }.ifBlank { device.hostName }.ifBlank { device.mac }, style = LabTypography.Value, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        val subtitle = buildString {
+                                            append(if (device.online) "在线" else "离线")
+                                            append(" · ")
+                                            append(device.ip)
+                                            if (device.mac.isNotBlank()) {
+                                                append(" · ")
+                                                append(device.mac)
+                                            }
+                                        }
+                                        Text(subtitle, style = LabTypography.Caption, color = if (device.online) StunGreen else LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }

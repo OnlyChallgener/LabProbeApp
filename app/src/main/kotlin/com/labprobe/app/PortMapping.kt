@@ -1419,10 +1419,11 @@ private fun PortMapDevicePickerDialog(
     val rows = remember(currentDevices, mode, query) {
         currentDevices.filter { d ->
             if (!isDeviceUsableForPublicEndpoint(d)) return@filter false
-            val addresses = if (mode == "6to4") listOf(cleanApiText(d.ip)) else ipv6Candidates(d)
+            val addresses = if (mode == "6to4") listOf(cleanApiText(d.ip)).filter { it.isNotBlank() } else ipv6Candidates(d)
+            if (addresses.isEmpty() && !d.online) return@filter false
             val text = "${d.remark} ${d.name} ${d.hostName} ${d.mac} ${addresses.joinToString(" ")}".lowercase(Locale.getDefault())
             query.isBlank() || text.contains(query.lowercase(Locale.getDefault()))
-        }
+        }.sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.ifBlank { it.hostName }.lowercase(Locale.ROOT) })
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {

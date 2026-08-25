@@ -626,7 +626,7 @@ private fun NativePortDevicePickerDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("选择目标设备", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.Bold, color = RouterInk)
-                        Text("仅展示适合原生端口映射的已命名设备", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                        Text("仅展示适合原生端口映射的设备", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                     }
                     TextButton(onClick = onRefresh, enabled = !loading) {
                         Text(if (loading) "读取中" else "刷新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = RouterBlue)
@@ -639,21 +639,32 @@ private fun NativePortDevicePickerDialog(
                     LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
                         items(rows, key = { it.mac.ifBlank { it.ip } }) { device ->
                             val title = device.remark.ifBlank { device.name }.ifBlank { device.hostName }.ifBlank { "未命名设备" }
+                            val profile = inferDeviceProfile(device)
+                            val isSelected = device.ip == selectedIp
                             Surface(
                                 onClick = { onPick(device) },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(15.dp),
-                                color = if (device.ip == selectedIp) RouterBlue.copy(alpha = .10f) else LabCoreSurface.Inner,
-                                border = BorderStroke(1.dp, if (device.ip == selectedIp) RouterBlue.copy(alpha = .35f) else LabCoreSurface.Border),
+                                color = if (isSelected) RouterBlue.copy(alpha = .10f) else LabCoreSurface.Inner,
+                                border = BorderStroke(1.dp, if (isSelected) RouterBlue.copy(alpha = .35f) else LabCoreSurface.Border),
                             ) {
                                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.Devices, null, Modifier.size(24.dp), tint = RouterBlue)
-                                    Spacer(Modifier.width(9.dp))
-                                    Column(Modifier.weight(1f)) {
+                                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 36)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                         Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text("${if (device.online) "在线" else "离线"} · ${device.ip}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = if (device.online) RouterGreen else RouterMuted)
+                                        val subtitle = buildString {
+                                            append(if (device.online) "在线" else "离线")
+                                            append(" · ")
+                                            append(device.ip)
+                                            if (device.mac.isNotBlank()) {
+                                                append(" · ")
+                                                append(device.mac)
+                                            }
+                                        }
+                                        Text(subtitle, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = if (device.online) RouterGreen else RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
-                                    if (device.ip == selectedIp) Icon(Icons.Rounded.Check, "已选择", Modifier.size(18.dp), tint = RouterBlue)
+                                    if (isSelected) Icon(Icons.Rounded.Check, "已选择", Modifier.size(18.dp), tint = RouterBlue)
                                 }
                             }
                         }

@@ -184,11 +184,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 路由器 DDNS 与控制链路体验优化" to listOf(
-                "修复路由器原生 DDNS 解析与同步状态容错，避免误显示同步中",
-                "Hub 状态页增加直接修改路由器连接配置入口",
-                "首页实时状态自适应展示 2.4G / 5G 射频温度",
-                "路由控制 API 错误信息完整传递与提示"
+            "v$NAME build$CODE · 映射终端精准筛选与 UI 体验优化" to listOf(
+                "优化 IPv6 映射、原生端口映射与 STUN 终端选择器，精准保留电脑、NAS、服务器、摄像头、打印机等设备",
+                "自动剔除手机、手表、音箱、智能家居及无名称的离线未知设备",
+                "终端列表全面展示 MAC 地址与专属分类图标",
+                "优化路由 NAT 诊断结果字号大小与排版"
             )
         )
 }
