@@ -38,6 +38,57 @@ class StunModelTest {
     }
 
     @Test
+    fun generatedTitleFollowsTheCurrentTargetPort() {
+        val rule = StunRule(
+            id = "stun-1",
+            name = "HTTPS · 192.168.5.46:8443",
+            enabled = true,
+            listenPort = 20_001,
+            targetIpv4 = "192.168.5.46",
+            targetPort = 9443,
+            serviceType = "HTTPS",
+            transportProtocol = "TCP",
+            actualState = "mapped",
+            firewallState = "ready",
+            runtime = StunRuntime(publicEndpoint = "111.23.167.91:10193"),
+        )
+
+        assertEquals("HTTPS · 192.168.5.46:9443", stunRuleTitle(rule))
+        assertEquals(
+            "HTTPS · 192.168.5.46:9443",
+            StunDraft.from(rule).toJson().getString("name"),
+        )
+    }
+
+    @Test
+    fun customTitleIsPreserved() {
+        val rule = StunRule(
+            id = "stun-1",
+            name = "家庭 NAS",
+            enabled = true,
+            listenPort = 20_001,
+            targetIpv4 = "192.168.5.46",
+            targetPort = 9443,
+            serviceType = "HTTPS",
+            transportProtocol = "TCP",
+            actualState = "mapped",
+            firewallState = "ready",
+            runtime = StunRuntime(),
+        )
+
+        assertEquals("家庭 NAS", stunRuleTitle(rule))
+        assertEquals("家庭 NAS", StunDraft.from(rule).toJson().getString("name"))
+    }
+
+    @Test
+    fun onlyHttpsCopyAddsAProtocolScheme() {
+        assertEquals("https://111.23.167.91:10193", stunAddressForCopy("HTTPS", "111.23.167.91:10193"))
+        assertEquals("https://111.23.167.91:10193", stunAddressForCopy("https", "http://111.23.167.91:10193"))
+        assertEquals("111.23.167.91:10170", stunAddressForCopy("WireGuard", "111.23.167.91:10170"))
+        assertEquals("111.23.167.91:10022", stunAddressForCopy("SSH", "111.23.167.91:10022"))
+    }
+
+    @Test
     fun stunFavoriteRoundTripKeepsLinkAndCurrentEndpoint() {
         val before = FavoriteShortcut(
             id = "stun-stun-1",

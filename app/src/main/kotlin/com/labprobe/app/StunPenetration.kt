@@ -209,7 +209,10 @@ data class StunDraft(
         put("transportProtocol", transportProtocol)
         put("targetIpv4", targetIpv4.trim())
         put("targetPort", targetPort.toIntOrNull() ?: 0)
-        name.trim().takeIf { it.isNotBlank() }?.let { put("name", it) }
+        val normalizedName = name.trim().let {
+            if (isGeneratedStunRuleName(it)) generatedStunRuleName(serviceType, targetIpv4, targetPort) else it
+        }
+        normalizedName.takeIf { it.isNotBlank() }?.let { put("name", it) }
         put("enabled", true)
     }
     companion object {
@@ -219,6 +222,23 @@ data class StunDraft(
 
 internal fun stunTemplate(type: String): PortMapServiceTemplate = PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.serviceType.equals(type, true) } ?: PORT_MAP_SERVICE_TEMPLATES.last()
 internal fun applyStunService(draft: StunDraft, template: PortMapServiceTemplate) = draft.copy(serviceType = template.serviceType, transportProtocol = template.defaultProtocol, targetPort = template.targetPort?.toString().orEmpty())
+private val generatedStunRuleNamePattern = Regex("^.+ · (?:\\d{1,3}\\.){3}\\d{1,3}:\\d+$")
+private fun isGeneratedStunRuleName(value: String): Boolean = generatedStunRuleNamePattern.matches(value.trim())
+private fun generatedStunRuleName(serviceType: String, targetIpv4: String, targetPort: String): String =
+    "${serviceType.trim()} · ${targetIpv4.trim()}:${targetPort.trim()}"
+internal fun stunRuleTitle(rule: StunRule): String = rule.name.trim().let {
+    if (it.isBlank() || isGeneratedStunRuleName(it)) {
+        generatedStunRuleName(rule.serviceType, rule.targetIpv4, rule.targetPort.toString())
+    } else {
+        it
+    }
+}
+internal fun stunAddressForCopy(serviceType: String, endpoint: String): String {
+    val value = endpoint.trim()
+    if (!serviceType.equals("HTTPS", ignoreCase = true) || value.isBlank()) return value
+    val withoutScheme = value.replaceFirst(Regex("^[A-Za-z][A-Za-z0-9+.-]*://"), "")
+    return "https://$withoutScheme"
+}
 private fun formatStunBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
@@ -226,7 +246,8 @@ private fun formatStunBytes(bytes: Long): String = when {
     else -> String.format(Locale.US, "%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
 }
 private fun formatStunTime(epoch: Long): String = if (epoch <= 0) "未知时间" else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch * 1000L))
-private fun copyStunAddress(context: Context, value: String) {
+private fun copyStunAddress(context: Context, serviceType: String, endpoint: String) {
+    val value = stunAddressForCopy(serviceType, endpoint)
     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("STUN 地址", value))
     toast(context, "地址已复制")
 }
@@ -317,7 +338,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     rule = rule,
                     menuOpen = menuFor == rule.id,
                     onMenu = { menuFor = if (menuFor == rule.id) null else rule.id },
-                    onCopy = { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { copyStunAddress(context, it) } },
+                    onCopy = { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { copyStunAddress(context, rule.serviceType, it) } },
                     onHistory = {
                         historyTarget = rule
                         scope.launch { history = runCatching { api.addresses(rule.id) }.getOrDefault(emptyList()) }
@@ -341,7 +362,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             result.onSuccess { editor = null; refresh() }.onFailure { error = it.message ?: "保存失败" }
         }
     } }
-    historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, it) }) }
+    historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
 }
 
 @Composable private fun StunIntro(agentOnline: Boolean, agentLastSeenAt: String, loading: Boolean, onRefresh: () -> Unit, onAdd: () -> Unit) {
@@ -404,7 +425,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Spacer(Modifier.width(7.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        rule.name,
+                        stunRuleTitle(rule),
                         style = LabTypography.CardTitle.copy(fontSize = 14.sp, lineHeight = 19.sp),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
