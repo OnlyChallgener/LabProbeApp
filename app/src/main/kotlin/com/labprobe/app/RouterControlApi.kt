@@ -96,7 +96,8 @@ class RouterControlApi(private val prefs: AppPrefs) {
         // global Hub/router disconnect. Only /status owns connection semantics.
         val root = hubApi.requestJson(path, method, body)
         if (root.has("ok") && !root.optBoolean("ok")) {
-            throw RouterStatusUnavailableException()
+            val err = root.optString("error").ifBlank { root.optString("message") }.ifBlank { "Hub 在线，但没有路由器数据" }
+            throw RouterStatusUnavailableException(err)
         }
         return root
     }
@@ -456,7 +457,7 @@ private fun JSONObject.ddnsFlag(default:Boolean,vararg keys:String):Boolean{
 }
 
 internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
-    val arr = data.optJSONArray("list") ?: data.optJSONArray("data") ?: data.optJSONArray("records") ?: JSONArray()
+    val arr = data.optJSONArray("list") ?: data.optJSONArray("services") ?: data.optJSONArray("data") ?: data.optJSONArray("records") ?: JSONArray()
     return (0 until arr.length()).mapNotNull { i ->
         arr.optJSONObject(i)?.let { o ->
             DdnsRecord(

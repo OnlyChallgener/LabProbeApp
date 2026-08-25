@@ -28,4 +28,21 @@ class RouterRealtimeExtendedFieldsTest {
         assertEquals(18.0, telemetry.getDouble("storagePercent"), 0.01)
         assertEquals(90_000L, telemetry.getLong("uptimeSeconds"))
     }
+
+    @Test
+    fun parseDdnsListAcceptsServicesAndListKeys() {
+        val jsonServices = JSONObject("""
+            {"services":[{"service":"0","service_name":"aliyun.com","domain":"rj.lab86@shinya.icu","username":"ak","enable":true}]}
+        """.trimIndent())
+        val list1 = parseDdnsList(jsonServices)
+        assertEquals(1, list1.size)
+        assertEquals("rj.lab86@shinya.icu", list1[0].domain)
+
+        val jsonList = JSONObject("""
+            {"list":[{"service":"1","service_name":"aliyun.com","domain":"op.lab86@shinya.icu","username":"ak","enable":true}]}
+        """.trimIndent())
+        val list2 = parseDdnsList(jsonList)
+        assertEquals(1, list2.size)
+        assertEquals("op.lab86@shinya.icu", list2[0].domain)
+    }
 }

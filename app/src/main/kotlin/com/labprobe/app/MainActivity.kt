@@ -184,13 +184,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · Router Core v1 设备筛选与设置修复" to listOf(
-                "APP 设置页可通过 Hub 修改路由器名称、管理地址、账号和密码",
-                "路由器密码不回显，留空保存时保留 Hub 中已配置的密码",
-                "检查更新会从 JSON 清单中提取可读发布说明，不再显示原始 JSON",
-                "版本弹窗仅展示当前版本对应的本次更新内容",
-                "设置页标题调整为 APP 设置并缩小一级",
-                "IPv6 映射与 STUN 设备选择隐藏手机、智能家居及其他不适合公网访问的终端"
+            "v$NAME build$CODE · 路由器 DDNS 与控制链路体验优化" to listOf(
+                "修复路由器原生 DDNS 解析与同步状态容错，避免误显示同步中",
+                "Hub 状态页增加直接修改路由器连接配置入口",
+                "首页实时状态自适应展示 2.4G / 5G 射频温度",
+                "路由控制 API 错误信息完整传递与提示"
             )
         )
 }
@@ -2071,7 +2069,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
                         "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
                         "tool_router_ipv6" -> Ipv6Screen(prefs, backFromTool)
-                        "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool)
+                        "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
                     }

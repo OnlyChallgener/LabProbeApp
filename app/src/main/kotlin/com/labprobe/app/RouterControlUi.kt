@@ -1772,7 +1772,7 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
 }
 
 @Composable
-fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
+fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit, onOpenSettings: (() -> Unit)? = null) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.status.collectAsState()
     val status = resource.value
@@ -1818,6 +1818,18 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
             Text(if (resource.refreshing) "正在后台刷新" else "刷新 Hub 状态", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
+        }
+        if (onOpenSettings != null && (!sessionConnected || status?.state == "unconfigured" || status?.state == "router_login_failed")) {
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                shape = RoundedCornerShape(13.dp),
+                border = BorderStroke(1.dp, RouterBlue),
+            ) {
+                Icon(Icons.Rounded.Settings, null, Modifier.size(17.dp), tint = RouterBlue)
+                Spacer(Modifier.width(7.dp))
+                Text("修改路由器连接配置", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterBlue)
+            }
         }
     }
 }

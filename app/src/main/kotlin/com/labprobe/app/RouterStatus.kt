@@ -800,14 +800,17 @@ private fun HeroDivider() = Box(Modifier.width(1.dp).height(38.dp).background(Co
 
 @Composable
 private fun RouterRealtimeCard(ui: RouterDashboardUi) {
+    val hasRadioTemp = ui.temperature2g > 0.0 || ui.temperature5g > 0.0
     RouterGlassCard {
         SectionHeader(Icons.Rounded.MonitorHeart, "实时状态", LabV2.Primary, ui.updatedAt)
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            RealtimeMetric(Icons.Rounded.Wifi, "2.4G", temperatureText(ui.temperature2g), LabV2.Green, ui.temperature2g / 100.0, Modifier.width(82.dp))
-            RealtimeMetric(Icons.Rounded.Wifi, "5G", temperatureText(ui.temperature5g), LabV2.Primary, ui.temperature5g / 100.0, Modifier.width(82.dp))
+            if (hasRadioTemp) {
+                RealtimeMetric(Icons.Rounded.Wifi, "2.4G", temperatureText(ui.temperature2g), LabV2.Green, ui.temperature2g / 100.0, Modifier.width(82.dp))
+                RealtimeMetric(Icons.Rounded.Wifi, "5G", temperatureText(ui.temperature5g), LabV2.Primary, ui.temperature5g / 100.0, Modifier.width(82.dp))
+            }
             RealtimeMetric(Icons.Rounded.Memory, "CPU", percentText(ui.cpu), Color(0xFF0284C7), ui.cpu / 100.0, Modifier.width(82.dp))
             RealtimeMetric(Icons.Rounded.DeveloperBoard, "内存", percentText(ui.memory), Color(0xFFFF8A00), ui.memory / 100.0, Modifier.width(82.dp))
             RealtimeMetric(Icons.Rounded.Storage, "存储", percentText(ui.storage), Color(0xFF0EA5E9), ui.storage.coerceAtLeast(0.0) / 100.0, Modifier.width(82.dp))
