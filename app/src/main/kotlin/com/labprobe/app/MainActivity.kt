@@ -3494,6 +3494,60 @@ fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: I
 }
 
 @Composable
+fun OneUiSegmentBar() {
+    Surface(
+        shape = HomeCardShape,
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+            val items = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.VpnKey, Icons.Rounded.Devices, Icons.Rounded.History)
+            items.forEachIndexed { idx, icon ->
+                val selected = idx == 0
+                Box(
+                    Modifier
+                        .height(40.dp)
+                        .weight(1f)
+                        .clip(HomeInnerShape)
+                        .background(if (selected) Color(0xFFF7FAFD) else Color.Transparent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, null, tint = if (selected) Color(0xFF0F172A) else Color(0xFF64748B), modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HealthCard(
+    modifier: Modifier = Modifier,
+    verticalPadding: Dp = 15.dp,
+    shape: androidx.compose.ui.graphics.Shape = HomeCardShape,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().shadow(
+            5.dp,
+            shape,
+            clip = false,
+            ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f),
+            spotColor = LabV2.ShadowSpot.copy(alpha = .95f),
+        ),
+        shape = shape,
+        color = Color.White,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
+    }
+}
+
+@Composable
 private fun HealthScoreHeroGlow(color: Color) {
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
@@ -3585,8 +3639,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Text(
                             "网络健康得分",
                             Modifier.weight(1f),
-                            fontSize = LabTypography.CardTitle.fontSize,
-                            lineHeight = LabTypography.CardTitle.lineHeight,
+                            style = LabTypography.CardTitle,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF0B1320),
                             maxLines = 1,
@@ -3601,8 +3654,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                                 scoreLabel,
                                 Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 color = scoreColor,
-                                fontSize = LabTypography.Badge.fontSize,
-                                lineHeight = LabTypography.Badge.lineHeight,
+                                style = LabTypography.Badge,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -3614,11 +3666,11 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         score < 85 -> message.ifBlank { "发现潜在异常，建议排查" }
                         else -> "网络整体运行平稳"
                     }
-                    Text(hint, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(hint, style = LabTypography.Supporting, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (lastRefresh.isNotBlank()) "刷新于 $lastRefresh" else "实时数据刷新中", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = LabV2.InkFaint, fontWeight = FontWeight.SemiBold)
+                        Text(if (lastRefresh.isNotBlank()) "刷新于 $lastRefresh" else "实时数据刷新中", style = LabTypography.Caption, color = LabV2.InkFaint, fontWeight = FontWeight.SemiBold)
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onNavigate("health_score") }) {
-                            Text("评分细则", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.Primary, fontWeight = FontWeight.SemiBold)
+                            Text("评分细则", style = LabTypography.Supporting, color = LabV2.Primary, fontWeight = FontWeight.SemiBold)
                             Icon(Icons.Rounded.ChevronRight, "查看细则", tint = LabV2.Primary, modifier = Modifier.size(16.dp))
                         }
                     }
