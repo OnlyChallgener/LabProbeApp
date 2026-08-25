@@ -1188,7 +1188,16 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         // compact devices frame only smooths instantaneous speed between snapshots.
         realtimeSmoother.acceptDevices(root)
         val previousOnline = onlineDevices
-        val freshByMac = fresh.associateBy { cleanMac(it.mac) }
+        val currentRatesByMac = previousOnline.associateBy({ cleanMac(it.mac) }, { it.realtimeUploadBytes to it.realtimeDownloadBytes })
+        val freshWithPreservedRates = fresh.map { item ->
+            val existing = currentRatesByMac[cleanMac(item.mac)]
+            if (existing != null) {
+                item.copy(realtimeUploadBytes = existing.first, realtimeDownloadBytes = existing.second)
+            } else {
+                item
+            }
+        }
+        val freshByMac = freshWithPreservedRates.associateBy { cleanMac(it.mac) }
         val disappeared = previousOnline
             .filterNot { old -> freshByMac.containsKey(cleanMac(old.mac)) }
             .map { old ->
@@ -1209,9 +1218,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             )
         }
 
-        if (fresh != onlineDevices) onlineDevices = fresh
+        if (freshWithPreservedRates != onlineDevices) onlineDevices = freshWithPreservedRates
         if (updatedWatched != devices) devices = updatedWatched
-        refreshOfflineDevices(offlineDevices + disappeared, fresh)
+        refreshOfflineDevices(offlineDevices + disappeared, freshWithPreservedRates)
         PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         persistCachesAsync()
     }
