@@ -184,12 +184,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 渲染性能彻底提速与双 Token 鉴权贯通" to listOf(
-                "彻底重构呼吸灯动画隔离渲染，根除 120 FPS 全屏重组造成的画面卡顿与 1 秒切换重影",
-                "Hub 鉴权全面兼容 APP_TOKEN / HOOK_TOKEN 互通，彻底解决 Relay Agent 清理与更新指令超时",
-                "优化移动网络 DNS 解析机制，毫秒级直连纯 AAAA 域名",
-                "修复新建 STUN 穿透默认误选无名离线设备的问题",
-                "全量对话框统一纯净白底，彻底消除 Material 3 紫粉色混色"
+            "v$NAME build$CODE · 首页完整功能看板回归与零卡顿渲染" to listOf(
+                "完整恢复首页健康卡片全部状态（WOL 快捷入口、今日总结、Hub / 出口 / SSH 快捷状态磁贴）",
+                "保持动画隔离与 Draw 阶段独立渲染，零掉帧、零重影、极致流畅",
+                "Hub 异步指令调度唤醒优化与双 Token 互通鉴权",
+                "纯 AAAA 域名秒级解析与纯白弹窗视觉统一"
             )
         )
 }
@@ -3643,37 +3642,47 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF0B1320),
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            softWrap = false,
+                            overflow = TextOverflow.Clip
                         )
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = scoreColor.copy(alpha = .12f),
-                            border = BorderStroke(1.dp, scoreColor.copy(alpha = .24f))
-                        ) {
-                            Text(
-                                scoreLabel,
-                                Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                color = scoreColor,
-                                style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold)
-                            )
+                        Spacer(Modifier.width(5.dp))
+                        Surface(shape = HomeInnerShape, color = scoreColor.copy(alpha = .10f)) {
+                            Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
+                                Text(scoreLabel, style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold), color = scoreColor)
+                            }
                         }
                     }
-                    val hint = when {
-                        !hubOk -> "Hub 离线，请检查网络或配置"
-                        !exitOk -> "公网未就绪，部分远程功能受限"
-                        !vpnOk -> "未检测到 VPN 记录，建议按需配置"
-                        score < 85 -> message.ifBlank { "发现潜在异常，建议排查" }
-                        else -> "网络整体运行平稳"
-                    }
-                    Text(hint, style = LabTypography.Supporting, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (lastRefresh.isNotBlank()) "刷新于 $lastRefresh" else "实时数据刷新中", style = LabTypography.Caption, color = LabV2.InkFaint, fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onNavigate("health_score") }) {
-                            Text("评分细则", style = LabTypography.Supporting, color = LabV2.Primary, fontWeight = FontWeight.SemiBold)
-                            Icon(Icons.Rounded.ChevronRight, "查看细则", tint = LabV2.Primary, modifier = Modifier.size(16.dp))
-                        }
-                    }
+                    Text(
+                        uiMessageZh(message).replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
+                        style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold),
+                        color = LabV2.InkMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    HealthStatePill(
+                        icon = Icons.Rounded.PowerSettingsNew,
+                        label = "WOL",
+                        value = "$wolCount 台",
+                        color = LabV2.Green,
+                        trailing = Icons.Rounded.ChevronRight,
+                        onClick = { onNavigate("wol") }
+                    )
+                    HealthStatePill(
+                        icon = Icons.Rounded.Summarize,
+                        label = "今日总结",
+                        value = "查看详情",
+                        color = LabV2.Primary,
+                        trailing = Icons.Rounded.ChevronRight,
+                        onClick = { onNavigate("daily") }
+                    )
                 }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                HealthShortcutTile(Icons.Rounded.Router, "Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
+                HealthShortcutTile(Icons.Rounded.Public, "出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("router_status") }
+                HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B), Modifier.weight(1f)) { onNavigate("tool_ssh") }
             }
         }
     }
