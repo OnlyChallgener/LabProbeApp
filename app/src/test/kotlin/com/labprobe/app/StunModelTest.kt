@@ -48,8 +48,10 @@ class StunModelTest {
             targetPort = 9443,
             serviceType = "HTTPS",
             transportProtocol = "TCP",
+            forwardMode = "router_native",
             actualState = "mapped",
             firewallState = "ready",
+            nativeMappingState = "ready",
             runtime = StunRuntime(publicEndpoint = "111.23.167.91:10193"),
         )
 
@@ -71,8 +73,10 @@ class StunModelTest {
             targetPort = 9443,
             serviceType = "HTTPS",
             transportProtocol = "TCP",
+            forwardMode = "router_native",
             actualState = "mapped",
             firewallState = "ready",
+            nativeMappingState = "ready",
             runtime = StunRuntime(),
         )
 
