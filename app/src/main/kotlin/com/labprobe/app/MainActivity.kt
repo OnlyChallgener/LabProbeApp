@@ -184,11 +184,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 映射终端精准筛选与 UI 体验优化" to listOf(
-                "优化 IPv6 映射、原生端口映射与 STUN 终端选择器，精准保留电脑、NAS、服务器、摄像头、打印机等设备",
-                "自动剔除手机、手表、音箱、智能家居及无名称的离线未知设备",
-                "终端列表全面展示 MAC 地址与专属分类图标",
-                "优化路由 NAT 诊断结果字号大小与排版"
+            "v$NAME build$CODE · 纯 IPv6 直连加速与弹窗视觉纯白加固" to listOf(
+                "优化移动网络 DNS 解析机制，毫秒级直连纯 AAAA 解析域名，解决下发指令超时与解析失败",
+                "修复新建 STUN 穿透时默认误选无名离线设备的问题",
+                "全局彻底移除 Material 3 仰角紫粉色混色，全量对话框统一纯净白底",
+                "Hub 路由器配置名称支持双向同步与自定义编辑保存"
             )
         )
 }
@@ -1918,10 +1918,16 @@ fun LabProbeApp(prefs: AppPrefs) {
         onPrimary = Color.White,
         primaryContainer = Color(0xFFDCEAFF),
         onPrimaryContainer = LabV2.Ink,
-        secondary = LabV2.Purple,
+        secondary = LabV2.Primary,
         tertiary = LabV2.Amber,
         background = LabV2.BackgroundMid,
-        surface = LabV2.CardTop,
+        surface = Color.White,
+        surfaceContainer = Color.White,
+        surfaceContainerHigh = Color.White,
+        surfaceContainerHighest = Color.White,
+        surfaceContainerLow = Color(0xFFFAFCFF),
+        surfaceContainerLowest = Color.White,
+        surfaceTint = Color.Transparent,
         surfaceVariant = LabV2.FieldSoft,
         outline = LabV2.BorderStrong,
         onSurface = LabV2.Ink,
@@ -10143,11 +10149,24 @@ class HubApi(private val prefs: AppPrefs) {
 
 class CustomDns(private val server: String) : Dns {
     override fun lookup(hostname: String): List<InetAddress> {
-        if (server.equals("system", true) || server.isBlank()) return Dns.SYSTEM.lookup(hostname).filterNot { it.hostAddress == "127.0.0.1" }
-        val v6 = DnsWire.query(hostname, server, 28)
-        val v4 = DnsWire.query(hostname, server, 1).filter { it != "127.0.0.1" }
+        val trimmedHost = hostname.trim().trimEnd('.')
+        runCatching { InetAddress.getByName(trimmedHost) }.getOrNull()?.let { return listOf(it) }
+
+        if (server.equals("system", true) || server.isBlank()) {
+            return Dns.SYSTEM.lookup(trimmedHost).filterNot { it.hostAddress == "127.0.0.1" }
+        }
+
+        val systemResult = runCatching {
+            Dns.SYSTEM.lookup(trimmedHost).filterNot { it.hostAddress == "127.0.0.1" }
+        }.getOrNull().orEmpty()
+        if (systemResult.isNotEmpty()) {
+            return systemResult
+        }
+
+        val v6 = DnsWire.query(trimmedHost, server, 28)
+        val v4 = DnsWire.query(trimmedHost, server, 1).filter { it != "127.0.0.1" }
         val all = (v6 + v4).distinct().mapNotNull { runCatching { InetAddress.getByName(it) }.getOrNull() }
-        return if (all.isNotEmpty()) all else Dns.SYSTEM.lookup(hostname).filterNot { it.hostAddress == "127.0.0.1" }
+        return all.ifEmpty { systemResult }
     }
 }
 

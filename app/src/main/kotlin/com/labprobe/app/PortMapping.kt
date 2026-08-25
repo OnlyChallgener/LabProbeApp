@@ -1729,10 +1729,13 @@ private fun PortMapDetailPage(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除端口映射？", style = LabTypography.CardTitle) },
-            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.Body) },
+            title = { Text("删除端口映射？", style = LabTypography.CardTitle.copy(color = LabV2.Ink)) },
+            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.Body.copy(color = LabV2.InkMuted)) },
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("删除", style = LabTypography.CompactButton.copy(color = PortRed)) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消", style = LabTypography.CompactButton) } }
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消", style = LabTypography.CompactButton.copy(color = LabV2.InkMuted)) } },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White,
+            tonalElevation = 0.dp
         )
     }
 }

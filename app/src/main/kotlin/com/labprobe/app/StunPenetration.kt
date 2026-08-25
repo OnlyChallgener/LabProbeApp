@@ -530,7 +530,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var showDevicePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val template = stunTemplate(draft.serviceType)
-    val selectedDevice = devices.firstOrNull { it.ip == draft.targetIpv4 }
+    val selectedDevice = if (draft.targetIpv4.isBlank()) null else devices.firstOrNull { it.ip.isNotBlank() && it.ip == draft.targetIpv4.trim() }
     fun refreshDevices(force: Boolean = false) {
         scope.launch {
             if (devices.isEmpty() || force) {
