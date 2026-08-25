@@ -461,7 +461,7 @@ internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
     return (0 until arr.length()).mapNotNull { i ->
         arr.optJSONObject(i)?.let { o ->
             DdnsRecord(
-                serviceId = o.ddnsText("service", "serviceId", "service_id", "id", "uuid"),
+                serviceId = o.ddnsText("serviceId", "service_id", "id", "domain", "uuid", "service"),
                 provider = o.ddnsText("service_name", "serviceName", "provider", "providerName").ifBlank { "aliyun.com" },
                 domain = o.ddnsText("domain", "host", "hostname", "record"),
                 username = o.ddnsText("username", "user", "accessKey", "accessKeyId", "access_key_id"),
