@@ -184,11 +184,12 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 纯 IPv6 直连加速与弹窗视觉纯白加固" to listOf(
-                "优化移动网络 DNS 解析机制，毫秒级直连纯 AAAA 解析域名，解决下发指令超时与解析失败",
-                "修复新建 STUN 穿透时默认误选无名离线设备的问题",
-                "全局彻底移除 Material 3 仰角紫粉色混色，全量对话框统一纯净白底",
-                "Hub 路由器配置名称支持双向同步与自定义编辑保存"
+            "v$NAME build$CODE · 渲染性能彻底提速与双 Token 鉴权贯通" to listOf(
+                "彻底重构呼吸灯动画隔离渲染，根除 120 FPS 全屏重组造成的画面卡顿与 1 秒切换重影",
+                "Hub 鉴权全面兼容 APP_TOKEN / HOOK_TOKEN 互通，彻底解决 Relay Agent 清理与更新指令超时",
+                "优化移动网络 DNS 解析机制，毫秒级直连纯 AAAA 域名",
+                "修复新建 STUN 穿透默认误选无名离线设备的问题",
+                "全量对话框统一纯净白底，彻底消除 Material 3 紫粉色混色"
             )
         )
 }
@@ -3493,63 +3494,7 @@ fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: I
 }
 
 @Composable
-fun OneUiSegmentBar() {
-    Surface(
-        shape = HomeCardShape,
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
-        shadowElevation = 0.dp,
-        tonalElevation = 0.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
-            val items = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.VpnKey, Icons.Rounded.Devices, Icons.Rounded.History)
-            items.forEachIndexed { idx, icon ->
-                val selected = idx == 0
-                Box(
-                    Modifier
-                        .height(40.dp)
-                        .weight(1f)
-                        .clip(HomeInnerShape)
-                        .background(if (selected) Color(0xFFF7FAFD) else Color.Transparent),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(icon, null, tint = if (selected) Color(0xFF0F172A) else Color(0xFF64748B), modifier = Modifier.size(20.dp))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun HealthCard(
-    modifier: Modifier = Modifier,
-    verticalPadding: Dp = 15.dp,
-    shape: androidx.compose.ui.graphics.Shape = HomeCardShape,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth().shadow(
-            5.dp,
-            shape,
-            clip = false,
-            ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f),
-            spotColor = LabV2.ShadowSpot.copy(alpha = .95f),
-        ),
-        shape = shape,
-        color = Color.White,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
-    ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
-    }
-}
-
-@Composable
-fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
-    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
-    val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
+private fun HealthScoreHeroGlow(color: Color) {
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
     val scoreGlowAlpha by scorePulse.animateFloat(
         initialValue = .15f,
@@ -3563,6 +3508,56 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
+    Box(
+        Modifier
+            .size(184.dp)
+            .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
+            .background(
+                Brush.radialGradient(
+                    0.00f to Color.Transparent,
+                    0.50f to Color.Transparent,
+                    0.64f to color.copy(alpha = scoreGlowAlpha * .20f),
+                    0.78f to color.copy(alpha = scoreGlowAlpha * .46f),
+                    1.00f to Color.Transparent
+                )
+            )
+    )
+}
+
+@Composable
+private fun RouterHeroGlow() {
+    val pulse = rememberInfiniteTransition(label = "routerGlow")
+    val glowAlpha by pulse.animateFloat(
+        initialValue = .28f,
+        targetValue = .64f,
+        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
+        label = "routerGlowAlpha"
+    )
+    val glowScale by pulse.animateFloat(
+        initialValue = 1.00f,
+        targetValue = 1.18f,
+        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
+        label = "routerGlowScale"
+    )
+    Box(
+        Modifier
+            .size(320.dp)
+            .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
+            .background(
+                Brush.radialGradient(
+                    0.00f to LabV2.Green.copy(alpha = glowAlpha * .30f),
+                    0.46f to LabV2.Green.copy(alpha = glowAlpha * .22f),
+                    0.78f to LabV2.Green.copy(alpha = glowAlpha * .10f),
+                    1.00f to Color.Transparent
+                )
+            )
+    )
+}
+
+@Composable
+fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
+    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
+    val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val shape = HomeCardShape
     Surface(
         modifier = Modifier.fillMaxWidth().shadow(
@@ -3581,20 +3576,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(124.dp).clip(CircleShape).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
-                    Box(
-                        Modifier
-                            .size(184.dp)
-                            .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
-                            .background(
-                                Brush.radialGradient(
-                                    0.00f to Color.Transparent,
-                                    0.50f to Color.Transparent,
-                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .20f),
-                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha * .46f),
-                                    1.00f to Color.Transparent
-                                )
-                            )
-                    )
+                    HealthScoreHeroGlow(scoreColor)
                     HealthScoreGauge(score, 112.dp)
                 }
                 Spacer(Modifier.width(12.dp))
@@ -3608,49 +3590,39 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF0B1320),
                             maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Clip
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(Modifier.width(5.dp))
-                        Surface(shape = HomeInnerShape, color = scoreColor.copy(alpha = .10f)) {
-                            Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
-                                Text(scoreLabel, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = scoreColor)
-                            }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = scoreColor.copy(alpha = .12f),
+                            border = BorderStroke(1.dp, scoreColor.copy(alpha = .24f))
+                        ) {
+                            Text(
+                                scoreLabel,
+                                Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                color = scoreColor,
+                                fontSize = LabTypography.Badge.fontSize,
+                                lineHeight = LabTypography.Badge.lineHeight,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
-                    Text(
-                        uiMessageZh(message).replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
-                        fontSize = LabTypography.Caption.fontSize,
-                        lineHeight = LabTypography.Caption.lineHeight,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LabV2.InkMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    HealthStatePill(
-                        icon = Icons.Rounded.PowerSettingsNew,
-                        label = "WOL",
-                        value = "$wolCount 台",
-                        color = LabV2.Green,
-                        trailing = Icons.Rounded.ChevronRight,
-                        onClick = { onNavigate("wol") }
-                    )
-                    HealthStatePill(
-                        icon = Icons.Rounded.Summarize,
-                        label = "今日总结",
-                        value = "查看详情",
-                        color = LabV2.Primary,
-                        trailing = Icons.Rounded.ChevronRight,
-                        onClick = { onNavigate("daily") }
-                    )
+                    val hint = when {
+                        !hubOk -> "Hub 离线，请检查网络或配置"
+                        !exitOk -> "公网未就绪，部分远程功能受限"
+                        !vpnOk -> "未检测到 VPN 记录，建议按需配置"
+                        score < 85 -> message.ifBlank { "发现潜在异常，建议排查" }
+                        else -> "网络整体运行平稳"
+                    }
+                    Text(hint, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (lastRefresh.isNotBlank()) "刷新于 $lastRefresh" else "实时数据刷新中", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = LabV2.InkFaint, fontWeight = FontWeight.SemiBold)
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onNavigate("health_score") }) {
+                            Text("评分细则", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.Primary, fontWeight = FontWeight.SemiBold)
+                            Icon(Icons.Rounded.ChevronRight, "查看细则", tint = LabV2.Primary, modifier = Modifier.size(16.dp))
+                        }
+                    }
                 }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                HealthShortcutTile(Icons.Rounded.Router, "Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
-                HealthShortcutTile(Icons.Rounded.Public, "出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("router_status") }
-                HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B), Modifier.weight(1f)) { onNavigate("tool_ssh") }
             }
         }
     }
@@ -3796,19 +3768,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         )
     }
     Box(Modifier.fillMaxWidth().height(196.dp), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .size(320.dp)
-                .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
-                .background(
-                    Brush.radialGradient(
-                        0.00f to LabV2.Green.copy(alpha = glowAlpha * .30f),
-                        0.46f to LabV2.Green.copy(alpha = glowAlpha * .22f),
-                        0.78f to LabV2.Green.copy(alpha = glowAlpha * .10f),
-                        1.00f to Color.Transparent
-                    )
-                )
-        )
+        RouterHeroGlow()
         Canvas(Modifier.size(240.dp)) {
             val c = center
             drawCircle(color = Color(0x1273A7FF), radius = size.minDimension * 0.40f, center = c)
