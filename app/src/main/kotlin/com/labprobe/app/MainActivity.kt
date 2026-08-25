@@ -3654,8 +3654,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                                 scoreLabel,
                                 Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 color = scoreColor,
-                                style = LabTypography.Badge,
-                                fontWeight = FontWeight.Bold
+                                style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold)
                             )
                         }
                     }
