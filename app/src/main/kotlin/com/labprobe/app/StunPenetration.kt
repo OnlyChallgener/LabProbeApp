@@ -117,10 +117,12 @@ data class StunRule(
     val actualState: String,
     val firewallState: String,
     val nativeMappingState: String,
+    val nativeMappingMessage: String = "",
+    val syncError: String = "",
     val runtime: StunRuntime,
 ) {
     val usesRouterNativeMapping: Boolean get() = forwardMode == "router_native"
-    val ready: Boolean get() = actualState == "mapped" && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
+    val ready: Boolean get() = enabled && actualState == "mapped" && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
 }
 
 data class StunAddressRecord(val endpoint: String, val updatedAt: Long)
@@ -154,6 +156,8 @@ private fun parseStunRule(json: JSONObject): StunRule {
         actualState = cleanApiText(json.optString("actualState", runtime.optString("state", "stopped"))),
         firewallState = cleanApiText(json.optString("firewallState", "pending")),
         nativeMappingState = cleanApiText(json.optString("nativeMappingState", "pending")),
+        nativeMappingMessage = cleanApiText(json.optString("nativeMappingMessage")),
+        syncError = cleanApiText(json.optString("syncError")),
         runtime = StunRuntime(
             state = cleanApiText(runtime.optString("state", "stopped")),
             resolvedTarget = cleanApiText(runtime.optString("resolvedTarget")),
@@ -197,6 +201,7 @@ class StunApi(private val prefs: AppPrefs) {
 
 data class StunDraft(
     val id: String = "",
+    val enabled: Boolean = true,
     val serviceType: String = "HTTPS",
     val transportProtocol: String = "TCP",
     val targetIpv4: String = "",
@@ -209,14 +214,19 @@ data class StunDraft(
         put("transportProtocol", transportProtocol)
         put("targetIpv4", targetIpv4.trim())
         put("targetPort", targetPort.toIntOrNull() ?: 0)
-        val normalizedName = name.trim().let {
-            if (isGeneratedStunRuleName(it)) generatedStunRuleName(serviceType, targetIpv4, targetPort) else it
-        }
-        normalizedName.takeIf { it.isNotBlank() }?.let { put("name", it) }
-        put("enabled", true)
+        put("name", name.trim())
+        put("enabled", enabled)
     }
     companion object {
-        fun from(rule: StunRule) = StunDraft(rule.id, rule.serviceType, rule.transportProtocol, rule.targetIpv4, rule.targetPort.toString(), rule.name)
+        fun from(rule: StunRule) = StunDraft(
+            id = rule.id,
+            enabled = rule.enabled,
+            serviceType = rule.serviceType,
+            transportProtocol = rule.transportProtocol,
+            targetIpv4 = rule.targetIpv4,
+            targetPort = rule.targetPort.toString(),
+            name = rule.name.takeUnless(::isGeneratedStunRuleName).orEmpty(),
+        )
     }
 }
 
@@ -224,14 +234,20 @@ internal fun stunTemplate(type: String): PortMapServiceTemplate = PORT_MAP_SERVI
 internal fun applyStunService(draft: StunDraft, template: PortMapServiceTemplate) = draft.copy(serviceType = template.serviceType, transportProtocol = template.defaultProtocol, targetPort = template.targetPort?.toString().orEmpty())
 private val generatedStunRuleNamePattern = Regex("^.+ · (?:\\d{1,3}\\.){3}\\d{1,3}:\\d+$")
 private fun isGeneratedStunRuleName(value: String): Boolean = generatedStunRuleNamePattern.matches(value.trim())
-private fun generatedStunRuleName(serviceType: String, targetIpv4: String, targetPort: String): String =
-    "${serviceType.trim()} · ${targetIpv4.trim()}:${targetPort.trim()}"
 internal fun stunRuleTitle(rule: StunRule): String = rule.name.trim().let {
     if (it.isBlank() || isGeneratedStunRuleName(it)) {
-        generatedStunRuleName(rule.serviceType, rule.targetIpv4, rule.targetPort.toString())
+        "${rule.serviceType.trim().ifBlank { "自定义" }} 穿透"
     } else {
         it
     }
+}
+internal fun stunDraftValidationError(draft: StunDraft): String? {
+    val ipv4 = draft.targetIpv4.trim()
+    val validIpv4 = ipv4.split('.').let { parts -> parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && (part.toIntOrNull() ?: -1) in 0..255 } }
+    if (!validIpv4) return "请输入有效的内网 IPv4 地址"
+    if ((draft.targetPort.toIntOrNull() ?: 0) !in 1..65535) return "目标端口必须是 1–65535"
+    if (draft.name.trim().length > 64) return "规则备注最多 64 个字符"
+    return null
 }
 internal fun stunAddressForCopy(serviceType: String, endpoint: String): String {
     val value = endpoint.trim()
@@ -268,6 +284,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     var editor by remember { mutableStateOf<StunDraft?>(null) }
+    var editorError by remember { mutableStateOf("") }
+    var editorSaving by remember { mutableStateOf(false) }
     var historyTarget by remember { mutableStateOf<StunRule?>(null) }
     var history by remember { mutableStateOf<List<StunAddressRecord>>(emptyList()) }
     var menuFor by remember { mutableStateOf<String?>(null) }
@@ -275,12 +293,13 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
         if (!silent) loading = true
         runCatching { api.list() }.onSuccess {
             val effectiveAgent = liveAgent
+            val effectiveAgentOnline = effectiveAgent?.online == true || it.agentOnline
             snapshot = it.copy(
-                agentOnline = effectiveAgent?.online == true || it.agentOnline,
+                agentOnline = effectiveAgentOnline,
                 agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { it.agentLastSeenAt } ?: it.agentLastSeenAt,
             )
             error = ""
-            it.rules.filter { rule -> rule.ready }.forEach { rule ->
+            it.rules.filter { rule -> effectiveAgentOnline && rule.ready }.forEach { rule ->
                 upsertStunFavorite(prefs, rule, ddnsSnapshot, nativeDdnsRecords)
             }
         }.onFailure {
@@ -315,7 +334,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             agentLastSeenAt = snapshot.agentLastSeenAt,
             loading = loading,
             onRefresh = { refresh() },
-            onAdd = { editor = StunDraft() },
+            onAdd = { editorError = ""; editor = StunDraft() },
         )
         if (error.isNotBlank()) {
             Surface(
@@ -331,11 +350,12 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Text("正在同步 STUN 设置，页面可以继续操作", style = LabTypography.Supporting)
             }
         } else if (!loading && snapshot.rules.isEmpty()) {
-            StunEmpty { editor = StunDraft() }
+            StunEmpty { editorError = ""; editor = StunDraft() }
         } else {
             snapshot.rules.forEach { rule ->
                 StunRuleCard(
                     rule = rule,
+                    agentOnline = snapshot.agentOnline,
                     menuOpen = menuFor == rule.id,
                     onMenu = { menuFor = if (menuFor == rule.id) null else rule.id },
                     onCopy = { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { copyStunAddress(context, rule.serviceType, it) } },
@@ -343,25 +363,54 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         historyTarget = rule
                         scope.launch { history = runCatching { api.addresses(rule.id) }.getOrDefault(emptyList()) }
                     },
-                    onEdit = { menuFor = null; editor = StunDraft.from(rule) },
+                    onEdit = { menuFor = null; editorError = ""; editor = StunDraft.from(rule) },
                     onToggle = {
                         menuFor = null
-                        scope.launch { runCatching { api.action(rule.id, if (rule.enabled) "stop" else "start") }.onFailure { error = it.message ?: "操作失败" }; refresh() }
+                        scope.launch {
+                            runCatching { api.action(rule.id, if (rule.enabled) "stop" else "start") }
+                                .onSuccess { refresh() }
+                                .onFailure { error = it.message ?: "操作失败" }
+                        }
                     },
                     onDelete = {
                         menuFor = null
-                        scope.launch { runCatching { api.delete(rule.id) }.onFailure { error = it.message ?: "删除失败" }; removeStunFavorite(prefs, rule.id); refresh() }
+                        scope.launch {
+                            runCatching { api.delete(rule.id) }
+                                .onSuccess { removeStunFavorite(prefs, rule.id); refresh() }
+                                .onFailure { error = it.message ?: "删除失败" }
+                        }
                     },
                 )
             }
         }
     }
-    editor?.let { draft -> StunEditorDialog(draft, prefs, onDismiss = { editor = null }) { saved ->
-        scope.launch {
-            val result = if (saved.id.isBlank()) runCatching { api.create(saved) } else runCatching { api.update(saved.id, saved) }
-            result.onSuccess { editor = null; refresh() }.onFailure { error = it.message ?: "保存失败" }
+    editor?.let { draft ->
+        StunEditorDialog(
+            initial = draft,
+            prefs = prefs,
+            error = editorError,
+            saving = editorSaving,
+            onDismiss = { if (!editorSaving) { editor = null; editorError = "" } },
+        ) { saved ->
+            val validationError = stunDraftValidationError(saved)
+            if (validationError != null) {
+                editorError = validationError
+            } else {
+                scope.launch {
+                    editorError = ""
+                    editorSaving = true
+                    val result = if (saved.id.isBlank()) runCatching { api.create(saved) } else runCatching { api.update(saved.id, saved) }
+                    result.onSuccess {
+                        editor = null
+                        refresh()
+                    }.onFailure {
+                        editorError = it.message ?: "保存失败"
+                    }
+                    editorSaving = false
+                }
+            }
         }
-    } }
+    }
     historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
 }
 
@@ -406,10 +455,14 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 }
 
-@Composable private fun StunRuleCard(rule: StunRule, menuOpen: Boolean, onMenu: () -> Unit, onCopy: () -> Unit, onHistory: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
+@Composable private fun StunRuleCard(rule: StunRule, agentOnline: Boolean, menuOpen: Boolean, onMenu: () -> Unit, onCopy: () -> Unit, onHistory: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
+    val liveReady = agentOnline && rule.ready
     val stateText = when {
+        rule.syncError.isNotBlank() -> "Agent 同步失败"
         !rule.enabled -> "已停止"
-        rule.ready -> "公网地址已获取"
+        !agentOnline && rule.runtime.publicEndpoint.isNotBlank() -> "Agent 离线 · 最近地址"
+        !agentOnline -> "Agent 离线"
+        liveReady -> "STUN 地址已获取"
         rule.actualState == "router_mapping_error" -> "路由器映射未就绪"
         rule.actualState == "router_mapping" -> "正在同步路由器映射"
         rule.actualState == "firewall_error" -> "防火墙未就绪"
@@ -417,7 +470,13 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
         rule.actualState == "mapped" || rule.actualState == "mapping" -> "正在校验公网地址"
         else -> "正在同步"
     }
-    val stateColor = when { rule.ready -> StunGreen; !rule.enabled -> LabV2.InkMuted; rule.actualState == "firewall_error" || rule.actualState == "router_mapping_error" -> StunRed; else -> StunAmber }
+    val stateColor = when {
+        rule.syncError.isNotBlank() -> StunRed
+        !rule.enabled || !agentOnline -> LabV2.InkMuted
+        rule.actualState == "firewall_error" || rule.actualState == "router_mapping_error" -> StunRed
+        liveReady -> StunGreen
+        else -> StunAmber
+    }
     LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -467,8 +526,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             val endpoint = rule.runtime.publicEndpoint
             Surface(
                 shape = LabCoreSurface.InnerShape,
-                color = if (rule.ready) StunGreen.copy(alpha = .07f) else LabCoreSurface.Inner,
-                border = BorderStroke(1.dp, if (rule.ready) StunGreen.copy(alpha = .16f) else LabCoreSurface.Border),
+                color = if (liveReady) StunGreen.copy(alpha = .07f) else LabCoreSurface.Inner,
+                border = BorderStroke(1.dp, if (liveReady) StunGreen.copy(alpha = .16f) else LabCoreSurface.Border),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -477,7 +536,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             Text(
                                 if (endpoint.isBlank()) "公网地址获取中" else endpoint,
                                 fontWeight = FontWeight.Bold,
-                                color = if (endpoint.isBlank()) LabV2.InkMuted else StunGreen,
+                                color = if (endpoint.isBlank() || !liveReady) LabV2.InkMuted else StunGreen,
                                 fontSize = 14.sp,
                                 lineHeight = 19.sp,
                                 maxLines = 1,
@@ -489,7 +548,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             }
                         }
                         Text(
-                            if (rule.usesRouterNativeMapping) "路由器直连至 ${rule.targetIpv4}:${rule.targetPort} · 地址变化无需改映射"
+                            if (!agentOnline && endpoint.isNotBlank()) "上次映射至 ${rule.targetIpv4}:${rule.targetPort} · 当前未验证"
+                            else if (rule.usesRouterNativeMapping) "路由器直连至 ${rule.targetIpv4}:${rule.targetPort} · 外网可达性取决于上级 NAT"
                             else "LabRelay 转发至 ${rule.targetIpv4}:${rule.targetPort}",
                             color = LabV2.InkMuted,
                             fontSize = LabTypography.Caption.fontSize,
@@ -524,7 +584,9 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     }
                 }
             }
-            rule.runtime.lastError.takeIf { it.isNotBlank() && !rule.ready }?.let { Text(it, color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            sequenceOf(rule.syncError, rule.nativeMappingMessage.takeIf { rule.enabled }.orEmpty(), rule.runtime.lastError.takeIf { rule.enabled }.orEmpty())
+                .firstOrNull { it.isNotBlank() && !liveReady }
+                ?.let { Text(it, color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
         }
     }
 }
@@ -533,7 +595,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = color, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(3.dp)); Text("$label ${formatStunBytes(bytes)}", color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize) }
 }
 
-@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
+@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
     var draft by remember(initial.id) { mutableStateOf(initial) }
     val cachedDevices = remember(prefs.cacheDevices, prefs.cacheOnlineDevices) {
         val overrides = parseDeviceOverrides(prefs.deviceOverridesJson)
@@ -566,7 +628,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) { refreshDevices(force = false) }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = { if (!saving) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(max = 680.dp),
             shape = RoundedCornerShape(28.dp),
@@ -616,45 +678,80 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     onClick = { showDevicePicker = true },
                 )
                 Text("从在线设备选择 IPv4；也可以继续手动填写。", style = LabTypography.Caption, color = LabV2.InkMuted)
-                OutlinedTextField(
-                    value = draft.targetIpv4,
-                    onValueChange = { draft = draft.copy(targetIpv4 = it) },
-                    label = { Text("内网地址") },
-                    placeholder = { Text("例如 192.168.5.46") },
-                    singleLine = true,
-                    shape = LabV2.FieldShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.White,
-                        unfocusedContainerColor = LabCoreSurface.Inner,
-                        focusedBorderColor = StunBlue,
-                        unfocusedBorderColor = LabCoreSurface.Border,
-                    ),
-                )
-                OutlinedTextField(
-                    value = draft.targetPort,
-                    onValueChange = { draft = draft.copy(targetPort = it.filter(Char::isDigit)) },
-                    label = { Text("目标端口") },
-                    placeholder = { Text("例如 443") },
-                    singleLine = true,
-                    shape = LabV2.FieldShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.White,
-                        unfocusedContainerColor = LabCoreSurface.Inner,
-                        focusedBorderColor = StunBlue,
-                        unfocusedBorderColor = LabCoreSurface.Border,
-                    ),
-                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onDismiss, shape = LabV2.ButtonShape, modifier = Modifier.weight(1f)) { Text("取消", style = LabTypography.Button) }
+                    OutlinedTextField(
+                        value = draft.targetIpv4,
+                        onValueChange = { draft = draft.copy(targetIpv4 = it) },
+                        label = { Text("内网地址") },
+                        placeholder = { Text("192.168.5.46") },
+                        singleLine = true,
+                        enabled = !saving,
+                        shape = LabV2.FieldShape,
+                        modifier = Modifier.weight(1.65f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = LabCoreSurface.Inner,
+                            focusedBorderColor = StunBlue,
+                            unfocusedBorderColor = LabCoreSurface.Border,
+                        ),
+                    )
+                    OutlinedTextField(
+                        value = draft.targetPort,
+                        onValueChange = { draft = draft.copy(targetPort = it.filter(Char::isDigit)) },
+                        label = { Text("目标端口") },
+                        placeholder = { Text("443") },
+                        singleLine = true,
+                        enabled = !saving,
+                        shape = LabV2.FieldShape,
+                        modifier = Modifier.weight(.85f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = LabCoreSurface.Inner,
+                            focusedBorderColor = StunBlue,
+                            unfocusedBorderColor = LabCoreSurface.Border,
+                        ),
+                    )
+                }
+                OutlinedTextField(
+                    value = draft.name,
+                    onValueChange = { draft = draft.copy(name = it.take(64)) },
+                    label = { Text("规则备注（可选）") },
+                    placeholder = { Text("例如 家庭 NAS") },
+                    supportingText = { Text("卡片标题优先显示备注；留空则显示“${draft.serviceType} 穿透”") },
+                    singleLine = true,
+                    enabled = !saving,
+                    shape = LabV2.FieldShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = LabCoreSurface.Inner,
+                        focusedBorderColor = StunBlue,
+                        unfocusedBorderColor = LabCoreSurface.Border,
+                    ),
+                )
+                if (error.isNotBlank()) {
+                    Surface(
+                        shape = LabV2.CompactCardShape,
+                        color = StunRed.copy(alpha = .08f),
+                        border = BorderStroke(1.dp, StunRed.copy(alpha = .18f)),
+                    ) {
+                        Text(error, color = StunRed, style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(10.dp))
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDismiss, enabled = !saving, shape = LabV2.ButtonShape, modifier = Modifier.weight(1f)) { Text("取消", style = LabTypography.Button) }
                     OutlinedButton(
                         onClick = { onSave(draft) },
+                        enabled = !saving,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.weight(1.35f),
                         border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
                     ) {
-                        Text(if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button.copy(color = StunBlue))
+                        if (saving) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = StunBlue)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(if (saving) "保存中" else if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button.copy(color = StunBlue))
                     }
                 }
             }
