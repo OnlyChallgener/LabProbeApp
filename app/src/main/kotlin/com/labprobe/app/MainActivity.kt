@@ -3558,25 +3558,24 @@ private fun HealthScoreHeroGlow(color: Color) {
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
-    Spacer(
+    Canvas(
         Modifier
             .size(184.dp)
             .graphicsLayer {
                 scaleX = scoreGlowScale.value
                 scaleY = scoreGlowScale.value
             }
-            .drawBehind {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        0.00f to Color.Transparent,
-                        0.50f to Color.Transparent,
-                        0.64f to color.copy(alpha = scoreGlowAlpha.value * .20f),
-                        0.78f to color.copy(alpha = scoreGlowAlpha.value * .46f),
-                        1.00f to Color.Transparent
-                    )
-                )
-            }
-    )
+    ) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                0.00f to Color.Transparent,
+                0.50f to Color.Transparent,
+                0.64f to color.copy(alpha = scoreGlowAlpha.value * .20f),
+                0.78f to color.copy(alpha = scoreGlowAlpha.value * .46f),
+                1.00f to Color.Transparent
+            )
+        )
+    }
 }
 
 @Composable
@@ -3594,24 +3593,23 @@ private fun RouterHeroGlow() {
         animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
         label = "routerGlowScale"
     )
-    Spacer(
+    Canvas(
         Modifier
             .size(320.dp)
             .graphicsLayer {
                 scaleX = glowScale.value
                 scaleY = glowScale.value
             }
-            .drawBehind {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        0.00f to LabV2.Green.copy(alpha = glowAlpha.value * .30f),
-                        0.46f to LabV2.Green.copy(alpha = glowAlpha.value * .22f),
-                        0.78f to LabV2.Green.copy(alpha = glowAlpha.value * .10f),
-                        1.00f to Color.Transparent
-                    )
-                )
-            }
-    )
+    ) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                0.00f to LabV2.Green.copy(alpha = glowAlpha.value * .30f),
+                0.46f to LabV2.Green.copy(alpha = glowAlpha.value * .22f),
+                0.78f to LabV2.Green.copy(alpha = glowAlpha.value * .10f),
+                1.00f to Color.Transparent
+            )
+        )
+    }
 }
 
 @Composable
