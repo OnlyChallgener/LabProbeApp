@@ -8117,7 +8117,7 @@ fun RoamingReport.toJson(): JSONObject {
         .put("networkEvents", networkArray)
 }
 
-fun buildRoamingReport(
+internal fun buildRoamingReport(
     samples: List<WifiSample>,
     events: List<RoamEvent>,
     quality: RoamQualitySummary,
