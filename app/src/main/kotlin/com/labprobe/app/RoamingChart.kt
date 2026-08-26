@@ -67,8 +67,8 @@ fun LabRoamCharts(
             RoamChartValue(index, sample.elapsedMs, sample.latency?.toDouble(), sample.lost)
         }
     }
-    val hasGateway = gatewayLatencyValues.any { it.value != null }
-    val hasWan = wanLatencyValues.any { it.value != null }
+    val hasGateway = gatewayLatencyValues.any { it.value != null || it.isLoss }
+    val hasWan = wanLatencyValues.any { it.value != null || it.isLoss }
     val primaryLatency = when {
         hasGateway -> gatewayLatencyValues
         hasWan -> wanLatencyValues

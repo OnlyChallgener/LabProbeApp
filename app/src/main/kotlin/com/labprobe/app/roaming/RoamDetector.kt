@@ -6,8 +6,10 @@ internal const val INVALID_ANDROID_BSSID = "02:00:00:00:00:00"
 
 internal fun isUsableBssid(value: String?): Boolean {
     val normalized = value?.trim().orEmpty()
-    if (normalized.isBlank() || normalized.equals(INVALID_ANDROID_BSSID, true) || normalized == "00:00:00:00:00:00") return false
-    return Regex("^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$").matches(normalized)
+    if (normalized.isBlank() || normalized.equals(INVALID_ANDROID_BSSID, true) || normalized == "00:00:00:00:00:00" || normalized.equals("ff:ff:ff:ff:ff:ff", true)) return false
+    if (!Regex("^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$").matches(normalized)) return false
+    val firstOctet = normalized.substringBefore(':').toIntOrNull(16) ?: return false
+    return firstOctet and 0x01 == 0
 }
 
 internal fun wifiBandOf(frequencyMhz: Int): String = when (frequencyMhz) {
@@ -167,35 +169,43 @@ internal fun attachProbeImpacts(
     final: Boolean = false
 ): List<BssidSwitchEvent> = switches.mapIndexed { index, event ->
     val boundary = switches.getOrNull(index + 1)?.oldObservedAtNanos ?: Long.MAX_VALUE
-    fun impact(target: RoamProbeTarget): RoamTargetImpact {
+    val closed = final || boundary != Long.MAX_VALUE
+    fun impact(target: RoamProbeTarget, previous: RoamTargetImpact): RoamTargetImpact {
         val scoped = attempts.asSequence()
             .filter { it.target == target && it.attempted }
             .filter { it.startedAtNanos >= event.oldObservedAtNanos && it.startedAtNanos < boundary }
             .sortedBy { it.startedAtNanos }
             .toList()
-        if (scoped.isEmpty()) return RoamTargetImpact()
+        if (scoped.isEmpty()) return previous
+        if (previous.state == RoamImpactState.RECOVERED || previous.state == RoamImpactState.NO_OUTAGE_OBSERVED) {
+            return previous.copy(attemptedCount = maxOf(previous.attemptedCount, scoped.size))
+        }
         val firstSuccess = scoped.firstOrNull {
             it.startedAtNanos >= event.newObservedAtNanos && it.latencyMs != null && it.completedAtNanos < boundary
         }
         val lossEnd = firstSuccess?.startedAtNanos ?: boundary
-        val losses = scoped.count { it.latencyMs == null && it.startedAtNanos < lossEnd }
+        val losses = maxOf(previous.lossCount, scoped.count { it.latencyMs == null && it.startedAtNanos < lossEnd })
+        val attemptedCount = maxOf(previous.attemptedCount, scoped.size)
         if (losses == 0) {
             return RoamTargetImpact(
-                state = if (firstSuccess != null) RoamImpactState.NO_OUTAGE_OBSERVED else if (final) RoamImpactState.UNRECOVERED else RoamImpactState.PENDING,
-                attemptedCount = scoped.size,
+                state = if (firstSuccess != null || closed) RoamImpactState.NO_OUTAGE_OBSERVED else RoamImpactState.PENDING,
+                attemptedCount = attemptedCount,
                 lossCount = 0
             )
         }
         return RoamTargetImpact(
-            state = if (firstSuccess != null) RoamImpactState.RECOVERED else if (final) RoamImpactState.UNRECOVERED else RoamImpactState.PENDING,
-            attemptedCount = scoped.size,
+            state = if (firstSuccess != null) RoamImpactState.RECOVERED else if (closed) RoamImpactState.UNRECOVERED else RoamImpactState.PENDING,
+            attemptedCount = attemptedCount,
             lossCount = losses,
             recoveryAfterNewBssidMs = firstSuccess?.let {
                 ((it.completedAtNanos - event.newObservedAtNanos) / 1_000_000L).coerceAtLeast(0L)
             }
         )
     }
-    event.copy(gatewayImpact = impact(RoamProbeTarget.GATEWAY), wanImpact = impact(RoamProbeTarget.WAN))
+    event.copy(
+        gatewayImpact = impact(RoamProbeTarget.GATEWAY, event.gatewayImpact),
+        wanImpact = impact(RoamProbeTarget.WAN, event.wanImpact)
+    )
 }
 
 internal fun percentile95Ms(gapsNanos: Collection<Long>): Long? {

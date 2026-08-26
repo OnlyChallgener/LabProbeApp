@@ -13,14 +13,16 @@ import java.util.Locale
 internal class WifiSampler(context: Context) {
     private val appContext = context.applicationContext
     private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    @Volatile private var lastScanRequestAtNanos: Long = Long.MIN_VALUE
 
     suspend fun sample(
         sessionId: Long,
         startedAtNanos: Long,
         candidate: RoamCandidateSnapshot
     ): RoamWifiObservation = withContext(Dispatchers.IO) {
-        val observedAtNanos = SystemClock.elapsedRealtimeNanos()
         val info = runCatching { wifi?.connectionInfo }.getOrNull()
+        // Timestamp the returned snapshot, not the start of the Binder call.
+        val observedAtNanos = SystemClock.elapsedRealtimeNanos()
         val rawBssid = info?.bssid?.trim()
         val bssid = rawBssid?.lowercase(Locale.US)?.takeIf(::isUsableBssid)
         val ssid = info?.ssid?.removeSurrounding("\"")?.trim().orEmpty().takeUnless {
@@ -68,14 +70,27 @@ internal class WifiSampler(context: Context) {
         val resultAgeMs = best?.timestamp?.takeIf { it > 0L }?.let { timestampMicros ->
             ((nowNanos / 1_000L - timestampMicros) / 1_000L).coerceAtLeast(0L)
         }
-        if (requestScan) runCatching { wifi?.startScan() }
+        val shouldRequestScan = requestScan && (
+            lastScanRequestAtNanos == Long.MIN_VALUE || nowNanos - lastScanRequestAtNanos >= 30_000_000_000L
+        )
+        val scanAccepted = if (shouldRequestScan) {
+            lastScanRequestAtNanos = nowNanos
+            runCatching { wifi?.startScan() == true }.getOrDefault(false)
+        } else null
         RoamCandidateSnapshot(
             bssid = best?.BSSID?.lowercase(Locale.US),
             rssi = best?.level,
             observedAtNanos = nowNanos,
             resultAgeMs = resultAgeMs,
             sameSsidCount = matches.size,
-            status = if (best == null) "候选 AP：缓存中未发现同 SSID 候选" else "候选 AP：系统扫描缓存观察值"
+            status = buildString {
+                append(if (best == null) "候选 AP：缓存中未发现同 SSID 候选" else "候选 AP：系统扫描缓存观察值")
+                when (scanAccepted) {
+                    true -> append(" · 已请求后台刷新")
+                    false -> append(" · 刷新被系统拒绝/限流")
+                    null -> Unit
+                }
+            }
         )
     }
 

@@ -13,9 +13,11 @@ import com.labprobe.app.roaming.RoamPingAttempt
 import com.labprobe.app.roaming.RoamProbeTarget
 import com.labprobe.app.roaming.RoamWifiObservation
 import com.labprobe.app.roaming.RoamingNetworkLayerEvent
+import com.labprobe.app.roaming.RoamingProbeStats
 import com.labprobe.app.roaming.RoamingSession
 import com.labprobe.app.roaming.RoamingSessionInput
 import com.labprobe.app.roaming.RoamingSessionSnapshot
+import com.labprobe.app.roaming.RoamingWifiStats
 import com.labprobe.app.roaming.WifiSampler
 import com.labprobe.app.roaming.wifiBandOf
 import android.Manifest
@@ -130,10 +132,12 @@ import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
@@ -2604,7 +2608,7 @@ fun CompactIconHistoryInput(label: String, hint: String, value: String, onValueC
 }
 
 @Composable
-fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> Unit, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
+fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> Unit, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
         ParamFrame(Modifier.fillMaxWidth()) {
@@ -2612,6 +2616,7 @@ fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> 
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
+                enabled = enabled,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 textStyle = LocalTextStyle.current.copy(fontSize = 12.7.sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
@@ -5714,6 +5719,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     val wifiSampler = remember(ctx) { WifiSampler(ctx) }
     var running by remember { mutableStateOf(false) }
+    var stopping by remember { mutableStateOf(false) }
     var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
     var session by remember { mutableStateOf<RoamingSession?>(null) }
     var sessionSnapshot by remember { mutableStateOf(RoamingSessionSnapshot(sessionId = 0L, running = false)) }
@@ -5726,6 +5732,9 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     var timeoutMs by remember { mutableStateOf("1000") }
     var enableCandidateScan by remember { mutableStateOf(false) }
     var candidateScanMode by remember { mutableStateOf("关闭") }
+    var sessionTargetMode by remember { mutableStateOf("路由器+外网") }
+    var sessionSampleMode by remember { mutableStateOf("Ping 250ms") }
+    var sessionStickyEnabled by remember { mutableStateOf(false) }
     var candidateCacheText by remember { mutableStateOf("候选 AP：未启用") }
     var job by remember { mutableStateOf<Job?>(null) }
     var showCurrentSummary by remember { mutableStateOf(false) }
@@ -5752,45 +5761,75 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val pingAttempts = sessionSnapshot.pingAttempts
     val roamCount = measuredSwitches.size
     val wifiSwitchCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid } }
-    val attemptedPings = remember(pingAttempts) { pingAttempts.filter { it.attempted } }
-    val lostCount = remember(attemptedPings) { attemptedPings.count { it.latencyMs == null } }
-    val lossRate = if (attemptedPings.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / attemptedPings.size)
+    fun lossRateOf(stats: RoamingProbeStats): String = if (stats.attemptedCount == 0) "--" else {
+        String.format(Locale.US, "%.1f%%", stats.lossCount * 100.0 / stats.attemptedCount)
+    }
     val stickyEnabled = enableCandidateScan && candidateScanMode != "关闭"
-    val stickyScore = remember(samples, stickyEnabled) { if (stickyEnabled) calculateStickyScore(samples, -70, 10) else 0 }
-    val events = remember(samples, stickyEnabled, measuredSwitches, sessionSnapshot.networkEvents) {
+    val configLocked = running || stopping
+    val resultTargetMode = if (sessionSnapshot.sessionId != 0L) sessionTargetMode else targetMode
+    val resultSampleMode = if (sessionSnapshot.sessionId != 0L) sessionSampleMode else sampleMode
+    val resultStickyEnabled = if (sessionSnapshot.sessionId != 0L) sessionStickyEnabled else stickyEnabled
+    val stickyScore = remember(samples, resultStickyEnabled, sessionSnapshot.wifiStats) {
+        if (!resultStickyEnabled) 0
+        else if (sessionSnapshot.wifiStats.weakDurationMs > 0L) {
+            ((sessionSnapshot.wifiStats.stickyDurationMs * 100.0 / sessionSnapshot.wifiStats.weakDurationMs).roundToInt()).coerceIn(0, 100)
+        } else calculateStickyScore(samples, -70, 10)
+    }
+    val events = remember(samples, resultStickyEnabled, measuredSwitches, sessionSnapshot.networkEvents) {
         buildProductionRoamingEventChain(
             samples = samples,
             switches = measuredSwitches,
             networkEvents = sessionSnapshot.networkEvents,
             weakThreshold = -70,
-            candidateGap = if (stickyEnabled) 10 else 999,
+            candidateGap = if (resultStickyEnabled) 10 else 999,
             stickyDurationMs = 3_000L,
             highLatencyMs = 150,
             lossTrigger = 2
         )
     }
-    val quality = remember(samples, events, stickyScore) { buildRoamingQuality(samples, events, stickyScore) }
-    val currentReport = remember(samples, events, quality, targetMode, sampleMode, stickyScore, measuredSwitches, pingAttempts, sessionSnapshot.networkEvents) {
+    val quality = remember(samples, events, stickyScore, resultTargetMode, pingAttempts, sessionSnapshot.gatewayStats, sessionSnapshot.wanStats) {
+        buildRoamingQuality(
+            samples, events, stickyScore, resultTargetMode, pingAttempts,
+            sessionSnapshot.gatewayStats, sessionSnapshot.wanStats
+        )
+    }
+    val currentReport = remember(samples, events, quality, resultTargetMode, resultSampleMode, stickyScore, measuredSwitches, pingAttempts, sessionSnapshot.networkEvents, sessionSnapshot.gatewayStats, sessionSnapshot.wanStats, sessionSnapshot.wifiStats) {
         if (samples.isEmpty()) null else buildRoamingReport(
-            samples, events, quality, targetMode, sampleMode, stickyScore,
+            samples, events, quality, resultTargetMode, resultSampleMode, stickyScore,
             measuredSwitches, pingAttempts, sessionSnapshot.networkEvents,
             sessionSnapshot.wifiGapP95Ms, sessionSnapshot.wifiGapMaxMs,
-            sessionSnapshot.wifiSampleCount
+            sessionSnapshot.wifiSampleCount, sessionSnapshot.gatewayStats,
+            sessionSnapshot.wanStats, sessionSnapshot.wifiStats
         )
+    }
+
+    fun stopRoaming(finalStatus: String) {
+        if (!running || stopping) return
+        val endingJob = job
+        val endingSession = session
+        running = false
+        stopping = true
+        status = "正在停止并收敛最终统计..."
+        scope.launch {
+            endingJob?.cancelAndJoin()
+            val finalSnapshot = endingSession?.finish()
+            if (session === endingSession && finalSnapshot != null) sessionSnapshot = finalSnapshot
+            stopping = false
+            status = finalStatus
+        }
     }
 
     LaunchedEffect(session) {
         session?.snapshot?.collect { next ->
             sessionSnapshot = next
-            samples = roamingUiSamples(next, targetMode)
+            samples = roamingUiSamples(next, sessionTargetMode)
             val candidate = next.latestWifi?.candidate
-            if (candidate != null && stickyEnabled) {
+            if (candidate != null && sessionStickyEnabled) {
                 candidateCacheText = candidateDisplayText(next.latestWifi, candidate)
             }
             val latestWifi = next.latestWifi
             status = if (latestWifi != null) {
-                val nextLosses = next.pingAttempts.count { it.attempted && it.latencyMs == null }
-                "Wi-Fi ${next.wifiSampleCount} 次 · BSSID切换 ${next.switches.size} 次 · Ping丢包 $nextLosses · 采样P95 ${next.wifiGapP95Ms ?: "--"}ms"
+                "Wi-Fi ${next.wifiSampleCount} 次 · BSSID切换 ${next.switches.size} 次 · 丢包 网关${next.gatewayStats.lossCount}/外网${next.wanStats.lossCount} · 采样P95 ${next.wifiGapP95Ms ?: "--"}ms"
             } else if (running) "采集中..." else status
         }
     }
@@ -5805,6 +5844,17 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             job?.cancel()
             session?.cancel()
         }
+    }
+
+    DisposableEffect(ctx, running, stopping, session) {
+        val activity = ctx.findActivity() as? ComponentActivity
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && running && !stopping) {
+                stopRoaming("应用进入后台，测试已停止并完成统计")
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
     }
 
     DisposableEffect(running, session) {
@@ -5927,27 +5977,27 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
 
     ExpressiveCard("漫游配置", "Wi-Fi 连接信息固定目标50ms观察；Ping独立运行。候选 AP 扫描需手动开启。", null, Color(0xFF2563EB)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
-            RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
-            RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f)) { targetMode = "仅外网" }
+            RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f), enabled = !configLocked) { targetMode = "路由器+外网" }
+            RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f), enabled = !configLocked) { targetMode = "仅路由器" }
+            RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f), enabled = !configLocked) { targetMode = "仅外网" }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("外网", Modifier.width(52.dp), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f))
             CompactTextField(
                 value = wanTarget,
                 onValueChange = { wanTarget = it.trim().take(64) },
-                enabled = targetMode != "仅路由器",
+                enabled = !configLocked && targetMode != "仅路由器",
                 leadingIcon = { FieldIconBox(Icons.Rounded.Public, Color(0xFF2563EB)) },
                 modifier = Modifier.weight(1f)
             )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TinyParamInputIcon("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("Ping超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f), enabled = !configLocked)
+            TinyParamInputIcon("Ping超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f), enabled = !configLocked)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Ping 100ms", "Ping 250ms", "Ping 500ms").forEach { mode ->
-                RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f)) {
+                RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f), enabled = !configLocked) {
                     sampleMode = mode
                     sampleMs = when (mode) { "Ping 100ms" -> "100"; "Ping 500ms" -> "500"; else -> "250" }
                 }
@@ -5960,16 +6010,12 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 enableCandidateScan = it != "关闭"
                 if (it == "关闭") candidateCacheText = "候选 AP：未启用"
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !configLocked
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = {
-                    if (running) {
-                        job?.cancel()
-                        session?.close()
-                        running = false
-                    }
                     session?.cancel()
                     session = null
                     sessionSnapshot = RoamingSessionSnapshot(sessionId = 0L, running = false)
@@ -5977,6 +6023,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     status = "已清空"
                     showCurrentSummary = false
                 },
+                enabled = !configLocked,
                 shape = RoundedCornerShape(15.dp),
                 modifier = Modifier.weight(1f).height(42.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
@@ -5990,10 +6037,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             Button(
                 onClick = {
                     if (running) {
-                        job?.cancel()
-                        session?.close()
-                        running = false
-                        status = "已停止 · 已完成最终统计"
+                        stopRoaming("已停止 · 已完成最终统计")
                     } else {
                         val hasPerm = runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
                         if (!hasPerm) {
@@ -6010,10 +6054,15 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         val activeSession = RoamingSession(sessionId = startedAtNanos)
                         val activeMode = targetMode
                         val activeWanTarget = wanTarget.trim().ifBlank { "223.5.5.5" }
+                        val activeCandidateEnabled = stickyEnabled
+                        val activeCandidateIntervalMs = candidateScanIntervalMs
+                        sessionTargetMode = activeMode
+                        sessionSampleMode = sampleMode
+                        sessionStickyEnabled = stickyEnabled
                         samples = emptyList()
                         sessionSnapshot = RoamingSessionSnapshot(sessionId = startedAtNanos)
                         candidateObservation = RoamCandidateSnapshot()
-                        candidateCacheText = if (enableCandidateScan) "候选 AP：等待系统扫描缓存" else "候选 AP：未启用"
+                        candidateCacheText = if (activeCandidateEnabled) "候选 AP：等待系统扫描缓存" else "候选 AP：未启用"
                         session?.cancel()
                         session = activeSession
                         running = true
@@ -6023,9 +6072,11 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                 launch {
                                     while (currentCoroutineContext().isActive) {
                                         val tickAt = SystemClock.elapsedRealtime()
-                                        val observation = runCatching {
+                                        val observation = try {
                                             wifiSampler.sample(activeSession.sessionId, startedAtNanos, candidateObservation)
-                                        }.getOrElse {
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (error: Throwable) {
                                             val nowNanos = SystemClock.elapsedRealtimeNanos()
                                             RoamWifiObservation(
                                                 sessionId = activeSession.sessionId,
@@ -6040,7 +6091,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                                 linkMbps = null,
                                                 txMbps = null,
                                                 rxMbps = null,
-                                                unavailableReason = it.message ?: "Wi-Fi 信息读取失败"
+                                                unavailableReason = error.message ?: "Wi-Fi 信息读取失败"
                                             )
                                         }
                                         activeSession.trySend(RoamingSessionInput.Wifi(activeSession.sessionId, observation))
@@ -6048,13 +6099,13 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                         delay((50L - spent).coerceAtLeast(1L))
                                     }
                                 }
-                                if (enableCandidateScan && candidateScanMode != "关闭") launch {
+                                if (activeCandidateEnabled) launch {
                                     while (currentCoroutineContext().isActive) {
                                         candidateObservation = runCatching {
                                             wifiSampler.refreshCandidate(sessionSnapshot.latestWifi, requestScan = true)
                                         }.getOrElse { RoamCandidateSnapshot(status = "候选 AP：读取受限") }
                                         candidateCacheText = candidateDisplayText(sessionSnapshot.latestWifi, candidateObservation)
-                                        delay(candidateScanIntervalMs.coerceAtMost(5_000L))
+                                        delay(activeCandidateIntervalMs.coerceAtMost(5_000L))
                                     }
                                 }
                                 suspend fun runProbeLoop(target: RoamProbeTarget, fixedAddress: InetAddress? = null) {
@@ -6065,7 +6116,13 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                             withContext(Dispatchers.IO) { runCatching { InetAddress.getByName(raw) }.getOrNull() }
                                         }
                                         val attempted = address != null
-                                        val latency = if (address != null) runCatching { pingOnceAddress(address, timeout) }.getOrNull() else null
+                                        val latency = if (address != null) try {
+                                            pingOnceAddress(address, timeout)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Throwable) {
+                                            null
+                                        } else null
                                         val completedNanos = SystemClock.elapsedRealtimeNanos()
                                         activeSession.trySend(RoamingSessionInput.Ping(
                                             activeSession.sessionId,
@@ -6096,12 +6153,13 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         }
                     }
                 },
+                enabled = !stopping,
                 shape = RoundedCornerShape(15.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF0284C7)),
                 modifier = Modifier.weight(1f).height(42.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
             ) {
-                Text(if (running) "停止测试" else "开始测试", fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                Text(if (stopping) "正在停止" else if (running) "停止测试" else "开始测试", fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
     }
@@ -6113,10 +6171,11 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         ) {
             StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.widthIn(min = 76.dp))
             StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.widthIn(min = 82.dp))
-            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.widthIn(min = 82.dp))
+            if (resultTargetMode != "仅外网") StatChip("网关丢包", lossRateOf(sessionSnapshot.gatewayStats), Color(0xFF64748B), Modifier.widthIn(min = 92.dp))
+            if (resultTargetMode != "仅路由器") StatChip("外网丢包", lossRateOf(sessionSnapshot.wanStats), Color(0xFF64748B), Modifier.widthIn(min = 92.dp))
             StatChip("漫游", "$roamCount", LabV2.Cyan, Modifier.widthIn(min = 76.dp))
         }
-        if (enableCandidateScan) {
+        if (resultStickyEnabled) {
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -6127,7 +6186,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         }
         RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
-        if (enableCandidateScan) {
+        if (resultStickyEnabled) {
             RoamPlainInfo("候选", candidateCacheText)
         } else {
             RoamPlainInfo("候选", "候选 AP 扫描关闭")
@@ -6141,7 +6200,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("漫游图表", fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.weight(1f))
-                        Text("Wi-Fi目标50ms · UI 250ms", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
+                        Text("Wi-Fi目标50ms · UI 250ms/最近约5分钟", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
                     }
                     LabRoamCharts(samples, running = running, events = events, modifier = Modifier.fillMaxWidth())
                 }
@@ -6166,7 +6225,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                             }) {
                                 Text("复制", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
                             }
-                            TextButton(onClick = {
+                            TextButton(enabled = !configLocked, onClick = {
                                 prefs.addRoamingReport(report)
                                 refreshRoamingHistory()
                                 status = "测试总结已保存 · ${reportHistory.size}/20 · ${reportHistoryKb}KB"
@@ -6184,10 +6243,10 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                 RoamingReportLine("信号RSSI", "最强${report.rssiBestDbm?.let { "${it}dBm" } ?: "--"} / 最弱${report.rssiWorstDbm?.let { "${it}dBm" } ?: "--"} / 平均${report.rssiAvgDbm?.let { "${it}dBm" } ?: "--"}")
                                 RoamingReportLine("协商速率", "最高${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
                                 RoamingReportLine("BSSID切换观察", "${report.roamCount}次 · 最长窗口${report.longestObservationMs?.let { "${it}ms" } ?: "—"} · 非精确802.11握手耗时")
-                                RoamingReportLine("Ping业务恢复", "网关${report.gatewayRecoveryMaxMs?.let { "${it}ms" } ?: "未观察到中断"} · 外网${report.wanRecoveryMaxMs?.let { "${it}ms" } ?: "未观察到中断"}")
+                                RoamingReportLine("Ping业务恢复", "网关${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} · 外网${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
                                 RoamingReportLine("全程/漫游窗口丢包", "网关${report.gatewayLossCount}/${report.gatewayRoamLossCount} · 外网${report.wanLossCount}/${report.wanRoamLossCount} · Network断开${report.networkDisconnectCount}")
                                 Text(report.conclusion, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), lineHeight = 16.sp)
-                                Text(if (enableCandidateScan) "候选 AP：${candidateCacheText.removePrefix("候选 AP：")}" else "候选 AP：未启用；粘 AP 判断未启用", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f), lineHeight = 15.sp)
+                                Text(if (resultStickyEnabled) "候选 AP：${candidateCacheText.removePrefix("候选 AP：")}" else "候选 AP：未启用；粘 AP 判断未启用", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f), lineHeight = 15.sp)
                             }
                         }
                     }
@@ -6308,7 +6367,9 @@ data class RoamingSwitchReport(
     val gatewayRecoveryMs: Long?,
     val wanRecoveryMs: Long?,
     val gatewayLossCount: Int,
-    val wanLossCount: Int
+    val wanLossCount: Int,
+    val gatewayImpactState: String = RoamImpactState.NOT_MONITORED.name,
+    val wanImpactState: String = RoamImpactState.NOT_MONITORED.name
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("oldBssid", oldBssid)
@@ -6318,6 +6379,8 @@ data class RoamingSwitchReport(
         .put("wanRecoveryMs", wanRecoveryMs ?: JSONObject.NULL)
         .put("gatewayLossCount", gatewayLossCount)
         .put("wanLossCount", wanLossCount)
+        .put("gatewayImpactState", gatewayImpactState)
+        .put("wanImpactState", wanImpactState)
 
     companion object {
         fun fromJson(value: JSONObject): RoamingSwitchReport = RoamingSwitchReport(
@@ -6327,7 +6390,19 @@ data class RoamingSwitchReport(
             gatewayRecoveryMs = value.optNullableLong("gatewayRecoveryMs"),
             wanRecoveryMs = value.optNullableLong("wanRecoveryMs"),
             gatewayLossCount = value.optInt("gatewayLossCount"),
-            wanLossCount = value.optInt("wanLossCount")
+            wanLossCount = value.optInt("wanLossCount"),
+            gatewayImpactState = value.optString("gatewayImpactState").takeIf { it.isNotBlank() }
+                ?: when {
+                    value.optNullableLong("gatewayRecoveryMs") != null -> RoamImpactState.RECOVERED.name
+                    value.optInt("gatewayLossCount") > 0 -> RoamImpactState.UNRECOVERED.name
+                    else -> RoamImpactState.NOT_MONITORED.name
+                },
+            wanImpactState = value.optString("wanImpactState").takeIf { it.isNotBlank() }
+                ?: when {
+                    value.optNullableLong("wanRecoveryMs") != null -> RoamImpactState.RECOVERED.name
+                    value.optInt("wanLossCount") > 0 -> RoamImpactState.UNRECOVERED.name
+                    else -> RoamImpactState.NOT_MONITORED.name
+                }
         )
     }
 }
@@ -6875,7 +6950,7 @@ private fun CandidateScanToggle(enabled: Boolean, onChange: (Boolean) -> Unit, m
 }
 
 @Composable
-private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val modes = listOf("关闭", "低频5s", "标准3s", "高频1s")
     Surface(
         modifier = modifier,
@@ -6899,7 +6974,7 @@ private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, 
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 modes.forEach { item ->
-                    RoamSegmentButton(item, mode == item, Modifier.weight(1f)) { onChange(item) }
+                    RoamSegmentButton(item, mode == item, Modifier.weight(1f), enabled = enabled) { onChange(item) }
                 }
             }
         }
@@ -6907,15 +6982,15 @@ private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, 
 }
 
 @Composable
-private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Surface(
-        modifier = modifier.height(42.dp).clip(RoundedCornerShape(15.dp)).clickable(onClick = onClick),
+        modifier = modifier.height(42.dp).clip(RoundedCornerShape(15.dp)).clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(15.dp),
         color = if (selected) Color(0xFF0284C7).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
         border = BorderStroke(1.dp, if (selected) Color(0xFF2563EB).copy(alpha = .38f) else MaterialTheme.colorScheme.outline.copy(alpha = .14f))
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = if (!enabled) MaterialTheme.colorScheme.onSurface.copy(alpha = .38f) else if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -8037,7 +8112,7 @@ fun roamingReportText(report: RoamingReport): String = buildString {
     appendLine("协商速率: 最高 ${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低 ${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均 ${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
     if (report.schemaVersion >= 2) {
         appendLine("BSSID切换: ${report.roamCount} 次，最长观察窗口 ${report.longestObservationMs?.let { "${it}ms" } ?: "--"}（非精确802.11握手耗时）")
-        appendLine("业务恢复: 网关 ${report.gatewayRecoveryMaxMs?.let { "最长${it}ms" } ?: "未观察到中断"} / 外网 ${report.wanRecoveryMaxMs?.let { "最长${it}ms" } ?: "未观察到中断"}")
+        appendLine("业务恢复: 网关 ${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} / 外网 ${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
         appendLine("全程 Ping 丢包: 网关 ${report.gatewayLossCount}/${report.gatewayAttemptCount} / 外网 ${report.wanLossCount}/${report.wanAttemptCount}")
         appendLine("漫游窗口丢包: 网关 ${report.gatewayRoamLossCount} / 外网 ${report.wanRoamLossCount}")
         appendLine("Network层断开: ${report.networkDisconnectCount} 次；Wi-Fi采样间隔 P95 ${report.wifiGapP95Ms ?: "--"}ms / 最大 ${report.wifiGapMaxMs ?: "--"}ms")
@@ -8129,7 +8204,10 @@ internal fun buildRoamingReport(
     networkEvents: List<RoamingNetworkLayerEvent> = emptyList(),
     wifiGapP95Ms: Long? = null,
     wifiGapMaxMs: Long? = null,
-    wifiSampleCount: Int = samples.size
+    wifiSampleCount: Int = samples.size,
+    gatewayStats: RoamingProbeStats = RoamingProbeStats(),
+    wanStats: RoamingProbeStats = RoamingProbeStats(),
+    wifiStats: RoamingWifiStats = RoamingWifiStats()
 ): RoamingReport {
     val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
     val rssi = samples.map { it.rssi }.filter { it > -120 }
@@ -8138,6 +8216,20 @@ internal fun buildRoamingReport(
     val wanAttempts = pingAttempts.filter { it.target == RoamProbeTarget.WAN && it.attempted }
     val gatewayLatency = gatewayAttempts.mapNotNull { it.latencyMs }
     val wanLatency = wanAttempts.mapNotNull { it.latencyMs }
+    fun effectiveStats(stats: RoamingProbeStats, attempts: List<RoamPingAttempt>): RoamingProbeStats {
+        if (stats.attemptedCount > 0) return stats
+        val successful = attempts.mapNotNull { it.latencyMs }
+        return RoamingProbeStats(
+            attemptedCount = attempts.size,
+            lossCount = attempts.count { it.latencyMs == null },
+            successCount = successful.size,
+            latencySumMs = successful.sumOf { it.toLong() },
+            minLatencyMs = successful.minOrNull(),
+            maxLatencyMs = successful.maxOrNull()
+        )
+    }
+    val gatewayAll = effectiveStats(gatewayStats, gatewayAttempts)
+    val wanAll = effectiveStats(wanStats, wanAttempts)
     val legacyLatency = samples.mapNotNull { it.latency }
     val lat = if (isV2) gatewayLatency else legacyLatency
     val speeds = samples.map { it.linkMbps }.filter { it > 0 }
@@ -8168,15 +8260,15 @@ internal fun buildRoamingReport(
         sampleMode = sampleMode,
         durationSec = duration,
         sampleCount = wifiSampleCount,
-        gatewayMinMs = lat.minOrNull(),
-        gatewayMaxMs = lat.maxOrNull(),
-        gatewayAvgMs = if (lat.isNotEmpty()) lat.average().roundToInt() else null,
-        rssiBestDbm = rssi.maxOrNull(),
-        rssiWorstDbm = rssi.minOrNull(),
-        rssiAvgDbm = if (rssi.isNotEmpty()) rssi.average().roundToInt() else null,
-        speedMaxMbps = speeds.maxOrNull(),
-        speedMinMbps = speeds.minOrNull(),
-        speedAvgMbps = if (speeds.isNotEmpty()) speeds.average().roundToInt() else null,
+        gatewayMinMs = if (isV2) gatewayAll.minLatencyMs else lat.minOrNull(),
+        gatewayMaxMs = if (isV2) gatewayAll.maxLatencyMs else lat.maxOrNull(),
+        gatewayAvgMs = if (isV2) gatewayAll.takeIf { it.successCount > 0 }?.let { (it.latencySumMs.toDouble() / it.successCount).roundToInt() } else if (lat.isNotEmpty()) lat.average().roundToInt() else null,
+        rssiBestDbm = if (isV2) wifiStats.bestRssiDbm ?: rssi.maxOrNull() else rssi.maxOrNull(),
+        rssiWorstDbm = if (isV2) wifiStats.worstRssiDbm ?: rssi.minOrNull() else rssi.minOrNull(),
+        rssiAvgDbm = if (isV2 && wifiStats.rssiCount > 0) (wifiStats.rssiSumDbm.toDouble() / wifiStats.rssiCount).roundToInt() else if (rssi.isNotEmpty()) rssi.average().roundToInt() else null,
+        speedMaxMbps = if (isV2) wifiStats.maxSpeedMbps ?: speeds.maxOrNull() else speeds.maxOrNull(),
+        speedMinMbps = if (isV2) wifiStats.minSpeedMbps ?: speeds.minOrNull() else speeds.minOrNull(),
+        speedAvgMbps = if (isV2 && wifiStats.speedCount > 0) (wifiStats.speedSumMbps.toDouble() / wifiStats.speedCount).roundToInt() else if (speeds.isNotEmpty()) speeds.average().roundToInt() else null,
         roamCount = roamCount,
         longestBreakMs = longestBreak,
         lossNearRoam = lossNear,
@@ -8189,15 +8281,15 @@ internal fun buildRoamingReport(
         schemaVersion = if (isV2) 2 else 1,
         durationMs = if (isV2) durationMs else duration * 1_000L,
         longestObservationMs = switches.maxOfOrNull { it.observationMs },
-        gatewayAttemptCount = gatewayAttempts.size,
-        gatewayLossCount = gatewayAttempts.count { it.latencyMs == null },
-        wanAttemptCount = wanAttempts.size,
-        wanLossCount = wanAttempts.count { it.latencyMs == null },
+        gatewayAttemptCount = gatewayAll.attemptedCount,
+        gatewayLossCount = gatewayAll.lossCount,
+        wanAttemptCount = wanAll.attemptedCount,
+        wanLossCount = wanAll.lossCount,
         gatewayRoamLossCount = switches.sumOf { it.gatewayImpact.lossCount },
         wanRoamLossCount = switches.sumOf { it.wanImpact.lossCount },
-        wanMinMs = wanLatency.minOrNull(),
-        wanMaxMs = wanLatency.maxOrNull(),
-        wanAvgMs = if (wanLatency.isNotEmpty()) wanLatency.average().roundToInt() else null,
+        wanMinMs = wanAll.minLatencyMs,
+        wanMaxMs = wanAll.maxLatencyMs,
+        wanAvgMs = wanAll.takeIf { it.successCount > 0 }?.let { (it.latencySumMs.toDouble() / it.successCount).roundToInt() },
         gatewayRecoveryMaxMs = gatewayRecoveryMax,
         wanRecoveryMaxMs = wanRecoveryMax,
         networkDisconnectCount = networkEvents.count { it.kind == "lost" },
@@ -8211,7 +8303,9 @@ internal fun buildRoamingReport(
                 gatewayRecoveryMs = it.gatewayImpact.recoveryAfterNewBssidMs,
                 wanRecoveryMs = it.wanImpact.recoveryAfterNewBssidMs,
                 gatewayLossCount = it.gatewayImpact.lossCount,
-                wanLossCount = it.wanImpact.lossCount
+                wanLossCount = it.wanImpact.lossCount,
+                gatewayImpactState = it.gatewayImpact.state.name,
+                wanImpactState = it.wanImpact.state.name
             )
         },
         networkEvents = networkEvents.map { "${it.timeText} ${it.label}" }
@@ -8309,7 +8403,7 @@ fun RoamingReportDetailScreen(report: RoamingReport, onBack: () -> Unit) {
             RoamingReportLine("协商速率", "最高${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
             if (report.schemaVersion >= 2) {
                 RoamingReportLine("BSSID切换观察", "${report.roamCount}次 · 最长窗口${report.longestObservationMs?.let { "${it}ms" } ?: "—"} · 非精确802.11握手耗时")
-                RoamingReportLine("Ping业务恢复", "网关${report.gatewayRecoveryMaxMs?.let { "${it}ms" } ?: "未观察到中断"} · 外网${report.wanRecoveryMaxMs?.let { "${it}ms" } ?: "未观察到中断"}")
+                RoamingReportLine("Ping业务恢复", "网关${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} · 外网${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
                 RoamingReportLine("全程Ping丢包", "网关${report.gatewayLossCount}/${report.gatewayAttemptCount} · 外网${report.wanLossCount}/${report.wanAttemptCount}")
                 RoamingReportLine("漫游窗口丢包", "网关${report.gatewayRoamLossCount} · 外网${report.wanRoamLossCount}")
                 RoamingReportLine("Network层", "断开${report.networkDisconnectCount}次 · 采样P95 ${report.wifiGapP95Ms ?: "--"}ms / 最大${report.wifiGapMaxMs ?: "--"}ms")
@@ -8413,6 +8507,25 @@ private fun roamImpactText(impact: com.labprobe.app.roaming.RoamTargetImpact): S
     RoamImpactState.PENDING -> "等待恢复"
     RoamImpactState.RECOVERED -> "恢复${impact.recoveryAfterNewBssidMs ?: 0}ms/丢包${impact.lossCount}"
     RoamImpactState.UNRECOVERED -> "未恢复/丢包${impact.lossCount}"
+}
+
+private fun roamingRecoverySummary(report: RoamingReport, target: RoamProbeTarget): String {
+    val disabled = when (target) {
+        RoamProbeTarget.GATEWAY -> report.targetMode == "仅外网"
+        RoamProbeTarget.WAN -> report.targetMode == "仅路由器"
+    }
+    if (disabled) return "未监测"
+    if (report.switches.isEmpty()) return if (report.roamCount == 0) "无BSSID切换" else "旧记录未区分"
+    val states = report.switches.map {
+        if (target == RoamProbeTarget.GATEWAY) it.gatewayImpactState else it.wanImpactState
+    }
+    val unrecovered = states.count { it == RoamImpactState.UNRECOVERED.name }
+    if (unrecovered > 0) return "未恢复${if (unrecovered > 1) "${unrecovered}次" else ""}"
+    if (states.any { it == RoamImpactState.PENDING.name }) return "等待恢复"
+    val recovery = if (target == RoamProbeTarget.GATEWAY) report.gatewayRecoveryMaxMs else report.wanRecoveryMaxMs
+    if (states.any { it == RoamImpactState.RECOVERED.name }) return recovery?.let { "最长${it}ms" } ?: "已恢复"
+    if (states.any { it == RoamImpactState.NO_OUTAGE_OBSERVED.name }) return "未观察到中断"
+    return "未监测"
 }
 
 private fun buildProductionRoamingEventChain(
@@ -8521,16 +8634,43 @@ fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candid
     return events.distinctBy { "${it.index}-${it.title}-${it.detail}" }.takeLast(80)
 }
 
-fun buildRoamingQuality(samples: List<WifiSample>, events: List<RoamEvent>, stickyScore: Int): RoamQualitySummary {
-    val latencies = samples.mapNotNull { it.latency }
-    val ok = latencies.isNotEmpty()
-    val avg = if (ok) latencies.average().roundToInt() else null
-    val worst = latencies.maxOrNull()
-    val loss = samples.count { it.lost }
+internal fun buildRoamingQuality(
+    samples: List<WifiSample>,
+    events: List<RoamEvent>,
+    stickyScore: Int,
+    targetMode: String? = null,
+    pingAttempts: List<RoamPingAttempt> = emptyList(),
+    gatewayStats: RoamingProbeStats = RoamingProbeStats(),
+    wanStats: RoamingProbeStats = RoamingProbeStats()
+): RoamQualitySummary {
+    val selectedAttempts = pingAttempts.filter { attempt ->
+        attempt.attempted && when (targetMode) {
+            "仅路由器" -> attempt.target == RoamProbeTarget.GATEWAY
+            "仅外网" -> attempt.target == RoamProbeTarget.WAN
+            else -> true
+        }
+    }
+    val hasStructuredPings = pingAttempts.isNotEmpty() || samples.any { it.observedAtNanos > 0L }
+    val latencies = if (hasStructuredPings) selectedAttempts.mapNotNull { it.latencyMs } else samples.mapNotNull { it.latency }
+    val selectedStats = when (targetMode) {
+        "仅路由器" -> listOf(gatewayStats)
+        "仅外网" -> listOf(wanStats)
+        else -> listOf(gatewayStats, wanStats)
+    }
+    val aggregateAttempts = selectedStats.sumOf { it.attemptedCount }
+    val aggregateSuccesses = selectedStats.sumOf { it.successCount }
+    val aggregateLatencySum = selectedStats.sumOf { it.latencySumMs }
+    val useAggregate = aggregateAttempts > 0
+    val avg = if (useAggregate && aggregateSuccesses > 0) (aggregateLatencySum.toDouble() / aggregateSuccesses).roundToInt()
+        else if (latencies.isNotEmpty()) latencies.average().roundToInt() else null
+    val worst = if (useAggregate) selectedStats.mapNotNull { it.maxLatencyMs }.maxOrNull() else latencies.maxOrNull()
+    val loss = if (useAggregate) selectedStats.sumOf { it.lossCount }
+        else if (hasStructuredPings) selectedAttempts.count { it.latencyMs == null } else samples.count { it.lost }
     val roam = events.count { it.title == "AP 切换" || it.title == "BSSID 切换" }
     val high = events.count { it.title == "高延迟" }
     val stickyEvents = events.count { it.title.contains("粘") }
-    val lossRate = if (samples.isEmpty()) 0.0 else loss * 100.0 / samples.size
+    val lossDenominator = if (useAggregate) aggregateAttempts else if (hasStructuredPings) selectedAttempts.size else samples.size
+    val lossRate = if (lossDenominator == 0) 0.0 else loss * 100.0 / lossDenominator
     var score = 100
     score -= (lossRate * 2.2).roundToInt()
     score -= (high * 4)
@@ -8544,7 +8684,7 @@ fun buildRoamingQuality(samples: List<WifiSample>, events: List<RoamEvent>, stic
         score >= 55 -> "一般"
         else -> "较差"
     }
-    val detail = "漫游 ${roam} 次 · 平均 ${avg?.let { "${it}ms" } ?: "--"} · 最高 ${worst?.let { "${it}ms" } ?: "--"} · 丢包 $loss · 粘AP $stickyScore"
+    val detail = "漫游 ${roam} 次 · 平均 ${avg?.let { "${it}ms" } ?: "--"} · 最高 ${worst?.let { "${it}ms" } ?: "--"} · 丢包 $loss/$lossDenominator · 粘AP $stickyScore"
     return RoamQualitySummary(score, label, detail, avg, worst, loss, roam, stickyScore)
 }
 

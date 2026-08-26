@@ -1,5 +1,6 @@
 package com.labprobe.app.roaming
 
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -46,11 +47,11 @@ class RoamingProductionTest {
         val detector = RoamDetector()
         assertNull(detector.observe(wifi(0, "aa:aa:aa:aa:aa:aa")))
         assertNull(detector.observe(wifi(50, null)))
-        assertNull(detector.observe(wifi(100, "bb:bb:bb:bb:bb:bb")))
-        val event = detector.observe(wifi(150, "bb:bb:bb:bb:bb:bb"))
+        assertNull(detector.observe(wifi(100, "b0:b0:b0:b0:b0:b0")))
+        val event = detector.observe(wifi(150, "b0:b0:b0:b0:b0:b0"))
 
         assertEquals("aa:aa:aa:aa:aa:aa", event?.oldBssid)
-        assertEquals("bb:bb:bb:bb:bb:bb", event?.newBssid)
+        assertEquals("b0:b0:b0:b0:b0:b0", event?.newBssid)
         assertEquals(100L, event?.observationMs)
         assertEquals(100_000_000L, event?.newObservedAtNanos)
     }
@@ -59,7 +60,7 @@ class RoamingProductionTest {
     fun `single sample A B A glitch is rejected`() {
         val detector = RoamDetector()
         detector.observe(wifi(0, "aa:aa:aa:aa:aa:aa"))
-        assertNull(detector.observe(wifi(50, "bb:bb:bb:bb:bb:bb")))
+        assertNull(detector.observe(wifi(50, "b0:b0:b0:b0:b0:b0")))
         assertNull(detector.observe(wifi(100, "aa:aa:aa:aa:aa:aa")))
         assertNull(detector.observe(wifi(150, "aa:aa:aa:aa:aa:aa")))
     }
@@ -68,8 +69,8 @@ class RoamingProductionTest {
     fun `SSID change is not counted as same network BSSID switch`() {
         val detector = RoamDetector()
         detector.observe(wifi(0, "aa:aa:aa:aa:aa:aa", ssid = "Lab-A"))
-        assertNull(detector.observe(wifi(50, "bb:bb:bb:bb:bb:bb", ssid = "Lab-B")))
-        assertNull(detector.observe(wifi(100, "bb:bb:bb:bb:bb:bb", ssid = "Lab-B")))
+        assertNull(detector.observe(wifi(50, "b0:b0:b0:b0:b0:b0", ssid = "Lab-B")))
+        assertNull(detector.observe(wifi(100, "b0:b0:b0:b0:b0:b0", ssid = "Lab-B")))
     }
 
     @Test
@@ -78,7 +79,7 @@ class RoamingProductionTest {
             oldSsid = "Lab",
             newSsid = "Lab",
             oldBssid = "aa:aa:aa:aa:aa:aa",
-            newBssid = "bb:bb:bb:bb:bb:bb",
+            newBssid = "b0:b0:b0:b0:b0:b0",
             oldObservedAtNanos = 100_000_000L,
             newObservedAtNanos = 150_000_000L,
             confirmedAtNanos = 200_000_000L,
@@ -109,7 +110,7 @@ class RoamingProductionTest {
     @Test
     fun `not attempted probe does not enter loss denominator`() {
         val event = BssidSwitchEvent(
-            "Lab", "Lab", "aa:aa:aa:aa:aa:aa", "bb:bb:bb:bb:bb:bb",
+            "Lab", "Lab", "aa:aa:aa:aa:aa:aa", "b0:b0:b0:b0:b0:b0",
             100_000_000L, 150_000_000L, 200_000_000L,
             -70, -60, 2412, 5180, 50L
         )
@@ -127,8 +128,8 @@ class RoamingProductionTest {
     fun `next BSSID switch prevents late recovery attribution`() {
         val detector = RoamDetector(confirmationSamples = 1)
         detector.observe(wifi(0, "aa:aa:aa:aa:aa:aa"))
-        val first = detector.observe(wifi(50, "bb:bb:bb:bb:bb:bb"))!!
-        detector.observe(wifi(100, "bb:bb:bb:bb:bb:bb"))
+        val first = detector.observe(wifi(50, "b0:b0:b0:b0:b0:b0"))!!
+        detector.observe(wifi(100, "b0:b0:b0:b0:b0:b0"))
         val second = detector.observe(wifi(150, "cc:cc:cc:cc:cc:cc"))!!
         val measured = attachProbeImpacts(
             listOf(first, second),
@@ -143,6 +144,52 @@ class RoamingProductionTest {
     }
 
     @Test
+    fun `final loss without recovery remains unrecovered`() {
+        val event = BssidSwitchEvent(
+            "Lab", "Lab", "aa:aa:aa:aa:aa:aa", "b0:b0:b0:b0:b0:b0",
+            100_000_000L, 150_000_000L, 200_000_000L,
+            -72, -60, 2412, 5180, 50L
+        )
+        val measured = attachProbeImpacts(
+            listOf(event),
+            listOf(ping(RoamProbeTarget.WAN, 160, 900, null)),
+            final = true
+        ).single()
+
+        assertEquals(RoamImpactState.UNRECOVERED, measured.wanImpact.state)
+        assertEquals(1, measured.wanImpact.lossCount)
+        assertNull(measured.wanImpact.recoveryAfterNewBssidMs)
+    }
+
+    @Test
+    fun `session finish drains queued inputs into final snapshot`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(0, "aa:aa:aa:aa:aa:aa")))
+        session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.GATEWAY, 10, 20, null)))
+
+        val snapshot = session.finish()
+
+        assertEquals(false, snapshot.running)
+        assertEquals(1, snapshot.wifiSampleCount)
+        assertEquals(1, snapshot.gatewayStats.attemptedCount)
+        assertEquals(1, snapshot.gatewayStats.lossCount)
+    }
+
+    @Test
+    fun `full session probe totals survive bounded chart buffer`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        repeat(6_001) { index ->
+            session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.WAN, index.toLong(), index + 1L, 12)))
+        }
+
+        val snapshot = session.finish()
+
+        assertEquals(6_001, snapshot.wanStats.attemptedCount)
+        assertEquals(6_001, snapshot.wanStats.successCount)
+        assertEquals(6_000, snapshot.pingAttempts.size)
+    }
+
+    @Test
     fun `band channel and interval quality calculations are deterministic`() {
         assertEquals("2.4G", wifiBandOf(2412))
         assertEquals(1, wifiChannelOf(2412))
@@ -152,5 +199,7 @@ class RoamingProductionTest {
         assertEquals(1, wifiChannelOf(5955))
         assertEquals(80L, percentile95Ms(listOf(50_000_000L, 52_000_000L, 80_000_000L)))
         assertTrue(isUsableBssid("aa:bb:cc:dd:ee:ff"))
+        assertEquals(false, isUsableBssid("ff:ff:ff:ff:ff:ff"))
+        assertEquals(false, isUsableBssid("01:00:5e:00:00:01"))
     }
 }
