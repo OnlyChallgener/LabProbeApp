@@ -79,12 +79,14 @@ internal class RoamingSession(
     private val detector = RoamDetector()
     private val displayWifi = ArrayDeque<RoamWifiObservation>()
     private val pings = ArrayDeque<RoamPingAttempt>()
+    private val pendingImpactPings = ArrayDeque<RoamPingAttempt>()
     private val switches = mutableListOf<BssidSwitchEvent>()
     private val networkEvents = ArrayDeque<RoamingNetworkLayerEvent>()
     private val wifiGapHistogram = java.util.TreeMap<Long, Long>()
     private var wifiGapCount = 0L
     private var wifiGapMaxMs: Long? = null
     private var latestWifi: RoamWifiObservation? = null
+    private var confirmedBssid: String? = null
     private var previousWifiNanos: Long? = null
     private var wifiSampleCount = 0
     private var lastDisplayAtNanos = Long.MIN_VALUE
@@ -109,6 +111,7 @@ internal class RoamingSession(
                     }
                     is RoamingSessionInput.Finish -> {
                         running = false
+                        flushPendingImpactPings(Long.MAX_VALUE)
                         closeLastSwitch()
                     }
                 }
@@ -142,9 +145,15 @@ internal class RoamingSession(
         latestWifi = value
         wifiStats = wifiStats.add(value)
         val switch = detector.observe(value)
+        val observedBssid = value.bssid?.lowercase()?.takeIf(::isUsableBssid)
+        if (confirmedBssid == null && observedBssid != null) confirmedBssid = observedBssid
         if (switch != null) {
-            closeLastSwitch()
-            switches += attachProbeImpacts(listOf(switch), pings.toList(), final = false).single()
+            switches += switch
+            flushPendingImpactPings(Long.MAX_VALUE)
+            if (switches.size > 1) closeSwitch(switches.lastIndex - 1)
+            confirmedBssid = switch.newBssid
+        } else if (observedBssid != null && observedBssid == confirmedBssid) {
+            flushPendingImpactPings(value.observedAtNanos)
         }
         val shouldDisplay = lastDisplayAtNanos == Long.MIN_VALUE || value.observedAtNanos - lastDisplayAtNanos >= publishIntervalNanos || switch != null
         if (shouldDisplay) {
@@ -163,6 +172,20 @@ internal class RoamingSession(
         } else {
             wanStats = wanStats.add(value.latencyMs)
         }
+        pendingImpactPings.addLast(value)
+    }
+
+    private fun flushPendingImpactPings(beforeNanos: Long) {
+        if (pendingImpactPings.isEmpty()) return
+        val deferred = ArrayDeque<RoamPingAttempt>()
+        while (pendingImpactPings.isNotEmpty()) {
+            val attempt = pendingImpactPings.removeFirst()
+            if (attempt.startedAtNanos < beforeNanos) routeImpactPing(attempt) else deferred.addLast(attempt)
+        }
+        pendingImpactPings.addAll(deferred)
+    }
+
+    private fun routeImpactPing(value: RoamPingAttempt) {
         val index = switches.indexOfLast { value.startedAtNanos >= it.oldObservedAtNanos }
         if (index < 0) return
         val boundary = switches.getOrNull(index + 1)?.oldObservedAtNanos ?: Long.MAX_VALUE
@@ -196,8 +219,8 @@ internal class RoamingSession(
         switches[index] = if (value.target == RoamProbeTarget.GATEWAY) event.copy(gatewayImpact = updated) else event.copy(wanImpact = updated)
     }
 
-    private fun closeLastSwitch() {
-        if (switches.isEmpty()) return
+    private fun closeSwitch(index: Int) {
+        if (index !in switches.indices) return
         fun close(impact: RoamTargetImpact): RoamTargetImpact {
             if (impact.state != RoamImpactState.PENDING) return impact
             return impact.copy(
@@ -208,12 +231,14 @@ internal class RoamingSession(
                 }
             )
         }
-        val event = switches.last()
-        switches[switches.lastIndex] = event.copy(
+        val event = switches[index]
+        switches[index] = event.copy(
             gatewayImpact = close(event.gatewayImpact),
             wanImpact = close(event.wanImpact)
         )
     }
+
+    private fun closeLastSwitch() = closeSwitch(switches.lastIndex)
 
     private fun publish(now: Long) {
         lastPublishAtNanos = now

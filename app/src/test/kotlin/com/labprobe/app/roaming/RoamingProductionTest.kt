@@ -221,6 +221,40 @@ class RoamingProductionTest {
     }
 
     @Test
+    fun `ping inside next confirmation window is counted only by next switch`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(0, "aa:aa:aa:aa:aa:aa")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(50, "b0:b0:b0:b0:b0:b0")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(100, "b0:b0:b0:b0:b0:b0")))
+        session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.GATEWAY, 90, 110, null)))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(150, "cc:cc:cc:cc:cc:cc")))
+        session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.GATEWAY, 160, 170, null)))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(200, "cc:cc:cc:cc:cc:cc")))
+
+        val snapshot = session.finish()
+
+        assertEquals(1, snapshot.switches[0].gatewayImpact.lossCount)
+        assertEquals(1, snapshot.switches[1].gatewayImpact.lossCount)
+    }
+
+    @Test
+    fun `success inside next confirmation window cannot recover previous switch`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(0, "aa:aa:aa:aa:aa:aa")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(50, "b0:b0:b0:b0:b0:b0")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(100, "b0:b0:b0:b0:b0:b0")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(150, "cc:cc:cc:cc:cc:cc")))
+        session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.GATEWAY, 160, 170, 12)))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(200, "cc:cc:cc:cc:cc:cc")))
+        session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.GATEWAY, 90, 210, null)))
+
+        val snapshot = session.finish()
+
+        assertEquals(RoamImpactState.UNRECOVERED, snapshot.switches[0].gatewayImpact.state)
+        assertEquals(RoamImpactState.NO_OUTAGE_OBSERVED, snapshot.switches[1].gatewayImpact.state)
+    }
+
+    @Test
     fun `band channel and interval quality calculations are deterministic`() {
         assertEquals("2.4G", wifiBandOf(2412))
         assertEquals(1, wifiChannelOf(2412))
