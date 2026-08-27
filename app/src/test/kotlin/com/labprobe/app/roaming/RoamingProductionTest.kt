@@ -255,6 +255,19 @@ class RoamingProductionTest {
     }
 
     @Test
+    fun `missing BSSID cannot grow pending impact buffer without bound`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        repeat(MAX_PENDING_IMPACT_PINGS + 1) { index ->
+            session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.WAN, index.toLong(), index + 1L, null)))
+        }
+
+        val snapshot = session.finish()
+
+        assertEquals(MAX_PENDING_IMPACT_PINGS + 1, snapshot.wanStats.attemptedCount)
+        assertTrue(snapshot.impactWindowTruncated)
+    }
+
+    @Test
     fun `band channel and interval quality calculations are deterministic`() {
         assertEquals("2.4G", wifiBandOf(2412))
         assertEquals(1, wifiChannelOf(2412))

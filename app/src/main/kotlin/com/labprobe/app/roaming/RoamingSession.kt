@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.ArrayDeque
 
+internal const val MAX_PENDING_IMPACT_PINGS = 12_000
+
 internal data class RoamingNetworkLayerEvent(
     val observedAtNanos: Long,
     val elapsedMs: Long,
@@ -55,6 +57,7 @@ internal data class RoamingSessionSnapshot(
     val gatewayStats: RoamingProbeStats = RoamingProbeStats(),
     val wanStats: RoamingProbeStats = RoamingProbeStats(),
     val wifiStats: RoamingWifiStats = RoamingWifiStats(),
+    val impactWindowTruncated: Boolean = false,
     val running: Boolean = true
 )
 
@@ -92,6 +95,7 @@ internal class RoamingSession(
     private var lastDisplayAtNanos = Long.MIN_VALUE
     private var lastPublishAtNanos = Long.MIN_VALUE
     private var running = true
+    private var impactWindowTruncated = false
     private var gatewayStats = RoamingProbeStats()
     private var wanStats = RoamingProbeStats()
     private var wifiStats = RoamingWifiStats()
@@ -173,6 +177,10 @@ internal class RoamingSession(
             wanStats = wanStats.add(value.latencyMs)
         }
         pendingImpactPings.addLast(value)
+        while (pendingImpactPings.size > MAX_PENDING_IMPACT_PINGS) {
+            pendingImpactPings.removeFirst()
+            impactWindowTruncated = true
+        }
     }
 
     private fun flushPendingImpactPings(beforeNanos: Long) {
@@ -257,6 +265,7 @@ internal class RoamingSession(
             gatewayStats = gatewayStats,
             wanStats = wanStats,
             wifiStats = wifiStats,
+            impactWindowTruncated = impactWindowTruncated,
             running = running
         )
     }

@@ -815,6 +815,7 @@ class AppPrefs(context: Context) {
                     networkDisconnectCount = o.optInt("networkDisconnectCount"),
                     wifiGapP95Ms = o.optNullableLong("wifiGapP95Ms"),
                     wifiGapMaxMs = o.optNullableLong("wifiGapMaxMs"),
+                    impactWindowTruncated = o.optBoolean("impactWindowTruncated", false),
                     switches = if (switchArray == null) emptyList() else (0 until switchArray.length()).mapNotNull { idx ->
                         switchArray.optJSONObject(idx)?.let { RoamingSwitchReport.fromJson(it) }
                     },
@@ -5799,7 +5800,8 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             measuredSwitches, pingAttempts, sessionSnapshot.networkEvents,
             sessionSnapshot.wifiGapP95Ms, sessionSnapshot.wifiGapMaxMs,
             sessionSnapshot.wifiSampleCount, sessionSnapshot.gatewayStats,
-            sessionSnapshot.wanStats, sessionSnapshot.wifiStats
+            sessionSnapshot.wanStats, sessionSnapshot.wifiStats,
+            sessionSnapshot.impactWindowTruncated
         )
     }
 
@@ -6256,6 +6258,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                                 RoamingReportLine("BSSID切换观察", "${report.roamCount}次 · 最长窗口${report.longestObservationMs?.let { "${it}ms" } ?: "—"} · 非精确802.11握手耗时")
                                 RoamingReportLine("Ping业务恢复", "网关${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} · 外网${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
                                 RoamingReportLine("全程/漫游窗口丢包", "网关${report.gatewayLossCount}/${report.gatewayRoamLossCount} · 外网${report.wanLossCount}/${report.wanRoamLossCount} · Network断开${report.networkDisconnectCount}")
+                                if (report.impactWindowTruncated) RoamingReportLine("窗口证据", "BSSID 长时间不可用，部分逐包归属已截断")
                                 Text(report.conclusion, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), lineHeight = 16.sp)
                                 Text(if (resultStickyEnabled) "候选 AP：${candidateCacheText.removePrefix("候选 AP：")}" else "候选 AP：未启用；粘 AP 判断未启用", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f), lineHeight = 15.sp)
                             }
@@ -6367,6 +6370,7 @@ data class RoamingReport(
     val networkDisconnectCount: Int = 0,
     val wifiGapP95Ms: Long? = null,
     val wifiGapMaxMs: Long? = null,
+    val impactWindowTruncated: Boolean = false,
     val switches: List<RoamingSwitchReport> = emptyList(),
     val networkEvents: List<String> = emptyList()
 )
@@ -8127,6 +8131,7 @@ fun roamingReportText(report: RoamingReport): String = buildString {
         appendLine("全程 Ping 丢包: 网关 ${report.gatewayLossCount}/${report.gatewayAttemptCount} / 外网 ${report.wanLossCount}/${report.wanAttemptCount}")
         appendLine("漫游窗口丢包: 网关 ${report.gatewayRoamLossCount} / 外网 ${report.wanRoamLossCount}")
         appendLine("Network层断开: ${report.networkDisconnectCount} 次；Wi-Fi采样间隔 P95 ${report.wifiGapP95Ms ?: "--"}ms / 最大 ${report.wifiGapMaxMs ?: "--"}ms")
+        if (report.impactWindowTruncated) appendLine("窗口证据: BSSID 长时间不可用，部分逐包归属已截断")
     } else {
         appendLine("旧版漫游估算: ${report.roamCount} 次，估算中断 ${report.longestBreakMs?.let { "${it}ms" } ?: "--"}，附近丢包 ${report.lossNearRoam}")
     }
@@ -8199,6 +8204,7 @@ fun RoamingReport.toJson(): JSONObject {
         .put("networkDisconnectCount", networkDisconnectCount)
         .put("wifiGapP95Ms", wifiGapP95Ms ?: JSONObject.NULL)
         .put("wifiGapMaxMs", wifiGapMaxMs ?: JSONObject.NULL)
+        .put("impactWindowTruncated", impactWindowTruncated)
         .put("switches", switchArray)
         .put("networkEvents", networkArray)
 }
@@ -8218,7 +8224,8 @@ internal fun buildRoamingReport(
     wifiSampleCount: Int = samples.size,
     gatewayStats: RoamingProbeStats = RoamingProbeStats(),
     wanStats: RoamingProbeStats = RoamingProbeStats(),
-    wifiStats: RoamingWifiStats = RoamingWifiStats()
+    wifiStats: RoamingWifiStats = RoamingWifiStats(),
+    impactWindowTruncated: Boolean = false
 ): RoamingReport {
     val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
     val rssi = samples.map { it.rssi }.filter { it > -120 }
@@ -8306,6 +8313,7 @@ internal fun buildRoamingReport(
         networkDisconnectCount = networkEvents.count { it.kind == "lost" },
         wifiGapP95Ms = wifiGapP95Ms,
         wifiGapMaxMs = wifiGapMaxMs,
+        impactWindowTruncated = impactWindowTruncated,
         switches = switches.map {
             RoamingSwitchReport(
                 oldBssid = it.oldBssid,
@@ -8418,6 +8426,7 @@ fun RoamingReportDetailScreen(report: RoamingReport, onBack: () -> Unit) {
                 RoamingReportLine("全程Ping丢包", "网关${report.gatewayLossCount}/${report.gatewayAttemptCount} · 外网${report.wanLossCount}/${report.wanAttemptCount}")
                 RoamingReportLine("漫游窗口丢包", "网关${report.gatewayRoamLossCount} · 外网${report.wanRoamLossCount}")
                 RoamingReportLine("Network层", "断开${report.networkDisconnectCount}次 · 采样P95 ${report.wifiGapP95Ms ?: "--"}ms / 最大${report.wifiGapMaxMs ?: "--"}ms")
+                if (report.impactWindowTruncated) RoamingReportLine("窗口证据", "BSSID 长时间不可用，部分逐包归属已截断")
             } else {
                 RoamingReportLine("旧版漫游估算", "${report.roamCount}次 · 估算中断${report.longestBreakMs?.let { "${it}ms" } ?: "—"} · 附近丢包${report.lossNearRoam}")
             }
