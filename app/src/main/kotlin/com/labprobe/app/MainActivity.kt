@@ -6041,8 +6041,16 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     } else {
                         val hasPerm = runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
                         if (!hasPerm) {
-                            Toast.makeText(ctx, "请先在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
-                            status = "缺少定位/附近设备权限，无法读取 Wi‑Fi 漫游信息"
+                            val missing = safeMissingWifiRoamingPermissions(ctx)
+                            val activity = ctx.findActivity()
+                            if (missing.isNotEmpty() && activity != null) {
+                                status = "缺少必要权限，已发起定位/附近设备授权"
+                                runCatching { ActivityCompat.requestPermissions(activity, missing, 9902) }
+                                    .onFailure { status = "权限请求启动失败，请到系统设置中授权" }
+                            } else {
+                                Toast.makeText(ctx, "请在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
+                                status = "无法自动请求权限，请到系统设置中授权"
+                            }
                             return@Button
                         }
                         if (!isWifiConnected(ctx)) {
@@ -6057,7 +6065,10 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         val activeCandidateEnabled = stickyEnabled
                         val activeCandidateIntervalMs = candidateScanIntervalMs
                         sessionTargetMode = activeMode
-                        sessionSampleMode = sampleMode
+                        sessionSampleMode = buildString {
+                            append("Ping ${interval}ms · 超时 ${timeout}ms")
+                            if (activeMode != "仅路由器") append(" · WAN ${activeWanTarget}")
+                        }
                         sessionStickyEnabled = stickyEnabled
                         samples = emptyList()
                         sessionSnapshot = RoamingSessionSnapshot(sessionId = startedAtNanos)
@@ -8503,6 +8514,7 @@ private fun candidateDisplayText(current: RoamWifiObservation?, candidate: RoamC
 
 private fun roamImpactText(impact: com.labprobe.app.roaming.RoamTargetImpact): String = when (impact.state) {
     RoamImpactState.NOT_MONITORED -> "未监测"
+    RoamImpactState.INSUFFICIENT_EVIDENCE -> "证据不足"
     RoamImpactState.NO_OUTAGE_OBSERVED -> "未观察到中断"
     RoamImpactState.PENDING -> "等待恢复"
     RoamImpactState.RECOVERED -> "恢复${impact.recoveryAfterNewBssidMs ?: 0}ms/丢包${impact.lossCount}"
@@ -8524,6 +8536,7 @@ private fun roamingRecoverySummary(report: RoamingReport, target: RoamProbeTarge
     if (states.any { it == RoamImpactState.PENDING.name }) return "等待恢复"
     val recovery = if (target == RoamProbeTarget.GATEWAY) report.gatewayRecoveryMaxMs else report.wanRecoveryMaxMs
     if (states.any { it == RoamImpactState.RECOVERED.name }) return recovery?.let { "最长${it}ms" } ?: "已恢复"
+    if (states.any { it == RoamImpactState.INSUFFICIENT_EVIDENCE.name }) return "证据不足"
     if (states.any { it == RoamImpactState.NO_OUTAGE_OBSERVED.name }) return "未观察到中断"
     return "未监测"
 }

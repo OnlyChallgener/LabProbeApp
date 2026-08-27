@@ -102,7 +102,7 @@ class RoamingProductionTest {
         assertEquals(RoamImpactState.RECOVERED, result.gatewayImpact.state)
         assertEquals(1, result.gatewayImpact.lossCount)
         assertEquals(830L, result.gatewayImpact.recoveryAfterNewBssidMs)
-        assertEquals(RoamImpactState.NO_OUTAGE_OBSERVED, result.wanImpact.state)
+        assertEquals(RoamImpactState.INSUFFICIENT_EVIDENCE, result.wanImpact.state)
         assertEquals(0, result.wanImpact.lossCount)
         assertNull(result.wanImpact.recoveryAfterNewBssidMs)
     }
@@ -187,6 +187,37 @@ class RoamingProductionTest {
         assertEquals(6_001, snapshot.wanStats.attemptedCount)
         assertEquals(6_001, snapshot.wanStats.successCount)
         assertEquals(6_000, snapshot.pingAttempts.size)
+    }
+
+    @Test
+    fun `full session gap maximum survives more than legacy window`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(0, "aa:aa:aa:aa:aa:aa")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(5_000, "aa:aa:aa:aa:aa:aa")))
+        repeat(2_100) { index ->
+            session.trySend(RoamingSessionInput.Wifi(1L, wifi(5_050L + index * 50L, "aa:aa:aa:aa:aa:aa")))
+        }
+
+        val snapshot = session.finish()
+
+        assertEquals(50L, snapshot.wifiGapP95Ms)
+        assertEquals(5_000L, snapshot.wifiGapMaxMs)
+    }
+
+    @Test
+    fun `unrecovered switch loss exceeds bounded ping chart buffer`() = runBlocking {
+        val session = RoamingSession(sessionId = 1L, publishIntervalNanos = Long.MAX_VALUE)
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(0, "aa:aa:aa:aa:aa:aa")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(50, "b0:b0:b0:b0:b0:b0")))
+        session.trySend(RoamingSessionInput.Wifi(1L, wifi(100, "b0:b0:b0:b0:b0:b0")))
+        repeat(6_001) { index ->
+            session.trySend(RoamingSessionInput.Ping(1L, ping(RoamProbeTarget.GATEWAY, 110L + index, 111L + index, null)))
+        }
+
+        val snapshot = session.finish()
+
+        assertEquals(RoamImpactState.UNRECOVERED, snapshot.switches.single().gatewayImpact.state)
+        assertEquals(6_001, snapshot.switches.single().gatewayImpact.lossCount)
     }
 
     @Test

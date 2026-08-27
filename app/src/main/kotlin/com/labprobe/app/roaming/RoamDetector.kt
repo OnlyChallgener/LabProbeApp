@@ -67,7 +67,7 @@ internal data class RoamPingAttempt(
     val failureReason: String? = null
 )
 
-internal enum class RoamImpactState { NOT_MONITORED, NO_OUTAGE_OBSERVED, PENDING, RECOVERED, UNRECOVERED }
+internal enum class RoamImpactState { NOT_MONITORED, INSUFFICIENT_EVIDENCE, NO_OUTAGE_OBSERVED, PENDING, RECOVERED, UNRECOVERED }
 
 internal data class RoamTargetImpact(
     val state: RoamImpactState = RoamImpactState.NOT_MONITORED,
@@ -188,7 +188,9 @@ internal fun attachProbeImpacts(
         val attemptedCount = maxOf(previous.attemptedCount, scoped.size)
         if (losses == 0) {
             return RoamTargetImpact(
-                state = if (firstSuccess != null || closed) RoamImpactState.NO_OUTAGE_OBSERVED else RoamImpactState.PENDING,
+                state = if (firstSuccess != null) RoamImpactState.NO_OUTAGE_OBSERVED
+                    else if (closed) RoamImpactState.INSUFFICIENT_EVIDENCE
+                    else RoamImpactState.PENDING,
                 attemptedCount = attemptedCount,
                 lossCount = 0
             )

@@ -132,6 +132,7 @@ private fun PingStyleRoamChart(
     val scheme = MaterialTheme.colorScheme
     val combinedValues = remember(values, secondaryValues) { values + secondaryValues }
     val validValues = remember(combinedValues) { combinedValues.mapNotNull { it.value } }
+    val hasObservedLoss = remember(combinedValues) { combinedValues.any { it.isLoss } }
     val axisValues = remember(combinedValues) { combinedValues.takeLast(360).mapNotNull { it.value }.ifEmpty { validValues } }
     val range = remember(axisValues, defaultRange, floor) { roamNiceRange(axisValues, defaultRange, floor) }
     val yMin = range.first
@@ -178,7 +179,7 @@ private fun PingStyleRoamChart(
                 )
                 if (validValues.isEmpty()) {
                     Text(
-                        emptyText,
+                        if (hasObservedLoss) "已探测：100%丢包，无 RTT" else emptyText,
                         modifier = Modifier.align(Alignment.Center),
                         color = scheme.onSurface.copy(alpha=.40f),
                         fontWeight = FontWeight.Bold,

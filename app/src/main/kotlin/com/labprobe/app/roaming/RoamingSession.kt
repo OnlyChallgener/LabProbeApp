@@ -81,7 +81,9 @@ internal class RoamingSession(
     private val pings = ArrayDeque<RoamPingAttempt>()
     private val switches = mutableListOf<BssidSwitchEvent>()
     private val networkEvents = ArrayDeque<RoamingNetworkLayerEvent>()
-    private val recentGaps = ArrayDeque<Long>()
+    private val wifiGapHistogram = java.util.TreeMap<Long, Long>()
+    private var wifiGapCount = 0L
+    private var wifiGapMaxMs: Long? = null
     private var latestWifi: RoamWifiObservation? = null
     private var previousWifiNanos: Long? = null
     private var wifiSampleCount = 0
@@ -100,22 +102,15 @@ internal class RoamingSession(
                 if (event.sessionId != sessionId) continue
                 when (event) {
                     is RoamingSessionInput.Wifi -> reduceWifi(event.value)
-                    is RoamingSessionInput.Ping -> {
-                        pings.addLast(event.value)
-                        while (pings.size > 6_000) pings.removeFirst()
-                        if (event.value.attempted) {
-                            if (event.value.target == RoamProbeTarget.GATEWAY) {
-                                gatewayStats = gatewayStats.add(event.value.latencyMs)
-                            } else {
-                                wanStats = wanStats.add(event.value.latencyMs)
-                            }
-                        }
-                    }
+                    is RoamingSessionInput.Ping -> reducePing(event.value)
                     is RoamingSessionInput.Network -> {
                         if (networkEvents.lastOrNull()?.label != event.value.label) networkEvents.addLast(event.value)
                         while (networkEvents.size > 80) networkEvents.removeFirst()
                     }
-                    is RoamingSessionInput.Finish -> running = false
+                    is RoamingSessionInput.Finish -> {
+                        running = false
+                        closeLastSwitch()
+                    }
                 }
                 val now = when (event) {
                     is RoamingSessionInput.Wifi -> event.value.observedAtNanos
@@ -134,8 +129,10 @@ internal class RoamingSession(
     private fun reduceWifi(value: RoamWifiObservation) {
         wifiSampleCount += 1
         previousWifiNanos?.let { previous ->
-            recentGaps.addLast((value.observedAtNanos - previous).coerceAtLeast(0L))
-            while (recentGaps.size > 2_048) recentGaps.removeFirst()
+            val gapMs = ((value.observedAtNanos - previous).coerceAtLeast(0L) / 1_000_000L)
+            wifiGapHistogram[gapMs] = (wifiGapHistogram[gapMs] ?: 0L) + 1L
+            wifiGapCount += 1L
+            wifiGapMaxMs = maxOf(wifiGapMaxMs ?: gapMs, gapMs)
         }
         previousWifiNanos = value.observedAtNanos
         latestWifi?.let { previous ->
@@ -146,13 +143,8 @@ internal class RoamingSession(
         wifiStats = wifiStats.add(value)
         val switch = detector.observe(value)
         if (switch != null) {
-            if (switches.isNotEmpty()) {
-                val finalized = attachProbeImpacts(listOf(switches.last(), switch), pings.toList(), final = false)
-                switches[switches.lastIndex] = finalized.first()
-                switches += finalized.last()
-            } else {
-                switches += switch
-            }
+            closeLastSwitch()
+            switches += attachProbeImpacts(listOf(switch), pings.toList(), final = false).single()
         }
         val shouldDisplay = lastDisplayAtNanos == Long.MIN_VALUE || value.observedAtNanos - lastDisplayAtNanos >= publishIntervalNanos || switch != null
         if (shouldDisplay) {
@@ -162,19 +154,71 @@ internal class RoamingSession(
         }
     }
 
+    private fun reducePing(value: RoamPingAttempt) {
+        pings.addLast(value)
+        while (pings.size > 6_000) pings.removeFirst()
+        if (!value.attempted) return
+        if (value.target == RoamProbeTarget.GATEWAY) {
+            gatewayStats = gatewayStats.add(value.latencyMs)
+        } else {
+            wanStats = wanStats.add(value.latencyMs)
+        }
+        val index = switches.indexOfLast { value.startedAtNanos >= it.oldObservedAtNanos }
+        if (index < 0) return
+        val boundary = switches.getOrNull(index + 1)?.oldObservedAtNanos ?: Long.MAX_VALUE
+        if (value.startedAtNanos >= boundary) return
+        val closed = boundary != Long.MAX_VALUE || !running
+        val event = switches[index]
+        val current = if (value.target == RoamProbeTarget.GATEWAY) event.gatewayImpact else event.wanImpact
+        val attemptedCount = current.attemptedCount + 1
+        val updated = when {
+            value.startedAtNanos < event.newObservedAtNanos -> current.copy(
+                state = if (value.latencyMs == null && closed) RoamImpactState.UNRECOVERED
+                    else if (current.state == RoamImpactState.NOT_MONITORED) RoamImpactState.PENDING
+                    else current.state,
+                attemptedCount = attemptedCount,
+                lossCount = current.lossCount + if (value.latencyMs == null && current.recoveryAfterNewBssidMs == null) 1 else 0
+            )
+            value.latencyMs != null && value.completedAtNanos < boundary && current.recoveryAfterNewBssidMs == null -> current.copy(
+                state = if (current.lossCount > 0) RoamImpactState.RECOVERED else RoamImpactState.NO_OUTAGE_OBSERVED,
+                attemptedCount = attemptedCount,
+                recoveryAfterNewBssidMs = if (current.lossCount > 0) {
+                    ((value.completedAtNanos - event.newObservedAtNanos) / 1_000_000L).coerceAtLeast(0L)
+                } else null
+            )
+            value.latencyMs == null && current.recoveryAfterNewBssidMs == null && current.state != RoamImpactState.NO_OUTAGE_OBSERVED -> current.copy(
+                state = if (closed) RoamImpactState.UNRECOVERED else RoamImpactState.PENDING,
+                attemptedCount = attemptedCount,
+                lossCount = current.lossCount + 1
+            )
+            else -> current.copy(attemptedCount = attemptedCount)
+        }
+        switches[index] = if (value.target == RoamProbeTarget.GATEWAY) event.copy(gatewayImpact = updated) else event.copy(wanImpact = updated)
+    }
+
+    private fun closeLastSwitch() {
+        if (switches.isEmpty()) return
+        fun close(impact: RoamTargetImpact): RoamTargetImpact {
+            if (impact.state != RoamImpactState.PENDING) return impact
+            return impact.copy(
+                state = when {
+                    impact.lossCount > 0 -> RoamImpactState.UNRECOVERED
+                    impact.attemptedCount > 0 -> RoamImpactState.INSUFFICIENT_EVIDENCE
+                    else -> RoamImpactState.NOT_MONITORED
+                }
+            )
+        }
+        val event = switches.last()
+        switches[switches.lastIndex] = event.copy(
+            gatewayImpact = close(event.gatewayImpact),
+            wanImpact = close(event.wanImpact)
+        )
+    }
+
     private fun publish(now: Long) {
         lastPublishAtNanos = now
-        val gaps = recentGaps.toList()
         val pingSnapshot = pings.toList()
-        val impactedSwitches = if (switches.isEmpty()) {
-            emptyList()
-        } else {
-            switches.dropLast(1) + attachProbeImpacts(listOf(switches.last()), pingSnapshot, final = !running).single()
-        }
-        if (impactedSwitches.isNotEmpty()) {
-            switches.clear()
-            switches.addAll(impactedSwitches)
-        }
+        val impactedSwitches = switches.toList()
         _snapshot.value = RoamingSessionSnapshot(
             sessionId = sessionId,
             latestWifi = latestWifi,
@@ -183,8 +227,8 @@ internal class RoamingSession(
             switches = impactedSwitches,
             networkEvents = networkEvents.toList(),
             wifiSampleCount = wifiSampleCount,
-            wifiGapP95Ms = percentile95Ms(gaps),
-            wifiGapMaxMs = gaps.maxOrNull()?.div(1_000_000L),
+            wifiGapP95Ms = wifiGapP95Ms(),
+            wifiGapMaxMs = wifiGapMaxMs,
             gatewayStats = gatewayStats,
             wanStats = wanStats,
             wifiStats = wifiStats,
@@ -204,6 +248,17 @@ internal class RoamingSession(
     fun cancel() {
         input.close()
         scope.cancel()
+    }
+
+    private fun wifiGapP95Ms(): Long? {
+        if (wifiGapCount <= 0L) return null
+        val targetRank = (wifiGapCount * 95L + 99L) / 100L
+        var cumulative = 0L
+        for ((gapMs, count) in wifiGapHistogram) {
+            cumulative += count
+            if (cumulative >= targetRank) return gapMs
+        }
+        return wifiGapMaxMs
     }
 }
 
