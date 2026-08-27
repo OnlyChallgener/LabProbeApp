@@ -201,11 +201,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 界面滑动与切换极致流畅优化" to listOf(
-                "全量将呼吸灯光晕改造为纯 GPU Draw 阶段独立渲染，彻底消除 120 FPS 冗余重组",
-                "卡片阴影采用硬件加速管线（HWUI），大幅降低滑动过程中的 GPU 合成开销",
-                "页面滑动背景渐变与首屏计算内存级缓存，根除主线程 IO 阻塞与微卡顿",
-                "保留所有卡片、磁贴与功能入口原始设计不变"
+            "v$NAME build$CODE · 路由器配置与 Relay 链路稳定性增强" to listOf(
+                "修复路由器管理配置保存与宽容凭证读取，消除非 BE72 硬件或不同固件下的登录误判",
+                "修复 Relay 端口映射在自定义路由名称下的指令路由与状态同步，恢复启停与实时控制",
+                "优化设置页面输入草稿保护与服务端报错信息穿透透传",
+                "保持既有 UI 视觉与 120 FPS 流畅渲染管线不变"
             )
         )
 }
@@ -10425,6 +10425,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
     var routerPasswordConfigured by remember { mutableStateOf(false) }
     var routerConfigLoading by remember { mutableStateOf(false) }
     var routerConfigSaving by remember { mutableStateOf(false) }
+    var userEditedRouter by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
     val settingsMint = Color(0xFF10A9C8)
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
@@ -10432,8 +10433,12 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
         routerConfigLoading = true
         runCatching { HubApi(prefs).getRouterConfig() }.onSuccess { config ->
-            routerName = config.name; routerUsername = config.username; routerAddress = config.address
-            routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
+            if (!userEditedRouter) {
+                if (config.name.isNotBlank() || routerName.isBlank()) routerName = config.name
+                if (config.username.isNotBlank() || routerUsername.isBlank()) routerUsername = config.username
+                if (config.address.isNotBlank() || routerAddress.isBlank()) routerAddress = config.address
+                routerPasswordConfigured = config.passwordConfigured
+            }
         }.onFailure { msg = "路由器配置读取失败：${uiMessageZh(it.message.orEmpty())}" }
         routerConfigLoading = false
     }
@@ -10463,11 +10468,11 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
             }
         }
         Text("路由器配置", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
-        LabeledInput("名称", "例如：BE72", routerName, { routerName = it })
-        LabeledInput("管理地址", "例如：http://192.168.5.1", routerAddress, { routerAddress = it })
+        LabeledInput("名称", "例如：BE72", routerName, { routerName = it; userEditedRouter = true })
+        LabeledInput("管理地址", "例如：http://192.168.5.1", routerAddress, { routerAddress = it; userEditedRouter = true })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) { LabeledInput("账号", "路由器管理账号", routerUsername, { routerUsername = it }) }
-            Column(Modifier.weight(1f)) { LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, { routerPassword = it }, password = true) }
+            Column(Modifier.weight(1f)) { LabeledInput("账号", "路由器管理账号", routerUsername, { routerUsername = it; userEditedRouter = true }) }
+            Column(Modifier.weight(1f)) { LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, { routerPassword = it; userEditedRouter = true }, password = true) }
         }
         if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
         val liveConnectionMessage = when (val realtime = state.mqttState) {
@@ -10504,6 +10509,7 @@ fun SettingsScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto
                     routerConfigSaving = true
                     runCatching { HubApi(prefs).putRouterConfig(RouterConfigUpdate(routerName.trim(), routerUsername.trim(), routerAddress.trim(), routerPassword.trim().takeIf { it.isNotBlank() })) }
                         .onSuccess { config ->
+                            userEditedRouter = false
                             routerName = config.name; routerUsername = config.username; routerAddress = config.address
                             routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
                             prefs.routerDisplayName = config.name; prefs.routerLanUrl = config.address
@@ -10742,7 +10748,11 @@ class HubApi(private val prefs: AppPrefs) {
                 throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
             }
             if (!response.isSuccessful) {
-                if (request.url.encodedPath.contains("/api/router/")) {
+                val serverMsg = runCatching { JSONObject(text).optString("message") }.getOrNull()?.takeIf { it.isNotBlank() }
+                if (serverMsg != null) {
+                    throw HubHttpException(response.code, serverMsg)
+                }
+                if (request.url.encodedPath.contains("/api/router/") && !request.url.encodedPath.contains("/config")) {
                     throw RouterStatusUnavailableException()
                 }
                 throw HubHttpException(response.code, "HTTP ${response.code}: $text")
