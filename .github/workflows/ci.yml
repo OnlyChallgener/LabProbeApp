@@ -63,9 +63,9 @@ jobs:
           fi
 
           WORKFLOWS=$(find .github/workflows -maxdepth 1 -type f -name '*.yml' -printf '%f\n' | sort)
-          EXPECTED_WORKFLOWS=$(printf '%s\n' android-release.yml ci.yml)
+          EXPECTED_WORKFLOWS=$(printf '%s\n' android-release.yml ci.yml test-bundle.yml)
           if [ "$WORKFLOWS" != "$EXPECTED_WORKFLOWS" ]; then
-            echo "Only CI and Android Release workflows are allowed." >&2
+            echo "Only CI, Android Release and Test Bundle workflows are allowed." >&2
             printf '%s\n' "$WORKFLOWS" >&2
             exit 1
           fi
