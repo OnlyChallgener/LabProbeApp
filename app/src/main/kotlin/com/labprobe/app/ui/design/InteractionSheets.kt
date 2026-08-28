@@ -210,7 +210,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
         }
         if (profile.wolCandidate || wolManaged) {
             LabSection("能力") {
-                LabInfoRow("WOL", if (wolManaged) "已加入管理" else "可加入管理", copyable = false, accent = Color(0xFF8B5CF6))
+                LabInfoRow("WOL", if (wolManaged) "已加入管理" else "可加入管理", copyable = false, accent = Color(0xFF0EA5E9))
                 LabInfoRow("关机", "未配置", copyable = false, accent = Color(0xFF64748B))
                 LabInfoRow("重启", "未配置", copyable = false, accent = Color(0xFF64748B))
             }

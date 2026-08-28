@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Refresh
@@ -54,14 +56,26 @@ fun Dhcpv6ClientScreen(viewModel: Ipv6ViewModel, onBack: () -> Unit) {
         onBack = onBack,
         compactHeader = true,
         unifiedTypography = true,
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            LabActionChip(
-                text = if (state.loading) "刷新中" else "刷新",
-                color = LabV2.Cyan,
+        action = {
+            Surface(
                 onClick = { viewModel.loadClients(force = true) },
-            )
-        }
+                enabled = !state.loading,
+                modifier = Modifier.size(36.dp),
+                shape = CircleShape,
+                color = LabV2.Field,
+                border = BorderStroke(1.dp, LabV2.Border)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (state.loading) {
+                        CircularProgressIndicator(Modifier.size(16.dp), color = LabV2.Primary, strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(19.dp), tint = LabV2.Primary)
+                    }
+                }
+            }
+        },
+    ) {
+
 
         if (state.loading && !state.loaded) {
             Surface(

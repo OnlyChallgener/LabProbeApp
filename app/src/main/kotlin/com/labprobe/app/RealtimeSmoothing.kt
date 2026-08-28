@@ -32,6 +32,9 @@ class RealtimeDisplaySmoother {
         val cpuPercent: Double = 0.0,
         val memoryPercent: Double = 0.0,
         val temperatureC: Double = 0.0,
+        val temperature2gC: Double = 0.0,
+        val temperature5gC: Double = 0.0,
+        val storagePercent: Double = -1.0,
     )
 
     private data class RouterDiscrete(
@@ -105,6 +108,9 @@ class RealtimeDisplaySmoother {
             cpuPercent = payload.optDouble("cpuPercent", 0.0).coerceAtLeast(0.0),
             memoryPercent = payload.optDouble("memoryPercent", 0.0).coerceAtLeast(0.0),
             temperatureC = payload.optDouble("temperatureC", 0.0),
+            temperature2gC = payload.optDouble("temperature2gC", routerTarget.temperature2gC),
+            temperature5gC = payload.optDouble("temperature5gC", routerTarget.temperature5gC),
+            storagePercent = payload.optDouble("storagePercent", routerTarget.storagePercent),
         )
         if (!routerInitialized) {
             routerDisplayed = target
@@ -189,6 +195,13 @@ class RealtimeDisplaySmoother {
                 cpuPercent = blend(routerDisplayed.cpuPercent, routerTarget.cpuPercent, SLOW_METRIC_WEIGHT),
                 memoryPercent = blend(routerDisplayed.memoryPercent, routerTarget.memoryPercent, SLOW_METRIC_WEIGHT),
                 temperatureC = blend(routerDisplayed.temperatureC, routerTarget.temperatureC, SLOW_METRIC_WEIGHT),
+                temperature2gC = blend(routerDisplayed.temperature2gC, routerTarget.temperature2gC, SLOW_METRIC_WEIGHT),
+                temperature5gC = blend(routerDisplayed.temperature5gC, routerTarget.temperature5gC, SLOW_METRIC_WEIGHT),
+                storagePercent = if (routerTarget.storagePercent < 0.0) routerDisplayed.storagePercent else blend(
+                    routerDisplayed.storagePercent.coerceAtLeast(0.0),
+                    routerTarget.storagePercent,
+                    SLOW_METRIC_WEIGHT,
+                ),
             )
             routerDirty = false
         }
@@ -198,6 +211,9 @@ class RealtimeDisplaySmoother {
             cpuPercent = roundedTenth(routerDisplayed.cpuPercent),
             memoryPercent = roundedTenth(routerDisplayed.memoryPercent),
             temperatureC = roundedTenth(routerDisplayed.temperatureC),
+            temperature2gC = roundedTenth(routerDisplayed.temperature2gC),
+            temperature5gC = roundedTenth(routerDisplayed.temperature5gC),
+            storagePercent = if (routerDisplayed.storagePercent < 0.0) -1.0 else roundedTenth(routerDisplayed.storagePercent),
         )
         val discrete = devicesOnlineCount?.let { routerDiscrete.copy(onlineDeviceCount = it) } ?: routerDiscrete
         val key = RouterRenderKey(rounded, discrete, routerSampleEpochMs, stale)
@@ -213,6 +229,9 @@ class RealtimeDisplaySmoother {
             .put("cpuPercent", rounded.cpuPercent)
             .put("memoryPercent", rounded.memoryPercent)
             .put("temperatureC", rounded.temperatureC)
+            .put("temperature2gC", rounded.temperature2gC)
+            .put("temperature5gC", rounded.temperature5gC)
+            .put("storagePercent", rounded.storagePercent)
             .put("totalUploadBytes", discrete.totalUploadBytes)
             .put("totalDownloadBytes", discrete.totalDownloadBytes)
             .put("uptimeSeconds", discrete.uptimeSeconds)
@@ -312,8 +331,8 @@ class RealtimeDisplaySmoother {
         val high = max(previous, target)
         val ratio = high / low
         val weight = when {
-            ratio >= 8.0 -> 0.88
-            ratio >= 3.0 -> 0.80
+            ratio >= 8.0 -> 0.75
+            ratio >= 3.0 -> 0.68
             abs(target - previous) < 512.0 -> 0.58
             else -> baseWeight
         }

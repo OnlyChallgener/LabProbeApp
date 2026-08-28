@@ -695,14 +695,14 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         if (result.log.isNotBlank()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 14.sp)
+                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 13.sp)
                 SelectionContainer {
                     Text(
                         natLogZh(result.log),
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.sp,
                         fontWeight = FontWeight.Normal,
                         color = NativeInk
                     )
@@ -714,35 +714,49 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
             NativeCard {
                 NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber, FontWeight.SemiBold)
                 history.forEachIndexed { index, item ->
-                    Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            if (item.mode == "5780") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                if (item.mode == "5780") {
+                                    listOf(
+                                        natMappingBehaviorZh(item.mappingBehavior),
+                                        natFilteringBehaviorZh(item.filteringBehavior)
+                                    ).filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
+                                } else natTypeZh(item.natType),
+                                fontSize = LabTypography.Body.fontSize,
+                                lineHeight = LabTypography.Body.lineHeight,
+                                fontWeight = FontWeight.Bold,
+                                color = NativeInk,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
                                 listOf(
-                                    natMappingBehaviorZh(item.mappingBehavior),
-                                    natFilteringBehaviorZh(item.filteringBehavior)
-                                ).filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
-                            } else natTypeZh(item.natType),
-                            fontSize = LabTypography.Body.fontSize,
-                            lineHeight = LabTypography.Body.lineHeight,
-                            fontWeight = FontWeight.SemiBold,
-                            color = NativeInk,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            listOf(
-                                item.externalAddress,
-                                if (item.mode == "5780") "RFC5780" else "RFC3489",
-                                item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
-                            ).filter(String::isNotBlank).joinToString(" · "),
-                            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Normal)
-                        )
+                                    item.externalAddress,
+                                    if (item.mode == "5780") "RFC5780" else "RFC3489",
+                                    item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
+                                ).filter(String::isNotBlank).joinToString(" · "),
+                                style = LabTypography.Caption.copy(color = NativeMuted, fontWeight = FontWeight.SemiBold)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                history = deleteNatHistory(context, item)
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Rounded.DeleteOutline, "删除检测记录", Modifier.size(18.dp), tint = NativeMuted)
+                        }
                     }
                     if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)
                 }
             }
         }
     }
+
 }
 
 
@@ -1004,12 +1018,12 @@ private fun NativeAnalysisValueRow(label: String, value: String) {
         Text(
             label,
             Modifier.width(78.dp),
-            style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.Medium)
+            style = LabTypography.Supporting.copy(color = NativeMuted, fontWeight = FontWeight.SemiBold)
         )
         Text(
             value,
             Modifier.weight(1f),
-            style = LabTypography.Body.copy(color = NativeInk, fontWeight = FontWeight.Medium),
+            style = LabTypography.Supporting.copy(fontSize = 12.sp, lineHeight = 16.sp, color = NativeInk, fontWeight = FontWeight.SemiBold),
             maxLines = 3,
             overflow = TextOverflow.Clip
         )
@@ -1099,6 +1113,12 @@ private fun saveNatHistory(context: Context, result: RouterNatResult): List<Rout
     )
     if (!normalizedResult.hasHistoryResult()) return loadNatHistory(context)
     val next = normalizeNatHistory(listOf(normalizedResult) + loadNatHistory(context))
+    persistNatHistory(context, next)
+    return next
+}
+
+private fun deleteNatHistory(context: Context, target: RouterNatResult): List<RouterNatResult> {
+    val next = loadNatHistory(context).filterNot { it.historyKey() == target.historyKey() }
     persistNatHistory(context, next)
     return next
 }

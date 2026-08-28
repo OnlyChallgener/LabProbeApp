@@ -29,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
@@ -63,8 +64,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
-private val RouterBlue = Color(0xFF2E6BE6)
-private val RouterCyan = Color(0xFF0AA6C7)
+private val RouterBlue = Color(0xFF0284C7)
+private val RouterCyan = Color(0xFF0EA5E9)
 private val RouterGreen = Color(0xFF16A36A)
 private val RouterAmber = Color(0xFFF59E0B)
 private val RouterRed = Color(0xFFE94B55)
@@ -72,7 +73,7 @@ private val RouterInk = Color(0xFF17233A)
 private val RouterMuted = Color(0xFF687890)
 private val RouterField = Color(0xFFFBFDFF)
 private val RouterBorder = Color(0xFFD9E8F7)
-private val RouterPage = Color(0xFFF2F8FF)
+private val RouterPage = Color(0xFFF8FBFF)
 
 private const val ROUTER_DIAGNOSTIC_CACHE_PREF = "router_diagnostic_cache_v1"
 
@@ -182,7 +183,7 @@ enum class RouterGlyph { Mapping, Ddns, Firewall, Diagnostic, Upnp, Port, Connec
 @Composable
 private fun RouterFeatureCard(title: String, status: String, accent: Color, glyph: RouterGlyph, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.width(104.dp).height(72.dp).clickable(onClick = onClick),
+        modifier = Modifier.width(104.dp).height(72.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
         shape = LabCoreSurface.CompactShape,
         color = LabCoreSurface.Card,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
@@ -355,14 +356,30 @@ private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
 @Composable
 private fun NativePortMappingPage(prefs: AppPrefs) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val resource by repository.portMappings.collectAsState()
     val rules = resource.value.orEmpty()
     val scope = repository.commandScope
+    var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
+    var devicesLoading by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<NativePortMapRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<NativePortMapRule?>(null) }
     val error = actionError.ifBlank { resource.error }
+
+    suspend fun refreshDevices(force: Boolean = false): List<DeviceItem> {
+        if (devices.isNotEmpty() && !force) return devices
+        devicesLoading = true
+        return runCatching { loadCanonicalPortMappingDevices(deviceApi, forceRefresh = force) }
+            .getOrElse { devices }
+            .also {
+                if (it.isNotEmpty()) devices = it
+                devicesLoading = false
+            }
+    }
+
+    LaunchedEffect(Unit) { refreshDevices() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -392,6 +409,9 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
         NativePortEditorSheet(
             initial = editing ?: NativePortMapRule(),
             existingNames = rules.map { it.ruleName }.toSet(),
+            devices = devices,
+            devicesLoading = devicesLoading,
+            refreshDevices = { refreshDevices(force = true) },
             onDismiss = { adding = false; editing = null },
             onSave = { saved ->
                 scope.launch {
@@ -482,9 +502,19 @@ private fun NativePortRouteSummary(rule: NativePortMapRule) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set<String>, onDismiss: () -> Unit, onSave: (NativePortMapRule) -> Unit) {
+private fun NativePortEditorSheet(
+    initial: NativePortMapRule,
+    existingNames: Set<String>,
+    devices: List<DeviceItem>,
+    devicesLoading: Boolean,
+    refreshDevices: suspend () -> List<DeviceItem>,
+    onDismiss: () -> Unit,
+    onSave: (NativePortMapRule) -> Unit,
+) {
     var draft by remember(initial) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
+    var showDevicePicker by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -512,7 +542,21 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
                 CompactField("外部端口", draft.srcPort, "80 或 1000-2000", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(srcPort = it.take(32)) }
                 CompactField("内部端口", draft.destPort, "80", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destPort = it.take(32)) }
             }
-            CompactField("内部设备 / IP", draft.destIp, "192.168.5.46", keyboardType = KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
+                CompactField("内部设备 / IP", draft.destIp, "192.168.5.46", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
+                OutlinedButton(
+                    onClick = { showDevicePicker = true },
+                    modifier = Modifier.height(50.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    contentPadding = PaddingValues(horizontal = 11.dp),
+                    border = BorderStroke(1.dp, RouterBlue.copy(alpha = .35f)),
+                ) {
+                    Icon(Icons.Rounded.Devices, "选择终端", Modifier.size(17.dp), tint = RouterBlue)
+                    Spacer(Modifier.width(4.dp))
+                    Text("选择", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterBlue)
+                }
+            }
+            Text("可手动填写地址，也可从终端列表关联路由器内网设备。", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
             AnimatedVisibility(draft.srcIp.isNotBlank() || draft.src.isBlank()) {
                 CompactField("允许来源IP", draft.srcIp, "例如 10.0.0.8", keyboardType = KeyboardType.Ascii) { draft = draft.copy(src = "", srcIp = it.take(64)) }
             }
@@ -537,6 +581,96 @@ private fun NativePortEditorSheet(initial: NativePortMapRule, existingNames: Set
                 ) { Text("保存并同步", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
             }
             Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+
+    if (showDevicePicker) {
+        NativePortDevicePickerDialog(
+            devices = devices,
+            loading = devicesLoading,
+            selectedIp = draft.destIp,
+            onRefresh = {
+                scope.launch { refreshDevices() }
+            },
+            onDismiss = { showDevicePicker = false },
+            onPick = { device ->
+                draft = draft.copy(destIp = device.ip)
+                showDevicePicker = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun NativePortDevicePickerDialog(
+    devices: List<DeviceItem>,
+    loading: Boolean,
+    selectedIp: String,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+    onPick: (DeviceItem) -> Unit,
+) {
+    val rows = remember(devices) {
+        devices.filter { it.ip.isNotBlank() && isDeviceUsableForPublicEndpoint(it) }
+            .sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.ifBlank { it.hostName }.lowercase(Locale.ROOT) })
+    }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
+            shape = RoundedCornerShape(26.dp),
+            color = Color.White,
+            shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("选择目标设备", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.Bold, color = RouterInk)
+                        Text("仅展示适合原生端口映射的设备", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                    }
+                    TextButton(onClick = onRefresh, enabled = !loading) {
+                        Text(if (loading) "读取中" else "刷新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = RouterBlue)
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(19.dp)) }
+                }
+                if (rows.isEmpty()) {
+                    CompactEmpty("暂无可关联设备", "请先在设备页为终端设置名称，或直接手动填写 IP", RouterGlyph.Port) { onRefresh() }
+                } else {
+                    LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+                        items(rows, key = { it.mac.ifBlank { it.ip } }) { device ->
+                            val title = device.remark.ifBlank { device.name }.ifBlank { device.hostName }.ifBlank { "未命名设备" }
+                            val profile = inferDeviceProfile(device)
+                            val isSelected = device.ip == selectedIp
+                            Surface(
+                                onClick = { onPick(device) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(15.dp),
+                                color = if (isSelected) RouterBlue.copy(alpha = .10f) else LabCoreSurface.Inner,
+                                border = BorderStroke(1.dp, if (isSelected) RouterBlue.copy(alpha = .35f) else LabCoreSurface.Border),
+                            ) {
+                                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 36)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        val subtitle = buildString {
+                                            append(if (device.online) "在线" else "离线")
+                                            append(" · ")
+                                            append(device.ip)
+                                            if (device.mac.isNotBlank()) {
+                                                append(" · ")
+                                                append(device.mac)
+                                            }
+                                        }
+                                        Text(subtitle, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = if (device.online) RouterGreen else RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (isSelected) Icon(Icons.Rounded.Check, "已选择", Modifier.size(18.dp), tint = RouterBlue)
+                                }
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("取消", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Bold, color = RouterBlue) }
             }
         }
     }
@@ -627,8 +761,10 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val resource by repository.firewall.collectAsState()
     val automationResource by automationRepository.state.collectAsState()
     val state = resource.value ?: FirewallState()
-    val scope = repository.commandScope
-    var direction by remember { mutableStateOf("forward") }
+    val scope = rememberCoroutineScope()
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
+    val directions = listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站")
+    val currentDirection = directions[pagerState.currentPage].first
     var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<FirewallRule?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -637,8 +773,8 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var followTargets by remember { mutableStateOf(FirewallAutomationTargets()) }
     var followTargetsLoading by remember { mutableStateOf(false) }
     val bindings = automationResource.bindings.associateBy { it.firewallUuid }
-    val visible = state.rules.filter { it.direction == direction }
     val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
+
 
     LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
     LaunchedEffect(followRule?.uuid) {
@@ -692,7 +828,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     if (adding || editing != null) {
         FirewallEditorPage(
-            initial = editing ?: FirewallRule(direction = direction, inIface = if (direction == "outbound") "" else "wan", outIface = if (direction == "inbound") "" else "lan"),
+            initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else "wan", outIface = if (currentDirection == "inbound") "" else "lan"),
             managedByMapping = editing?.let { bindings.containsKey(it.uuid) } == true,
             onBack = { adding = false; editing = null },
             onSave = { rule -> scope.launch {
@@ -705,40 +841,61 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("防火墙", onBack, "${state.rules.count { it.enabled }} 条启用 · ${state.rules.size}/${state.maxRules}") }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站").forEach { (value, label) -> CompactSegment(label, direction == value, Modifier.weight(1f)) { direction = value } }
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                directions.forEachIndexed { index, (_, label) ->
+                    CompactSegment(label, pagerState.currentPage == index, Modifier.weight(1f)) {
+                        scope.launch { pagerState.animateScrollToPage(index) }
+                    }
                 }
             }
-            item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp), tint = RouterBlue) }
-                    Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(19.dp)) } }
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val dir = directions[page].first
+                val visible = state.rules.filter { it.direction == dir }
+                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                            Spacer(Modifier.weight(1f))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) {
+                                    Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
+                                }
+                                Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+                    if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
+                    if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
+                    if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${directions[page].second}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
+                    items(visible, key = { it.uuid }) { rule ->
+                        FirewallRuleCard(
+                            rule,
+                            binding = bindings[rule.uuid],
+                            onOpen = { editing = rule },
+                            onFollow = { followRule = rule },
+                            onToggle = { scope.launch {
+                                repository.setFirewallEnabled(rule.uuid, !rule.enabled)
+                                    .onSuccess { actionError = "" }
+                                    .onFailure { actionError = it.message.orEmpty() }
+                            } },
+                            onDelete = { deleteTarget = rule }
+                        )
+                    }
+                    item { Spacer(Modifier.height(12.dp)) }
                 }
-            }
-            if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
-            if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
-            if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
-            if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${when(direction){"inbound"->"入站";"outbound"->"出站";else->"转发"}}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
-            items(visible, key = { it.uuid }) { rule ->
-                FirewallRuleCard(
-                    rule,
-                    binding = bindings[rule.uuid],
-                    onOpen = { editing = rule },
-                    onFollow = { followRule = rule },
-                    onToggle = { scope.launch {
-                        repository.setFirewallEnabled(rule.uuid, !rule.enabled)
-                            .onSuccess { actionError = "" }
-                            .onFailure { actionError = it.message.orEmpty() }
-                    } },
-                    onDelete = { deleteTarget = rule }
-                )
             }
         }
     }
+
     deleteTarget?.let { rule ->
         ConfirmDialog("删除防火墙规则？", "删除“${rule.ruleName}”可能立即影响远程访问。", "删除", {
             scope.launch {
@@ -757,7 +914,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
 @Composable
 private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBinding?, onOpen: () -> Unit, onFollow: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
     val accent = if (rule.target == "ACCEPT") RouterGreen else RouterRed
-    PremiumCard(accent, Modifier.clickable(onClick = onOpen)) {
+    PremiumCard(accent, Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onOpen)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(6.dp).background(if (rule.enabled) accent else RouterMuted.copy(alpha=.45f), CircleShape))
             Spacer(Modifier.width(7.dp))
@@ -773,7 +930,7 @@ private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBind
                     val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
                     Text(
                         if (binding == null) "关联路由器映射" else "映射联动 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待映射" }}",
-                        modifier = Modifier.clickable(onClick = onFollow).padding(vertical = 1.dp),
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFollow).padding(vertical = 1.dp),
                         fontSize = LabTypography.Caption.fontSize,
                         fontWeight = FontWeight.SemiBold,
                         color = followColor,
@@ -852,25 +1009,38 @@ private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean,
 
 @Composable
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    var area by rememberSaveable { mutableIntStateOf(0) }
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
+    val scope = rememberCoroutineScope()
     Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, "LabProbe DDNS · 路由器原生 DDNS · 证书监控") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                CompactSegment("LabProbe DDNS", area == 0, Modifier.weight(1f)) { area = 0 }
-                CompactSegment("路由器原生 DDNS", area == 1, Modifier.weight(1f)) { area = 1 }
-                CompactSegment("证书监控", area == 2, Modifier.weight(1f)) { area = 2 }
-            }
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (area) {
-                    0 -> LabProbeDdnsSection(prefs)
-                    1 -> DdnsRecordsSection(prefs)
-                    else -> CertificateExpirySection(prefs)
+                CompactSegment("LabProbe DDNS", pagerState.currentPage == 0, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(0) }
                 }
-                Spacer(Modifier.height(12.dp))
+                CompactSegment("路由器原生 DDNS", pagerState.currentPage == 1, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(1) }
+                }
+                CompactSegment("证书监控", pagerState.currentPage == 2, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(2) }
+                }
+            }
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (page) {
+                        0 -> LabProbeDdnsSection(prefs)
+                        1 -> DdnsRecordsSection(prefs)
+                        else -> CertificateExpirySection(prefs)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
             }
         }
     }
 }
+
 
 private val labProbeProviderIds = listOf("alidns", "dnspod", "cloudflare", "dynv6", "duckdns", "desec", "dynu", "ipv64")
 
@@ -1134,7 +1304,7 @@ private fun LabProbeDdnsCard(
         if (record.recordTypes.contains("CNAME")) add("CNAME ${record.publishedValues["CNAME"].orEmpty().ifBlank { "—" }}")
         if (record.recordTypes.contains("TXT")) add("TXT ${record.publishedValues["TXT"].orEmpty().ifBlank { "—" }}")
     }.joinToString(" · ").ifBlank { "—" }
-    PremiumCard(accent, Modifier.clickable(onClick = onClick)) {
+    PremiumCard(accent, Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             RouterGlyphIcon(RouterGlyph.Ddns, RouterBlue, Modifier.size(30.dp))
             Spacer(Modifier.width(9.dp))
@@ -1520,7 +1690,7 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
     PremiumCard(accent){
         Row(verticalAlignment=Alignment.CenterVertically){
             Row(
-                modifier=Modifier.weight(1f).clickable(onClick=onEdit),
+                modifier=Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(onClick=onEdit),
                 verticalAlignment=Alignment.CenterVertically,
             ){
                 RouterGlyphIcon(RouterGlyph.Ddns,accent,Modifier.size(27.dp))
@@ -1613,7 +1783,7 @@ fun RouterDiagnosticScreen(prefs:AppPrefs,onBack:()->Unit){
 }
 
 @Composable
-fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
+fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit, onOpenSettings: (() -> Unit)? = null) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.status.collectAsState()
     val status = resource.value
@@ -1660,6 +1830,18 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(7.dp))
             Text(if (resource.refreshing) "正在后台刷新" else "刷新 Hub 状态", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
         }
+        if (onOpenSettings != null && (!sessionConnected || status?.state == "unconfigured" || status?.state == "router_login_failed")) {
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                shape = RoundedCornerShape(13.dp),
+                border = BorderStroke(1.dp, RouterBlue),
+            ) {
+                Icon(Icons.Rounded.Settings, null, Modifier.size(17.dp), tint = RouterBlue)
+                Spacer(Modifier.width(7.dp))
+                Text("修改路由器连接配置", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterBlue)
+            }
+        }
     }
 }
 private fun routerLastSyncText(lastSuccessAt: Long): String {
@@ -1705,70 +1887,37 @@ private fun CompactToolbar(
             Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
             Text(subtitle, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         }
-        if (onRefresh != null) {
-            CompactToolbarAction(
-                contentDescription = "刷新",
-                onClick = onRefresh,
-                enabled = !loading,
-                touchSize = actionTouchSize,
-                primary = false,
-                loading = loading,
-            )
-        }
-        if (onAdd != null) {
-            CompactToolbarAction(
-                contentDescription = "新增端口映射",
-                onClick = onAdd,
-                enabled = true,
-                touchSize = actionTouchSize,
-                primary = true,
-            )
-        }
-    }
-}
-
-@Composable
-private fun CompactToolbarAction(
-    contentDescription: String,
-    onClick: () -> Unit,
-    enabled: Boolean,
-    touchSize: Dp,
-    primary: Boolean,
-    loading: Boolean = false,
-) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.size(touchSize),
-        shape = RoundedCornerShape(14.dp),
-        color = Color.Transparent,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Surface(
-                modifier = Modifier.size(36.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = if (primary) RouterBlue else LabCoreSurface.Card,
-                border = if (primary) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
-                shadowElevation = if (primary) 2.dp else 1.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (onRefresh != null) {
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !loading,
+                    modifier = Modifier.size(34.dp)
+                ) {
                     if (loading) {
                         CircularProgressIndicator(Modifier.size(16.dp), color = RouterBlue, strokeWidth = 2.dp)
                     } else {
-                        Icon(
-                            if (primary) Icons.Rounded.Add else Icons.Rounded.Refresh,
-                            contentDescription,
-                            Modifier.size(if (primary) 19.dp else 18.dp),
-                            tint = if (primary) Color.White else RouterBlue,
-                        )
+                        Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
+                    }
+                }
+            }
+            if (onAdd != null) {
+                Surface(
+                    onClick = onAdd,
+                    shape = CircleShape,
+                    color = RouterBlue,
+                    modifier = Modifier.size(35.dp),
+                    shadowElevation = 2.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp))
                     }
                 }
             }
         }
     }
 }
+
 
 @Composable
 private fun PremiumCard(accent:Color,modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit){
@@ -1840,7 +1989,7 @@ private fun CompactChoice(label:String,value:String,options:List<String>,modifie
     Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)){
         if(label.isNotBlank())Text(label,fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
         Box{
-            Surface(Modifier.fillMaxWidth().height(50.dp).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
+            Surface(Modifier.fillMaxWidth().height(50.dp).clip(LabCoreSurface.InnerShape).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
                 Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(display(value),Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
             DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(display(option),fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
@@ -1871,6 +2020,23 @@ private fun CompactEmpty(title:String,subtitle:String,glyph:RouterGlyph,onAdd:((
 private fun LoadingBlock(){Box(Modifier.fillMaxWidth().height(130.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.4.dp)}}
 
 @Composable
-private fun ConfirmDialog(title:String,text:String,confirmText:String,onConfirm:()->Unit,onDismiss:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title,fontSize = LabTypography.CardTitle.fontSize,fontWeight=FontWeight.SemiBold)},text={Text(text,fontSize = LabTypography.Value.fontSize)},confirmButton={TextButton(onClick=onConfirm){Text(confirmText,color=RouterRed,fontWeight=FontWeight.SemiBold)}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}},shape=RoundedCornerShape(17.dp))}
+private fun ConfirmDialog(
+    title: String,
+    text: String,
+    confirmText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk) },
+        text = { Text(text, fontSize = LabTypography.Value.fontSize, color = RouterMuted) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmText, color = RouterRed, fontWeight = FontWeight.SemiBold) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消", color = RouterMuted) } },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color.White,
+        tonalElevation = 0.dp
+    )
+}
 
 private fun formatBytesCompact(bytes:Long):String=when{bytes<1024->"${bytes}B";bytes<1024*1024->String.format(Locale.US,"%.1fKB",bytes/1024.0);else->String.format(Locale.US,"%.1fMB",bytes/1024.0/1024.0)}

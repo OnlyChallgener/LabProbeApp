@@ -77,7 +77,9 @@ private fun strongNameType(d: DeviceItem): DeviceTypeRule? {
     if (nameText.isBlank()) return null
     return when {
         listOf("儿童手表", "电话手表", "小天才", "米兔", "kidswatch").any { nameText.contains(it) } -> deviceTypeById("child_watch")
-        nameText.contains("ipc") -> deviceTypeById("camera")
+        listOf("galaxy watch", "apple watch", "watch", "手表", "手环", "band").any { nameText.contains(it) } || Regex("""\bsm-[rl]\d+""").containsMatchIn(nameText) -> deviceTypeById("watch")
+        listOf("camera", "ipc", "tp-link", "tplink", "海康", "大华", "萤石", "ezviz", "dahua", "hikvision", "监控", "摄像").any { nameText.contains(it) } -> deviceTypeById("camera")
+        listOf("printer", "打印机", "打印").any { nameText.contains(it) } -> deviceTypeById("printer")
         listOf("smart ring", "galaxy ring").any { nameText.contains(it) } -> deviceTypeById("smart_ring")
         listOf("ipad", "matepad", "galaxy tab", "xiaoxin pad", "redmi pad", "mi pad", "pad", "平板").any { nameText.contains(it) } -> deviceTypeById("tablet")
         listOf("iphone", "苹果手机").any { nameText.contains(it) } -> deviceTypeById("iphone")

@@ -69,6 +69,31 @@ class SecureSshPasswordStore(context: Context) {
     fun set(value: String) = delegate.set(value)
 }
 
+/**
+ * Keeps every WireGuard client private key inside a Keystore-encrypted blob.
+ * Profile metadata deliberately stays outside this store so the UI can show a
+ * disconnected profile without ever reading or logging its private key.
+ */
+class SecureWireGuardKeyStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure_wireguard", "labprobe_wireguard_client_keys_v1")
+
+    fun get(profileId: String): String = runCatching {
+        org.json.JSONObject(delegate.get()).optString(profileId).trim()
+    }.getOrDefault("")
+
+    fun put(profileId: String, privateKey: String) {
+        val values = runCatching { org.json.JSONObject(delegate.get()) }.getOrElse { org.json.JSONObject() }
+        values.put(profileId, privateKey.trim())
+        delegate.set(values.toString())
+    }
+
+    fun remove(profileId: String) {
+        val values = runCatching { org.json.JSONObject(delegate.get()) }.getOrElse { org.json.JSONObject() }
+        values.remove(profileId)
+        delegate.set(if (values.length() == 0) "" else values.toString())
+    }
+}
+
 /** Removes the deprecated APP-side HOOK_TOKEN copy left by build132. */
 fun clearDeprecatedHookToken(context: Context) {
     context.applicationContext

@@ -1,11 +1,14 @@
 package com.labprobe.app
 
+import androidx.compose.ui.draw.clip
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -59,8 +62,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private val PortBlue = Color(0xFF1677F2)
-private val PortCyan = Color(0xFF13B8D4)
+private val PortBlue = Color(0xFF0284C7)
+private val PortCyan = Color(0xFF0EA5E9)
 private val PortGreen = Color(0xFF12B981)
 private val PortRed = Color(0xFFEF5350)
 private val PortSlate = Color(0xFF718096)
@@ -448,25 +451,73 @@ internal fun portMapValidationField(message: String): String = when {
     else -> "general"
 }
 
-private object PortMappingMemoryCache {
+internal object PortMappingMemoryCache {
     var rules: List<PortMapRule> = emptyList()
     var rulesRevision: Long = 0L
     var rulesUpdatedAt: String = ""
     var snapshotRevision: Long = 0L
     var devices: List<DeviceItem> = emptyList()
+    var devicesUpdatedAt: Long = 0L
     var agent: PortMapAgentInfo? = null
+
+    fun isDevicesFresh(maxAgeMs: Long = 60_000L): Boolean {
+        return devices.isNotEmpty() && (System.currentTimeMillis() - devicesUpdatedAt < maxAgeMs)
+    }
+
+    fun updateFromApp(watched: List<DeviceItem>, online: List<DeviceItem>, offline: List<DeviceItem> = emptyList()) {
+        val merged = mergeSharedDeviceState(watched + offline, online)
+        if (merged.isNotEmpty()) {
+            devices = merged
+            devicesUpdatedAt = System.currentTimeMillis()
+        }
+    }
 }
 
-/** Uses the same status/NDP plus watched/online merge as the device page. */
-private suspend fun loadCanonicalPortMappingDevices(api: HubApi): List<DeviceItem> = coroutineScope {
+/**
+ * Loads the same watched + online device snapshot used by the device page and
+ * the IPv6 mapping picker. Reuses warm memory cache for 0ms load time and
+ * queries single-snapshot fast path when network refresh is needed.
+ */
+internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, forceRefresh: Boolean = false): List<DeviceItem> = coroutineScope {
+    if (!forceRefresh && PortMappingMemoryCache.isDevicesFresh()) {
+        return@coroutineScope PortMappingMemoryCache.devices
+    }
+
+    // Fast-path: 1 single snapshot HTTP request to fetch status + watched + online + offline devices.
+    val snapshot = runCatching { api.getSyncSnapshot() }.getOrNull()
+    if (snapshot != null) {
+        val syncWatched = mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.watchedDevices)
+        val syncOnline = mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.onlineDevices)
+        val syncMerged = mergeSharedDeviceState(syncWatched, syncOnline).ifEmpty { snapshot.offlineDevices }
+        if (syncMerged.isNotEmpty()) {
+            PortMappingMemoryCache.devices = syncMerged
+            PortMappingMemoryCache.devicesUpdatedAt = System.currentTimeMillis()
+            return@coroutineScope syncMerged
+        }
+    }
+
+    // Fallback path: concurrent status + watched + online devices query for older Hub versions.
     val statusRequest = async { runCatching { api.getStatus() }.getOrNull() }
-    val watchedRequest = async { api.getDevices(false) }
-    val onlineRequest = async { api.getDevices(true) }
+    val watchedRequest = async { runCatching { api.getDevices(false) }.getOrDefault(emptyList()) }
+    val onlineRequest = async { runCatching { api.getDevices(true) }.getOrDefault(emptyList()) }
+
     val status = statusRequest.await()
-    val watched = mergeIpv6NeighborsFromStatus(status, watchedRequest.await())
-    val online = mergeIpv6NeighborsFromStatus(status, onlineRequest.await())
-    mergeSharedDeviceState(watched, online)
+    val watchedList = watchedRequest.await()
+    val onlineList = onlineRequest.await()
+
+    val watched = mergeIpv6NeighborsFromStatus(status, watchedList)
+    val online = mergeIpv6NeighborsFromStatus(status, onlineList)
+    val merged = mergeSharedDeviceState(watched, online)
+    if (merged.isNotEmpty()) {
+        PortMappingMemoryCache.devices = merged
+        PortMappingMemoryCache.devicesUpdatedAt = System.currentTimeMillis()
+        merged
+    } else {
+        PortMappingMemoryCache.devices
+    }
 }
+
+
 
 @Composable
 fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = false) {
@@ -730,7 +781,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = f
             initial = editDraft!!,
             devices = devices,
             portRange = agent.portMin..agent.portMax,
-            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi) },
+            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi, forceRefresh = true) },
             onDismiss = { editDraft = null },
             onSave = { draft ->
                 val saveDraft = portMapDraftForSave(draft)
@@ -831,7 +882,7 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 @Composable
 private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
     val status = portMapStatus(rule)
-    LabCoreCard(modifier = Modifier.clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
+    LabCoreCard(modifier = Modifier.clip(LabCoreSurface.CardShape).clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(7.dp).background(status.color, CircleShape))
@@ -961,7 +1012,7 @@ private fun PortMapEditorSheet(
                         PORT_MAP_SERVICE_TEMPLATES.forEach { template ->
                             val selected = selectedTemplateLabel == template.label || (selectedTemplateLabel == null && draft.serviceType == template.serviceType)
                             Surface(
-                                modifier = Modifier.clickable {
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable {
                                     selectedTemplateLabel = template.label
                                     draft = applyPortMapServiceTemplate(draft, template)
                                 },
@@ -1062,7 +1113,7 @@ private fun PortMapEditorSheet(
 
                 val advancedSummary = "${draft.duration} · 最多 ${draft.maxConnections.ifBlank { "—" }} 连接 · 空闲 ${draft.idleTimeoutSec.ifBlank { "—" }} 秒"
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { advancedExpanded = !advancedExpanded },
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { advancedExpanded = !advancedExpanded },
                     shape = LabCoreSurface.InnerShape,
                     color = LabCoreSurface.Inner,
                     border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
@@ -1212,7 +1263,7 @@ private fun PortMapV2ReadOnly(
             tonalElevation = 0.dp
         ) {
             Row(
-                Modifier.fillMaxSize().padding(horizontal = 13.dp).horizontalScroll(rememberScrollState()).clickable(enabled = copyable) { copy(ctx, value) },
+                Modifier.fillMaxSize().padding(horizontal = 13.dp).horizontalScroll(rememberScrollState()).clickable(enabled = copyable, interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(ctx, value) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(value, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = accent, maxLines = 1, overflow = TextOverflow.Clip)
@@ -1283,7 +1334,7 @@ private fun PortMapSelectedDevice(
     }
     val profile = device?.let(::inferDeviceProfile)
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onClick() },
         shape = RoundedCornerShape(18.dp),
         color = LabV2.Field,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
@@ -1367,10 +1418,12 @@ private fun PortMapDevicePickerDialog(
     }
     val rows = remember(currentDevices, mode, query) {
         currentDevices.filter { d ->
-            val addresses = if (mode == "6to4") listOf(cleanApiText(d.ip)) else ipv6Candidates(d)
+            if (!isDeviceUsableForPublicEndpoint(d)) return@filter false
+            val addresses = if (mode == "6to4") listOf(cleanApiText(d.ip)).filter { it.isNotBlank() } else ipv6Candidates(d)
+            if (addresses.isEmpty() && !d.online) return@filter false
             val text = "${d.remark} ${d.name} ${d.hostName} ${d.mac} ${addresses.joinToString(" ")}".lowercase(Locale.getDefault())
             query.isBlank() || text.contains(query.lowercase(Locale.getDefault()))
-        }
+        }.sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.ifBlank { it.hostName }.lowercase(Locale.ROOT) })
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1386,7 +1439,7 @@ private fun PortMapDevicePickerDialog(
                     Column(Modifier.weight(1f)) {
                         Text("选择目标设备", fontSize = LabTypography.PageTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
                         Text(
-                            if (mode == "6to4") "当前显示设备 IPv4 地址" else if (targetMode == "ipv6_suffix") "当前显示全局 IPv6 与后 64 位" else "当前显示设备完整 IPv6 地址",
+                            if (mode == "6to4") "当前显示适合映射的设备 IPv4 地址" else if (targetMode == "ipv6_suffix") "当前显示适合映射的全局 IPv6 与后 64 位" else "当前显示适合映射的完整 IPv6 地址",
                             fontSize = LabTypography.Supporting.fontSize,
                             fontWeight = FontWeight.SemiBold,
                             color = LabV2.InkMuted
@@ -1445,7 +1498,7 @@ private fun PortMapDevicePickerDialog(
                             val selected = cleanMac(device.mac).equals(cleanMac(selectedMac), ignoreCase = true)
                             val expanded = expandedMac == cleanMac(device.mac)
                             Surface(
-                                modifier = Modifier.fillMaxWidth().clickable(enabled = recommended.isNotBlank()) {
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = recommended.isNotBlank()) {
                                     onPick(if (mode == "6to6") device.copy(ipv6 = listOf(recommended), ipv6Candidates = listOf(Ipv6AddressCandidate(recommended, primary = true))) else device)
                                 },
                                 shape = RoundedCornerShape(18.dp),
@@ -1676,10 +1729,13 @@ private fun PortMapDetailPage(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除端口映射？", style = LabTypography.CardTitle) },
-            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.Body) },
+            title = { Text("删除端口映射？", style = LabTypography.CardTitle.copy(color = LabV2.Ink)) },
+            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.Body.copy(color = LabV2.InkMuted)) },
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("删除", style = LabTypography.CompactButton.copy(color = PortRed)) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消", style = LabTypography.CompactButton) } }
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消", style = LabTypography.CompactButton.copy(color = LabV2.InkMuted)) } },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White,
+            tonalElevation = 0.dp
         )
     }
 }

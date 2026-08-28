@@ -33,8 +33,95 @@ class StunModelTest {
         assertEquals("TCP", json.getString("transportProtocol"))
         assertEquals("192.168.5.46", json.getString("targetIpv4"))
         assertEquals(22, json.getInt("targetPort"))
+        assertEquals("", json.getString("name"))
         assertTrue(json.getBoolean("enabled"))
-        assertEquals(5, json.length())
+        assertEquals(6, json.length())
+    }
+
+    @Test
+    fun generatedTitleUsesStableServiceFallbackAndDoesNotPopulateRemark() {
+        val rule = StunRule(
+            id = "stun-1",
+            name = "HTTPS · 192.168.5.46:8443",
+            enabled = true,
+            listenPort = 20_001,
+            targetIpv4 = "192.168.5.46",
+            targetPort = 9443,
+            serviceType = "HTTPS",
+            transportProtocol = "TCP",
+            forwardMode = "router_native",
+            actualState = "mapped",
+            firewallState = "ready",
+            nativeMappingState = "ready",
+            runtime = StunRuntime(publicEndpoint = "111.23.167.91:10193"),
+        )
+
+        assertEquals("HTTPS 穿透", stunRuleTitle(rule))
+        assertEquals(
+            "",
+            StunDraft.from(rule).toJson().getString("name"),
+        )
+    }
+
+    @Test
+    fun customTitleIsPreserved() {
+        val rule = StunRule(
+            id = "stun-1",
+            name = "家庭 NAS",
+            enabled = true,
+            listenPort = 20_001,
+            targetIpv4 = "192.168.5.46",
+            targetPort = 9443,
+            serviceType = "HTTPS",
+            transportProtocol = "TCP",
+            forwardMode = "router_native",
+            actualState = "mapped",
+            firewallState = "ready",
+            nativeMappingState = "ready",
+            runtime = StunRuntime(),
+        )
+
+        assertEquals("家庭 NAS", stunRuleTitle(rule))
+        assertEquals("家庭 NAS", StunDraft.from(rule).toJson().getString("name"))
+    }
+
+    @Test
+    fun editingStoppedRuleDoesNotRestartIt() {
+        val rule = StunRule(
+            id = "stun-1",
+            name = "家庭 NAS",
+            enabled = false,
+            listenPort = 20_001,
+            targetIpv4 = "192.168.5.46",
+            targetPort = 9999,
+            serviceType = "HTTP",
+            transportProtocol = "TCP",
+            forwardMode = "router_native",
+            actualState = "stopped",
+            firewallState = "ready",
+            nativeMappingState = "ready",
+            runtime = StunRuntime(publicEndpoint = "111.23.167.91:10193"),
+        )
+
+        val draft = StunDraft.from(rule)
+        assertEquals(false, draft.toJson().getBoolean("enabled"))
+        assertEquals(false, rule.ready)
+    }
+
+    @Test
+    fun validatesIpv4PortAndRemarkBeforeSaving() {
+        assertEquals("请输入有效的内网 IPv4 地址", stunDraftValidationError(StunDraft(targetIpv4 = "192.168.5.999")))
+        assertEquals("目标端口必须是 1–65535", stunDraftValidationError(StunDraft(targetIpv4 = "192.168.5.46", targetPort = "0")))
+        assertEquals("规则备注最多 64 个字符", stunDraftValidationError(StunDraft(targetIpv4 = "192.168.5.46", name = "a".repeat(65))))
+        assertEquals(null, stunDraftValidationError(StunDraft(targetIpv4 = "192.168.5.46", targetPort = "9999", name = "NAS")))
+    }
+
+    @Test
+    fun onlyHttpsCopyAddsAProtocolScheme() {
+        assertEquals("https://111.23.167.91:10193", stunAddressForCopy("HTTPS", "111.23.167.91:10193"))
+        assertEquals("https://111.23.167.91:10193", stunAddressForCopy("https", "http://111.23.167.91:10193"))
+        assertEquals("111.23.167.91:10170", stunAddressForCopy("WireGuard", "111.23.167.91:10170"))
+        assertEquals("111.23.167.91:10022", stunAddressForCopy("SSH", "111.23.167.91:10022"))
     }
 
     @Test

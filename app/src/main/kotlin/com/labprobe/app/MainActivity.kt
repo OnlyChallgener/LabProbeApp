@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
+
 import android.content.ClipData
 import android.content.ContextWrapper
 import android.app.Activity
@@ -8,6 +10,20 @@ import com.labprobe.app.feature.assistant.AiFloatingPet
 import com.labprobe.app.feature.assistant.AiSettingsScreen
 import com.labprobe.app.feature.assistant.AiChatScreen
 import com.labprobe.app.feature.assistant.AiUsageScreen
+import com.labprobe.app.roaming.BssidSwitchEvent
+import com.labprobe.app.roaming.RoamCandidateSnapshot
+import com.labprobe.app.roaming.RoamImpactState
+import com.labprobe.app.roaming.RoamPingAttempt
+import com.labprobe.app.roaming.RoamProbeTarget
+import com.labprobe.app.roaming.RoamWifiObservation
+import com.labprobe.app.roaming.RoamingNetworkLayerEvent
+import com.labprobe.app.roaming.RoamingProbeStats
+import com.labprobe.app.roaming.RoamingSession
+import com.labprobe.app.roaming.RoamingSessionInput
+import com.labprobe.app.roaming.RoamingSessionSnapshot
+import com.labprobe.app.roaming.RoamingWifiStats
+import com.labprobe.app.roaming.WifiSampler
+import com.labprobe.app.roaming.wifiBandOf
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -120,11 +136,14 @@ import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -186,29 +205,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 字体、色彩、排版与中文提示统一优化" to listOf(
-                "启动图标按原始 SVG 逐路径还原雷达环、节点、连线和右侧三点",
-                "SSH 为旧路由器增加 group14-sha1 安全回退，不启用 group1 和旧 CBC 算法",
-                "下拉菜单与 NAT 选中按钮统一为蓝白配色，不再显示默认粉紫色",
-                "首页、设备页和详情卡统一优先显示用户备注名称",
-                "已安装版本高于旧更新清单时，最新版本不再倒退显示",
-                "Relay 更新优先按实际上报版本判断成功，避免旧失败状态误报",
-                "区分更新请求超时和已下发后的状态轮询超时",
-                "Relay 版本检查与更新任务移到应用级作用域，离开页面仍会继续",
-                "更新后持续监测 Agent 心跳，版本号和最后上报时间自动刷新",
-                "离线列表保持独立权威数据，关注列表只引用在线或离线最新记录",
-                "永久 IPv6 映射保留真实启动时间，缺失时不再显示 0 分",
-                "SSH 密码迁移至 Android Keystore，并启用主机密钥校验",
-                "设备一级页面按返回键回到 APP 首页，不再直接退出到桌面",
-                "离线事件会校正旧归档时间，避免通知与离线卡片不一致",
-                "每日设备排行保留 Hub 返回的当天在线时长与流量数据",
-                "Agent 更新检查改为 Hub 后台任务，502 不再显示原始 HTML",
-                "SSH 小卡片改为浅灰色，今日概览同步状态移到右上角",
-                "首页卡片拖动响应加快，点击反馈按卡片圆角裁剪",
-                "终端实时栏的速率与连接数改为固定间距",
-                "NAT 任务完成后耗时和路由器响应停止累计，保留最终结果",
-                "路由状态、DDNS 与网络自检刷新保留上次有效数据，不再白屏",
-                "统一 Hub、WSS 与路由器数据状态，避免实时正常却显示 Hub 断开"
+            "v$NAME build$CODE · WireGuard 连接前置状态检查" to listOf(
+                "启动 DDNS、STUN 或手动配置前重新读取 WireGuard 网关状态，避免服务端停用时进入无效握手",
+                "网关停用时由用户确认启用，保留完整服务端配置并等待 Agent revision 与 applyResult 成功",
+                "兼容通过 kernel-netlink 成功应用但运行状态不可观测的路由器，不再误判为网关未就绪",
+                "VPN 授权返回后重新检查网关状态，并修复 Agent 空错误显示为 null"
             )
         )
 }
@@ -311,6 +312,11 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("favorite_shortcuts_v1", v).apply()
     var favoriteNetworkMode: String get() = sp.getString("favorite_network_mode", "lan") ?: "lan"
         set(v) = sp.edit().putString("favorite_network_mode", v).apply()
+    /** WireGuard profile metadata only. Private keys are stored separately in Android Keystore. */
+    var wireGuardProfilesJson: String get() = sp.getString("wireguard_profiles_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("wireguard_profiles_v1", v).apply()
+    var wireGuardActiveProfileId: String get() = sp.getString("wireguard_active_profile_v1", "") ?: ""
+        set(v) = sp.edit().putString("wireguard_active_profile_v1", v.trim()).apply()
     var routerLanUrl: String get() = sp.getString("router_lan_url_v1", "") ?: ""
         set(v) = sp.edit().putString("router_lan_url_v1", v.trim()).apply()
     var routerWanUrl: String get() = sp.getString("router_wan_url_v1", "") ?: ""
@@ -768,6 +774,8 @@ class AppPrefs(context: Context) {
             (0 until arr.length()).mapNotNull { i ->
                 val o = arr.optJSONObject(i) ?: return@mapNotNull null
                 val ev = o.optJSONArray("events")
+                val switchArray = o.optJSONArray("switches")
+                val networkArray = o.optJSONArray("networkEvents")
                 RoamingReport(
                     id = o.optLong("id", i.toLong()),
                     time = o.optString("time"),
@@ -793,7 +801,29 @@ class AppPrefs(context: Context) {
                     qualityScore = o.optInt("qualityScore"),
                     qualityLabel = o.optString("qualityLabel"),
                     conclusion = o.optString("conclusion"),
-                    events = if (ev == null) emptyList() else (0 until ev.length()).map { idx -> ev.optString(idx) }.filter { it.isNotBlank() }
+                    events = if (ev == null) emptyList() else (0 until ev.length()).map { idx -> ev.optString(idx) }.filter { it.isNotBlank() },
+                    schemaVersion = o.optInt("schemaVersion", 1),
+                    durationMs = o.optLong("durationMs", o.optInt("durationSec").toLong() * 1_000L),
+                    longestObservationMs = o.optNullableLong("longestObservationMs"),
+                    gatewayAttemptCount = o.optInt("gatewayAttemptCount"),
+                    gatewayLossCount = o.optInt("gatewayLossCount"),
+                    wanAttemptCount = o.optInt("wanAttemptCount"),
+                    wanLossCount = o.optInt("wanLossCount"),
+                    gatewayRoamLossCount = o.optInt("gatewayRoamLossCount", o.optInt("gatewayLossCount")),
+                    wanRoamLossCount = o.optInt("wanRoamLossCount", o.optInt("wanLossCount")),
+                    wanMinMs = o.optNullableInt("wanMinMs"),
+                    wanMaxMs = o.optNullableInt("wanMaxMs"),
+                    wanAvgMs = o.optNullableInt("wanAvgMs"),
+                    gatewayRecoveryMaxMs = o.optNullableLong("gatewayRecoveryMaxMs"),
+                    wanRecoveryMaxMs = o.optNullableLong("wanRecoveryMaxMs"),
+                    networkDisconnectCount = o.optInt("networkDisconnectCount"),
+                    wifiGapP95Ms = o.optNullableLong("wifiGapP95Ms"),
+                    wifiGapMaxMs = o.optNullableLong("wifiGapMaxMs"),
+                    impactWindowTruncated = o.optBoolean("impactWindowTruncated", false),
+                    switches = if (switchArray == null) emptyList() else (0 until switchArray.length()).mapNotNull { idx ->
+                        switchArray.optJSONObject(idx)?.let { RoamingSwitchReport.fromJson(it) }
+                    },
+                    networkEvents = if (networkArray == null) emptyList() else (0 until networkArray.length()).map { idx -> networkArray.optString(idx) }.filter { it.isNotBlank() }
                 )
             }
         }.getOrDefault(emptyList()).take(20)
@@ -997,6 +1027,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
     private val cacheWriteVersion = AtomicLong(0L)
+    private var cachePersistJob: Job? = null
     private val liteRealtimeApi = LiteRealtimeApi(prefs)
     private val realtimeSmoother = RealtimeDisplaySmoother()
     private var liteRenderJob: Job? = null
@@ -1110,6 +1141,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var favoriteSyncVersion by mutableIntStateOf(if (prefs.syncWebhookFavoriteShortcuts(events) > 0) 1 else 0)
 
     init {
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         stateScope.launch {
             for (firstSignal in foregroundRecoverySignals) {
                 var forceFull = firstSignal
@@ -1202,7 +1234,16 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         // compact devices frame only smooths instantaneous speed between snapshots.
         realtimeSmoother.acceptDevices(root)
         val previousOnline = onlineDevices
-        val freshByMac = fresh.associateBy { cleanMac(it.mac) }
+        val currentRatesByMac = previousOnline.associateBy({ cleanMac(it.mac) }, { it.realtimeUploadBytes to it.realtimeDownloadBytes })
+        val freshWithPreservedRates = fresh.map { item ->
+            val existing = currentRatesByMac[cleanMac(item.mac)]
+            if (existing != null) {
+                item.copy(realtimeUploadBytes = existing.first, realtimeDownloadBytes = existing.second)
+            } else {
+                item
+            }
+        }
+        val freshByMac = freshWithPreservedRates.associateBy { cleanMac(it.mac) }
         val disappeared = previousOnline
             .filterNot { old -> freshByMac.containsKey(cleanMac(old.mac)) }
             .map { old ->
@@ -1223,14 +1264,16 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             )
         }
 
-        if (fresh != onlineDevices) onlineDevices = fresh
+        if (freshWithPreservedRates != onlineDevices) onlineDevices = freshWithPreservedRates
         if (updatedWatched != devices) devices = updatedWatched
-        refreshOfflineDevices(offlineDevices + disappeared, fresh)
+        refreshOfflineDevices(offlineDevices + disappeared, freshWithPreservedRates)
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         persistCachesAsync()
     }
 
     private suspend fun calibrateRealtimeCache() {
         if (!foregroundActive || prefs.hub.isBlank() || prefs.token.isBlank()) return
+        if (mqttConnected && realtimeDataFresh) return
         supervisorScope {
             val router = async { runCatching { liteRealtimeApi.router() }.getOrNull() }
             val devicesRuntime = async { runCatching { liteRealtimeApi.devices() }.getOrNull() }
@@ -1407,6 +1450,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (devicesChanged) devices = merged
         if (onlineChanged) onlineDevices = online
         if (eventsChanged) events = normalizedEvents
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || offlineChanged || eventsChanged, silent = silent)
     }
 
@@ -1562,7 +1606,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val onlineSnapshot = onlineDevices.toList()
         val offlineSnapshot = offlineDevices.toList()
         val eventSnapshot = events.toList()
-        cacheScope.launch {
+        cachePersistJob?.cancel()
+        cachePersistJob = cacheScope.launch {
+            delay(2_000L)
             val devicesText = JSONArray(deviceSnapshot.map { it.toJson() }).toString()
             val onlineText = JSONArray(onlineSnapshot.map { it.toJson() }).toString()
             val offlineText = JSONArray(offlineSnapshot.map { it.toJson() }).toString()
@@ -1635,6 +1681,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (devicesChanged) devices = mergedDevices
         if (onlineChanged) onlineDevices = devOnlineWithIpv6
         if (eventsChanged) events = evs
+        PortMappingMemoryCache.updateFromApp(devices, onlineDevices, offlineDevices)
         finishSuccessfulSync(previousEventKeys, dataChanged = statusChanged || devicesChanged || onlineChanged || offlineChanged || eventsChanged, silent = silent)
     }
 
@@ -1930,10 +1977,16 @@ fun LabProbeApp(prefs: AppPrefs) {
         onPrimary = Color.White,
         primaryContainer = Color(0xFFDCEAFF),
         onPrimaryContainer = LabV2.Ink,
-        secondary = LabV2.Purple,
+        secondary = LabV2.Primary,
         tertiary = LabV2.Amber,
         background = LabV2.BackgroundMid,
-        surface = LabV2.CardTop,
+        surface = Color.White,
+        surfaceContainer = Color.White,
+        surfaceContainerHigh = Color.White,
+        surfaceContainerHighest = Color.White,
+        surfaceContainerLow = Color(0xFFFAFCFF),
+        surfaceContainerLowest = Color.White,
+        surfaceTint = Color.Transparent,
         surfaceVariant = LabV2.FieldSoft,
         outline = LabV2.BorderStrong,
         onSurface = LabV2.Ink,
@@ -2093,13 +2146,14 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
                         "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
                         "tool_stun" -> StunPenetrationScreen(prefs, backFromTool)
+                        "tool_wireguard" -> WireGuardScreen(prefs, backFromTool)
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
                         "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
                         "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
                         "tool_router_ipv6" -> Ipv6Screen(prefs, backFromTool)
-                        "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool)
+                        "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
                     }
@@ -2189,6 +2243,7 @@ fun DetailShell(
     compactHeader: Boolean = false,
     unifiedTypography: Boolean = false,
     showHeader: Boolean = true,
+    action: (@Composable RowScope.() -> Unit)? = null,
     sectionGap: Dp = LabV2.SectionGap,
     titleStyleOverride: androidx.compose.ui.text.TextStyle? = null,
     subtitleStyleOverride: androidx.compose.ui.text.TextStyle? = null,
@@ -2206,6 +2261,7 @@ fun DetailShell(
                 title = title,
                 subtitle = subtitle,
                 onBack = onBack,
+                action = action,
                 compactTitle = compactHeader,
                 titleStyle = titleStyleOverride ?: LabTypography.PageTitle.takeIf { unifiedTypography },
                 subtitleStyle = subtitleStyleOverride ?: LabTypography.Supporting.takeIf { unifiedTypography }
@@ -2214,11 +2270,12 @@ fun DetailShell(
         content()
         Spacer(Modifier.height(2.dp))
     }
+
 }
 
 @Composable
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
-    val techBlue = Color(0xFF2D63D8)
+    val techBlue = Color(0xFF0284C7)
     Surface(
         color = Color.White,
         shape = HomeCardShape,
@@ -2347,7 +2404,7 @@ fun InfoRow(label: String, value: String?, copyable: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.width(76.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (copyable && value?.isNotBlank() == true) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable { copy(ctx, value) }, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(ctx, value) }, verticalAlignment = Alignment.CenterVertically) {
                 Text(text, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1)
             }
         } else {
@@ -2452,9 +2509,9 @@ private val ParamFieldHeight = 48.dp
 private val ParamFieldRadius = 15.dp
 
 @Composable
-fun ParamFrame(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
+fun ParamFrame(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
     Surface(
-        modifier = modifier.height(ParamFieldHeight),
+        modifier = modifier.height(ParamFieldHeight).then(if (onClick != null) Modifier.clip(RoundedCornerShape(ParamFieldRadius)).clickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(ParamFieldRadius),
         color = LabV2.Field,
         border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
@@ -2512,7 +2569,7 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                 maxLines = 1,
                 modifier = Modifier.padding(start = 2.dp)
             )
-            ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
+            ParamFrame(modifier = Modifier.fillMaxWidth(), onClick = { expanded = true }) {
                 Text(
                     value + "ms",
                     fontSize = 13.8.sp,
@@ -2576,7 +2633,7 @@ fun CompactIconHistoryInput(label: String, hint: String, value: String, onValueC
 }
 
 @Composable
-fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> Unit, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier) {
+fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> Unit, icon: ImageVector, keyboardType: KeyboardType = KeyboardType.Number, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, fontSize = 9.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
         ParamFrame(Modifier.fillMaxWidth()) {
@@ -2584,6 +2641,7 @@ fun TinyParamInputIcon(label: String, value: String, onValueChange: (String) -> 
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
+                enabled = enabled,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 textStyle = LocalTextStyle.current.copy(fontSize = 12.7.sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface),
@@ -2599,7 +2657,7 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
     Box(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(label, fontSize = 10.4.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), maxLines = 1, modifier = Modifier.padding(start = 2.dp))
-            ParamFrame(Modifier.fillMaxWidth().clickable { expanded = true }) {
+            ParamFrame(modifier = Modifier.fillMaxWidth(), onClick = { expanded = true }) {
                 FieldIconBox(icon)
                 Text(
                     value + suffix,
@@ -2795,6 +2853,37 @@ private fun updateHttpClient() = OkHttpClient.Builder()
     .readTimeout(10, TimeUnit.SECONDS)
     .build()
 
+/** Converts manifest/release-note variants to readable text; never exposes raw JSON to UI. */
+internal fun normalizeReleaseNotes(root: JSONObject): String {
+    fun valueText(value: Any?): String {
+        return when (value) {
+            is JSONArray -> (0 until value.length()).mapNotNull { index -> valueText(value.opt(index)).takeIf { it.isNotBlank() } }.joinToString("\n")
+            is JSONObject -> {
+                val preferred = listOf("text", "content", "body", "message", "description", "notes", "items", "changes", "features", "fixes")
+                    .asSequence().mapNotNull { key -> value.opt(key)?.let(::valueText) }.firstOrNull { it.isNotBlank() }
+                preferred ?: value.keys().asSequence()
+                    .filterNot { it in setOf("version", "versionName", "versionCode", "downloadUrl", "sha256", "sizeBytes") }
+                    .mapNotNull { key -> valueText(value.opt(key)).takeIf { it.isNotBlank() } }
+                    .joinToString("\n")
+            }
+            null, JSONObject.NULL -> ""
+            is String -> {
+                val text = value.trim()
+                when {
+                    text.startsWith("{") -> runCatching { valueText(JSONObject(text)) }.getOrDefault("")
+                    text.startsWith("[") -> runCatching { valueText(JSONArray(text)) }.getOrDefault("")
+                    else -> cleanApiText(text)
+                }
+            }
+            else -> cleanApiText(value.toString())
+        }
+    }
+    val keys = listOf("releaseNotes", "release_notes", "changelog", "notes", "body", "message")
+    return keys.asSequence().mapNotNull { key -> root.opt(key)?.let(::valueText) }
+        .map { it.trim() }.firstOrNull { it.isNotBlank() && !it.trim().matches(Regex("^[\\[{].*[\\]}]$", RegexOption.DOT_MATCHES_ALL)) }
+        .orEmpty()
+}
+
 private fun fetchLuckyUpdateInfo(client: OkHttpClient): GitHubUpdateInfo {
     val req = Request.Builder()
         .url(UpdateRepository.APP_MANIFEST)
@@ -2812,11 +2901,7 @@ private fun fetchLuckyUpdateInfo(client: OkHttpClient): GitHubUpdateInfo {
         }
         val sha256 = json.optString("sha256").trim().lowercase(Locale.ROOT)
         if (sha256.isNotBlank() && !sha256.matches(Regex("[0-9a-f]{64}"))) error("Lucky update.json 的 sha256 无效")
-        val rawChangelog = json.opt("changelog")
-        val changelog = when (rawChangelog) {
-            is JSONArray -> (0 until rawChangelog.length()).joinToString("\n") { rawChangelog.optString(it) }
-            else -> cleanApiText(rawChangelog?.toString())
-        }
+        val changelog = normalizeReleaseNotes(json)
         val apkName = Uri.parse(downloadUrl).lastPathSegment.orEmpty().ifBlank { "LabProbeApp-v$versionName.apk" }
         return GitHubUpdateInfo(
             tag = versionName,
@@ -2847,7 +2932,7 @@ private fun fetchGitHubReleaseInfo(client: OkHttpClient): GitHubUpdateInfo {
         val json = JSONObject(bodyText)
         val tag = json.optString("tag_name", "")
         val name = json.optString("name", tag.ifBlank { "未知版本" })
-        val body = json.optString("body", "")
+        val body = normalizeReleaseNotes(json)
         val htmlUrl = json.optString("html_url", AppVersion.GITHUB)
         val assets = json.optJSONArray("assets") ?: JSONArray()
         var apkName = ""
@@ -3029,7 +3114,7 @@ fun VersionInfoDialog(onDismiss: () -> Unit, onUpdateFound: (GitHubUpdateInfo) -
                     },
                     enabled = !checking,
                     shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                     modifier = Modifier.fillMaxWidth().height(42.dp)
                 ) {
                     Icon(Icons.Rounded.SystemUpdate, null, Modifier.size(17.dp), tint = Color.White)
@@ -3116,11 +3201,11 @@ fun UpdateDialogCard(
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (state.phase == "done" && state.filePath.isNotBlank()) {
-                    Button(onClick = onInstall, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("安装", fontWeight = FontWeight.Black) }
+                    Button(onClick = onInstall, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("安装", fontWeight = FontWeight.Black) }
                 } else if (state.phase == "error") {
-                    Button(onClick = onRetry, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("重新下载", fontWeight = FontWeight.Black) }
+                    Button(onClick = onRetry, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("重新下载", fontWeight = FontWeight.Black) }
                 } else {
-                    Button(onClick = onImmediate, enabled = state.phase != "downloading" && !checking, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))) { Text("立即更新", fontWeight = FontWeight.Black) }
+                    Button(onClick = onImmediate, enabled = state.phase != "downloading" && !checking, shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))) { Text("立即更新", fontWeight = FontWeight.Black) }
                 }
             }
         },
@@ -3239,7 +3324,9 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     LaunchedEffect(liveVpnRows) {
         if (liveVpnRows.isNotEmpty()) {
             cachedVpnRows = liveVpnRows
-            prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)
+            withContext(Dispatchers.IO) {
+                prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)
+            }
         }
     }
     val vpnRows = if (liveVpnRows.isNotEmpty()) liveVpnRows else cachedVpnRows
@@ -3249,22 +3336,23 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val vpnOk = vpnRows.isNotEmpty()
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
     val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
+    val homeGradient = remember {
+        Brush.verticalGradient(
+            listOf(
+                Color(0xFFEAF5FF),
+                Color(0xFFF5FAFF),
+                Color(0xFFFBFDFF),
+                Color.White
+            )
+        )
+    }
 
     Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFFEAF5FF),
-                        Color(0xFFF5FAFF),
-                        Color(0xFFFBFDFF),
-                        Color.White
-                    )
-                )
-            )
+            .background(homeGradient)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -3346,7 +3434,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                             privacyMode = !privacyMode
                             prefs.privacyMode = privacyMode
                         },
-                        onClick = { onNavigate("tool_router_ddns") }
+                        onClick = { onNavigate("tool_wireguard") }
                     )
                     "devices" -> HealthDevicesCard(state) { onNavigate("devices") }
                     "today" -> HealthTodayCard(prefs, state, prefs.lastRefresh) { onNavigate("daily") }
@@ -3526,17 +3614,11 @@ fun HealthCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth().shadow(
-            5.dp,
-            shape,
-            clip = false,
-            ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f),
-            spotColor = LabV2.ShadowSpot.copy(alpha = .95f),
-        ),
+        modifier = modifier.fillMaxWidth(),
         shape = shape,
         color = Color.White,
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
+        shadowElevation = 2.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
@@ -3544,54 +3626,91 @@ fun HealthCard(
 }
 
 @Composable
-fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
-    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
-    val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
+private fun HealthScoreHeroGlow(color: Color) {
     val scorePulse = rememberInfiniteTransition(label = "homeScoreGlow")
-    val scoreGlowAlpha by scorePulse.animateFloat(
+    val scoreGlowAlpha = scorePulse.animateFloat(
         initialValue = .15f,
         targetValue = .30f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowAlpha"
     )
-    val scoreGlowScale by scorePulse.animateFloat(
+    val scoreGlowScale = scorePulse.animateFloat(
         initialValue = .99f,
         targetValue = 1.14f,
         animationSpec = infiniteRepeatable(tween(2100), repeatMode = RepeatMode.Reverse),
         label = "homeScoreGlowScale"
     )
+    Canvas(
+        Modifier
+            .size(184.dp)
+            .graphicsLayer {
+                scaleX = scoreGlowScale.value
+                scaleY = scoreGlowScale.value
+            }
+    ) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                0.00f to Color.Transparent,
+                0.50f to Color.Transparent,
+                0.64f to color.copy(alpha = scoreGlowAlpha.value * .20f),
+                0.78f to color.copy(alpha = scoreGlowAlpha.value * .46f),
+                1.00f to Color.Transparent
+            )
+        )
+    }
+}
+
+@Composable
+private fun RouterHeroGlow() {
+    val pulse = rememberInfiniteTransition(label = "routerGlow")
+    val glowAlpha = pulse.animateFloat(
+        initialValue = .28f,
+        targetValue = .64f,
+        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
+        label = "routerGlowAlpha"
+    )
+    val glowScale = pulse.animateFloat(
+        initialValue = 1.00f,
+        targetValue = 1.18f,
+        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
+        label = "routerGlowScale"
+    )
+    Canvas(
+        Modifier
+            .size(320.dp)
+            .graphicsLayer {
+                scaleX = glowScale.value
+                scaleY = glowScale.value
+            }
+    ) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                0.00f to LabV2.Green.copy(alpha = glowAlpha.value * .30f),
+                0.46f to LabV2.Green.copy(alpha = glowAlpha.value * .22f),
+                0.78f to LabV2.Green.copy(alpha = glowAlpha.value * .10f),
+                1.00f to Color.Transparent
+            )
+        )
+    }
+}
+
+@Composable
+fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
+    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
+    val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val shape = HomeCardShape
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(
-            5.dp,
-            shape,
-            clip = false,
-            ambientColor = LabV2.ShadowAmbient.copy(alpha = .85f),
-            spotColor = LabV2.ShadowSpot.copy(alpha = .95f),
-        ),
+        modifier = Modifier.fillMaxWidth(),
         shape = shape,
         color = Color.White,
         tonalElevation = 0.dp,
-        shadowElevation = 1.dp,
-        border = null
+        shadowElevation = 2.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(124.dp).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
-                    Box(
-                        Modifier
-                            .size(184.dp)
-                            .graphicsLayer { scaleX = scoreGlowScale; scaleY = scoreGlowScale }
-                            .background(
-                                Brush.radialGradient(
-                                    0.00f to Color.Transparent,
-                                    0.50f to Color.Transparent,
-                                    0.64f to scoreColor.copy(alpha = scoreGlowAlpha * .20f),
-                                    0.78f to scoreColor.copy(alpha = scoreGlowAlpha * .46f),
-                                    1.00f to Color.Transparent
-                                )
-                            )
-                    )
+                Box(Modifier.size(124.dp).clip(CircleShape).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
+                    HealthScoreHeroGlow(scoreColor)
                     HealthScoreGauge(score, 112.dp)
                 }
                 Spacer(Modifier.width(12.dp))
@@ -3600,8 +3719,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Text(
                             "网络健康得分",
                             Modifier.weight(1f),
-                            fontSize = LabTypography.CardTitle.fontSize,
-                            lineHeight = LabTypography.CardTitle.lineHeight,
+                            style = LabTypography.CardTitle,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF0B1320),
                             maxLines = 1,
@@ -3612,15 +3730,13 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         Surface(shape = HomeInnerShape, color = scoreColor.copy(alpha = .10f)) {
                             Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(13.dp), tint = scoreColor)
-                                Text(scoreLabel, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = scoreColor)
+                                Text(scoreLabel, style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold), color = scoreColor)
                             }
                         }
                     }
                     Text(
                         uiMessageZh(message).replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
-                        fontSize = LabTypography.Caption.fontSize,
-                        lineHeight = LabTypography.Caption.lineHeight,
-                        fontWeight = FontWeight.SemiBold,
+                        style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold),
                         color = LabV2.InkMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -3678,20 +3794,9 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
     val badCount = state.events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }.coerceAtMost(4)
     val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
-    val pulse = rememberInfiniteTransition(label = "routerGlow")
-    val glowAlpha by pulse.animateFloat(
-        initialValue = .28f,
-        targetValue = .64f,
-        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
-        label = "routerGlowAlpha"
-    )
-    val glowScale by pulse.animateFloat(
-        initialValue = 1.00f,
-        targetValue = 1.18f,
-        animationSpec = infiniteRepeatable(tween(2200), repeatMode = RepeatMode.Reverse),
-        label = "routerGlowScale"
-    )
-    AgentUpdateCoordinator.bind(prefs)
+    LaunchedEffect(prefs.hub, prefs.token) {
+        AgentUpdateCoordinator.bind(prefs)
+    }
     val agentUpdateUi by AgentUpdateCoordinator.state.collectAsState()
     val agentInfo = agentUpdateUi.info
     val agentMessage = agentUpdateUi.message
@@ -3793,19 +3898,7 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
         )
     }
     Box(Modifier.fillMaxWidth().height(196.dp), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .size(320.dp)
-                .graphicsLayer { scaleX = glowScale; scaleY = glowScale }
-                .background(
-                    Brush.radialGradient(
-                        0.00f to LabV2.Green.copy(alpha = glowAlpha * .30f),
-                        0.46f to LabV2.Green.copy(alpha = glowAlpha * .22f),
-                        0.78f to LabV2.Green.copy(alpha = glowAlpha * .10f),
-                        1.00f to Color.Transparent
-                    )
-                )
-        )
+        RouterHeroGlow()
         Canvas(Modifier.size(240.dp)) {
             val c = center
             drawCircle(color = Color(0x1273A7FF), radius = size.minDimension * 0.40f, center = c)
@@ -4288,7 +4381,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
 
 @Composable
 fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
-    HealthCard(Modifier.clip(HomeCardShape)) {
+    HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -4302,14 +4395,14 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("VPN / STUN 地址", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "按服务名显示，点击钥匙可隐藏公网地址。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("WireGuard", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "手动、DDNS 与 STUN 配置彼此独立，点击进入。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(13.dp))
         if (rows.isEmpty()) {
             Text(
-                "正在等待 STUN 地址同步，获取后会保留上次有效地址。",
+                "还没有公网入口记录，点击卡片创建 WireGuard 配置。",
                 fontSize = LabTypography.Value.fontSize,
                 fontWeight = FontWeight.SemiBold,
                 color = LabV2.InkMuted
@@ -4650,7 +4743,7 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
         }
         item { topNav() }
         item {
-            val syncChipBlue = Color(0xFF2563EB)
+            val syncChipBlue = Color(0xFF0284C7)
             val syncChipColors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
                 selectedContainerColor = syncChipBlue.copy(alpha = .12f),
                 selectedLabelColor = syncChipBlue,
@@ -5334,7 +5427,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
             Surface(
                 onClick = { reloadNetworkProfile(forceCarrier = true) },
                 shape = CircleShape,
-                color = Color(0xFF2563EB).copy(alpha = .10f),
+                color = Color(0xFF0284C7).copy(alpha = .10f),
                 modifier = Modifier.size(34.dp)
             ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Refresh, null, tint = Color(0xFF2563EB), modifier = Modifier.size(18.dp)) } }
         }
@@ -5673,17 +5766,24 @@ fun WifiRoamingScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("无线
 fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val wifiSampler = remember(ctx) { WifiSampler(ctx) }
     var running by remember { mutableStateOf(false) }
+    var stopping by remember { mutableStateOf(false) }
     var samples by remember { mutableStateOf<List<WifiSample>>(emptyList()) }
+    var session by remember { mutableStateOf<RoamingSession?>(null) }
+    var sessionSnapshot by remember { mutableStateOf(RoamingSessionSnapshot(sessionId = 0L, running = false)) }
+    var candidateObservation by remember { mutableStateOf(RoamCandidateSnapshot()) }
     var status by remember { mutableStateOf("等待测试") }
     var targetMode by remember { mutableStateOf("路由器+外网") }
     var wanTarget by remember { mutableStateOf("223.5.5.5") }
-    var sampleMode by remember { mutableStateOf("标准250ms") }
+    var sampleMode by remember { mutableStateOf("Ping 250ms") }
     var sampleMs by remember { mutableStateOf("250") }
     var timeoutMs by remember { mutableStateOf("1000") }
     var enableCandidateScan by remember { mutableStateOf(false) }
     var candidateScanMode by remember { mutableStateOf("关闭") }
-    var lastCandidateScanAt by remember { mutableStateOf(0L) }
+    var sessionTargetMode by remember { mutableStateOf("路由器+外网") }
+    var sessionSampleMode by remember { mutableStateOf("Ping 250ms") }
+    var sessionStickyEnabled by remember { mutableStateOf(false) }
     var candidateCacheText by remember { mutableStateOf("候选 AP：未启用") }
     var job by remember { mutableStateOf<Job?>(null) }
     var showCurrentSummary by remember { mutableStateOf(false) }
@@ -5693,8 +5793,8 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     var reportHistoryKb by remember { mutableStateOf(1) }
 
     val interval = sampleMs.toIntOrNull()?.coerceIn(100, 5000) ?: when (sampleMode) {
-        "高频100ms" -> 100
-        "低频500ms" -> 500
+        "Ping 100ms" -> 100
+        "Ping 500ms" -> 500
         else -> 250
     }
     val timeout = timeoutMs.toIntOrNull()?.coerceIn(300, 5000) ?: 1000
@@ -5704,25 +5804,84 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         "低频5s" -> 5000L
         else -> Long.MAX_VALUE
     }
-    val effectiveTarget = remember(targetMode, wanTarget) {
-        when (targetMode) {
-            "仅外网" -> wanTarget.trim().ifBlank { "223.5.5.5" }
-            "仅路由器" -> "网关"
-            else -> "网关+外网|${wanTarget.trim().ifBlank { "223.5.5.5" }}"
-        }
-    }
     val latest = samples.lastOrNull()
     val validSamples = remember(samples) { samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" } }
-    val roamCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid } }
+    val measuredSwitches = sessionSnapshot.switches
+    val pingAttempts = sessionSnapshot.pingAttempts
+    val roamCount = measuredSwitches.size
     val wifiSwitchCount = remember(validSamples) { validSamples.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid } }
-    val lostCount = remember(samples) { samples.count { it.lost } }
-    val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
+    fun lossRateOf(stats: RoamingProbeStats): String = if (stats.attemptedCount == 0) "--" else {
+        String.format(Locale.US, "%.1f%%", stats.lossCount * 100.0 / stats.attemptedCount)
+    }
     val stickyEnabled = enableCandidateScan && candidateScanMode != "关闭"
-    val stickyScore = remember(samples, stickyEnabled) { if (stickyEnabled) calculateStickyScore(samples, -70, 10) else 0 }
-    val events = remember(samples, stickyEnabled) { buildRoamingEventChain(samples, -70, if (stickyEnabled) 10 else 999, 3, 150, 2) }
-    val quality = remember(samples, events, stickyScore) { buildRoamingQuality(samples, events, stickyScore) }
-    val currentReport = remember(samples, events, quality, targetMode, sampleMode, stickyScore) {
-        if (samples.isEmpty()) null else buildRoamingReport(samples, events, quality, targetMode, sampleMode, stickyScore)
+    val configLocked = running || stopping
+    val resultTargetMode = if (sessionSnapshot.sessionId != 0L) sessionTargetMode else targetMode
+    val resultSampleMode = if (sessionSnapshot.sessionId != 0L) sessionSampleMode else sampleMode
+    val resultStickyEnabled = if (sessionSnapshot.sessionId != 0L) sessionStickyEnabled else stickyEnabled
+    val stickyScore = remember(samples, resultStickyEnabled, sessionSnapshot.wifiStats) {
+        if (!resultStickyEnabled) 0
+        else if (sessionSnapshot.wifiStats.weakDurationMs > 0L) {
+            ((sessionSnapshot.wifiStats.stickyDurationMs * 100.0 / sessionSnapshot.wifiStats.weakDurationMs).roundToInt()).coerceIn(0, 100)
+        } else calculateStickyScore(samples, -70, 10)
+    }
+    val events = remember(samples, resultStickyEnabled, measuredSwitches, sessionSnapshot.networkEvents) {
+        buildProductionRoamingEventChain(
+            samples = samples,
+            switches = measuredSwitches,
+            networkEvents = sessionSnapshot.networkEvents,
+            weakThreshold = -70,
+            candidateGap = if (resultStickyEnabled) 10 else 999,
+            stickyDurationMs = 3_000L,
+            highLatencyMs = 150,
+            lossTrigger = 2
+        )
+    }
+    val quality = remember(samples, events, stickyScore, resultTargetMode, pingAttempts, sessionSnapshot.gatewayStats, sessionSnapshot.wanStats) {
+        buildRoamingQuality(
+            samples, events, stickyScore, resultTargetMode, pingAttempts,
+            sessionSnapshot.gatewayStats, sessionSnapshot.wanStats
+        )
+    }
+    val currentReport = remember(samples, events, quality, resultTargetMode, resultSampleMode, stickyScore, measuredSwitches, pingAttempts, sessionSnapshot.networkEvents, sessionSnapshot.gatewayStats, sessionSnapshot.wanStats, sessionSnapshot.wifiStats) {
+        if (samples.isEmpty()) null else buildRoamingReport(
+            samples, events, quality, resultTargetMode, resultSampleMode, stickyScore,
+            measuredSwitches, pingAttempts, sessionSnapshot.networkEvents,
+            sessionSnapshot.wifiGapP95Ms, sessionSnapshot.wifiGapMaxMs,
+            sessionSnapshot.wifiSampleCount, sessionSnapshot.gatewayStats,
+            sessionSnapshot.wanStats, sessionSnapshot.wifiStats,
+            sessionSnapshot.impactWindowTruncated
+        )
+    }
+
+    fun stopRoaming(finalStatus: String) {
+        if (!running || stopping) return
+        val endingJob = job
+        val endingSession = session
+        running = false
+        stopping = true
+        status = "正在停止并收敛最终统计..."
+        scope.launch {
+            endingJob?.cancelAndJoin()
+            val finalSnapshot = endingSession?.finish()
+            if (session === endingSession && finalSnapshot != null) sessionSnapshot = finalSnapshot
+            stopping = false
+            status = finalStatus
+        }
+    }
+
+    LaunchedEffect(session) {
+        session?.snapshot?.collect { next ->
+            sessionSnapshot = next
+            samples = roamingUiSamples(next, sessionTargetMode)
+            val candidate = next.latestWifi?.candidate
+            if (candidate != null && sessionStickyEnabled) {
+                candidateCacheText = candidateDisplayText(next.latestWifi, candidate)
+            }
+            val latestWifi = next.latestWifi
+            status = if (latestWifi != null) {
+                "Wi-Fi ${next.wifiSampleCount} 次 · BSSID切换 ${next.switches.size} 次 · 丢包 网关${next.gatewayStats.lossCount}/外网${next.wanStats.lossCount} · 采样P95 ${next.wifiGapP95Ms ?: "--"}ms"
+            } else if (running) "采集中..." else status
+        }
     }
 
     fun refreshRoamingHistory() {
@@ -5731,7 +5890,59 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     }
 
     DisposableEffect(Unit) {
-        onDispose { job?.cancel() }
+        onDispose {
+            job?.cancel()
+            session?.cancel()
+        }
+    }
+
+    DisposableEffect(ctx, running, stopping, session) {
+        val activity = ctx.findActivity() as? ComponentActivity
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && running && !stopping) {
+                stopRoaming("应用进入后台，测试已停止并完成统计")
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
+
+    DisposableEffect(running, session) {
+        val activeSession = session
+        if (!running || activeSession == null) {
+            onDispose { }
+        } else {
+            val manager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            fun emit(kind: String, label: String) {
+                val nowNanos = SystemClock.elapsedRealtimeNanos()
+                activeSession.trySend(RoamingSessionInput.Network(
+                    activeSession.sessionId,
+                    RoamingNetworkLayerEvent(
+                        observedAtNanos = nowNanos,
+                        elapsedMs = ((nowNanos - activeSession.sessionId) / 1_000_000L).coerceAtLeast(0L),
+                        timeText = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date()),
+                        label = label,
+                        kind = kind
+                    )
+                ))
+            }
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = emit("available", "默认网络可用/恢复")
+                override fun onLost(network: Network) = emit("lost", "默认网络丢失/切换")
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                    val transport = when {
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "蜂窝"
+                        else -> "其他"
+                    }
+                    val validated = if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) "已验证" else "未验证"
+                    emit("capabilities", "网络能力：$transport · $validated")
+                }
+            }
+            runCatching { manager?.registerDefaultNetworkCallback(callback) }
+            onDispose { runCatching { manager?.unregisterNetworkCallback(callback) } }
+        }
     }
 
     if (showHistorySheet) {
@@ -5814,31 +6025,31 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         }
     }
 
-    ExpressiveCard("漫游配置", "轻量稳定模式：进入页面不读取 Wi‑Fi；候选 AP 扫描需手动开启。", null, Color(0xFF2563EB)) {
+    ExpressiveCard("漫游配置", "Wi-Fi 连接信息固定目标50ms观察；Ping独立运行。候选 AP 扫描需手动开启。", null, Color(0xFF2563EB)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f)) { targetMode = "路由器+外网" }
-            RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f)) { targetMode = "仅路由器" }
-            RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f)) { targetMode = "仅外网" }
+            RoamSegmentButton("路由器+外网", targetMode == "路由器+外网", Modifier.weight(1f), enabled = !configLocked) { targetMode = "路由器+外网" }
+            RoamSegmentButton("仅路由器", targetMode == "仅路由器", Modifier.weight(1f), enabled = !configLocked) { targetMode = "仅路由器" }
+            RoamSegmentButton("仅外网", targetMode == "仅外网", Modifier.weight(1f), enabled = !configLocked) { targetMode = "仅外网" }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("外网", Modifier.width(52.dp), fontSize = 12.3.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f))
             CompactTextField(
                 value = wanTarget,
                 onValueChange = { wanTarget = it.trim().take(64) },
-                enabled = targetMode != "仅路由器",
+                enabled = !configLocked && targetMode != "仅路由器",
                 leadingIcon = { FieldIconBox(Icons.Rounded.Public, Color(0xFF2563EB)) },
                 modifier = Modifier.weight(1f)
             )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TinyParamInputIcon("采样ms", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("Ping间隔", sampleMs, { sampleMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Schedule, KeyboardType.Number, Modifier.weight(1f), enabled = !configLocked)
+            TinyParamInputIcon("Ping超时", timeoutMs, { timeoutMs = it.filter { c -> c.isDigit() }.take(4) }, Icons.Rounded.Timer, KeyboardType.Number, Modifier.weight(1f), enabled = !configLocked)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("高频100ms", "标准250ms", "低频500ms").forEach { mode ->
-                RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f)) {
+            listOf("Ping 100ms", "Ping 250ms", "Ping 500ms").forEach { mode ->
+                RoamSegmentButton(mode, sampleMode == mode, Modifier.weight(1f), enabled = !configLocked) {
                     sampleMode = mode
-                    sampleMs = when (mode) { "高频100ms" -> "100"; "低频500ms" -> "500"; else -> "250" }
+                    sampleMs = when (mode) { "Ping 100ms" -> "100"; "Ping 500ms" -> "500"; else -> "250" }
                 }
             }
         }
@@ -5849,11 +6060,20 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                 enableCandidateScan = it != "关闭"
                 if (it == "关闭") candidateCacheText = "候选 AP：未启用"
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !configLocked
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
-                onClick = { samples = emptyList(); status = "已清空"; showCurrentSummary = false },
+                onClick = {
+                    session?.cancel()
+                    session = null
+                    sessionSnapshot = RoamingSessionSnapshot(sessionId = 0L, running = false)
+                    samples = emptyList()
+                    status = "已清空"
+                    showCurrentSummary = false
+                },
+                enabled = !configLocked,
                 shape = RoundedCornerShape(15.dp),
                 modifier = Modifier.weight(1f).height(42.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
@@ -5867,12 +6087,20 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
             Button(
                 onClick = {
                     if (running) {
-                        job?.cancel(); running = false; status = "已停止"
+                        stopRoaming("已停止 · 已完成最终统计")
                     } else {
                         val hasPerm = runCatching { hasRequiredWifiRoamingPermissions(ctx) }.getOrDefault(false)
                         if (!hasPerm) {
-                            Toast.makeText(ctx, "请先在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
-                            status = "缺少定位/附近设备权限，无法读取 Wi‑Fi 漫游信息"
+                            val missing = safeMissingWifiRoamingPermissions(ctx)
+                            val activity = ctx.findActivity()
+                            if (missing.isNotEmpty() && activity != null) {
+                                status = "缺少必要权限，已发起定位/附近设备授权"
+                                runCatching { ActivityCompat.requestPermissions(activity, missing, 9902) }
+                                    .onFailure { status = "权限请求启动失败，请到系统设置中授权" }
+                            } else {
+                                Toast.makeText(ctx, "请在系统设置中允许定位/附近设备权限", Toast.LENGTH_SHORT).show()
+                                status = "无法自动请求权限，请到系统设置中授权"
+                            }
                             return@Button
                         }
                         if (!isWifiConnected(ctx)) {
@@ -5880,58 +6108,135 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                             status = "未连接 Wi‑Fi，无法开始漫游测试"
                             return@Button
                         }
-                        samples = emptyList(); running = true; status = "采集中..."
+                        val startedAtNanos = SystemClock.elapsedRealtimeNanos()
+                        val activeSession = RoamingSession(sessionId = startedAtNanos)
+                        val activeMode = targetMode
+                        val activeWanTarget = wanTarget.trim().ifBlank { "223.5.5.5" }
+                        val activeCandidateEnabled = stickyEnabled
+                        val activeCandidateIntervalMs = candidateScanIntervalMs
+                        sessionTargetMode = activeMode
+                        sessionSampleMode = buildString {
+                            append("Ping ${interval}ms · 超时 ${timeout}ms")
+                            if (activeMode != "仅路由器") append(" · WAN ${activeWanTarget}")
+                        }
+                        sessionStickyEnabled = stickyEnabled
+                        samples = emptyList()
+                        sessionSnapshot = RoamingSessionSnapshot(sessionId = startedAtNanos)
+                        candidateObservation = RoamCandidateSnapshot()
+                        candidateCacheText = if (activeCandidateEnabled) "候选 AP：等待系统扫描缓存" else "候选 AP：未启用"
+                        session?.cancel()
+                        session = activeSession
+                        running = true
+                        status = "Wi-Fi 固定目标50ms采集 · Ping独立运行"
                         job = scope.launch {
-                            while (currentCoroutineContext().isActive) {
-                                val nowElapsed = SystemClock.elapsedRealtime()
-                                val shouldScan = enableCandidateScan && candidateScanMode != "关闭" && nowElapsed - lastCandidateScanAt >= candidateScanIntervalMs
-                                if (shouldScan) lastCandidateScanAt = nowElapsed
-                                val sample = runCatching { readWifiSample(ctx, effectiveTarget, timeout, shouldScan) }
-                                    .getOrElse {
-                                        val now = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                                        WifiSample(now, "unknown", "", -127, null, true)
-                                    }
-                                if (shouldScan) {
-                                    candidateCacheText = if (sample.sameSsidApCount > 0 && sample.candidateBssid.isNotBlank()) {
-                                        "候选 AP：${sample.sameSsidApCount}个 · ${sample.candidateBssid.takeLast(8)} · ${sample.candidateRssi}dBm · 强 ${sample.rssiGapDb}dB"
-                                    } else {
-                                        "候选 AP：未发现同 SSID 候选，${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())} 更新"
+                            supervisorScope {
+                                launch {
+                                    while (currentCoroutineContext().isActive) {
+                                        val tickAt = SystemClock.elapsedRealtime()
+                                        val observation = try {
+                                            wifiSampler.sample(activeSession.sessionId, startedAtNanos, candidateObservation)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (error: Throwable) {
+                                            val nowNanos = SystemClock.elapsedRealtimeNanos()
+                                            RoamWifiObservation(
+                                                sessionId = activeSession.sessionId,
+                                                observedAtNanos = nowNanos,
+                                                elapsedMs = (nowNanos - startedAtNanos) / 1_000_000L,
+                                                wallTimeText = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date()),
+                                                ssid = "unknown",
+                                                bssid = null,
+                                                rssi = null,
+                                                frequencyMhz = null,
+                                                channel = null,
+                                                linkMbps = null,
+                                                txMbps = null,
+                                                rxMbps = null,
+                                                unavailableReason = error.message ?: "Wi-Fi 信息读取失败"
+                                            )
+                                        }
+                                        activeSession.trySend(RoamingSessionInput.Wifi(activeSession.sessionId, observation))
+                                        val spent = SystemClock.elapsedRealtime() - tickAt
+                                        delay((50L - spent).coerceAtLeast(1L))
                                     }
                                 }
-                                samples = (samples + sample).takeLast(1200)
-                                val okRssi = sample.rssi > -120
-                                val latestLoss = samples.count { it.lost }
-                                val latestValid = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
-                                val latestRoam = latestValid.zipWithNext().count { it.first.ssid == it.second.ssid && it.first.bssid != it.second.bssid }
-                                val latestWifiSwitch = latestValid.zipWithNext().count { it.first.ssid.isNotBlank() && it.second.ssid.isNotBlank() && it.first.ssid != it.second.ssid }
-                                val scanText = if (enableCandidateScan) " · 候选扫描${candidateScanMode}" else " · 候选扫描关"
-                                status = if (okRssi) "采样 ${samples.size} 次 · AP漫游 $latestRoam 次 · Wi‑Fi切换 $latestWifiSwitch 次 · 丢包 $latestLoss$scanText" else "Wi‑Fi 信息不可用 · 采样 ${samples.size} 次 · 丢包 $latestLoss$scanText"
-                                delay(interval.toLong())
+                                if (activeCandidateEnabled) launch {
+                                    while (currentCoroutineContext().isActive) {
+                                        candidateObservation = runCatching {
+                                            wifiSampler.refreshCandidate(sessionSnapshot.latestWifi, requestScan = true)
+                                        }.getOrElse { RoamCandidateSnapshot(status = "候选 AP：读取受限") }
+                                        candidateCacheText = candidateDisplayText(sessionSnapshot.latestWifi, candidateObservation)
+                                        delay(activeCandidateIntervalMs.coerceAtMost(5_000L))
+                                    }
+                                }
+                                suspend fun runProbeLoop(target: RoamProbeTarget, fixedAddress: InetAddress? = null) {
+                                    while (currentCoroutineContext().isActive) {
+                                        val tickAtMs = SystemClock.elapsedRealtime()
+                                        val startedNanos = SystemClock.elapsedRealtimeNanos()
+                                        val address = if (target == RoamProbeTarget.WAN) fixedAddress else wifiSampler.gatewayAddress()?.let { raw ->
+                                            withContext(Dispatchers.IO) { runCatching { InetAddress.getByName(raw) }.getOrNull() }
+                                        }
+                                        val attempted = address != null
+                                        val latency = if (address != null) try {
+                                            pingOnceAddress(address, timeout)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Throwable) {
+                                            null
+                                        } else null
+                                        val completedNanos = SystemClock.elapsedRealtimeNanos()
+                                        activeSession.trySend(RoamingSessionInput.Ping(
+                                            activeSession.sessionId,
+                                            RoamPingAttempt(
+                                                sessionId = activeSession.sessionId,
+                                                target = target,
+                                                startedAtNanos = startedNanos,
+                                                completedAtNanos = completedNanos,
+                                                attempted = attempted,
+                                                latencyMs = latency,
+                                                failureReason = when {
+                                                    !attempted -> if (target == RoamProbeTarget.GATEWAY) "网关地址不可用" else "目标解析失败"
+                                                    latency == null -> "Ping 无响应"
+                                                    else -> null
+                                                }
+                                            )
+                                        ))
+                                        val spent = SystemClock.elapsedRealtime() - tickAtMs
+                                        delay((interval.toLong() - spent).coerceAtLeast(1L))
+                                    }
+                                }
+                                if (activeMode != "仅外网") launch { runProbeLoop(RoamProbeTarget.GATEWAY) }
+                                if (activeMode != "仅路由器") launch {
+                                    val address = withContext(Dispatchers.IO) { runCatching { InetAddress.getByName(activeWanTarget) }.getOrNull() }
+                                    runProbeLoop(RoamProbeTarget.WAN, address)
+                                }
                             }
                         }
                     }
                 },
+                enabled = !stopping,
                 shape = RoundedCornerShape(15.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
+                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF0284C7)),
                 modifier = Modifier.weight(1f).height(42.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
             ) {
-                Text(if (running) "停止测试" else "开始测试", fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                Text(if (stopping) "正在停止" else if (running) "停止测试" else "开始测试", fontSize = 11.2.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
         }
     }
 
-    ExpressiveCard("实时结果", if (samples.isEmpty()) status else "$status · 测试 ${formatSecondsCompact((samples.size * interval / 1000).coerceAtLeast(1))}", null, Color(0xFF16A34A)) {
+    ExpressiveCard("实时结果", if (samples.isEmpty()) status else "$status · 测试 ${formatSecondsCompact(((latest?.elapsedMs ?: 0L) / 1000L).toInt())}", null, Color(0xFF16A34A)) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             StatChip("RSSI", latest?.rssi?.takeIf { it > -120 }?.let { "$it" } ?: "—", Color(0xFF16A34A), Modifier.widthIn(min = 76.dp))
             StatChip("延迟", latest?.latency?.let { "${it}ms" } ?: "—", Color(0xFFF59E0B), Modifier.widthIn(min = 82.dp))
-            StatChip("丢包", lossRate, Color(0xFF64748B), Modifier.widthIn(min = 82.dp))
+            if (resultTargetMode != "仅外网") StatChip("网关丢包", lossRateOf(sessionSnapshot.gatewayStats), Color(0xFF64748B), Modifier.widthIn(min = 92.dp))
+            if (resultTargetMode != "仅路由器") StatChip("外网丢包", lossRateOf(sessionSnapshot.wanStats), Color(0xFF64748B), Modifier.widthIn(min = 92.dp))
             StatChip("漫游", "$roamCount", LabV2.Cyan, Modifier.widthIn(min = 76.dp))
         }
-        if (enableCandidateScan) {
+        if (resultStickyEnabled) {
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -5942,7 +6247,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
         }
         RoamPlainInfo("SSID", latest?.ssid?.takeIf { it.isNotBlank() && it != "unknown" } ?: "—")
         RoamPlainInfo("BSSID", latest?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" } ?: "—")
-        if (enableCandidateScan) {
+        if (resultStickyEnabled) {
             RoamPlainInfo("候选", candidateCacheText)
         } else {
             RoamPlainInfo("候选", "候选 AP 扫描关闭")
@@ -5956,7 +6261,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("漫游图表", fontSize = 15.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.weight(1f))
-                        Text("轻量稳定模式", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
+                        Text("Wi-Fi目标50ms · UI 250ms/最近约5分钟", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 1)
                     }
                     LabRoamCharts(samples, running = running, events = events, modifier = Modifier.fillMaxWidth())
                 }
@@ -5981,7 +6286,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                             }) {
                                 Text("复制", fontSize = 11.5.sp, fontWeight = FontWeight.Black)
                             }
-                            TextButton(onClick = {
+                            TextButton(enabled = !configLocked, onClick = {
                                 prefs.addRoamingReport(report)
                                 refreshRoamingHistory()
                                 status = "测试总结已保存 · ${reportHistory.size}/20 · ${reportHistoryKb}KB"
@@ -5995,11 +6300,15 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
                         AnimatedVisibility(showCurrentSummary) {
                             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                 RoamingReportLine("网关延迟", "最小${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}")
+                                RoamingReportLine("外网延迟", "最小${report.wanMinMs?.let { "${it}ms" } ?: "--"} / 最大${report.wanMaxMs?.let { "${it}ms" } ?: "--"} / 平均${report.wanAvgMs?.let { "${it}ms" } ?: "--"}")
                                 RoamingReportLine("信号RSSI", "最强${report.rssiBestDbm?.let { "${it}dBm" } ?: "--"} / 最弱${report.rssiWorstDbm?.let { "${it}dBm" } ?: "--"} / 平均${report.rssiAvgDbm?.let { "${it}dBm" } ?: "--"}")
                                 RoamingReportLine("协商速率", "最高${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
-                                RoamingReportLine("漫游切换", "${report.roamCount}次 · 最长${report.longestBreakMs?.let { "${it}ms" } ?: "—"} · 切换附近丢包${report.lossNearRoam}")
+                                RoamingReportLine("BSSID切换观察", "${report.roamCount}次 · 最长窗口${report.longestObservationMs?.let { "${it}ms" } ?: "—"} · 非精确802.11握手耗时")
+                                RoamingReportLine("Ping业务恢复", "网关${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} · 外网${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
+                                RoamingReportLine("全程/漫游窗口丢包", "网关${report.gatewayLossCount}/${report.gatewayRoamLossCount} · 外网${report.wanLossCount}/${report.wanRoamLossCount} · Network断开${report.networkDisconnectCount}")
+                                if (report.impactWindowTruncated) RoamingReportLine("窗口证据", "BSSID 长时间不可用，部分逐包归属已截断")
                                 Text(report.conclusion, fontSize = 11.5.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), lineHeight = 16.sp)
-                                Text(if (enableCandidateScan) "候选 AP：${candidateCacheText.removePrefix("候选 AP：")}" else "候选 AP：未启用；粘 AP 判断未启用", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f), lineHeight = 15.sp)
+                                Text(if (resultStickyEnabled) "候选 AP：${candidateCacheText.removePrefix("候选 AP：")}" else "候选 AP：未启用；粘 AP 判断未启用", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f), lineHeight = 15.sp)
                             }
                         }
                     }
@@ -6031,6 +6340,8 @@ data class WifiSample(
     val rssi: Int,
     val latency: Int?,
     val lost: Boolean,
+    val elapsedMs: Long = 0L,
+    val observedAtNanos: Long = 0L,
     val gatewayLatency: Int? = null,
     val wanLatency: Int? = null,
     val gatewayLost: Boolean = false,
@@ -6089,8 +6400,75 @@ data class RoamingReport(
     val qualityScore: Int,
     val qualityLabel: String,
     val conclusion: String,
-    val events: List<String>
+    val events: List<String>,
+    val schemaVersion: Int = 1,
+    val durationMs: Long = 0L,
+    val longestObservationMs: Long? = null,
+    val gatewayAttemptCount: Int = 0,
+    val gatewayLossCount: Int = 0,
+    val wanAttemptCount: Int = 0,
+    val wanLossCount: Int = 0,
+    val gatewayRoamLossCount: Int = 0,
+    val wanRoamLossCount: Int = 0,
+    val wanMinMs: Int? = null,
+    val wanMaxMs: Int? = null,
+    val wanAvgMs: Int? = null,
+    val gatewayRecoveryMaxMs: Long? = null,
+    val wanRecoveryMaxMs: Long? = null,
+    val networkDisconnectCount: Int = 0,
+    val wifiGapP95Ms: Long? = null,
+    val wifiGapMaxMs: Long? = null,
+    val impactWindowTruncated: Boolean = false,
+    val switches: List<RoamingSwitchReport> = emptyList(),
+    val networkEvents: List<String> = emptyList()
 )
+
+data class RoamingSwitchReport(
+    val oldBssid: String,
+    val newBssid: String,
+    val observationMs: Long,
+    val gatewayRecoveryMs: Long?,
+    val wanRecoveryMs: Long?,
+    val gatewayLossCount: Int,
+    val wanLossCount: Int,
+    val gatewayImpactState: String = RoamImpactState.NOT_MONITORED.name,
+    val wanImpactState: String = RoamImpactState.NOT_MONITORED.name
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("oldBssid", oldBssid)
+        .put("newBssid", newBssid)
+        .put("observationMs", observationMs)
+        .put("gatewayRecoveryMs", gatewayRecoveryMs ?: JSONObject.NULL)
+        .put("wanRecoveryMs", wanRecoveryMs ?: JSONObject.NULL)
+        .put("gatewayLossCount", gatewayLossCount)
+        .put("wanLossCount", wanLossCount)
+        .put("gatewayImpactState", gatewayImpactState)
+        .put("wanImpactState", wanImpactState)
+
+    companion object {
+        fun fromJson(value: JSONObject): RoamingSwitchReport = RoamingSwitchReport(
+            oldBssid = value.optString("oldBssid"),
+            newBssid = value.optString("newBssid"),
+            observationMs = value.optLong("observationMs"),
+            gatewayRecoveryMs = value.optNullableLong("gatewayRecoveryMs"),
+            wanRecoveryMs = value.optNullableLong("wanRecoveryMs"),
+            gatewayLossCount = value.optInt("gatewayLossCount"),
+            wanLossCount = value.optInt("wanLossCount"),
+            gatewayImpactState = value.optString("gatewayImpactState").takeIf { it.isNotBlank() }
+                ?: when {
+                    value.optNullableLong("gatewayRecoveryMs") != null -> RoamImpactState.RECOVERED.name
+                    value.optInt("gatewayLossCount") > 0 -> RoamImpactState.UNRECOVERED.name
+                    else -> RoamImpactState.NOT_MONITORED.name
+                },
+            wanImpactState = value.optString("wanImpactState").takeIf { it.isNotBlank() }
+                ?: when {
+                    value.optNullableLong("wanRecoveryMs") != null -> RoamImpactState.RECOVERED.name
+                    value.optInt("wanLossCount") > 0 -> RoamImpactState.UNRECOVERED.name
+                    else -> RoamImpactState.NOT_MONITORED.name
+                }
+        )
+    }
+}
 
 data class DnsQualityRow(val server: String, val ms: Long?, val a: String, val aaaa: String, val note: String)
 data class ServiceTarget(val name: String, val host: String, val port: Int, val protocol: String)
@@ -6110,7 +6488,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
     var running by remember { mutableStateOf(false) }
     var rows by remember { mutableStateOf<List<Ipv6TestRow>>(emptyList()) }
     var summary by remember { mutableStateOf("等待检测") }
-    val blue = Color(0xFF2563EB)
+    val blue = Color(0xFF0284C7)
     ExpressiveCard("IPv6 配置", "对标 test-ipv6：IPv4/IPv6公网出口、双栈、大包、AAAA 与 ASN 分项检测。", Icons.Rounded.SettingsEthernet, Color(0xFF06B6D4)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TinyInfoParam("目标", "test-ipv6", Icons.Rounded.Dns, blue, Modifier.weight(1f))
@@ -6135,7 +6513,7 @@ fun Ipv6TestTool(prefs: AppPrefs) {
         rows.forEach { row ->
             val c = when (row.ok) { true -> Color(0xFF16A34A); false -> Color(0xFFEF4444); null -> Color(0xFFF59E0B) }
             Surface(
-                modifier = Modifier.fillMaxWidth().then(if (row.route.isNotBlank()) Modifier.clickable { } else Modifier),
+                modifier = Modifier.fillMaxWidth().then(if (row.route.isNotBlank()) Modifier.clip(RoundedCornerShape(18.dp)).clickable { } else Modifier),
                 shape = RoundedCornerShape(18.dp),
                 color = c.copy(alpha = .07f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, c.copy(alpha = .10f))
@@ -6173,7 +6551,7 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
     var samples by remember { mutableStateOf<List<SpeedSample>>(emptyList()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val blue = Color(0xFF2563EB)
+    val blue = Color(0xFF0284C7)
     fun applyTemplate(name: String) {
         template = name
         templates.firstOrNull { it.name == name }?.let { if (it.url.isNotBlank()) url = it.url }
@@ -6376,7 +6754,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
     val lossRate = if (samples.isEmpty()) "--" else String.format(Locale.US, "%.1f%%", lostCount * 100.0 / samples.size.coerceAtLeast(1))
     val stickyScore = remember(samples, weakThreshold, candidateGap) { calculateStickyScore(samples, weakThreshold, candidateGap) }
     val events = remember(samples, weakThreshold, candidateGap, triggerSec, highLatency, lossTrigger) {
-        buildRoamingEventChain(samples, weakThreshold, candidateGap, triggerSec, highLatency, lossTrigger)
+        buildRoamingEventChain(samples, weakThreshold, candidateGap, triggerSec * 1_000L, highLatency, lossTrigger)
     }
     val quality = remember(samples, events, stickyScore) { buildRoamingQuality(samples, events, stickyScore) }
     val currentReport = remember(samples, events, quality, targetMode, sampleMode, stickyScore) {
@@ -6435,7 +6813,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
             }
         }
         Surface(
-            modifier = Modifier.fillMaxWidth().clickable { advancedOpen = !advancedOpen },
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable { advancedOpen = !advancedOpen },
             shape = RoundedCornerShape(17.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = .90f),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f))
@@ -6517,7 +6895,7 @@ fun WifiRoamingTool(prefs: AppPrefs) {
                     }
                 },
                 shape = RoundedCornerShape(17.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF2563EB)),
+                colors = ButtonDefaults.buttonColors(containerColor = if (running) Color(0xFF64748B) else Color(0xFF0284C7)),
                 modifier = Modifier.weight(1.22f).height(46.dp)
             ) {
                 Icon(if (running) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null, Modifier.size(17.dp))
@@ -6635,7 +7013,7 @@ private fun CandidateScanToggle(enabled: Boolean, onChange: (Boolean) -> Unit, m
 }
 
 @Composable
-private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val modes = listOf("关闭", "低频5s", "标准3s", "高频1s")
     Surface(
         modifier = modifier,
@@ -6659,7 +7037,7 @@ private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, 
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 modes.forEach { item ->
-                    RoamSegmentButton(item, mode == item, Modifier.weight(1f)) { onChange(item) }
+                    RoamSegmentButton(item, mode == item, Modifier.weight(1f), enabled = enabled) { onChange(item) }
                 }
             }
         }
@@ -6667,15 +7045,15 @@ private fun CandidateScanModeSelector(mode: String, onChange: (String) -> Unit, 
 }
 
 @Composable
-private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun RoamSegmentButton(text: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Surface(
-        modifier = modifier.height(42.dp).clickable(onClick = onClick),
+        modifier = modifier.height(42.dp).clip(RoundedCornerShape(15.dp)).clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(15.dp),
-        color = if (selected) Color(0xFF2563EB).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+        color = if (selected) Color(0xFF0284C7).copy(alpha = .10f) else MaterialTheme.colorScheme.surface.copy(alpha = .92f),
         border = BorderStroke(1.dp, if (selected) Color(0xFF2563EB).copy(alpha = .38f) else MaterialTheme.colorScheme.outline.copy(alpha = .14f))
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, fontSize = 11.8.sp, fontWeight = FontWeight.Black, color = if (!enabled) MaterialTheme.colorScheme.onSurface.copy(alpha = .38f) else if (selected) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .86f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -6818,7 +7196,7 @@ fun PingTool(prefs: AppPrefs) {
     var showHistory by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val blue = Color(0xFF2563EB)
+    val blue = Color(0xFF0284C7)
     val showPort = protocol.startsWith("TCP") || protocol.startsWith("HTTP")
 
     if (showHistory) {
@@ -6940,7 +7318,7 @@ fun PingLatencyCard(points: List<PingPoint>, accent: Color, onHistory: () -> Uni
 @Composable
 fun PingRatePillCompact(points: List<PingPoint>) {
     val rate = formatRate(points)
-    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF0284C7).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Speed, null, Modifier.size(12.dp), tint = Color(0xFF2563EB))
             Spacer(Modifier.width(3.dp))
@@ -6966,7 +7344,7 @@ fun PingLossPillCompact(points: List<PingPoint>) {
 @Composable
 fun PingRatePill(points: List<PingPoint>) {
     val rate = formatRate(points)
-    Surface(shape = RoundedCornerShape(50), color = Color(0xFF2563EB).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
+    Surface(shape = RoundedCornerShape(50), color = Color(0xFF0284C7).copy(alpha = .10f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .14f))) {
         Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Speed, null, Modifier.size(13.dp), tint = Color(0xFF2563EB))
             Spacer(Modifier.width(4.dp))
@@ -6990,7 +7368,7 @@ fun PingHistoryDialog(history: List<PingHistoryEntry>, bytes: Int, onClear: () -
                     Text("暂无历史。完成一次测试后自动保存最近 10 条汇总。", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .60f))
                 }
                 history.forEach { item -> PingHistoryItem(item) }
-                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF2563EB).copy(alpha = .07f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = .10f))) {
+                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF2563EB).copy(alpha = .07f), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = .10f))) {
                     Text("历史记录占用：约 ${formatBytes(bytes)} · 最多 10 条", Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB))
                 }
             }
@@ -7789,12 +8167,22 @@ fun roamingReportText(report: RoamingReport): String = buildString {
     appendLine("SSID: ${report.ssid}")
     appendLine("时间: ${report.time}")
     appendLine("模式: ${report.targetMode} / ${report.sampleMode}")
-    appendLine("样本: ${report.sampleCount} 次，时长约 ${formatSecondsCompact(report.durationSec)}")
+    appendLine("样本: ${report.sampleCount} 次，时长 ${formatSecondsCompact(report.durationSec)}")
     appendLine("评分: ${report.qualityScore} ${report.qualityLabel}")
-    appendLine("延迟: 最小 ${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大 ${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均 ${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}")
+    appendLine(if (report.schemaVersion >= 2) "网关 Ping RTT: 最小 ${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大 ${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均 ${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}" else "旧版目标延迟: 最小 ${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大 ${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均 ${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}")
+    if (report.schemaVersion >= 2) appendLine("外网 Ping RTT: 最小 ${report.wanMinMs?.let { "${it}ms" } ?: "--"} / 最大 ${report.wanMaxMs?.let { "${it}ms" } ?: "--"} / 平均 ${report.wanAvgMs?.let { "${it}ms" } ?: "--"}")
     appendLine("RSSI: 最强 ${report.rssiBestDbm?.let { "${it}dBm" } ?: "--"} / 最弱 ${report.rssiWorstDbm?.let { "${it}dBm" } ?: "--"} / 平均 ${report.rssiAvgDbm?.let { "${it}dBm" } ?: "--"}")
     appendLine("协商速率: 最高 ${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低 ${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均 ${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
-    appendLine("漫游: ${report.roamCount} 次，最长中断 ${report.longestBreakMs?.let { "${it}ms" } ?: "--"}，切换附近丢包 ${report.lossNearRoam}")
+    if (report.schemaVersion >= 2) {
+        appendLine("BSSID切换: ${report.roamCount} 次，最长观察窗口 ${report.longestObservationMs?.let { "${it}ms" } ?: "--"}（非精确802.11握手耗时）")
+        appendLine("业务恢复: 网关 ${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} / 外网 ${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
+        appendLine("全程 Ping 丢包: 网关 ${report.gatewayLossCount}/${report.gatewayAttemptCount} / 外网 ${report.wanLossCount}/${report.wanAttemptCount}")
+        appendLine("漫游窗口丢包: 网关 ${report.gatewayRoamLossCount} / 外网 ${report.wanRoamLossCount}")
+        appendLine("Network层断开: ${report.networkDisconnectCount} 次；Wi-Fi采样间隔 P95 ${report.wifiGapP95Ms ?: "--"}ms / 最大 ${report.wifiGapMaxMs ?: "--"}ms")
+        if (report.impactWindowTruncated) appendLine("窗口证据: BSSID 长时间不可用，部分逐包归属已截断")
+    } else {
+        appendLine("旧版漫游估算: ${report.roamCount} 次，估算中断 ${report.longestBreakMs?.let { "${it}ms" } ?: "--"}，附近丢包 ${report.lossNearRoam}")
+    }
     appendLine("粘AP: ${report.stickyScore}，最高候选差 ${report.bestCandidateGap?.let { "${it}dB" } ?: "--"}")
     appendLine("结论: ${report.conclusion}")
     if (report.events.isNotEmpty()) {
@@ -7812,10 +8200,15 @@ fun copyRoamingReportToClipboard(ctx: Context, report: RoamingReport) {
 }
 
 fun JSONObject.optNullableInt(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
+fun JSONObject.optNullableLong(name: String): Long? = if (has(name) && !isNull(name)) optLong(name) else null
 
 fun RoamingReport.toJson(): JSONObject {
     val ev = JSONArray()
     events.take(80).forEach { ev.put(it) }
+    val switchArray = JSONArray()
+    switches.take(80).forEach { switchArray.put(it.toJson()) }
+    val networkArray = JSONArray()
+    networkEvents.take(80).forEach { networkArray.put(it) }
     return JSONObject()
         .put("id", id)
         .put("time", time)
@@ -7842,27 +8235,80 @@ fun RoamingReport.toJson(): JSONObject {
         .put("qualityLabel", qualityLabel)
         .put("conclusion", conclusion)
         .put("events", ev)
+        .put("schemaVersion", schemaVersion)
+        .put("durationMs", durationMs)
+        .put("longestObservationMs", longestObservationMs ?: JSONObject.NULL)
+        .put("gatewayAttemptCount", gatewayAttemptCount)
+        .put("gatewayLossCount", gatewayLossCount)
+        .put("wanAttemptCount", wanAttemptCount)
+        .put("wanLossCount", wanLossCount)
+        .put("gatewayRoamLossCount", gatewayRoamLossCount)
+        .put("wanRoamLossCount", wanRoamLossCount)
+        .put("wanMinMs", wanMinMs ?: JSONObject.NULL)
+        .put("wanMaxMs", wanMaxMs ?: JSONObject.NULL)
+        .put("wanAvgMs", wanAvgMs ?: JSONObject.NULL)
+        .put("gatewayRecoveryMaxMs", gatewayRecoveryMaxMs ?: JSONObject.NULL)
+        .put("wanRecoveryMaxMs", wanRecoveryMaxMs ?: JSONObject.NULL)
+        .put("networkDisconnectCount", networkDisconnectCount)
+        .put("wifiGapP95Ms", wifiGapP95Ms ?: JSONObject.NULL)
+        .put("wifiGapMaxMs", wifiGapMaxMs ?: JSONObject.NULL)
+        .put("impactWindowTruncated", impactWindowTruncated)
+        .put("switches", switchArray)
+        .put("networkEvents", networkArray)
 }
 
-fun buildRoamingReport(
+internal fun buildRoamingReport(
     samples: List<WifiSample>,
     events: List<RoamEvent>,
     quality: RoamQualitySummary,
     targetMode: String,
     sampleMode: String,
-    stickyScore: Int
+    stickyScore: Int,
+    switches: List<BssidSwitchEvent> = emptyList(),
+    pingAttempts: List<RoamPingAttempt> = emptyList(),
+    networkEvents: List<RoamingNetworkLayerEvent> = emptyList(),
+    wifiGapP95Ms: Long? = null,
+    wifiGapMaxMs: Long? = null,
+    wifiSampleCount: Int = samples.size,
+    gatewayStats: RoamingProbeStats = RoamingProbeStats(),
+    wanStats: RoamingProbeStats = RoamingProbeStats(),
+    wifiStats: RoamingWifiStats = RoamingWifiStats(),
+    impactWindowTruncated: Boolean = false
 ): RoamingReport {
     val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
     val rssi = samples.map { it.rssi }.filter { it > -120 }
-    val lat = samples.mapNotNull { it.latency }
+    val isV2 = samples.any { it.observedAtNanos > 0L }
+    val gatewayAttempts = pingAttempts.filter { it.target == RoamProbeTarget.GATEWAY && it.attempted }
+    val wanAttempts = pingAttempts.filter { it.target == RoamProbeTarget.WAN && it.attempted }
+    val gatewayLatency = gatewayAttempts.mapNotNull { it.latencyMs }
+    val wanLatency = wanAttempts.mapNotNull { it.latencyMs }
+    fun effectiveStats(stats: RoamingProbeStats, attempts: List<RoamPingAttempt>): RoamingProbeStats {
+        if (stats.attemptedCount > 0) return stats
+        val successful = attempts.mapNotNull { it.latencyMs }
+        return RoamingProbeStats(
+            attemptedCount = attempts.size,
+            lossCount = attempts.count { it.latencyMs == null },
+            successCount = successful.size,
+            latencySumMs = successful.sumOf { it.toLong() },
+            minLatencyMs = successful.minOrNull(),
+            maxLatencyMs = successful.maxOrNull()
+        )
+    }
+    val gatewayAll = effectiveStats(gatewayStats, gatewayAttempts)
+    val wanAll = effectiveStats(wanStats, wanAttempts)
+    val legacyLatency = samples.mapNotNull { it.latency }
+    val lat = if (isV2) gatewayLatency else legacyLatency
     val speeds = samples.map { it.linkMbps }.filter { it > 0 }
-    val duration = samples.size.coerceAtLeast(1)
-    val roamCount = events.count { it.title == "AP 切换" }
-    val lossNear = events.filter { it.title == "AP 切换" }.sumOf { e ->
+    val durationMs = (samples.lastOrNull()?.elapsedMs ?: 0L).coerceAtLeast(0L)
+    val duration = if (isV2) ((durationMs + 999L) / 1_000L).toInt().coerceAtLeast(1) else samples.size.coerceAtLeast(1)
+    val roamCount = if (isV2) switches.size else events.count { it.title == "AP 切换" }
+    val lossNear = if (isV2) switches.sumOf { it.gatewayImpact.lossCount + it.wanImpact.lossCount } else events.filter { it.title == "AP 切换" }.sumOf { e ->
         Regex("""丢包\s*(\d+)""").find(e.detail)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
     }
     val bestGap = samples.map { it.rssiGapDb }.filter { it > 0 }.maxOrNull()
-    val longestBreak = estimateLongestBreakMs(samples)
+    val gatewayRecoveryMax = switches.mapNotNull { it.gatewayImpact.recoveryAfterNewBssidMs }.maxOrNull()
+    val wanRecoveryMax = switches.mapNotNull { it.wanImpact.recoveryAfterNewBssidMs }.maxOrNull()
+    val longestBreak = if (isV2) listOfNotNull(gatewayRecoveryMax, wanRecoveryMax).maxOrNull()?.toInt() else estimateLongestBreakMs(samples)
     val conclusion = when {
         samples.isEmpty() -> "暂无有效样本。"
         roamCount == 0 && stickyScore <= 10 && (quality.lossCount == 0) -> "本次未发生漫游，当前连接稳定。"
@@ -7879,16 +8325,16 @@ fun buildRoamingReport(
         targetMode = targetMode,
         sampleMode = sampleMode,
         durationSec = duration,
-        sampleCount = samples.size,
-        gatewayMinMs = lat.minOrNull(),
-        gatewayMaxMs = lat.maxOrNull(),
-        gatewayAvgMs = if (lat.isNotEmpty()) lat.average().roundToInt() else null,
-        rssiBestDbm = rssi.maxOrNull(),
-        rssiWorstDbm = rssi.minOrNull(),
-        rssiAvgDbm = if (rssi.isNotEmpty()) rssi.average().roundToInt() else null,
-        speedMaxMbps = speeds.maxOrNull(),
-        speedMinMbps = speeds.minOrNull(),
-        speedAvgMbps = if (speeds.isNotEmpty()) speeds.average().roundToInt() else null,
+        sampleCount = wifiSampleCount,
+        gatewayMinMs = if (isV2) gatewayAll.minLatencyMs else lat.minOrNull(),
+        gatewayMaxMs = if (isV2) gatewayAll.maxLatencyMs else lat.maxOrNull(),
+        gatewayAvgMs = if (isV2) gatewayAll.takeIf { it.successCount > 0 }?.let { (it.latencySumMs.toDouble() / it.successCount).roundToInt() } else if (lat.isNotEmpty()) lat.average().roundToInt() else null,
+        rssiBestDbm = if (isV2) wifiStats.bestRssiDbm ?: rssi.maxOrNull() else rssi.maxOrNull(),
+        rssiWorstDbm = if (isV2) wifiStats.worstRssiDbm ?: rssi.minOrNull() else rssi.minOrNull(),
+        rssiAvgDbm = if (isV2 && wifiStats.rssiCount > 0) (wifiStats.rssiSumDbm.toDouble() / wifiStats.rssiCount).roundToInt() else if (rssi.isNotEmpty()) rssi.average().roundToInt() else null,
+        speedMaxMbps = if (isV2) wifiStats.maxSpeedMbps ?: speeds.maxOrNull() else speeds.maxOrNull(),
+        speedMinMbps = if (isV2) wifiStats.minSpeedMbps ?: speeds.minOrNull() else speeds.minOrNull(),
+        speedAvgMbps = if (isV2 && wifiStats.speedCount > 0) (wifiStats.speedSumMbps.toDouble() / wifiStats.speedCount).roundToInt() else if (speeds.isNotEmpty()) speeds.average().roundToInt() else null,
         roamCount = roamCount,
         longestBreakMs = longestBreak,
         lossNearRoam = lossNear,
@@ -7897,18 +8343,54 @@ fun buildRoamingReport(
         qualityScore = quality.score,
         qualityLabel = quality.label,
         conclusion = conclusion,
-        events = events.takeLast(30).map { "${it.time}  ${it.title}：${it.detail}" }
+        events = events.takeLast(30).map { "${it.time}  ${it.title}：${it.detail}" },
+        schemaVersion = if (isV2) 2 else 1,
+        durationMs = if (isV2) durationMs else duration * 1_000L,
+        longestObservationMs = switches.maxOfOrNull { it.observationMs },
+        gatewayAttemptCount = gatewayAll.attemptedCount,
+        gatewayLossCount = gatewayAll.lossCount,
+        wanAttemptCount = wanAll.attemptedCount,
+        wanLossCount = wanAll.lossCount,
+        gatewayRoamLossCount = switches.sumOf { it.gatewayImpact.lossCount },
+        wanRoamLossCount = switches.sumOf { it.wanImpact.lossCount },
+        wanMinMs = wanAll.minLatencyMs,
+        wanMaxMs = wanAll.maxLatencyMs,
+        wanAvgMs = wanAll.takeIf { it.successCount > 0 }?.let { (it.latencySumMs.toDouble() / it.successCount).roundToInt() },
+        gatewayRecoveryMaxMs = gatewayRecoveryMax,
+        wanRecoveryMaxMs = wanRecoveryMax,
+        networkDisconnectCount = networkEvents.count { it.kind == "lost" },
+        wifiGapP95Ms = wifiGapP95Ms,
+        wifiGapMaxMs = wifiGapMaxMs,
+        impactWindowTruncated = impactWindowTruncated,
+        switches = switches.map {
+            RoamingSwitchReport(
+                oldBssid = it.oldBssid,
+                newBssid = it.newBssid,
+                observationMs = it.observationMs,
+                gatewayRecoveryMs = it.gatewayImpact.recoveryAfterNewBssidMs,
+                wanRecoveryMs = it.wanImpact.recoveryAfterNewBssidMs,
+                gatewayLossCount = it.gatewayImpact.lossCount,
+                wanLossCount = it.wanImpact.lossCount,
+                gatewayImpactState = it.gatewayImpact.state.name,
+                wanImpactState = it.wanImpact.state.name
+            )
+        },
+        networkEvents = networkEvents.map { "${it.timeText} ${it.label}" }
     )
 }
 
 fun estimateLongestBreakMs(samples: List<WifiSample>): Int? {
-    var run = 0
-    var longest = 0
+    var runStartedAt: Long? = null
+    var longest = 0L
     samples.forEach { s ->
-        run = if (s.lost) run + 1 else 0
-        if (run > longest) longest = run
+        if (s.lost && runStartedAt == null) runStartedAt = s.elapsedMs
+        if (!s.lost && runStartedAt != null) {
+            longest = maxOf(longest, (s.elapsedMs - runStartedAt!!).coerceAtLeast(0L))
+            runStartedAt = null
+        }
     }
-    return if (longest > 0) longest * 250 else null
+    runStartedAt?.let { longest = maxOf(longest, ((samples.lastOrNull()?.elapsedMs ?: it) - it).coerceAtLeast(0L)) }
+    return longest.takeIf { it > 0L }?.toInt()
 }
 
 @Composable
@@ -7957,7 +8439,7 @@ fun RoamingReportHistoryScreen(
                         AnimatedVisibility(expanded) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(report.conclusion, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.68f), lineHeight = 16.sp)
-                                Text("延迟 ${report.gatewayMinMs?.let { "${it}ms" } ?: "--"}/${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"}/${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"} · RSSI ${report.rssiBestDbm ?: "--"}/${report.rssiWorstDbm ?: "--"}/${report.rssiAvgDbm ?: "--"}dBm · 漫游 ${report.roamCount} 次 · 粘AP ${report.stickyScore}", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), lineHeight = 15.sp)
+                                Text("${if (report.schemaVersion >= 2) "网关RTT" else "旧版延迟"} ${report.gatewayMinMs?.let { "${it}ms" } ?: "--"}/${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"}/${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"} · RSSI ${report.rssiBestDbm ?: "--"}/${report.rssiWorstDbm ?: "--"}/${report.rssiAvgDbm ?: "--"}dBm · BSSID切换 ${report.roamCount} 次 · 粘AP ${report.stickyScore}", fontSize = 10.8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), lineHeight = 15.sp)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(onClick = { onOpen(report) }, modifier = Modifier.weight(1f).height(38.dp), shape = RoundedCornerShape(14.dp)) { Text("查看总结", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
                                     OutlinedButton(onClick = { onDelete(report.id) }, modifier = Modifier.weight(1f).height(38.dp), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444))) { Text("删除", fontSize = 11.5.sp, fontWeight = FontWeight.Black) }
@@ -7983,10 +8465,19 @@ fun RoamingReportDetailScreen(report: RoamingReport, onBack: () -> Unit) {
         }
         ExpressiveCard("总览", "评分 ${report.qualityScore} · ${report.qualityLabel}", Icons.Rounded.FactCheck, Color(0xFF16A34A)) {
             RoamingReportLine("网关延迟", "最小${report.gatewayMinMs?.let { "${it}ms" } ?: "--"} / 最大${report.gatewayMaxMs?.let { "${it}ms" } ?: "--"} / 平均${report.gatewayAvgMs?.let { "${it}ms" } ?: "--"}")
-            RoamingReportLine("外网延迟", if (report.targetMode.contains("外网")) "同目标模式记录于网关延迟列" else "未启用外网目标")
+            RoamingReportLine("外网延迟", if (report.schemaVersion >= 2) "最小${report.wanMinMs?.let { "${it}ms" } ?: "--"} / 最大${report.wanMaxMs?.let { "${it}ms" } ?: "--"} / 平均${report.wanAvgMs?.let { "${it}ms" } ?: "--"}" else if (report.targetMode.contains("外网")) "旧版目标延迟未区分网关/外网" else "未启用外网目标")
             RoamingReportLine("信号RSSI", "最强${report.rssiBestDbm?.let { "${it}dBm" } ?: "--"} / 最弱${report.rssiWorstDbm?.let { "${it}dBm" } ?: "--"} / 平均${report.rssiAvgDbm?.let { "${it}dBm" } ?: "--"}")
             RoamingReportLine("协商速率", "最高${report.speedMaxMbps?.let { "${it}Mbps" } ?: "--"} / 最低${report.speedMinMbps?.let { "${it}Mbps" } ?: "--"} / 平均${report.speedAvgMbps?.let { "${it}Mbps" } ?: "--"}")
-            RoamingReportLine("漫游切换", "${report.roamCount}次 · 最长${report.longestBreakMs?.let { "${it}ms" } ?: "—"} · 切换附近丢包${report.lossNearRoam}")
+            if (report.schemaVersion >= 2) {
+                RoamingReportLine("BSSID切换观察", "${report.roamCount}次 · 最长窗口${report.longestObservationMs?.let { "${it}ms" } ?: "—"} · 非精确802.11握手耗时")
+                RoamingReportLine("Ping业务恢复", "网关${roamingRecoverySummary(report, RoamProbeTarget.GATEWAY)} · 外网${roamingRecoverySummary(report, RoamProbeTarget.WAN)}")
+                RoamingReportLine("全程Ping丢包", "网关${report.gatewayLossCount}/${report.gatewayAttemptCount} · 外网${report.wanLossCount}/${report.wanAttemptCount}")
+                RoamingReportLine("漫游窗口丢包", "网关${report.gatewayRoamLossCount} · 外网${report.wanRoamLossCount}")
+                RoamingReportLine("Network层", "断开${report.networkDisconnectCount}次 · 采样P95 ${report.wifiGapP95Ms ?: "--"}ms / 最大${report.wifiGapMaxMs ?: "--"}ms")
+                if (report.impactWindowTruncated) RoamingReportLine("窗口证据", "BSSID 长时间不可用，部分逐包归属已截断")
+            } else {
+                RoamingReportLine("旧版漫游估算", "${report.roamCount}次 · 估算中断${report.longestBreakMs?.let { "${it}ms" } ?: "—"} · 附近丢包${report.lossNearRoam}")
+            }
             RoamingReportLine("粘AP分析", "Sticky ${report.stickyScore} · 最高候选差${report.bestCandidateGap?.let { "${it}dB" } ?: "--"}")
             Text(report.conclusion, fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.72f), lineHeight = 17.sp)
         }
@@ -8010,16 +8501,150 @@ fun RoamingReportLine(label: String, value: String) {
 fun calculateStickyScore(samples: List<WifiSample>, weakThreshold: Int, candidateGap: Int): Int {
     val valid = samples.filter { it.rssi > -120 && it.bssid.isNotBlank() && it.bssid != "02:00:00:00:00:00" }
     if (valid.size < 3) return 0
-    val sticky = valid.count { it.rssi <= weakThreshold && it.rssiGapDb >= candidateGap && it.candidateBssid.isNotBlank() }
-    val weak = valid.count { it.rssi <= weakThreshold }.coerceAtLeast(1)
-    return ((sticky * 100.0 / weak).roundToInt()).coerceIn(0, 100)
+    var stickyMs = 0L
+    var weakMs = 0L
+    valid.zipWithNext().forEach { (current, next) ->
+        val duration = (next.elapsedMs - current.elapsedMs).coerceIn(0L, 2_000L)
+        if (current.rssi <= weakThreshold) {
+            weakMs += duration
+            if (current.rssiGapDb >= candidateGap && current.candidateBssid.isNotBlank()) stickyMs += duration
+        }
+    }
+    return if (weakMs <= 0L) 0 else ((stickyMs * 100.0 / weakMs).roundToInt()).coerceIn(0, 100)
 }
 
-fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candidateGap: Int, triggerSeconds: Int, highLatencyMs: Int, lossTrigger: Int): List<RoamEvent> {
+private fun roamingUiSamples(snapshot: RoamingSessionSnapshot, targetMode: String): List<WifiSample> {
+    if (snapshot.displayWifi.isEmpty()) return emptyList()
+    val attempts = snapshot.pingAttempts.filter { it.attempted }.sortedBy { it.completedAtNanos }
+    return snapshot.displayWifi.mapIndexed { index, observation ->
+        val previousNanos = snapshot.displayWifi.getOrNull(index - 1)?.observedAtNanos ?: Long.MIN_VALUE
+        fun latestAttempt(target: RoamProbeTarget): RoamPingAttempt? = attempts.lastOrNull {
+            it.target == target && it.completedAtNanos > previousNanos && it.completedAtNanos <= observation.observedAtNanos
+        }
+        val gateway = latestAttempt(RoamProbeTarget.GATEWAY)
+        val wan = latestAttempt(RoamProbeTarget.WAN)
+        val selectedLatency = when (targetMode) {
+            "仅外网" -> wan?.latencyMs
+            else -> gateway?.latencyMs ?: wan?.latencyMs
+        }
+        val selectedLost = when (targetMode) {
+            "仅外网" -> wan?.latencyMs == null && wan != null
+            "仅路由器" -> gateway?.latencyMs == null && gateway != null
+            else -> (gateway?.latencyMs == null && gateway != null) || (wan?.latencyMs == null && wan != null)
+        }
+        val candidateRssi = observation.candidate.rssi ?: -127
+        val rssi = observation.rssi ?: -127
+        val gap = if (candidateRssi > -120 && rssi > -120) candidateRssi - rssi else 0
+        WifiSample(
+            time = observation.wallTimeText,
+            ssid = observation.ssid,
+            bssid = observation.bssid.orEmpty(),
+            rssi = rssi,
+            latency = selectedLatency,
+            lost = selectedLost,
+            elapsedMs = observation.elapsedMs,
+            observedAtNanos = observation.observedAtNanos,
+            gatewayLatency = gateway?.latencyMs,
+            wanLatency = wan?.latencyMs,
+            gatewayLost = gateway != null && gateway.latencyMs == null,
+            wanLost = wan != null && wan.latencyMs == null,
+            linkMbps = observation.linkMbps ?: 0,
+            frequencyMHz = observation.frequencyMhz ?: 0,
+            txMbps = observation.txMbps ?: 0,
+            rxMbps = observation.rxMbps ?: 0,
+            candidateBssid = observation.candidate.bssid.orEmpty(),
+            candidateRssi = candidateRssi,
+            sameSsidApCount = observation.candidate.sameSsidCount,
+            rssiGapDb = gap.coerceAtLeast(0),
+            stickyCandidate = observation.candidate.bssid != null && gap >= 10
+        )
+    }
+}
+
+private fun candidateDisplayText(current: RoamWifiObservation?, candidate: RoamCandidateSnapshot): String {
+    val bssid = candidate.bssid ?: return candidate.status
+    val gap = if (candidate.rssi != null && current?.rssi != null) candidate.rssi - current.rssi else null
+    val age = candidate.resultAgeMs?.let { " · 缓存${it}ms" }.orEmpty()
+    val gapText = gap?.let { " · 强${it}dB" }.orEmpty()
+    return "候选 AP：${candidate.sameSsidCount}个 · ${bssid.takeLast(8)} · ${candidate.rssi ?: "--"}dBm$gapText$age"
+}
+
+private fun roamImpactText(impact: com.labprobe.app.roaming.RoamTargetImpact): String = when (impact.state) {
+    RoamImpactState.NOT_MONITORED -> "未监测"
+    RoamImpactState.INSUFFICIENT_EVIDENCE -> "证据不足"
+    RoamImpactState.NO_OUTAGE_OBSERVED -> "未观察到中断"
+    RoamImpactState.PENDING -> "等待恢复"
+    RoamImpactState.RECOVERED -> "恢复${impact.recoveryAfterNewBssidMs ?: 0}ms/丢包${impact.lossCount}"
+    RoamImpactState.UNRECOVERED -> "未恢复/丢包${impact.lossCount}"
+}
+
+private fun roamingRecoverySummary(report: RoamingReport, target: RoamProbeTarget): String {
+    val disabled = when (target) {
+        RoamProbeTarget.GATEWAY -> report.targetMode == "仅外网"
+        RoamProbeTarget.WAN -> report.targetMode == "仅路由器"
+    }
+    if (disabled) return "未监测"
+    if (report.switches.isEmpty()) return if (report.roamCount == 0) "无BSSID切换" else "旧记录未区分"
+    val states = report.switches.map {
+        if (target == RoamProbeTarget.GATEWAY) it.gatewayImpactState else it.wanImpactState
+    }
+    val unrecovered = states.count { it == RoamImpactState.UNRECOVERED.name }
+    if (unrecovered > 0) return "未恢复${if (unrecovered > 1) "${unrecovered}次" else ""}"
+    if (states.any { it == RoamImpactState.PENDING.name }) return "等待恢复"
+    val recovery = if (target == RoamProbeTarget.GATEWAY) report.gatewayRecoveryMaxMs else report.wanRecoveryMaxMs
+    if (states.any { it == RoamImpactState.RECOVERED.name }) return recovery?.let { "最长${it}ms" } ?: "已恢复"
+    if (states.any { it == RoamImpactState.INSUFFICIENT_EVIDENCE.name }) return "证据不足"
+    if (states.any { it == RoamImpactState.NO_OUTAGE_OBSERVED.name }) return "未观察到中断"
+    return "未监测"
+}
+
+private fun buildProductionRoamingEventChain(
+    samples: List<WifiSample>,
+    switches: List<BssidSwitchEvent>,
+    networkEvents: List<RoamingNetworkLayerEvent>,
+    weakThreshold: Int,
+    candidateGap: Int,
+    stickyDurationMs: Long,
+    highLatencyMs: Int,
+    lossTrigger: Int
+): List<RoamEvent> {
+    val base = buildRoamingEventChain(samples, weakThreshold, candidateGap, stickyDurationMs, highLatencyMs, lossTrigger)
+        .filterNot { it.title == "AP 切换" || it.title == "Wi-Fi 切换" }
+    fun indexFor(nanos: Long): Int = samples.indices.minByOrNull { index ->
+        kotlin.math.abs(samples[index].observedAtNanos - nanos)
+    } ?: 0
+    val switchRows = switches.map { event ->
+        val oldRadio = "${wifiBandOf(event.oldFrequencyMhz ?: 0)}/${event.oldRssi?.let { "${it}dBm" } ?: "--"}"
+        val newRadio = "${wifiBandOf(event.newFrequencyMhz ?: 0)}/${event.newRssi?.let { "${it}dBm" } ?: "--"}"
+        RoamEvent(
+            index = indexFor(event.newObservedAtNanos),
+            time = samples.getOrNull(indexFor(event.newObservedAtNanos))?.time ?: "",
+            title = "BSSID 切换",
+            detail = "${event.oldBssid.takeLast(8)} → ${event.newBssid.takeLast(8)} · 观察窗口 ${event.observationMs}ms（非802.11握手耗时）\n$oldRadio → $newRadio · 网关${roamImpactText(event.gatewayImpact)} · 外网${roamImpactText(event.wanImpact)}",
+            level = if (event.gatewayImpact.lossCount + event.wanImpact.lossCount > 0) "warn" else "good"
+        )
+    }
+    val networkRows = networkEvents.map { event ->
+        RoamEvent(
+            index = samples.indexOfFirst { it.elapsedMs >= event.elapsedMs }.takeIf { it >= 0 } ?: samples.lastIndex.coerceAtLeast(0),
+            time = event.timeText,
+            title = "Network层事件",
+            detail = event.label,
+            level = if (event.kind == "lost") "bad" else "info"
+        )
+    }
+    return (base + switchRows + networkRows)
+        .sortedWith(compareBy<RoamEvent> { it.index }.thenBy { it.time })
+        .distinctBy { "${it.index}-${it.title}-${it.detail}" }
+        .takeLast(80)
+}
+
+fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candidateGap: Int, stickyDurationMs: Long, highLatencyMs: Int, lossTrigger: Int): List<RoamEvent> {
     if (samples.isEmpty()) return emptyList()
     val events = mutableListOf<RoamEvent>()
     var weakRun = 0
-    var stickyRun = 0
+    var stickyStartedAtMs: Long? = null
+    var stickyEventEmitted = false
     var lossRun = 0
     var lastBssid = ""
     var lastSsid = ""
@@ -8028,20 +8653,28 @@ fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candid
         val weak = s.rssi > -120 && s.rssi <= weakThreshold
         val hasCandidate = s.candidateBssid.isNotBlank() && s.rssiGapDb >= candidateGap
         weakRun = if (weak) weakRun + 1 else 0
-        stickyRun = if (weak && hasCandidate && validBssid && s.candidateBssid != s.bssid) stickyRun + 1 else 0
+        val stickyNow = weak && hasCandidate && validBssid && s.candidateBssid != s.bssid
+        if (stickyNow) {
+            if (stickyStartedAtMs == null) stickyStartedAtMs = s.elapsedMs
+        } else {
+            stickyStartedAtMs = null
+            stickyEventEmitted = false
+        }
         lossRun = if (s.lost) lossRun + 1 else 0
         if (weakRun == 1) {
             events += RoamEvent(idx, s.time, "弱信号观察", "当前 RSSI ${s.rssi}dBm，低于阈值 ${weakThreshold}dBm", "warn")
         }
-        if (hasCandidate && stickyRun == 1) {
+        if (stickyNow && stickyStartedAtMs == s.elapsedMs) {
             events += RoamEvent(idx, s.time, "发现更强候选 AP", "${s.candidateBssid.takeLast(8)} · ${s.candidateRssi}dBm，比当前强 ${s.rssiGapDb}dB", "info")
         }
-        if (stickyRun == triggerSeconds.coerceAtLeast(1)) {
-            events += RoamEvent(idx, s.time, "疑似粘 AP", "连续 ${triggerSeconds}s 存在更强候选 AP，但仍停留在 ${s.bssid.takeLast(8)}", "bad")
+        val stickyElapsedMs = stickyStartedAtMs?.let { (s.elapsedMs - it).coerceAtLeast(0L) } ?: 0L
+        if (stickyNow && !stickyEventEmitted && stickyElapsedMs >= stickyDurationMs.coerceAtLeast(1L)) {
+            events += RoamEvent(idx, s.time, "疑似粘 AP", "持续 ${String.format(Locale.US, "%.1f", stickyElapsedMs / 1000.0)}s 存在更强候选 AP，但仍停留在 ${s.bssid.takeLast(8)}", "bad")
+            stickyEventEmitted = true
         }
         if (validBssid && lastBssid.isNotBlank() && lastSsid.isNotBlank() && s.ssid != lastSsid) {
             val lossNear = samples.subList((idx - 3).coerceAtLeast(0), (idx + 2).coerceAtMost(samples.size)).count { it.lost }
-            val latency = s.latency?.let { " · 恢复 ${it}ms" } ?: " · 等待 Ping 恢复"
+            val latency = s.latency?.let { " · 当次 Ping RTT ${it}ms" } ?: " · 当次无 Ping 响应"
             events += RoamEvent(
                 idx,
                 s.time,
@@ -8051,7 +8684,7 @@ fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candid
             )
         } else if (validBssid && lastBssid.isNotBlank() && s.ssid == lastSsid && s.bssid != lastBssid) {
             val lossNear = samples.subList((idx - 2).coerceAtLeast(0), (idx + 1).coerceAtMost(samples.size)).count { it.lost }
-            val latency = s.latency?.let { " · 恢复 ${it}ms" } ?: " · 等待 Ping 恢复"
+            val latency = s.latency?.let { " · 当次 Ping RTT ${it}ms" } ?: " · 当次无 Ping 响应"
             events += RoamEvent(idx, s.time, "AP 切换", "${lastBssid.takeLast(8)} → ${s.bssid.takeLast(8)}$latency · 丢包 $lossNear", if (lossNear == 0) "good" else "warn")
         }
         if (s.latency != null && s.latency > highLatencyMs) {
@@ -8071,16 +8704,43 @@ fun buildRoamingEventChain(samples: List<WifiSample>, weakThreshold: Int, candid
     return events.distinctBy { "${it.index}-${it.title}-${it.detail}" }.takeLast(80)
 }
 
-fun buildRoamingQuality(samples: List<WifiSample>, events: List<RoamEvent>, stickyScore: Int): RoamQualitySummary {
-    val latencies = samples.mapNotNull { it.latency }
-    val ok = latencies.isNotEmpty()
-    val avg = if (ok) latencies.average().roundToInt() else null
-    val worst = latencies.maxOrNull()
-    val loss = samples.count { it.lost }
-    val roam = events.count { it.title == "AP 切换" }
+internal fun buildRoamingQuality(
+    samples: List<WifiSample>,
+    events: List<RoamEvent>,
+    stickyScore: Int,
+    targetMode: String? = null,
+    pingAttempts: List<RoamPingAttempt> = emptyList(),
+    gatewayStats: RoamingProbeStats = RoamingProbeStats(),
+    wanStats: RoamingProbeStats = RoamingProbeStats()
+): RoamQualitySummary {
+    val selectedAttempts = pingAttempts.filter { attempt ->
+        attempt.attempted && when (targetMode) {
+            "仅路由器" -> attempt.target == RoamProbeTarget.GATEWAY
+            "仅外网" -> attempt.target == RoamProbeTarget.WAN
+            else -> true
+        }
+    }
+    val hasStructuredPings = pingAttempts.isNotEmpty() || samples.any { it.observedAtNanos > 0L }
+    val latencies = if (hasStructuredPings) selectedAttempts.mapNotNull { it.latencyMs } else samples.mapNotNull { it.latency }
+    val selectedStats = when (targetMode) {
+        "仅路由器" -> listOf(gatewayStats)
+        "仅外网" -> listOf(wanStats)
+        else -> listOf(gatewayStats, wanStats)
+    }
+    val aggregateAttempts = selectedStats.sumOf { it.attemptedCount }
+    val aggregateSuccesses = selectedStats.sumOf { it.successCount }
+    val aggregateLatencySum = selectedStats.sumOf { it.latencySumMs }
+    val useAggregate = aggregateAttempts > 0
+    val avg = if (useAggregate && aggregateSuccesses > 0) (aggregateLatencySum.toDouble() / aggregateSuccesses).roundToInt()
+        else if (latencies.isNotEmpty()) latencies.average().roundToInt() else null
+    val worst = if (useAggregate) selectedStats.mapNotNull { it.maxLatencyMs }.maxOrNull() else latencies.maxOrNull()
+    val loss = if (useAggregate) selectedStats.sumOf { it.lossCount }
+        else if (hasStructuredPings) selectedAttempts.count { it.latencyMs == null } else samples.count { it.lost }
+    val roam = events.count { it.title == "AP 切换" || it.title == "BSSID 切换" }
     val high = events.count { it.title == "高延迟" }
     val stickyEvents = events.count { it.title.contains("粘") }
-    val lossRate = if (samples.isEmpty()) 0.0 else loss * 100.0 / samples.size
+    val lossDenominator = if (useAggregate) aggregateAttempts else if (hasStructuredPings) selectedAttempts.size else samples.size
+    val lossRate = if (lossDenominator == 0) 0.0 else loss * 100.0 / lossDenominator
     var score = 100
     score -= (lossRate * 2.2).roundToInt()
     score -= (high * 4)
@@ -8094,7 +8754,7 @@ fun buildRoamingQuality(samples: List<WifiSample>, events: List<RoamEvent>, stic
         score >= 55 -> "一般"
         else -> "较差"
     }
-    val detail = "漫游 ${roam} 次 · 平均 ${avg?.let { "${it}ms" } ?: "--"} · 最高 ${worst?.let { "${it}ms" } ?: "--"} · 丢包 $loss · 粘AP $stickyScore"
+    val detail = "漫游 ${roam} 次 · 平均 ${avg?.let { "${it}ms" } ?: "--"} · 最高 ${worst?.let { "${it}ms" } ?: "--"} · 丢包 $loss/$lossDenominator · 粘AP $stickyScore"
     return RoamQualitySummary(score, label, detail, avg, worst, loss, roam, stickyScore)
 }
 
@@ -8208,7 +8868,7 @@ fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
         color = MaterialTheme.colorScheme.surface,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .10f)),
         tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth().clickable { onCopy() }
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable { onCopy() }
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -8227,7 +8887,7 @@ fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
 
 @Composable
 fun DnsResultRow(r: DnsRecord, onCopy: () -> Unit) {
-    Surface(shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .06f), modifier = Modifier.fillMaxWidth().clickable { onCopy() }) {
+    Surface(shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .06f), modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable { onCopy() }) {
         Column(Modifier.padding(11.dp)) {
             Text("${r.value} (${r.type})", fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOf(r.operator, r.source).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -8352,7 +9012,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
         FilterChip(selected = mode == "RFC5780", onClick = { mode = "RFC5780"; prefs.natMode = mode }, label = { Text("RFC5780 / 8489", fontSize = 12.sp, fontWeight = FontWeight.Black) }, colors = natChipColors)
         FilterChip(selected = mode == "RFC3489", onClick = { mode = "RFC3489"; prefs.natMode = mode }, label = { Text("RFC3489 TEST", fontSize = 12.sp, fontWeight = FontWeight.Black) }, colors = natChipColors)
         Spacer(Modifier.weight(1f))
-        Surface(onClick = openHistory, shape = CircleShape, color = Color(0xFF2563EB).copy(alpha = .10f), modifier = Modifier.size(38.dp)) {
+        Surface(onClick = openHistory, shape = CircleShape, color = Color(0xFF0284C7).copy(alpha = .10f), modifier = Modifier.size(38.dp)) {
             Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, null, tint = Color(0xFF2563EB), modifier = Modifier.size(19.dp)) }
         }
     }
@@ -8372,7 +9032,7 @@ fun NatTool(prefs: AppPrefs, openHistory: () -> Unit) {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = if (item.host == host && item.port.toString() == port) accent.copy(alpha = .10f) else MaterialTheme.colorScheme.onSurface.copy(alpha = .035f),
-                        modifier = Modifier.fillMaxWidth().clickable { selected = item; host = item.host; port = item.port.toString() }
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { selected = item; host = item.host; port = item.port.toString() }
                     ) {
                         Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.Dns, null, tint = accent, modifier = Modifier.size(18.dp))
@@ -8495,7 +9155,7 @@ fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Uni
     LaunchedEffect(pendingDelete) { if (pendingDelete) { delay(170); onDelete() } }
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 92.dp)) {
-            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { targetOffsetPx = 0f; pendingDelete = true }, contentAlignment = Alignment.Center) {
+            Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Color(0xFFEF4444)).clickable { targetOffsetPx = 0f; pendingDelete = true }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp)); Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp) }
             }
             Surface(
@@ -8506,7 +9166,8 @@ fun NatHistoryCard(item: NatHistoryEntry, expanded: Boolean, onToggle: () -> Uni
                         onDragCancel = { dragging = false; targetOffsetPx = 0f },
                         onHorizontalDrag = { _, dragAmount -> targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f) }
                     )
-                }.shadow(4.dp, RoundedCornerShape(24.dp), clip = false).clickable { onToggle() },
+                }.shadow(4.dp, RoundedCornerShape(24.dp), clip = false),
+                onClick = onToggle,
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = .985f)
             ) {
@@ -8615,7 +9276,7 @@ fun TraceTool(prefs: AppPrefs) {
         }
     }
     ExpressiveCard("追踪结果", if (running) "正在追踪，逐跳追加。点击结果可复制。" else "点击结果可复制。", Icons.Rounded.Notes, Color(0xFF2563EB)) {
-        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .045f), modifier = Modifier.fillMaxWidth().clickable { copy(ctx, result) }) {
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .045f), modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { copy(ctx, result) }) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
                 Text(result, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .72f), fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 17.sp)
             }
@@ -8659,7 +9320,7 @@ fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen:
             if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
                 Box(
                     Modifier.align(Alignment.CenterEnd).width(88.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
-                        .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                        .background(Color(0xFFEF4444))
                         .clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true },
                     contentAlignment = Alignment.Center
                 ) {
@@ -8864,7 +9525,7 @@ fun SshResultCard(item: SshResultEntry, openedSwipeId: Long?, onSwipeOpen: (Long
     AnimatedVisibility(visible = !pendingDelete, exit = fadeOut(animationSpec = tween(120)) + shrinkVertically(animationSpec = tween(170)), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().heightIn(min = 106.dp)) {
             if (animatedOffsetPx < -1f || targetOffsetPx < -1f) {
-                Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444)))).clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true }, contentAlignment = Alignment.Center) {
+                Box(Modifier.align(Alignment.CenterEnd).width(92.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp)).background(Color(0xFFEF4444)).clickable { targetOffsetPx = 0f; onSwipeClose(); pendingDelete = true }, contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
                         Text("删除", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
@@ -9194,7 +9855,7 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                         .width(78.dp)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(18.dp))
-                        .background(Brush.horizontalGradient(listOf(Color(0xFFFF8A80), Color(0xFFEF4444))))
+                        .background(Color(0xFFEF4444))
                         .clickable {
                             targetOffsetPx = 0f
                             onSwipeClose()
@@ -9693,7 +10354,7 @@ fun DailyAddressSummaryRow(o: JSONObject) {
         }
         if (address.isNotBlank()) {
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).clickable { copy(ctx, address) },
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(ctx, address) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(address, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary, maxLines = 1)
@@ -9767,6 +10428,33 @@ private fun realtimeFailureText(raw: String): String {
     }
 }
 
+data class RouterConfigSnapshot(
+    val name: String = "",
+    val username: String = "",
+    val address: String = "",
+    val passwordConfigured: Boolean = false,
+    val sessionSeconds: Int = 0,
+    val verifyTls: Boolean = false,
+    val connected: Boolean = false,
+    val state: String = "",
+    val message: String = "",
+) {
+    companion object {
+        fun fromJson(root: JSONObject): RouterConfigSnapshot = RouterConfigSnapshot(
+            name = root.optString("name", ""), username = root.optString("username", ""),
+            address = root.optString("address", ""), passwordConfigured = root.optBoolean("passwordConfigured", false),
+            sessionSeconds = root.optInt("sessionSeconds", 0), verifyTls = root.optBoolean("verifyTls", false),
+            connected = root.optBoolean("connected", false), state = root.optString("state", ""),
+            message = root.optString("message", ""),
+        )
+    }
+}
+
+data class RouterConfigUpdate(val name: String, val username: String, val address: String, val password: String? = null) {
+    fun toJson(): JSONObject = JSONObject().put("name", name).put("username", username).put("address", address).put("test", true)
+        .also { root -> password?.takeIf { it.isNotBlank() }?.let { root.put("password", it) } }
+}
+
 @Composable
 fun SettingsScreen(
     prefs: AppPrefs,
@@ -9775,13 +10463,40 @@ fun SettingsScreen(
     onAuto: (String) -> Unit,
     onBack: () -> Unit,
     onOpenAi: () -> Unit,
-) = DetailShell("我的 / 设置", "连接、AI、通知、隐私与关于", onBack) {
+) = DetailShell(
+    title = "我的 / 设置", subtitle = "连接、AI、通知、隐私与关于", onBack = onBack,
+    titleStyleOverride = LabTypography.PageTitle.copy(
+        fontSize = (LabTypography.PageTitle.fontSize.value - 1f).coerceAtLeast(1f).sp,
+        lineHeight = (LabTypography.PageTitle.lineHeight.value - 1f).coerceAtLeast(1f).sp,
+    )
+) {
     var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
+    var routerName by remember { mutableStateOf("") }
+    var routerUsername by remember { mutableStateOf("") }
+    var routerAddress by remember { mutableStateOf("") }
+    var routerPassword by remember { mutableStateOf("") }
+    var routerPasswordConfigured by remember { mutableStateOf(false) }
+    var routerConfigLoading by remember { mutableStateOf(false) }
+    var routerConfigSaving by remember { mutableStateOf(false) }
+    var userEditedRouter by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
     val settingsMint = Color(0xFF10A9C8)
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
+    LaunchedEffect(prefs.hub, prefs.token) {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return@LaunchedEffect
+        routerConfigLoading = true
+        runCatching { HubApi(prefs).getRouterConfig() }.onSuccess { config ->
+            if (!userEditedRouter) {
+                if (config.name.isNotBlank() || routerName.isBlank()) routerName = config.name
+                if (config.username.isNotBlank() || routerUsername.isBlank()) routerUsername = config.username
+                if (config.address.isNotBlank() || routerAddress.isBlank()) routerAddress = config.address
+                routerPasswordConfigured = config.passwordConfigured
+            }
+        }.onFailure { msg = "路由器配置读取失败：${uiMessageZh(it.message.orEmpty())}" }
+        routerConfigLoading = false
+    }
     ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
         LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
@@ -9807,6 +10522,14 @@ fun SettingsScreen(
                 }
             }
         }
+        Text("路由器配置", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
+        LabeledInput("名称", "例如：BE72", routerName, { routerName = it; userEditedRouter = true })
+        LabeledInput("管理地址", "例如：http://192.168.5.1", routerAddress, { routerAddress = it; userEditedRouter = true })
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) { LabeledInput("账号", "路由器管理账号", routerUsername, { routerUsername = it; userEditedRouter = true }) }
+            Column(Modifier.weight(1f)) { LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, { routerPassword = it; userEditedRouter = true }, password = true) }
+        }
+        if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
         val liveConnectionMessage = when (val realtime = state.mqttState) {
             HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时同步正常" else "实时链路已连接，等待首帧数据"
             HubRealtimeState.Connecting -> if (state.hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
@@ -9837,9 +10560,20 @@ fun SettingsScreen(
                     if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)
                     state.startRealtime()
                 }
-                toast(ctx, "已保存")
+                scope.launch {
+                    routerConfigSaving = true
+                    runCatching { HubApi(prefs).putRouterConfig(RouterConfigUpdate(routerName.trim(), routerUsername.trim(), routerAddress.trim(), routerPassword.trim().takeIf { it.isNotBlank() })) }
+                        .onSuccess { config ->
+                            userEditedRouter = false
+                            routerName = config.name; routerUsername = config.username; routerAddress = config.address
+                            routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
+                            prefs.routerDisplayName = config.name; prefs.routerLanUrl = config.address
+                            msg = "路由器配置已同步到 Hub"; toast(ctx, "已保存并同步路由器配置")
+                        }.onFailure { msg = "路由器配置保存失败：${uiMessageZh(it.message.orEmpty())}" }
+                    routerConfigSaving = false
+                }
             }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint)) {
-                Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text(if (routerConfigSaving) "保存中" else "保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Button(onClick = {
                 val cleanHub = normalizeHubAddressForDisplay(hub)
@@ -9976,6 +10710,12 @@ class HubApi(private val prefs: AppPrefs) {
         requireRouterStatus(requestJson("/api/router/dashboard/credentials/refresh", "POST", JSONObject()))
             .optLong("refreshNonce", 0L)
     }
+    suspend fun getRouterConfig(): RouterConfigSnapshot = withContext(Dispatchers.IO) {
+        RouterConfigSnapshot.fromJson(requireRouterStatus(requestJson("/api/router/config")))
+    }
+    suspend fun putRouterConfig(config: RouterConfigUpdate): RouterConfigSnapshot = withContext(Dispatchers.IO) {
+        RouterConfigSnapshot.fromJson(requireRouterStatus(requestJson("/api/router/config", "PUT", config.toJson())))
+    }
     suspend fun getDevices(online: Boolean): List<DeviceItem> = withContext(Dispatchers.IO) {
         val path = if (online) "/api/devices?view=online" else "/api/devices"
         val root = requestJson(path)
@@ -10066,7 +10806,11 @@ class HubApi(private val prefs: AppPrefs) {
                 throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
             }
             if (!response.isSuccessful) {
-                if (request.url.encodedPath.contains("/api/router/")) {
+                val serverMsg = runCatching { JSONObject(text).optString("message") }.getOrNull()?.takeIf { it.isNotBlank() }
+                if (serverMsg != null) {
+                    throw HubHttpException(response.code, serverMsg)
+                }
+                if (request.url.encodedPath.contains("/api/router/") && !request.url.encodedPath.contains("/config")) {
                     throw RouterStatusUnavailableException()
                 }
                 throw HubHttpException(response.code, "HTTP ${response.code}: $text")
@@ -10103,11 +10847,24 @@ class HubApi(private val prefs: AppPrefs) {
 
 class CustomDns(private val server: String) : Dns {
     override fun lookup(hostname: String): List<InetAddress> {
-        if (server.equals("system", true) || server.isBlank()) return Dns.SYSTEM.lookup(hostname).filterNot { it.hostAddress == "127.0.0.1" }
-        val v6 = DnsWire.query(hostname, server, 28)
-        val v4 = DnsWire.query(hostname, server, 1).filter { it != "127.0.0.1" }
+        val trimmedHost = hostname.trim().trimEnd('.')
+        runCatching { InetAddress.getByName(trimmedHost) }.getOrNull()?.let { return listOf(it) }
+
+        if (server.equals("system", true) || server.isBlank()) {
+            return Dns.SYSTEM.lookup(trimmedHost).filterNot { it.hostAddress == "127.0.0.1" }
+        }
+
+        val systemResult = runCatching {
+            Dns.SYSTEM.lookup(trimmedHost).filterNot { it.hostAddress == "127.0.0.1" }
+        }.getOrNull().orEmpty()
+        if (systemResult.isNotEmpty()) {
+            return systemResult
+        }
+
+        val v6 = DnsWire.query(trimmedHost, server, 28)
+        val v4 = DnsWire.query(trimmedHost, server, 1).filter { it != "127.0.0.1" }
         val all = (v6 + v4).distinct().mapNotNull { runCatching { InetAddress.getByName(it) }.getOrNull() }
-        return if (all.isNotEmpty()) all else Dns.SYSTEM.lookup(hostname).filterNot { it.hostAddress == "127.0.0.1" }
+        return all.ifEmpty { systemResult }
     }
 }
 

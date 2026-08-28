@@ -15,3 +15,5 @@ keystore/
 # IDE
 .idea/
 *.iml
+*.tar.gz
+

@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 
-private data class RoamChartValue(val index: Int, val value: Double?, val isLoss: Boolean = false)
+private data class RoamChartValue(val index: Int, val elapsedMs: Long, val value: Double?, val isLoss: Boolean = false)
 
 @Composable
 fun LabRoamCharts(
@@ -49,26 +49,26 @@ fun LabRoamCharts(
 ) {
     val rssiValues = remember(samples) {
         samples.mapIndexed { index, sample ->
-            RoamChartValue(index, sample.rssi.takeIf { it > -120 }?.toDouble(), false)
+            RoamChartValue(index, sample.elapsedMs, sample.rssi.takeIf { it > -120 }?.toDouble(), false)
         }
     }
     val gatewayLatencyValues = remember(samples) {
         samples.mapIndexed { index, sample ->
-            RoamChartValue(index, sample.gatewayLatency?.toDouble(), sample.gatewayLost)
+            RoamChartValue(index, sample.elapsedMs, sample.gatewayLatency?.toDouble(), sample.gatewayLost)
         }
     }
     val wanLatencyValues = remember(samples) {
         samples.mapIndexed { index, sample ->
-            RoamChartValue(index, sample.wanLatency?.toDouble(), sample.wanLost)
+            RoamChartValue(index, sample.elapsedMs, sample.wanLatency?.toDouble(), sample.wanLost)
         }
     }
     val fallbackLatencyValues = remember(samples) {
         samples.mapIndexed { index, sample ->
-            RoamChartValue(index, sample.latency?.toDouble(), sample.lost)
+            RoamChartValue(index, sample.elapsedMs, sample.latency?.toDouble(), sample.lost)
         }
     }
-    val hasGateway = gatewayLatencyValues.any { it.value != null }
-    val hasWan = wanLatencyValues.any { it.value != null }
+    val hasGateway = gatewayLatencyValues.any { it.value != null || it.isLoss }
+    val hasWan = wanLatencyValues.any { it.value != null || it.isLoss }
     val primaryLatency = when {
         hasGateway -> gatewayLatencyValues
         hasWan -> wanLatencyValues
@@ -95,14 +95,14 @@ fun LabRoamCharts(
             modifier = Modifier.fillMaxWidth().height(188.dp)
         )
         PingStyleRoamChart(
-            title = "漫游延迟 ms",
+            title = "Ping 业务 RTT ms",
             subtitle = latencyLegend,
             values = primaryLatency,
             secondaryValues = secondaryLatency,
             events = events,
             running = running,
             accent = Color(0xFF2563EB),
-            secondaryAccent = Color(0xFF7C3AED),
+            secondaryAccent = Color(0xFF0EA5E9),
             emptyText = "等待延迟样本",
             defaultRange = 0.0 to 100.0,
             floor = 0.0,
@@ -126,17 +126,21 @@ private fun PingStyleRoamChart(
     yFormatter: (Double) -> String,
     subtitle: String = "",
     secondaryValues: List<RoamChartValue> = emptyList(),
-    secondaryAccent: Color = Color(0xFF7C3AED)
+    secondaryAccent: Color = Color(0xFF0EA5E9)
 ) {
     val scrollState = rememberScrollState()
     val scheme = MaterialTheme.colorScheme
     val combinedValues = remember(values, secondaryValues) { values + secondaryValues }
     val validValues = remember(combinedValues) { combinedValues.mapNotNull { it.value } }
+    val hasObservedLoss = remember(combinedValues) { combinedValues.any { it.isLoss } }
     val axisValues = remember(combinedValues) { combinedValues.takeLast(360).mapNotNull { it.value }.ifEmpty { validValues } }
     val range = remember(axisValues, defaultRange, floor) { roamNiceRange(axisValues, defaultRange, floor) }
     val yMin = range.first
     val yMax = range.second.coerceAtLeast(yMin + 1.0)
     val totalSamples = maxOf(values.size, secondaryValues.size, 1)
+    val firstElapsedMs = combinedValues.minOfOrNull { it.elapsedMs } ?: 0L
+    val lastElapsedMs = combinedValues.maxOfOrNull { it.elapsedMs } ?: firstElapsedMs
+    val totalDurationMs = (lastElapsedMs - firstElapsedMs).coerceAtLeast(1L)
 
     BoxWithConstraints(
         modifier = modifier
@@ -175,7 +179,7 @@ private fun PingStyleRoamChart(
                 )
                 if (validValues.isEmpty()) {
                     Text(
-                        emptyText,
+                        if (hasObservedLoss) "已探测：100%丢包，无 RTT" else emptyText,
                         modifier = Modifier.align(Alignment.Center),
                         color = scheme.onSurface.copy(alpha=.40f),
                         fontWeight = FontWeight.Bold,
@@ -212,7 +216,10 @@ private fun PingStyleRoamChart(
                             return plotBottom - ratio * plotH
                         }
                         fun xFor(index: Int): Float {
-                            val ratio = if (totalSamples <= 1) .5f else (index.toFloat() / (totalSamples - 1).toFloat()).coerceIn(0f, 1f)
+                            val elapsed = values.getOrNull(index)?.elapsedMs
+                                ?: secondaryValues.getOrNull(index)?.elapsedMs
+                                ?: firstElapsedMs
+                            val ratio = ((elapsed - firstElapsedMs).toDouble() / totalDurationMs.toDouble()).toFloat().coerceIn(0f, 1f)
                             return plotLeft + ratio * plotW
                         }
                         fun pointForEvent(index: Int): Offset? {
@@ -257,7 +264,7 @@ private fun PingStyleRoamChart(
                                 "bad" -> Color(0xFFEF4444)
                                 "warn" -> Color(0xFFF59E0B)
                                 "good" -> Color(0xFF16A34A)
-                                else -> Color(0xFF7C3AED)
+                                else -> Color(0xFF0EA5E9)
                             }
                             val bottom = plotBottom - 2.dp.toPx()
                             val top = point.y.coerceIn(plotTop + 2.dp.toPx(), plotBottom - 3.dp.toPx())
@@ -334,9 +341,9 @@ private fun PingStyleRoamChart(
                     val scrollPx = scrollState.value.toFloat().coerceIn(0f, maxScrollPx)
                     val startRatio = (scrollPx / contentPlotW).coerceIn(0f, 1f)
                     val endRatio = ((scrollPx + visiblePlotW) / contentPlotW).coerceIn(0f, 1f)
-                    val totalSec = (totalSamples - 1).coerceAtLeast(1).toFloat()
+                    val totalSec = (totalDurationMs / 1000f).coerceAtLeast(0.001f)
                     val startSec = totalSec * startRatio
-                    val visibleSec = (totalSec * endRatio - startSec).coerceAtLeast(1f)
+                    val visibleSec = (totalSec * endRatio - startSec).coerceAtLeast(0.001f)
                     val xGrid = Color(0xFF64748B).copy(alpha = 0.030f)
                     for (idx in 0 until 5) {
                         val ratio = idx / 4f
