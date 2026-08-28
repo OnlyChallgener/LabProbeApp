@@ -201,11 +201,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 路由器配置与 Relay 链路稳定性增强" to listOf(
-                "修复路由器管理配置保存与宽容凭证读取，消除非 BE72 硬件或不同固件下的登录误判",
-                "修复 Relay 端口映射在自定义路由名称下的指令路由与状态同步，恢复启停与实时控制",
-                "优化设置页面输入草稿保护与服务端报错信息穿透透传",
-                "保持既有 UI 视觉与 120 FPS 流畅渲染管线不变"
+            "v$NAME build$CODE · WireGuard 连接前置状态检查" to listOf(
+                "启动 DDNS、STUN 或手动配置前重新读取 WireGuard 网关状态，避免服务端停用时进入无效握手",
+                "网关停用时由用户确认启用，保留完整服务端配置并等待 Agent revision 与 applyResult 成功",
+                "兼容通过 kernel-netlink 成功应用但运行状态不可观测的路由器，不再误判为网关未就绪",
+                "VPN 授权返回后重新检查网关状态，并修复 Agent 空错误显示为 null"
             )
         )
 }
