@@ -610,10 +610,13 @@ internal fun parseWireGuardServerState(root: JSONObject): WireGuardServerState {
         applyResultEnabled = applyResult?.takeIf { it.has("enabled") }?.optBoolean("enabled"),
         capabilityRunning = capability?.optBoolean("running", false) ?: false,
         interfaceRunning = matchingInterface?.takeIf { it.has("running") }?.optBoolean("running"),
-        applyError = applyResult?.optString("error").orEmpty().trim(),
-        capabilityError = capability?.optString("error").orEmpty().trim(),
+        applyError = applyResult?.optNullableString("error").orEmpty(),
+        capabilityError = capability?.optNullableString("error").orEmpty(),
     )
 }
+
+private fun JSONObject.optNullableString(name: String): String =
+    if (isNull(name)) "" else optString(name).trim()
 
 internal fun buildWireGuardServerEnablePayload(root: JSONObject): JSONObject {
     val server = root.optJSONObject("server") ?: throw IllegalStateException("WireGuard 网关配置不存在")

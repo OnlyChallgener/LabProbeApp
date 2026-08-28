@@ -238,5 +238,30 @@ class WireGuardClientTest {
         assertEquals("路由器端口被占用", wireGuardServerErrorForRevision(applyFailure, 12))
         assertEquals("WireGuard 内核不可用", wireGuardServerErrorForRevision(capabilityFailure, 12))
     }
+
+    @Test
+    fun jsonNullAgentErrorsAreNotDisplayedAsLiteralNull() {
+        val root = JSONObject()
+            .put("revision", 12)
+            .put("server", JSONObject()
+                .put("interfaceName", "labwg0")
+                .put("enabled", true))
+            .put("agentStatus", JSONObject()
+                .put("revision", 12)
+                .put("applyResult", JSONObject()
+                    .put("revision", 12)
+                    .put("ok", true)
+                    .put("error", JSONObject.NULL))
+                .put("capability", JSONObject()
+                    .put("running", false)
+                    .put("error", JSONObject.NULL)))
+
+        val state = parseWireGuardServerState(root)
+
+        assertEquals("", state.applyError)
+        assertEquals("", state.capabilityError)
+        assertEquals("", wireGuardServerErrorForRevision(state, 12))
+        assertFalse(isWireGuardServerReady(state))
+    }
 }
 
