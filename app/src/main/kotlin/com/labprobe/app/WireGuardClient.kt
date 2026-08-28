@@ -573,6 +573,11 @@ data class WireGuardServerState(
     val applyResultRevision: Long? = null,
     val applyResultOk: Boolean? = null,
     val applyResultEnabled: Boolean? = null,
+    val applyResultInterfaceName: String = "",
+    val applyResultControlBackend: String = "",
+    val capabilityWgToolAvailable: Boolean? = null,
+    val capabilityProvisioningReady: Boolean = false,
+    val capabilityControlBackend: String = "",
     val capabilityRunning: Boolean = false,
     val interfaceRunning: Boolean? = null,
     val applyError: String = "",
@@ -608,6 +613,11 @@ internal fun parseWireGuardServerState(root: JSONObject): WireGuardServerState {
         applyResultRevision = applyResult?.takeIf { it.has("revision") }?.optLong("revision"),
         applyResultOk = applyResult?.takeIf { it.has("ok") }?.optBoolean("ok"),
         applyResultEnabled = applyResult?.takeIf { it.has("enabled") }?.optBoolean("enabled"),
+        applyResultInterfaceName = applyResult?.optNullableString("interfaceName").orEmpty(),
+        applyResultControlBackend = applyResult?.optNullableString("controlBackend").orEmpty(),
+        capabilityWgToolAvailable = capability?.takeIf { it.has("wgToolAvailable") }?.optBoolean("wgToolAvailable"),
+        capabilityProvisioningReady = capability?.optBoolean("provisioningReady", false) ?: false,
+        capabilityControlBackend = capability?.optNullableString("controlBackend").orEmpty(),
         capabilityRunning = capability?.optBoolean("running", false) ?: false,
         interfaceRunning = matchingInterface?.takeIf { it.has("running") }?.optBoolean("running"),
         applyError = applyResult?.optNullableString("error").orEmpty(),
@@ -628,12 +638,25 @@ internal fun buildWireGuardServerEnablePayload(root: JSONObject): JSONObject {
 internal fun isWireGuardServerReady(state: WireGuardServerState, targetRevision: Long = state.config.revision): Boolean {
     val applyResultMatches = state.applyResultRevision?.let { it >= targetRevision } ?: true
     val applyResultSucceeded = state.applyResultOk != false && state.applyResultEnabled != false && state.applyError.isBlank()
+    val runtimeObservable = state.capabilityWgToolAvailable == true || state.interfaceRunning != null
+    val runtimeReady = if (runtimeObservable) {
+        state.capabilityRunning && state.interfaceRunning == true
+    } else {
+        state.capabilityWgToolAvailable == false &&
+            state.capabilityProvisioningReady &&
+            state.capabilityControlBackend == "kernel-netlink" &&
+            state.capabilityError.isBlank() &&
+            state.applyResultRevision?.let { it >= targetRevision } == true &&
+            state.applyResultOk == true &&
+            state.applyResultEnabled == true &&
+            state.applyResultInterfaceName == state.config.interfaceName &&
+            state.applyResultControlBackend == "kernel-netlink"
+    }
     return state.config.enabled &&
         state.agentRevision >= targetRevision &&
         applyResultMatches &&
         applyResultSucceeded &&
-        state.capabilityRunning &&
-        state.interfaceRunning == true
+        runtimeReady
 }
 
 internal fun wireGuardServerErrorForRevision(state: WireGuardServerState, targetRevision: Long): String {

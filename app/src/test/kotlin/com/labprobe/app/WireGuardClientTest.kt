@@ -193,6 +193,90 @@ class WireGuardClientTest {
     }
 
     @Test
+    fun kernelNetlinkApplyCanProveReadinessWhenWgRuntimeIsNotObservable() {
+        val root = JSONObject()
+            .put("revision", 9)
+            .put("server", JSONObject()
+                .put("interfaceName", "labwg0")
+                .put("enabled", true))
+            .put("agentStatus", JSONObject()
+                .put("revision", 9)
+                .put("applyResult", JSONObject()
+                    .put("revision", 9)
+                    .put("ok", true)
+                    .put("enabled", true)
+                    .put("interfaceName", "labwg0")
+                    .put("controlBackend", "kernel-netlink"))
+                .put("capability", JSONObject()
+                    .put("wgToolAvailable", false)
+                    .put("provisioningReady", true)
+                    .put("controlBackend", "kernel-netlink")
+                    .put("running", false)
+                    .put("interfaces", JSONArray())
+                    .put("error", JSONObject.NULL)))
+
+        assertTrue(isWireGuardServerReady(parseWireGuardServerState(root)))
+    }
+
+    @Test
+    fun unobservableRuntimeStillRequiresExactSuccessfulKernelNetlinkApply() {
+        val root = JSONObject()
+            .put("revision", 9)
+            .put("server", JSONObject()
+                .put("interfaceName", "labwg0")
+                .put("enabled", true))
+            .put("agentStatus", JSONObject()
+                .put("revision", 9)
+                .put("applyResult", JSONObject()
+                    .put("revision", 8)
+                    .put("ok", true)
+                    .put("enabled", true)
+                    .put("interfaceName", "labwg0")
+                    .put("controlBackend", "kernel-netlink"))
+                .put("capability", JSONObject()
+                    .put("wgToolAvailable", false)
+                    .put("provisioningReady", true)
+                    .put("controlBackend", "kernel-netlink")
+                    .put("running", false)
+                    .put("interfaces", JSONArray())))
+
+        assertFalse(isWireGuardServerReady(parseWireGuardServerState(root)))
+
+        root.getJSONObject("agentStatus")
+            .getJSONObject("applyResult")
+            .put("revision", 9)
+            .put("interfaceName", "other-wg")
+        assertFalse(isWireGuardServerReady(parseWireGuardServerState(root)))
+    }
+
+    @Test
+    fun observableStoppedRuntimeCannotBeOverriddenBySuccessfulApplyResult() {
+        val root = JSONObject()
+            .put("revision", 9)
+            .put("server", JSONObject()
+                .put("interfaceName", "labwg0")
+                .put("enabled", true))
+            .put("agentStatus", JSONObject()
+                .put("revision", 9)
+                .put("applyResult", JSONObject()
+                    .put("revision", 9)
+                    .put("ok", true)
+                    .put("enabled", true)
+                    .put("interfaceName", "labwg0")
+                    .put("controlBackend", "kernel-netlink"))
+                .put("capability", JSONObject()
+                    .put("wgToolAvailable", true)
+                    .put("provisioningReady", true)
+                    .put("controlBackend", "kernel-netlink")
+                    .put("running", false)
+                    .put("interfaces", JSONArray().put(JSONObject()
+                        .put("name", "labwg0")
+                        .put("running", false)))))
+
+        assertFalse(isWireGuardServerReady(parseWireGuardServerState(root)))
+    }
+
+    @Test
     fun enablingServerPreservesTheCompleteCurrentServerDocument() {
         val peers = JSONArray().put(JSONObject().put("id", "phone").put("publicKey", "client-key"))
         val endpointProfiles = JSONArray().put(JSONObject().put("id", "ddns-home").put("endpointSource", "ddns"))
