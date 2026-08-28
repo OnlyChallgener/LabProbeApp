@@ -236,6 +236,14 @@ class AiApiClient(
                 ),
                 conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
                 confirmation = confirmation,
+                clientActions = buildList {
+                    val actions = root.optJSONArray("clientActions") ?: JSONArray()
+                    for (index in 0 until actions.length()) {
+                        val item = actions.optJSONObject(index) ?: continue
+                        val type = item.optString("type")
+                        if (type.isNotBlank()) add(AiClientAction(type, item.optString("route")))
+                    }
+                },
             )
         }
     }

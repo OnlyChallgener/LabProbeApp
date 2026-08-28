@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.app.Activity
 import com.labprobe.app.feature.router.ipv6.Ipv6Screen
 import com.labprobe.app.feature.assistant.AiFloatingPet
+import com.labprobe.app.feature.assistant.AiForeground
 import com.labprobe.app.feature.assistant.AiSettingsScreen
 import com.labprobe.app.feature.assistant.AiChatScreen
 import com.labprobe.app.feature.assistant.AiUsageScreen
@@ -244,6 +245,26 @@ class MainActivity : ComponentActivity() {
         applyLabProbeSystemBars()
         setContent { LabProbeApp(prefs) }
     }
+
+    override fun onResume() {
+        super.onResume()
+        AiForeground.visible = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AiForeground.visible = false
+    }
+}
+
+/** Maps assistant clientAction route names to app route strings. */
+private fun mapAssistantRoute(route: String): String = when (route) {
+    "home", "devices", "tools", "favorites", "settings", "ai_chat" -> route
+    "router" -> "router_settings"
+    "wireguard" -> "tool_wireguard"
+    "stun" -> "tool_stun"
+    "portmap" -> "tool_portmap"
+    else -> "home"
 }
 
 fun Activity.applyLabProbeSystemBars() {
@@ -2129,7 +2150,12 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenAi = { aiReturnRoute = "settings"; route = "ai_settings" },
                         )
                         "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = aiReturnRoute }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
-                        "ai_chat" -> AiChatScreen(context, onBack = { route = "ai_settings" })
+                        "ai_chat" -> AiChatScreen(
+                            context,
+                            onBack = { route = "ai_settings" },
+                            onNavigate = { route = mapAssistantRoute(it) },
+                            onRefreshData = { scope.launch { state.refreshAll(forceFull = true) } },
+                        )
                         "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)

@@ -2,8 +2,13 @@ package com.labprobe.app.feature.assistant
 
 import android.content.Context
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -32,10 +37,13 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
@@ -66,16 +74,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -189,12 +200,15 @@ private fun AiFormField(
     singleLine: Boolean = true,
     maxLines: Int = 4,
 ) {
+    var focused by remember { mutableStateOf(false) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+        if (label.isNotBlank()) {
+            Text(label, color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+        }
         Surface(
             shape = AiControlShape,
-            color = AiTone.Field,
-            border = BorderStroke(1.dp, AiTone.Border),
+            color = if (focused) Color.White else AiTone.Field,
+            border = BorderStroke(1.dp, if (focused) AiTone.Mint.copy(alpha = .6f) else AiTone.Border),
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
         ) {
@@ -205,13 +219,51 @@ private fun AiFormField(
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
                     textStyle = TextStyle(color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium),
                     singleLine = singleLine,
                     maxLines = maxLines,
                     visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+                    cursorBrush = SolidColor(AiTone.Mint),
                 )
             }
+        }
+    }
+}
+
+/** Chat input with mint focus ring, send-key support and no label gutter. */
+@Composable
+private fun AiChatInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSend: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier,
+        shape = AiControlShape,
+        color = if (focused) Color.White else AiTone.Field,
+        border = BorderStroke(1.dp, if (focused) AiTone.Mint.copy(alpha = .6f) else AiTone.Border),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp)) {
+            if (value.isBlank()) {
+                Text("输入消息…", color = AiTone.Muted.copy(alpha = .68f), fontSize = 14.sp)
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+                enabled = enabled,
+                textStyle = TextStyle(color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp),
+                cursorBrush = SolidColor(AiTone.Mint),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                maxLines = 4,
+            )
         }
     }
 }
@@ -248,7 +300,7 @@ private fun AiToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun AiHeader(title: String, subtitle: String, onBack: () -> Unit) {
+private fun AiHeader(title: String, subtitle: String, onBack: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Surface(
             modifier = Modifier.size(42.dp).clip(CircleShape).aiTap(onClick = onBack),
@@ -265,14 +317,30 @@ private fun AiHeader(title: String, subtitle: String, onBack: () -> Unit) {
             Text(title, color = AiTone.Ink, style = LabTypography.PageTitle)
             Text(subtitle, color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
         }
+        trailing?.let {
+            Spacer(Modifier.weight(1f))
+            it()
+        }
     }
 }
 
 @Composable
-private fun AiRobotMark(modifier: Modifier = Modifier) {
+private fun AiRobotMark(modifier: Modifier = Modifier, thinking: Boolean = false) {
+    val eyeAlpha: Float
+    if (thinking) {
+        val blink = rememberInfiniteTransition(label = "ai-robot-think")
+        eyeAlpha = blink.animateFloat(
+            initialValue = .3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(560, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "ai-robot-blink",
+        ).value
+    } else {
+        eyeAlpha = 1f
+    }
     Canvas(modifier) {
         val body = AiTone.Ink
-        val eye = AiTone.Mint
+        val eye = AiTone.Mint.copy(alpha = eyeAlpha)
         drawLine(eye, Offset(size.width * .5f, 1f), Offset(size.width * .5f, size.height * .19f), 2.1f)
         drawCircle(eye, 2.1f, Offset(size.width * .5f, 1f))
         drawRoundRect(
@@ -406,8 +474,22 @@ fun AiSettingsScreen(
                 Text("密钥只在保存时发送给 Hub；APP 不保存原文。首次配置请先粘贴 Key。", color = AiTone.Muted, fontSize = 11.sp, lineHeight = 16.sp)
                 when (val current = state) {
                     AiConnectionState.Testing -> LinearProgressIndicator(Modifier.fillMaxWidth(), color = AiTone.Mint, trackColor = AiTone.MintSoft)
-                    is AiConnectionState.Success -> Text(current.message, color = AiTone.MintDark, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    is AiConnectionState.Failure -> Text(current.message, color = AiTone.Danger, fontSize = 12.sp, lineHeight = 17.sp)
+                    is AiConnectionState.Success -> Surface(
+                        shape = AiControlShape,
+                        color = AiTone.MintSoft,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 0.dp,
+                    ) {
+                        Text(current.message, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = AiTone.MintDark, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    is AiConnectionState.Failure -> Surface(
+                        shape = AiControlShape,
+                        color = AiTone.Danger.copy(alpha = .08f),
+                        tonalElevation = 0.dp,
+                        shadowElevation = 0.dp,
+                    ) {
+                        Text(current.message, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = AiTone.Danger, fontSize = 12.sp, lineHeight = 17.sp)
+                    }
                     AiConnectionState.Idle -> Unit
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -450,7 +532,11 @@ fun AiSettingsScreen(
         }
         AiPanel(accent = AiTone.Mint.copy(alpha = .32f)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("助手与记录", style = LabTypography.CardTitle, color = AiTone.Ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AiRobotMark(Modifier.size(22.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("助手与记录", style = LabTypography.CardTitle, color = AiTone.Ink)
+                }
                 Text("对话可以查询 Hub 数据；涉及写入的指令会先展示确认内容。", color = AiTone.Muted, fontSize = 12.sp, lineHeight = 17.sp)
                 AiAction("打开对话", primary = true, icon = Icons.Rounded.ChatBubbleOutline, enabled = settings.enabled && settings.hasApiKey, onClick = onChat)
                 AiAction("查看 Token 用量", icon = Icons.Rounded.DataUsage, onClick = onUsage)
@@ -480,7 +566,11 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
         AiHeader("Token 用量", "任务级统计 · $message", onBack)
         AiPanel {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                Text("今日", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(AiTone.Mint))
+                    Spacer(Modifier.width(6.dp))
+                    Text("今日", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
                 Text("${summary.todayTotalTokens} Token · ${summary.todayRequests} 次任务", color = AiTone.Ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 HorizontalDivider(color = AiTone.Border)
                 Text("累计 ${summary.totalTokens} Token · ${summary.requests} 次任务", color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -526,6 +616,9 @@ private fun AiHintChip(hint: AiToolHint, onClick: () -> Unit) {
             if (hint.risk == "write") {
                 Icon(Icons.Rounded.Lock, null, tint = AiTone.Warning, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(5.dp))
+            } else {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(AiTone.Mint.copy(alpha = .55f)))
+                Spacer(Modifier.width(5.dp))
             }
             Text(hint.name, color = AiTone.Ink, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
@@ -535,22 +628,86 @@ private fun AiHintChip(hint: AiToolHint, onClick: () -> Unit) {
 @Composable
 private fun AiChatBubble(message: AiMessage) {
     val user = message.role == "user"
-    AiPanel(
-        modifier = Modifier.fillMaxWidth(),
-        accent = if (user) AiTone.Mint.copy(alpha = .32f) else AiTone.Border,
-    ) {
-        Column(
-            Modifier.fillMaxWidth().background(if (user) AiTone.MintSoft else AiTone.Surface).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Text(message.content, Modifier.fillMaxWidth(), color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp)
+    if (user) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Surface(
+                shape = RoundedCornerShape(18.dp, 6.dp, 18.dp, 18.dp),
+                color = AiTone.MintSoft,
+                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .32f)),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Text(
+                    message.content,
+                    Modifier.widthIn(max = 264.dp).padding(12.dp),
+                    color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
+                )
+            }
+        }
+    } else {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+            Surface(
+                modifier = Modifier.size(26.dp).clip(CircleShape),
+                shape = CircleShape,
+                color = AiTone.Field,
+                border = BorderStroke(1.dp, AiTone.Border),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) { AiRobotMark(Modifier.fillMaxSize().padding(5.dp)) }
+            }
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                modifier = Modifier.widthIn(max = 280.dp),
+                shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
+                color = AiTone.Surface,
+                border = BorderStroke(1.dp, AiTone.Border),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Text(
+                    message.content,
+                    Modifier.padding(12.dp),
+                    color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
+                )
+            }
         }
     }
 }
 
 @Composable
-fun AiChatScreen(context: Context, onBack: () -> Unit) {
+private fun AiTypingBubble() {
+    val dots = rememberInfiniteTransition(label = "ai-typing")
+    val phase by dots.animateFloat(
+        initialValue = 0f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
+        label = "ai-typing-phase",
+    )
+    AiPanel {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AiRobotMark(Modifier.size(24.dp), thinking = true)
+            Spacer(Modifier.width(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                repeat(3) { index ->
+                    val active = phase.toInt() % 3 == index
+                    Box(
+                        Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(AiTone.Mint.copy(alpha = if (active) .95f else .32f)),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}) {
     val store = remember { AiSettingsStore(context) }
     val prefs = remember { AppPrefs(context) }
     val client = remember { AiApiClient(store, prefs.hub, prefs.token, appPrefs = prefs) }
@@ -564,15 +721,20 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var usage by remember { mutableStateOf(AiTokenSummary()) }
     val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size, sending, pendingConfirmation) {
+        val target = messages.size - 1 + if (pendingConfirmation != null || sending) 1 else 0
+        if (target >= 0) runCatching { listState.animateScrollToItem(target) }
+    }
 
     LaunchedEffect(Unit) {
         runCatching { client.latestConversation() }
             .onSuccess { (id, history) ->
                 conversationId = id
                 messages.clear()
-                if (history.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询 Hub 状态、设备与网络数据；涉及变更时会先请你确认。") else messages.addAll(history)
+                if (history.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。") else messages.addAll(history)
             }
-            .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询 Hub 状态、设备与网络数据；涉及变更时会先请你确认。") }
+            .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。") }
         loadingHistory = false
         runCatching { client.catalog() }.onSuccess { toolHints = it }
     }
@@ -581,7 +743,10 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
         while (true) {
             runCatching { client.notifications(store.lastNotificationId()) }
                 .onSuccess { rows ->
-                    rows.forEach { messages += AiMessage("assistant", "${it.title}\n${it.content}") }
+                    rows.forEach {
+                        messages += AiMessage("assistant", "${it.title}\n${it.content}")
+                        AiNotifier.notifyAssistantMessage(context, it.title, it.content)
+                    }
                     rows.maxOfOrNull { it.id }?.let(store::saveLastNotificationId)
                 }
             delay(15_000)
@@ -592,7 +757,18 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).imePadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack)
+        AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack, trailing = {
+            Surface(
+                modifier = Modifier.size(38.dp),
+                shape = CircleShape,
+                color = AiTone.MintSoft,
+                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) { AiRobotMark(Modifier.fillMaxSize().padding(7.dp)) }
+            }
+        })
         if (toolHints.isNotEmpty()) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(end = 4.dp)) {
                 items(toolHints, key = { it.id }) { hint -> AiHintChip(hint) { input = hint.example } }
@@ -600,21 +776,44 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
+            state = listState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(bottom = 4.dp),
         ) {
             if (loadingHistory) item { Text("正在恢复最近对话…", color = AiTone.Muted, fontSize = 12.sp) }
             items(messages) { message -> AiChatBubble(message) }
+            if (sending) item { AiTypingBubble() }
             pendingConfirmation?.let { confirmation ->
                 item {
                     AiPanel(accent = AiTone.Warning.copy(alpha = .55f)) {
-                        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Security, null, tint = AiTone.Warning, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text(confirmation.title, style = LabTypography.CardTitle, color = AiTone.Ink)
+                                Surface(
+                                    modifier = Modifier.size(34.dp),
+                                    shape = CircleShape,
+                                    color = AiTone.WarningSoft,
+                                    tonalElevation = 0.dp,
+                                    shadowElevation = 0.dp,
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Rounded.Security, null, tint = AiTone.Warning, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text(confirmation.title, style = LabTypography.CardTitle, color = AiTone.Ink)
+                                    Text("需要你确认后才会执行", color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
-                            Text(confirmation.summary, color = AiTone.Ink, fontSize = 12.5.sp, lineHeight = 18.sp)
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = AiTone.Field,
+                                tonalElevation = 0.dp,
+                                shadowElevation = 0.dp,
+                            ) {
+                                Text(confirmation.summary, Modifier.fillMaxWidth().padding(12.dp), color = AiTone.Ink, fontSize = 12.5.sp, lineHeight = 18.sp)
+                            }
                             Text("确认后仅执行以上操作；确认有效期为 5 分钟。", color = AiTone.Muted, fontSize = 11.sp)
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                                 AiAction("取消", Modifier.weight(1f), tone = AiTone.Danger, enabled = !sending) {
@@ -638,31 +837,57 @@ fun AiChatScreen(context: Context, onBack: () -> Unit) {
                 }
             }
         }
-        Text("本次任务 Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）", color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            AiFormField("", input, { input = it }, Modifier.weight(1f), placeholder = "输入消息…", singleLine = false, maxLines = 4)
-            Surface(
-                modifier = Modifier.size(50.dp).clip(CircleShape).aiTap(
-                    enabled = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null,
-                ) {
-                    val text = input.trim()
-                    input = ""
-                    messages += AiMessage("user", text)
-                    sending = true
-                    scope.launch {
-                        runCatching { client.chat(messages.toList(), conversationId) }
-                            .onSuccess {
-                                conversationId = it.conversationId ?: conversationId
-                                messages += AiMessage("assistant", it.content)
-                                usage = it.usage
-                                pendingConfirmation = it.confirmation
+        Surface(
+            shape = AiPillShape,
+            color = AiTone.Field,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+        ) {
+            Text(
+                "本次任务 Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）",
+                Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+            )
+        }
+        val canSend = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null
+        val sendNow = {
+            if (canSend) {
+                val text = input.trim()
+                input = ""
+                messages += AiMessage("user", text)
+                sending = true
+                scope.launch {
+                    runCatching { client.chat(messages.toList(), conversationId) }
+                        .onSuccess {
+                            conversationId = it.conversationId ?: conversationId
+                            messages += AiMessage("assistant", it.content)
+                            usage = it.usage
+                            pendingConfirmation = it.confirmation
+                            it.clientActions.forEach { action ->
+                                when (action.type) {
+                                    "navigate" -> if (action.route.isNotBlank()) onNavigate(action.route)
+                                    "refresh" -> onRefreshData()
+                                }
                             }
-                            .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
-                        sending = false
-                    }
-                },
+                        }
+                        .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
+                    sending = false
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            AiChatInput(
+                value = input,
+                onValueChange = { input = it },
+                onSend = sendNow,
+                enabled = !sending && !loadingHistory && pendingConfirmation == null,
+                modifier = Modifier.weight(1f),
+            )
+            Surface(
+                modifier = Modifier.size(50.dp).clip(CircleShape).aiTap(enabled = canSend, onClick = sendNow),
                 shape = CircleShape,
-                color = AiTone.Mint,
+                color = if (canSend) AiTone.Mint else AiTone.Mint.copy(alpha = .35f),
                 tonalElevation = 0.dp,
                 shadowElevation = 0.dp,
             ) {

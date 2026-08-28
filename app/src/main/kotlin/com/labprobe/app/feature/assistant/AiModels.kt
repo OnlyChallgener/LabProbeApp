@@ -22,6 +22,12 @@ data class AiReply(
     val usage: AiTokenSummary = AiTokenSummary(),
     val conversationId: String? = null,
     val confirmation: AiToolConfirmation? = null,
+    val clientActions: List<AiClientAction> = emptyList(),
+)
+
+data class AiClientAction(
+    val type: String,
+    val route: String = "",
 )
 
 data class AiToolHint(
