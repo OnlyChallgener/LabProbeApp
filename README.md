@@ -294,3 +294,8 @@ APP 保留原更新入口、弹窗、忽略更新、下载目录和安装流程�
 - 新版本说明写入 GitHub Release Notes，不再维护独立 `CHANGELOG.md`。
 - 签名说明、部署说明、版本规则、Release 规则统一维护在本文件。
 - 根目录 `labprobe_icon_1024.png` 作为 Logo 原始资源暂时保留；若确认无设计留档价值，可后续单独删除。
+
+
+## 测试发布（test-bundle tag）
+
+推送 `test-bundle/<日期-序号>` 形式的 tag（与 labprobe-hub 仓库同名 tag 配对使用）即触发测试 APK 构建，发布为 prerelease（`LabProbe-v<版本>-build<码>-test.apk`，与正式版同签名）。测试构建不做 tag/版本一致性检查，可指向任意分支；正式发布仍走 `v*-build*` tag。详见 labprobe-hub 仓库 README 的「测试发布」一节。

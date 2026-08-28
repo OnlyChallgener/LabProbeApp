@@ -1,0 +1,115 @@
+name: Test Bundle Release
+
+# Shared test-release tag across LabProbeApp and labprobe-hub.
+# Pushing the same `test-bundle/*` tag to both repos builds the full trio
+# (APP APK, Hub image, LabRelay router bundle) as prereleases. Unlike the
+# production `v*-build*` pipeline, this workflow has no tag/version match
+# gate and accepts commits from any branch, so test builds can point at
+# feature branches.
+
+on:
+  push:
+    tags:
+      - 'test-bundle/*'
+  workflow_dispatch:
+
+concurrency:
+  group: test-bundle-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - name: Resolve app version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_CODE=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)
+          VERSION_NAME=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)
+
+          test -n "$VERSION_CODE"
+          test -n "$VERSION_NAME"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+      - name: Prepare signing key
+        env:
+          LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LABPROBE_KEYSTORE_BASE64"
+          printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
+          echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
+
+      - name: Test and build signed Release APK
+        env:
+          LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
+          LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
+          LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
+          LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+
+      - name: Verify signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='${VERSION_CODE}' versionName='${VERSION_NAME}'"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
+          sha256sum "$APK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-v${{ env.VERSION_NAME }}-build${{ env.VERSION_CODE }}-test-apk
+          path: app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish test prerelease
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/release/app-release.apk'
+          ASSET="LabProbe-v${VERSION_NAME}-build${VERSION_CODE}-test.apk"
+          cp "$APK" "$RUNNER_TEMP/$ASSET"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$ASSET" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/$ASSET" \
+              --target "$GITHUB_SHA" \
+              --title "Test bundle ${GITHUB_REF_NAME}（极客网探 v${VERSION_NAME} build${VERSION_CODE}）" \
+              --prerelease \
+              --notes "Test bundle build. Same release signature as production; not for daily use."
+          fi
