@@ -94,6 +94,9 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var editor by remember { mutableStateOf<WireGuardProfile?>(null) }
     var editingExisting by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf<WireGuardProfile?>(null) }
+    var requestedStart by remember { mutableStateOf<WireGuardProfile?>(null) }
+    var pendingServerEnable by remember { mutableStateOf<WireGuardProfile?>(null) }
+    var startCheckInProgress by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var syncing by remember { mutableStateOf(false) }
     var stunRules by remember { mutableStateOf<List<StunRule>>(emptyList()) }
@@ -135,33 +138,52 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
         }
     }
-    val vpnPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+    val vpnPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val profile = pendingStart
         pendingStart = null
         if (profile != null) {
-            scope.launch {
-                when (val result = controller.start(profile, store.privateKey(profile.id))) {
-                    WireGuardStartResult.Started -> {
-                        message = "${profile.name} 已启动"
-                        runtime = controller.status()
-                    }
-                    is WireGuardStartResult.PermissionRequired -> message = "系统尚未授予 VPN权限"
-                    is WireGuardStartResult.Failed -> message = result.message
-                }
-            }
+            if (result.resultCode == android.app.Activity.RESULT_OK) requestedStart = profile
+            else message = "系统尚未授予 VPN权限"
         }
     }
-    fun start(profile: WireGuardProfile) {
-        scope.launch {
-            when (val result = controller.start(profile, store.privateKey(profile.id))) {
-                WireGuardStartResult.Started -> {
-                    message = "${profile.name} 已启动"
-                    runtime = controller.status()
-                }
-                is WireGuardStartResult.PermissionRequired -> pendingStart = profile.also { vpnPermission.launch(result.intent) }
-                is WireGuardStartResult.Failed -> message = result.message
+
+    suspend fun startClient(profile: WireGuardProfile) {
+        when (val result = controller.start(profile, store.privateKey(profile.id))) {
+            WireGuardStartResult.Started -> {
+                message = "${profile.name} 已启动"
+                runtime = controller.status()
             }
+            is WireGuardStartResult.PermissionRequired -> pendingStart = profile.also { vpnPermission.launch(result.intent) }
+            is WireGuardStartResult.Failed -> message = result.message
         }
+    }
+
+    fun requestStart(profile: WireGuardProfile) {
+        if (!startCheckInProgress) requestedStart = profile
+    }
+
+    LaunchedEffect(requestedStart) {
+        val profile = requestedStart ?: return@LaunchedEffect
+        startCheckInProgress = true
+        message = "正在检查 WireGuard 网关状态…"
+        runCatching { wireGuardHubApi.loadServerState() }
+            .onSuccess { state ->
+                serverConfig = state.config
+                when {
+                    !state.config.enabled -> {
+                        message = ""
+                        pendingServerEnable = profile
+                    }
+                    !isWireGuardServerReady(state) -> {
+                        val error = wireGuardServerErrorForRevision(state, state.config.revision)
+                        message = error.ifBlank { "WireGuard 网关尚未就绪" }
+                    }
+                    else -> startClient(profile)
+                }
+            }
+            .onFailure { error -> message = error.message ?: "WireGuard 网关状态读取失败" }
+        startCheckInProgress = false
+        requestedStart = null
     }
 
     LaunchedEffect(Unit) {
@@ -304,7 +326,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         profile = profile,
                         active = isActive,
                         runtime = if (isActive) runtime else null,
-                        onStart = { start(profile) },
+                        onStart = { requestStart(profile) },
                         onStop = {
                             scope.launch {
                                 runtime = controller.stop()
@@ -374,6 +396,31 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     syncing = false
                 }
             }
+        )
+    }
+
+    pendingServerEnable?.let { profile ->
+        WireGuardEnableServerDialog(
+            onCancel = {
+                pendingServerEnable = null
+                message = ""
+            },
+            onConfirm = {
+                pendingServerEnable = null
+                scope.launch {
+                    startCheckInProgress = true
+                    message = "正在启用 WireGuard 网关…"
+                    var enabledSuccessfully = false
+                    runCatching { wireGuardHubApi.enableServerAndAwaitReady() }
+                        .onSuccess { state ->
+                            serverConfig = state.config
+                            enabledSuccessfully = true
+                        }
+                        .onFailure { error -> message = error.message ?: "WireGuard 网关启动失败/未就绪" }
+                    startCheckInProgress = false
+                    if (enabledSuccessfully) requestStart(profile)
+                }
+            },
         )
     }
 
@@ -549,6 +596,44 @@ private fun WireGuardProfileCard(
                     Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("启动连接", style = LabTypography.CompactButton)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WireGuardEnableServerDialog(
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    Dialog(onDismissRequest = onCancel) {
+        Surface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("WireGuard 网关已停用", style = LabTypography.CardTitle)
+                Text(
+                    "当前配置需要先启用路由器上的 WireGuard 服务端。",
+                    style = LabTypography.Body.copy(color = LabV2.InkMuted),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.weight(1f),
+                        shape = LabCoreSurface.InnerShape,
+                    ) {
+                        Text("取消", style = LabTypography.Button)
+                    }
+                    Button(
+                        onClick = onConfirm,
+                        modifier = Modifier.weight(1.4f),
+                        colors = ButtonDefaults.buttonColors(containerColor = WireGuardBlue),
+                        shape = LabCoreSurface.InnerShape,
+                    ) {
+                        Text("启用并连接", style = LabTypography.Button)
+                    }
                 }
             }
         }
