@@ -93,23 +93,21 @@ jobs:
           name: LabProbe-v${{ env.VERSION_NAME }}-build${{ env.VERSION_CODE }}-test-apk
           path: app/build/outputs/apk/release/app-release.apk
 
+      - name: Stage test APK
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/LabProbe-v${VERSION_NAME}-build${VERSION_CODE}-test.apk"
+
       - name: Publish test prerelease
         if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK='app/build/outputs/apk/release/app-release.apk'
-          ASSET="LabProbe-v${VERSION_NAME}-build${VERSION_CODE}-test.apk"
-          cp "$APK" "$RUNNER_TEMP/$ASSET"
-
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$ASSET" --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/$ASSET" \
-              --target "$GITHUB_SHA" \
-              --title "Test bundle ${GITHUB_REF_NAME}（极客网探 v${VERSION_NAME} build${VERSION_CODE}）" \
-              --prerelease \
-              --notes "Test bundle build. Same release signature as production; not for daily use."
-          fi
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Test bundle ${{ github.ref_name }}（极客网探 v${{ env.VERSION_NAME }} build${{ env.VERSION_CODE }}）
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          body: |
+            Test bundle build. Same release signature as production; not for daily use.
+          files: |
+            ${{ runner.temp }}/LabProbe-v${{ env.VERSION_NAME }}-build${{ env.VERSION_CODE }}-test.apk
