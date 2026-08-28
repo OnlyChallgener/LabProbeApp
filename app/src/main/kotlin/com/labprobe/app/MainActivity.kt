@@ -264,6 +264,10 @@ private fun mapAssistantRoute(route: String): String = when (route) {
     "wireguard" -> "tool_wireguard"
     "stun" -> "tool_stun"
     "portmap" -> "tool_portmap"
+    "ipv6" -> "tool_router_ipv6"
+    "ddns" -> "tool_router_ddns"
+    "nat" -> "tool_nat"
+    "wol" -> "wol"
     else -> "home"
 }
 
@@ -2155,6 +2159,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onBack = { route = "ai_settings" },
                             onNavigate = { route = mapAssistantRoute(it) },
                             onRefreshData = { scope.launch { state.refreshAll(forceFull = true) } },
+                            onOpenSettings = { aiReturnRoute = "ai_chat"; route = "ai_settings" },
                         )
                         "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)

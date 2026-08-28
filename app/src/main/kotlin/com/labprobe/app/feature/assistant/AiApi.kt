@@ -85,42 +85,69 @@ class AiApiClient(
 
     suspend fun usage(): AiUsageSummary = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        request(hubUrl.trimEnd('/') + "/api/ai/usage", "GET", null).use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val root = JSONObject(text)
-            val recentRoot = root.optJSONArray("recent") ?: JSONArray()
-            val recent = buildList {
-                for (index in 0 until recentRoot.length()) {
-                    val item = recentRoot.optJSONObject(index) ?: continue
-                    add(AiUsageRecord(
-                        id = item.optInt("id"),
-                        conversationId = item.optString("conversation_id"),
-                        provider = item.optString("provider"),
-                        model = item.optString("model"),
-                        promptTokens = item.optInt("prompt_tokens"),
-                        completionTokens = item.optInt("completion_tokens"),
-                        totalTokens = item.optInt("total_tokens"),
-                        status = item.optString("status", "completed"),
-                        usageKnown = when (val known = item.opt("usage_known")) {
-                            is Boolean -> known
-                            is Number -> known.toInt() != 0
-                            else -> known?.toString()?.toBooleanStrictOrNull() ?: true
-                        },
-                        createdAt = item.optString("created_at"),
-                    ))
+            request(hubUrl.trimEnd('/') + "/api/ai/usage", "GET", null).use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error(apiFailure(response.code, text))
+                val root = JSONObject(text)
+                val recentRoot = root.optJSONArray("recent") ?: JSONArray()
+                val recent = buildList {
+                    for (index in 0 until recentRoot.length()) {
+                        val item = recentRoot.optJSONObject(index) ?: continue
+                        add(AiUsageRecord(
+                            id = item.optInt("id"),
+                            conversationId = item.optString("conversation_id"),
+                            provider = item.optString("provider"),
+                            model = item.optString("model"),
+                            promptTokens = item.optInt("prompt_tokens"),
+                            completionTokens = item.optInt("completion_tokens"),
+                            totalTokens = item.optInt("total_tokens"),
+                            status = item.optString("status", "completed"),
+                            usageKnown = when (val known = item.opt("usage_known")) {
+                                is Boolean -> known
+                                is Number -> known.toInt() != 0
+                                else -> known?.toString()?.toBooleanStrictOrNull() ?: true
+                            },
+                            createdAt = item.optString("created_at"),
+                        ))
+                    }
                 }
+                val dailyRoot = root.optJSONArray("daily") ?: JSONArray()
+                val daily = buildList {
+                    for (index in 0 until dailyRoot.length()) {
+                        val item = dailyRoot.optJSONObject(index) ?: continue
+                        val modelsJson = item.optJSONObject("models") ?: JSONObject()
+                        val models = buildMap {
+                            val keys = modelsJson.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                put(key, modelsJson.optLong(key))
+                            }
+                        }
+                        add(AiUsageDay(
+                            date = item.optString("date"),
+                            requests = item.optInt("requests"),
+                            totalTokens = item.optInt("total_tokens"),
+                            cacheHitTokens = item.optInt("cache_hit_tokens"),
+                            cacheMissTokens = item.optInt("cache_miss_tokens"),
+                            models = models,
+                        ))
+                    }
+                }
+                val storage = root.optJSONObject("storage") ?: JSONObject()
+                AiUsageSummary(
+                    requests = root.optInt("requests", 0),
+                    promptTokens = root.optInt("prompt_tokens", 0),
+                    completionTokens = root.optInt("completion_tokens", 0),
+                    totalTokens = root.optInt("total_tokens", 0),
+                    todayRequests = root.optInt("today_requests", 0),
+                    todayTotalTokens = root.optInt("today_total_tokens", 0),
+                    recent = recent,
+                    daily = daily,
+                    storageConversations = storage.optInt("conversations", 0),
+                    storageMessages = storage.optInt("messages", 0),
+                    storageBytes = storage.optLong("bytes", 0L),
+                )
             }
-            AiUsageSummary(
-                requests = root.optInt("requests", 0),
-                promptTokens = root.optInt("prompt_tokens", 0),
-                completionTokens = root.optInt("completion_tokens", 0),
-                totalTokens = root.optInt("total_tokens", 0),
-                todayRequests = root.optInt("today_requests", 0),
-                todayTotalTokens = root.optInt("today_total_tokens", 0),
-                recent = recent,
-            )
-        }
     }
 
     suspend fun latestConversation(): Pair<String?, List<AiMessage>> = withContext(Dispatchers.IO) {

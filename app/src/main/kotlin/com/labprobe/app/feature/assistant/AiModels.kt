@@ -62,6 +62,19 @@ data class AiUsageSummary(
     val todayRequests: Int = 0,
     val todayTotalTokens: Int = 0,
     val recent: List<AiUsageRecord> = emptyList(),
+    val daily: List<AiUsageDay> = emptyList(),
+    val storageConversations: Int = 0,
+    val storageMessages: Int = 0,
+    val storageBytes: Long = 0,
+)
+
+data class AiUsageDay(
+    val date: String,
+    val requests: Int,
+    val totalTokens: Int,
+    val cacheHitTokens: Int,
+    val cacheMissTokens: Int,
+    val models: Map<String, Long> = emptyMap(),
 )
 
 data class AiUsageRecord(

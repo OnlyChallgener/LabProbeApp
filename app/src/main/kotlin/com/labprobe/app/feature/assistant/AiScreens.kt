@@ -84,17 +84,23 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.LabTypography
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -111,6 +117,26 @@ private object AiTone {
     val Warning = Color(0xFFF2A23E)
     val WarningSoft = Color(0xFFFFF7E8)
     val Danger = Color(0xFFD85C5C)
+}
+
+private data class AiProviderPreset(val label: String, val model: String, val baseUrl: String)
+
+/** One-tap fills for common OpenAI-compatible providers; fields stay editable. */
+private val AI_PROVIDER_PRESETS = listOf(
+    AiProviderPreset("DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com"),
+    AiProviderPreset("智谱 GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4"),
+    AiProviderPreset("阿里通义", "qwen-flash", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    AiProviderPreset("Gemini", "gemini-2.5-flash", "https://generativelanguage.googleapis.com/v1beta/openai"),
+)
+
+private const val AI_GREETING = "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。"
+
+/** Process-lifetime chat state: reopening the screen is instant, no reload flash. */
+object AiChatSession {
+    val messages = mutableStateListOf<AiMessage>()
+    var conversationId: String? = null
+    var loaded: Boolean = false
+    var toolHints: List<AiToolHint> = emptyList()
 }
 
 private val AiPanelShape = RoundedCornerShape(24.dp)
@@ -452,7 +478,7 @@ fun AiSettingsScreen(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        AiHeader("AI 设置", "连接 DeepSeek 与 Hub", onBack)
+        AiHeader("AI 设置", "连接大模型与 Hub", onBack)
         AiPanel {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -462,8 +488,27 @@ fun AiSettingsScreen(
                     }
                     AiToggle(settings.enabled) { settings = settings.copy(enabled = it) }
                 }
+                Text("常用服务商（点选自动填充，可再手动修改）", color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(AI_PROVIDER_PRESETS) { preset ->
+                        val active = baseUrl.equals(preset.baseUrl, ignoreCase = true)
+                        Surface(
+                            modifier = Modifier.clip(AiPillShape).aiTap {
+                                model = preset.model
+                                baseUrl = preset.baseUrl
+                            },
+                            shape = AiPillShape,
+                            color = if (active) AiTone.MintSoft else AiTone.Surface,
+                            border = BorderStroke(1.dp, if (active) AiTone.Mint.copy(alpha = .7f) else AiTone.Border),
+                            tonalElevation = 0.dp,
+                            shadowElevation = 0.dp,
+                        ) {
+                            Text(preset.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = AiTone.Ink, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 AiFormField("模型", model, { model = it }, placeholder = "deepseek-v4-flash")
-                AiFormField("DeepSeek API 地址", baseUrl, { baseUrl = it }, placeholder = "https://api.deepseek.com")
+                AiFormField("API 地址（OpenAI 兼容）", baseUrl, { baseUrl = it }, placeholder = "https://api.deepseek.com")
                 AiFormField(
                     if (settings.hasApiKey) "API Key（已保存，可替换）" else "DeepSeek API Key",
                     key,
@@ -559,11 +604,14 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
             .onSuccess { summary = it; message = "已更新" }
             .onFailure { message = it.message ?: "读取失败" }
     }
+    val daily = summary.daily
+    val cacheHit = daily.sumOf { it.cacheHitTokens }
+    val cacheMiss = daily.sumOf { it.cacheMissTokens }
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        AiHeader("Token 用量", "任务级统计 · $message", onBack)
+        AiHeader("Token 用量", "按北京时间自然日 · $message", onBack)
         AiPanel {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -575,13 +623,70 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 HorizontalDivider(color = AiTone.Border)
                 Text("累计 ${summary.totalTokens} Token · ${summary.requests} 次任务", color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text("输入 ${summary.promptTokens} · 输出 ${summary.completionTokens}", color = AiTone.Muted, fontSize = 11.5.sp)
+                if (summary.storageBytes > 0) {
+                    HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
+                    val storageText = "对话存储 ${formatAiStorage(summary.storageBytes)} · ${summary.storageMessages} 条"
+                    if (summary.storageBytes > 8L * 1024 * 1024) {
+                        Text("$storageText · 建议在 Hub 清理对话", color = AiTone.Warning, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    } else {
+                        Text(storageText, color = AiTone.Muted, fontSize = 11.5.sp)
+                    }
+                }
+            }
+        }
+        AiPanel {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("近 14 天趋势", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
+                    if (cacheHit + cacheMiss > 0) {
+                        Text("缓存命中 ${cacheHit * 100 / (cacheHit + cacheMiss)}%", color = AiTone.MintDark, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (daily.isEmpty()) {
+                    Text("还没有用量数据。", color = AiTone.Muted, fontSize = 12.sp)
+                } else {
+                    AiDailyTrendChart(daily)
+                    Spacer(Modifier.height(2.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(daily.first().date.substring(5), color = AiTone.Muted, fontSize = 10.5.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text("峰值 ${compactTokens(daily.maxOfOrNull { it.totalTokens } ?: 0)}", color = AiTone.Muted, fontSize = 10.5.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text(daily.last().date.substring(5), color = AiTone.Muted, fontSize = 10.5.sp)
+                    }
+                }
+            }
+        }
+        AiPanel {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("模型用量（近 14 天）", style = LabTypography.CardTitle, color = AiTone.Ink)
+                val modelTotals = daily.flatMap { it.models.entries }
+                    .groupingBy { it.key }
+                    .fold(0L) { acc, entry -> acc + entry.value }
+                if (modelTotals.isEmpty()) {
+                    Text("暂无模型维度数据。", color = AiTone.Muted, fontSize = 12.sp)
+                } else {
+                    val periodTotal = modelTotals.values.sum().coerceAtLeast(1L)
+                    modelTotals.entries.sortedByDescending { it.value }.forEach { (model, tokens) ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(Modifier.fillMaxWidth()) {
+                                Text(model, color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                Text("${compactTokens(tokens.toInt())} · ${tokens * 100 / periodTotal}%", color = AiTone.Muted, fontSize = 11.sp)
+                            }
+                            Box(Modifier.fillMaxWidth().height(6.dp).clip(AiPillShape).background(AiTone.Field)) {
+                                val fraction = (tokens.toFloat() / periodTotal).coerceIn(0.02f, 1f)
+                                Box(Modifier.fillMaxWidth(fraction).height(6.dp).clip(AiPillShape).background(AiTone.Mint.copy(alpha = .75f)))
+                            }
+                        }
+                    }
+                }
             }
         }
         AiPanel {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("最近单次任务", style = LabTypography.CardTitle, color = AiTone.Ink)
                 if (summary.recent.isEmpty()) Text("暂时还没有已完成的 AI 任务。", color = AiTone.Muted, fontSize = 12.sp)
-                summary.recent.forEachIndexed { index, record ->
+                summary.recent.take(5).forEachIndexed { index, record ->
                     if (index > 0) HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
                     Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("${record.totalTokens} Token · ${if (record.status == "completed") "已完成" else "未完成"}", color = if (record.status == "completed") AiTone.Ink else AiTone.Danger, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -602,6 +707,36 @@ private fun formatAiUsageTime(value: String): String = value
     .take(19)
     .ifBlank { "时间未知" }
 
+private fun compactTokens(value: Int): String = when {
+    value >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", value / 1_000_000.0)
+    value >= 1_000 -> String.format(Locale.ROOT, "%.1fk", value / 1_000.0)
+    else -> value.toString()
+}
+
+private fun formatAiStorage(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
+    bytes > 0 -> "${(bytes + 1023) / 1024} KB"
+    else -> "0 KB"
+}
+
+@Composable
+private fun AiDailyTrendChart(daily: List<AiUsageDay>) {
+    val maxTokens = (daily.maxOfOrNull { it.totalTokens } ?: 0).coerceAtLeast(1)
+    Canvas(Modifier.fillMaxWidth().height(88.dp)) {
+        val gap = 3.dp.toPx()
+        val barWidth = ((size.width - gap * (daily.size - 1)) / daily.size).coerceAtLeast(1f)
+        daily.forEachIndexed { index, day ->
+            val barHeight = (size.height * (day.totalTokens.toFloat() / maxTokens)).coerceAtLeast(2.dp.toPx())
+            drawRoundRect(
+                color = if (index == daily.lastIndex) AiTone.Mint else AiTone.Mint.copy(alpha = .42f),
+                topLeft = Offset(index * (barWidth + gap), size.height - barHeight),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(barWidth.coerceAtMost(8.dp.toPx()) / 3f),
+            )
+        }
+    }
+}
+
 @Composable
 private fun AiHintChip(hint: AiToolHint, onClick: () -> Unit) {
     Surface(
@@ -621,6 +756,97 @@ private fun AiHintChip(hint: AiToolHint, onClick: () -> Unit) {
                 Spacer(Modifier.width(5.dp))
             }
             Text(hint.name, color = AiTone.Ink, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
+/** Minimal markdown: headings, bullets, ordered lists, **bold**, `code`. */
+private sealed interface AiMdBlock {
+    data class Paragraph(val text: String) : AiMdBlock
+    data class Heading(val text: String, val level: Int) : AiMdBlock
+    data class Bullet(val text: String, val marker: String) : AiMdBlock
+}
+
+private fun aiMarkdownBlocks(content: String): List<AiMdBlock> {
+    val blocks = mutableListOf<AiMdBlock>()
+    val paragraph = StringBuilder()
+    fun flush() {
+        if (paragraph.isNotBlank()) blocks += AiMdBlock.Paragraph(paragraph.toString().trim())
+        paragraph.setLength(0)
+    }
+    val ordered = Regex("^\\d+[.、)]\\s*")
+    for (raw in content.replace("\r\n", "\n").split("\n")) {
+        val trimmed = raw.trim()
+        when {
+            trimmed.isBlank() -> flush()
+            trimmed.startsWith("#") -> {
+                flush()
+                val level = trimmed.takeWhile { it == '#' }.length.coerceIn(1, 3)
+                blocks += AiMdBlock.Heading(trimmed.dropWhile { it == '#' }.trim(), level)
+            }
+            trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ") -> {
+                flush()
+                blocks += AiMdBlock.Bullet(trimmed.substring(2).trim(), "•")
+            }
+            ordered.containsMatchIn(trimmed) -> {
+                flush()
+                val marker = ordered.find(trimmed)!!.value.trimEnd('.', '、', ')')
+                blocks += AiMdBlock.Bullet(trimmed.substring(ordered.find(trimmed)!!.value.length).trim(), "$marker.")
+            }
+            else -> {
+                if (paragraph.isNotEmpty()) paragraph.append('\n')
+                paragraph.append(trimmed)
+            }
+        }
+    }
+    flush()
+    return blocks
+}
+
+private fun aiInlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
+    val pattern = Regex("\\*\\*(.+?)\\*\\*|`([^`\\n]+)`")
+    var last = 0
+    for (match in pattern.findAll(text)) {
+        append(text.substring(last, match.range.first))
+        val bold = match.groupValues[1]
+        val code = match.groupValues[2]
+        if (bold.isNotEmpty()) {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(bold) }
+        } else {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = AiTone.MintSoft, color = AiTone.MintDark)) {
+                append(code)
+            }
+        }
+        last = match.range.last + 1
+    }
+    if (last < text.length) append(text.substring(last))
+}
+
+@Composable
+private fun AiMarkdownText(content: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        for (block in aiMarkdownBlocks(content)) {
+            when (block) {
+                is AiMdBlock.Heading -> Text(
+                    aiInlineMarkdown(block.text),
+                    color = AiTone.Ink,
+                    fontSize = if (block.level >= 3) 13.sp else 14.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                is AiMdBlock.Bullet -> Row {
+                    Text(block.marker, color = AiTone.Mint, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        aiInlineMarkdown(block.text),
+                        Modifier.weight(1f),
+                        color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
+                    )
+                }
+                is AiMdBlock.Paragraph -> Text(
+                    aiInlineMarkdown(block.text),
+                    color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
+                )
+            }
         }
     }
 }
@@ -665,11 +891,8 @@ private fun AiChatBubble(message: AiMessage) {
                 tonalElevation = 0.dp,
                 shadowElevation = 0.dp,
             ) {
-                Text(
-                    message.content,
-                    Modifier.padding(12.dp),
-                    color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
-                )
+                AiMarkdownText(message.content)
+                Spacer(Modifier.height(1.dp))
             }
         }
     }
@@ -707,16 +930,16 @@ private fun AiTypingBubble() {
 }
 
 @Composable
-fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}) {
+fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}, onOpenSettings: () -> Unit = {}) {
     val store = remember { AiSettingsStore(context) }
     val prefs = remember { AppPrefs(context) }
     val client = remember { AiApiClient(store, prefs.hub, prefs.token, appPrefs = prefs) }
     val localTools = remember { AiLocalToolExecutor(prefs) }
-    val messages = remember { mutableStateListOf<AiMessage>() }
-    var toolHints by remember { mutableStateOf<List<AiToolHint>>(emptyList()) }
+    val messages = AiChatSession.messages
+    var toolHints by remember { mutableStateOf(AiChatSession.toolHints) }
     var pendingConfirmation by remember { mutableStateOf<AiToolConfirmation?>(null) }
-    var conversationId by remember { mutableStateOf<String?>(null) }
-    var loadingHistory by remember { mutableStateOf(true) }
+    var conversationId by remember { mutableStateOf(AiChatSession.conversationId) }
+    var loadingHistory by remember { mutableStateOf(!AiChatSession.loaded) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var usage by remember { mutableStateOf(AiTokenSummary()) }
@@ -728,15 +951,19 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     }
 
     LaunchedEffect(Unit) {
-        runCatching { client.latestConversation() }
-            .onSuccess { (id, history) ->
-                conversationId = id
-                messages.clear()
-                if (history.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。") else messages.addAll(history)
-            }
-            .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。") }
+        if (!AiChatSession.loaded) {
+            runCatching { client.latestConversation() }
+                .onSuccess { (id, history) ->
+                    AiChatSession.conversationId = id
+                    messages.clear()
+                    if (history.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(history)
+                }
+                .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING) }
+            AiChatSession.loaded = true
+            conversationId = AiChatSession.conversationId
+        }
         loadingHistory = false
-        runCatching { client.catalog() }.onSuccess { toolHints = it }
+        runCatching { client.catalog() }.onSuccess { toolHints = it; AiChatSession.toolHints = it }
     }
     LaunchedEffect(Unit) {
         while (loadingHistory) delay(100)
@@ -759,7 +986,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     ) {
         AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack, trailing = {
             Surface(
-                modifier = Modifier.size(38.dp),
+                modifier = Modifier.size(38.dp).aiTap(onClick = onOpenSettings),
                 shape = CircleShape,
                 color = AiTone.MintSoft,
                 border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)),
@@ -856,12 +1083,16 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 val text = input.trim()
                 input = ""
                 messages += AiMessage("user", text)
+                // Hub caps a request at 80 messages; send only the latest turns.
+                val history = messages.toList().takeLast(40)
                 sending = true
                 scope.launch {
-                    runCatching { client.chat(messages.toList(), conversationId) }
+                    runCatching { client.chat(history, conversationId) }
                         .onSuccess {
                             conversationId = it.conversationId ?: conversationId
+                            AiChatSession.conversationId = conversationId
                             messages += AiMessage("assistant", it.content)
+                            while (messages.size > 120) messages.removeAt(0)
                             usage = it.usage
                             pendingConfirmation = it.confirmation
                             it.clientActions.forEach { action ->
