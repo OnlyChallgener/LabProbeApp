@@ -139,5 +139,104 @@ class WireGuardClientTest {
         assertFalse(config.enabled)
         assertEquals("10.77.0.1/24", config.address)
     }
+
+    @Test
+    fun serverIsReadyOnlyAfterDesiredRevisionAndTargetInterfaceAreRunning() {
+        val root = JSONObject()
+            .put("revision", 9)
+            .put("server", JSONObject()
+                .put("interfaceName", "labwg0")
+                .put("listenPort", 51820)
+                .put("mtu", 1420)
+                .put("address", "10.77.0.1/24")
+                .put("enabled", true))
+            .put("agentStatus", JSONObject()
+                .put("revision", 9)
+                .put("applyResult", JSONObject()
+                    .put("revision", 9)
+                    .put("ok", true)
+                    .put("enabled", true))
+                .put("capability", JSONObject()
+                    .put("running", true)
+                    .put("interfaces", JSONArray().put(JSONObject()
+                        .put("name", "labwg0")
+                        .put("running", true)))))
+
+        val state = parseWireGuardServerState(root)
+
+        assertEquals(9L, state.agentRevision)
+        assertTrue(state.capabilityRunning)
+        assertEquals(true, state.interfaceRunning)
+        assertTrue(isWireGuardServerReady(state))
+    }
+
+    @Test
+    fun enabledServerDoesNotStartWhenAgentRevisionOrInterfaceIsNotReady() {
+        val root = JSONObject()
+            .put("revision", 9)
+            .put("server", JSONObject()
+                .put("interfaceName", "labwg0")
+                .put("enabled", true))
+            .put("agentStatus", JSONObject()
+                .put("revision", 8)
+                .put("applyResult", JSONObject()
+                    .put("revision", 8)
+                    .put("ok", true)
+                    .put("enabled", true))
+                .put("capability", JSONObject()
+                    .put("running", true)
+                    .put("interfaces", JSONArray().put(JSONObject()
+                        .put("name", "other-wg")
+                        .put("running", true)))))
+
+        assertFalse(isWireGuardServerReady(parseWireGuardServerState(root)))
+    }
+
+    @Test
+    fun enablingServerPreservesTheCompleteCurrentServerDocument() {
+        val peers = JSONArray().put(JSONObject().put("id", "phone").put("publicKey", "client-key"))
+        val endpointProfiles = JSONArray().put(JSONObject().put("id", "ddns-home").put("endpointSource", "ddns"))
+        val root = JSONObject()
+            .put("revision", 14)
+            .put("server", JSONObject()
+                .put("interfaceName", "customwg")
+                .put("listenPort", 51826)
+                .put("mtu", 1380)
+                .put("address", "10.88.0.1/24")
+                .put("enabled", false)
+                .put("peers", peers)
+                .put("endpointProfiles", endpointProfiles)
+                .put("futureField", "keep-me"))
+
+        val payload = buildWireGuardServerEnablePayload(root)
+
+        assertEquals(14L, payload.getLong("expectedRevision"))
+        assertTrue(payload.getBoolean("enabled"))
+        assertEquals("customwg", payload.getString("interfaceName"))
+        assertEquals(51826, payload.getInt("listenPort"))
+        assertEquals(1380, payload.getInt("mtu"))
+        assertEquals("10.88.0.1/24", payload.getString("address"))
+        assertEquals("phone", payload.getJSONArray("peers").getJSONObject(0).getString("id"))
+        assertEquals("ddns-home", payload.getJSONArray("endpointProfiles").getJSONObject(0).getString("id"))
+        assertEquals("keep-me", payload.getString("futureField"))
+    }
+
+    @Test
+    fun currentApplyAndCapabilityErrorsAreExposed() {
+        val applyFailure = WireGuardServerState(
+            config = WireGuardServerConfig(revision = 12, enabled = true),
+            applyResultRevision = 12,
+            applyResultOk = false,
+            applyError = "路由器端口被占用",
+        )
+        val capabilityFailure = WireGuardServerState(
+            config = WireGuardServerConfig(revision = 12, enabled = true),
+            agentRevision = 12,
+            capabilityError = "WireGuard 内核不可用",
+        )
+
+        assertEquals("路由器端口被占用", wireGuardServerErrorForRevision(applyFailure, 12))
+        assertEquals("WireGuard 内核不可用", wireGuardServerErrorForRevision(capabilityFailure, 12))
+    }
 }
 

@@ -561,32 +561,126 @@ data class WireGuardServerConfig(
     val listenPort: Int = DEFAULT_WIREGUARD_PORT,
     val mtu: Int = DEFAULT_WIREGUARD_MTU,
     val address: String = "10.77.0.1/24",
+    val interfaceName: String = "labwg0",
     val serverPublicKey: String = "",
     val revision: Long = 0L,
     val enabled: Boolean = true,
 )
 
-/** Real Hub/Agent control plane. Manual profiles intentionally never enter this class. */
+data class WireGuardServerState(
+    val config: WireGuardServerConfig,
+    val agentRevision: Long = 0L,
+    val applyResultRevision: Long? = null,
+    val applyResultOk: Boolean? = null,
+    val applyResultEnabled: Boolean? = null,
+    val capabilityRunning: Boolean = false,
+    val interfaceRunning: Boolean? = null,
+    val applyError: String = "",
+    val capabilityError: String = "",
+)
+
+internal fun parseWireGuardServerState(root: JSONObject): WireGuardServerState {
+    val server = root.optJSONObject("server") ?: throw IllegalStateException("WireGuard 网关配置不存在")
+    val agentStatus = root.optJSONObject("agentStatus")
+    val applyResult = agentStatus?.optJSONObject("applyResult")
+    val capability = agentStatus?.optJSONObject("capability")
+    val interfaceName = server.optString("interfaceName", "labwg0").ifBlank { "labwg0" }
+    val interfaces = capability?.optJSONArray("interfaces")
+    val matchingInterface = interfaces?.let { rows ->
+        (0 until rows.length())
+            .mapNotNull(rows::optJSONObject)
+            .firstOrNull { it.optString("name") == interfaceName }
+    }
+    val serverPublicKey = agentStatus?.optString("publicKey").orEmpty().ifBlank {
+        wireGuardServerPublicKey(root).ifBlank { server.optString("serverPublicKey") }
+    }
+    return WireGuardServerState(
+        config = WireGuardServerConfig(
+            listenPort = server.optInt("listenPort", DEFAULT_WIREGUARD_PORT),
+            mtu = server.optInt("mtu", DEFAULT_WIREGUARD_MTU),
+            address = server.optString("address", "10.77.0.1/24").ifBlank { "10.77.0.1/24" },
+            interfaceName = interfaceName,
+            serverPublicKey = serverPublicKey,
+            revision = root.optLong("revision", 0L),
+            enabled = server.optBoolean("enabled", true),
+        ),
+        agentRevision = agentStatus?.optLong("revision", 0L) ?: 0L,
+        applyResultRevision = applyResult?.takeIf { it.has("revision") }?.optLong("revision"),
+        applyResultOk = applyResult?.takeIf { it.has("ok") }?.optBoolean("ok"),
+        applyResultEnabled = applyResult?.takeIf { it.has("enabled") }?.optBoolean("enabled"),
+        capabilityRunning = capability?.optBoolean("running", false) ?: false,
+        interfaceRunning = matchingInterface?.takeIf { it.has("running") }?.optBoolean("running"),
+        applyError = applyResult?.optString("error").orEmpty().trim(),
+        capabilityError = capability?.optString("error").orEmpty().trim(),
+    )
+}
+
+internal fun buildWireGuardServerEnablePayload(root: JSONObject): JSONObject {
+    val server = root.optJSONObject("server") ?: throw IllegalStateException("WireGuard 网关配置不存在")
+    return JSONObject(server.toString())
+        .put("expectedRevision", root.optLong("revision", 0L))
+        .put("enabled", true)
+}
+
+internal fun isWireGuardServerReady(state: WireGuardServerState, targetRevision: Long = state.config.revision): Boolean {
+    val applyResultMatches = state.applyResultRevision?.let { it >= targetRevision } ?: true
+    val applyResultSucceeded = state.applyResultOk != false && state.applyResultEnabled != false && state.applyError.isBlank()
+    return state.config.enabled &&
+        state.agentRevision >= targetRevision &&
+        applyResultMatches &&
+        applyResultSucceeded &&
+        state.capabilityRunning &&
+        state.interfaceRunning == true
+}
+
+internal fun wireGuardServerErrorForRevision(state: WireGuardServerState, targetRevision: Long): String {
+    val applyResultIsCurrent = state.applyResultRevision?.let { it >= targetRevision } ?: true
+    if (applyResultIsCurrent && state.applyError.isNotBlank()) return state.applyError
+    if (applyResultIsCurrent && state.applyResultOk == false) return "WireGuard 网关启动失败/未就绪"
+    if (state.agentRevision >= targetRevision && state.capabilityError.isNotBlank()) return state.capabilityError
+    return ""
+}
+
+/** Real Hub/Agent control plane. Manual profile contents are never provisioned through this class. */
 class WireGuardHubApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
 
     private fun getServer(): JSONObject = JSONObject(hubApi.requestText("/api/wireguard/server"))
 
+    suspend fun loadServerState(): WireGuardServerState = withContext(Dispatchers.IO) {
+        parseWireGuardServerState(getServer())
+    }
+
     suspend fun loadServerConfig(): WireGuardServerConfig = withContext(Dispatchers.IO) {
-        val root = getServer()
-        val server = root.optJSONObject("server")
-        val agentStatus = root.optJSONObject("agentStatus")
-        val serverPublicKey = agentStatus?.optString("publicKey").orEmpty().ifBlank {
-            server?.optString("serverPublicKey").orEmpty()
+        parseWireGuardServerState(getServer()).config
+    }
+
+    suspend fun enableServerAndAwaitReady(): WireGuardServerState = withContext(Dispatchers.IO) {
+        val before = getServer()
+        val currentState = parseWireGuardServerState(before)
+        if (currentState.config.enabled) {
+            if (isWireGuardServerReady(currentState)) return@withContext currentState
+            val error = wireGuardServerErrorForRevision(currentState, currentState.config.revision)
+            throw IllegalStateException(error.ifBlank { "WireGuard 网关尚未就绪" })
         }
-        WireGuardServerConfig(
-            listenPort = server?.optInt("listenPort", DEFAULT_WIREGUARD_PORT) ?: DEFAULT_WIREGUARD_PORT,
-            mtu = server?.optInt("mtu", DEFAULT_WIREGUARD_MTU) ?: DEFAULT_WIREGUARD_MTU,
-            address = server?.optString("address", "10.77.0.1/24")?.ifBlank { "10.77.0.1/24" } ?: "10.77.0.1/24",
-            serverPublicKey = serverPublicKey,
-            revision = root.optLong("revision", 0L),
-            enabled = server?.optBoolean("enabled", true) ?: true,
-        )
+
+        val payload = buildWireGuardServerEnablePayload(before)
+        val saved = JSONObject(hubApi.requestText("/api/wireguard/server", "PUT", payload.toString()))
+        val targetRevision = saved.optLong("revision", 0L)
+        if (targetRevision <= 0L) throw IllegalStateException("Hub 未接受 WireGuard 网关启用请求")
+
+        var latestState = parseWireGuardServerState(getServer())
+        repeat(12) { attempt ->
+            if (isWireGuardServerReady(latestState, targetRevision)) return@withContext latestState
+            wireGuardServerErrorForRevision(latestState, targetRevision).takeIf { it.isNotBlank() }?.let {
+                throw IllegalStateException(it)
+            }
+            if (attempt < 11) {
+                delay(1_500L)
+                latestState = parseWireGuardServerState(getServer())
+            }
+        }
+        throw IllegalStateException("WireGuard 网关启动失败/未就绪")
     }
 
     suspend fun updateServerConfig(
@@ -609,6 +703,7 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
             listenPort = server?.optInt("listenPort", listenPort) ?: listenPort,
             mtu = server?.optInt("mtu", mtu) ?: mtu,
             address = server?.optString("address", address) ?: address,
+            interfaceName = server?.optString("interfaceName", "labwg0")?.ifBlank { "labwg0" } ?: "labwg0",
             revision = saved.optLong("revision", 0L),
             enabled = server?.optBoolean("enabled", enabled) ?: enabled,
         )
