@@ -130,5 +130,41 @@ jobs:
               assert heading in readme, f'missing README governance section: {heading}'
           PY
 
+      - name: Prepare signing key for release test APK
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LABPROBE_KEYSTORE_BASE64"
+          printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
+          echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
+
       - name: Unit tests and Release compile
+        env:
+          LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
+          LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
+          LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
+          LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
         run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+
+      - name: Verify signed release test APK
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          sha256sum "$APK"
+
+      - name: Upload release test APK
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-release-test-${{ github.sha }}
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
