@@ -150,30 +150,53 @@ class AiApiClient(
             }
     }
 
+    suspend fun conversationMessages(conversationId: String): List<AiMessage> = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations/${java.net.URLEncoder.encode(conversationId, "UTF-8")}/messages", "GET", null).use { response ->
+            val messagesText = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, messagesText))
+            val raw = JSONObject(messagesText).optJSONArray("messages") ?: JSONArray()
+            buildList {
+                for (index in 0 until raw.length()) {
+                    val item = raw.optJSONObject(index) ?: continue
+                    val role = item.optString("role")
+                    val content = item.optString("content")
+                    if (role in setOf("user", "assistant", "system") && content.isNotBlank()) {
+                        add(AiMessage(role, content))
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun listConversations(limit: Int = 20): List<AiConversation> = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations?limit=$limit", "GET", null).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
+            val rows = JSONObject(text).optJSONArray("conversations") ?: JSONArray()
+            buildList {
+                for (index in 0 until rows.length()) {
+                    val item = rows.optJSONObject(index) ?: continue
+                    add(AiConversation(
+                        id = item.optString("id"),
+                        title = item.optString("title"),
+                        updatedAt = item.optString("updated_at"),
+                    ))
+                }
+            }
+        }
+    }
+
     suspend fun latestConversation(): Pair<String?, List<AiMessage>> = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/conversations?limit=1", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val rows = JSONObject(text).optJSONArray("conversations")
+            val rows = JSONObject(text).optJSONArray("conversations") ?: JSONArray()
             val id = rows?.optJSONObject(0)?.optString("id")?.takeIf { !it.isNullOrBlank() }
             if (id == null) return@withContext null to emptyList()
-            request(hubUrl.trimEnd('/') + "/api/ai/conversations/${java.net.URLEncoder.encode(id, "UTF-8")}/messages", "GET", null).use { messagesResponse ->
-                val messagesText = messagesResponse.body?.string().orEmpty()
-                if (!messagesResponse.isSuccessful) error(apiFailure(messagesResponse.code, messagesText))
-                val raw = JSONObject(messagesText).optJSONArray("messages") ?: JSONArray()
-                val messages = buildList {
-                    for (index in 0 until raw.length()) {
-                        val item = raw.optJSONObject(index) ?: continue
-                        val role = item.optString("role")
-                        val content = item.optString("content")
-                        if (role in setOf("user", "assistant", "system") && content.isNotBlank()) {
-                            add(AiMessage(role, content))
-                        }
-                    }
-                }
-                id to messages
-            }
+            id to conversationMessages(id)
         }
     }
 
@@ -263,6 +286,7 @@ class AiApiClient(
                 ),
                 conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
                 confirmation = confirmation,
+                usageKnown = root.optBoolean("usageKnown", true),
                 clientActions = buildList {
                     val actions = root.optJSONArray("clientActions") ?: JSONArray()
                     for (index in 0 until actions.length()) {

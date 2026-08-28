@@ -47,9 +47,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Security
@@ -125,8 +127,10 @@ private data class AiProviderPreset(val label: String, val model: String, val ba
 private val AI_PROVIDER_PRESETS = listOf(
     AiProviderPreset("DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com"),
     AiProviderPreset("智谱 GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4"),
-    AiProviderPreset("阿里通义", "qwen-flash", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-    AiProviderPreset("Gemini", "gemini-2.5-flash", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    AiProviderPreset("阿里千问", "qwen3.6-flash", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    AiProviderPreset("Gemini", "gemini-3.6-flash", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    AiProviderPreset("小米 MiMo", "mimo-v2.5", "https://api.xiaomimimo.com/v1"),
+    AiProviderPreset("腾讯混元", "hunyuan-turbos", "https://api.hunyuan.cloud.tencent.com/v1"),
 )
 
 private const val AI_GREETING = "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。"
@@ -238,7 +242,7 @@ private fun AiFormField(
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
         ) {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = if (singleLine) 14.dp else 12.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = if (singleLine) 14.dp else 13.dp)) {
                 if (value.isBlank() && placeholder.isNotBlank()) {
                     Text(placeholder, color = AiTone.Muted.copy(alpha = .68f), fontSize = 14.sp)
                 }
@@ -246,7 +250,7 @@ private fun AiFormField(
                     value = value,
                     onValueChange = onValueChange,
                     modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
-                    textStyle = TextStyle(color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                    textStyle = TextStyle(color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
                     singleLine = singleLine,
                     maxLines = maxLines,
                     visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
@@ -269,13 +273,13 @@ private fun AiChatInput(
     var focused by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier,
-        shape = AiControlShape,
+        shape = RoundedCornerShape(20.dp),
         color = if (focused) Color.White else AiTone.Field,
         border = BorderStroke(1.dp, if (focused) AiTone.Mint.copy(alpha = .6f) else AiTone.Border),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
-        Box(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp)) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
             if (value.isBlank()) {
                 Text("输入消息…", color = AiTone.Muted.copy(alpha = .68f), fontSize = 14.sp)
             }
@@ -284,7 +288,7 @@ private fun AiChatInput(
                 onValueChange = onValueChange,
                 modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
                 enabled = enabled,
-                textStyle = TextStyle(color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp),
+                textStyle = TextStyle(color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
                 cursorBrush = SolidColor(AiTone.Mint),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSend() }),
@@ -599,6 +603,8 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     val client = remember { AiApiClient(store, prefs.hub, prefs.token) }
     var summary by remember { mutableStateOf(AiUsageSummary()) }
     var message by remember { mutableStateOf("正在读取") }
+    var latestDayExpanded by remember { mutableStateOf(true) }
+    var expandedOlderDays by remember { mutableStateOf(setOf<String>()) }
     LaunchedEffect(Unit) {
         runCatching { client.usage() }
             .onSuccess { summary = it; message = "已更新" }
@@ -620,6 +626,13 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                     Text("今日", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 Text("${summary.todayTotalTokens} Token · ${summary.todayRequests} 次任务", color = AiTone.Ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                if (summary.todayTotalTokens == 0 && daily.isNotEmpty()) {
+                    val yesterdaysDate = runCatching { java.time.LocalDate.now().minusDays(1).toString() }.getOrDefault("")
+                    val yesterday = daily.firstOrNull { it.date == yesterdaysDate && it.totalTokens > 0 }
+                    if (yesterday != null) {
+                        Text("昨日 ${compactTokens(yesterday.totalTokens)} Token · ${yesterday.requests} 次任务", color = AiTone.Muted, fontSize = 12.sp)
+                    }
+                }
                 HorizontalDivider(color = AiTone.Border)
                 Text("累计 ${summary.totalTokens} Token · ${summary.requests} 次任务", color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text("输入 ${summary.promptTokens} · 输出 ${summary.completionTokens}", color = AiTone.Muted, fontSize = 11.5.sp)
@@ -666,32 +679,39 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 if (modelTotals.isEmpty()) {
                     Text("暂无模型维度数据。", color = AiTone.Muted, fontSize = 12.sp)
                 } else {
-                    val periodTotal = modelTotals.values.sum().coerceAtLeast(1L)
-                    modelTotals.entries.sortedByDescending { it.value }.forEach { (model, tokens) ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(Modifier.fillMaxWidth()) {
-                                Text(model, color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                Text("${compactTokens(tokens.toInt())} · ${tokens * 100 / periodTotal}%", color = AiTone.Muted, fontSize = 11.sp)
-                            }
-                            Box(Modifier.fillMaxWidth().height(6.dp).clip(AiPillShape).background(AiTone.Field)) {
-                                val fraction = (tokens.toFloat() / periodTotal).coerceIn(0.02f, 1f)
-                                Box(Modifier.fillMaxWidth(fraction).height(6.dp).clip(AiPillShape).background(AiTone.Mint.copy(alpha = .75f)))
-                            }
-                        }
-                    }
+                    AiModelDonut(modelTotals)
                 }
             }
         }
         AiPanel {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text("最近单次任务", style = LabTypography.CardTitle, color = AiTone.Ink)
+                Text("任务记录（近 7 天，按天折叠）", style = LabTypography.CardTitle, color = AiTone.Ink)
                 if (summary.recent.isEmpty()) Text("暂时还没有已完成的 AI 任务。", color = AiTone.Muted, fontSize = 12.sp)
-                summary.recent.take(5).forEachIndexed { index, record ->
-                    if (index > 0) HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
-                    Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("${record.totalTokens} Token · ${if (record.status == "completed") "已完成" else "未完成"}", color = if (record.status == "completed") AiTone.Ink else AiTone.Danger, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        Text("${record.model} · 输入 ${record.promptTokens} · 输出 ${record.completionTokens}", color = AiTone.Muted, fontSize = 11.sp)
-                        Text(formatAiUsageTime(record.createdAt), color = AiTone.Muted.copy(alpha = .78f), fontSize = 10.5.sp)
+                val dayGroups = remember(summary.recent) { aiGroupTasksByDay(summary.recent) }
+                dayGroups.take(7).forEachIndexed { groupIndex, group ->
+                    val expanded = if (groupIndex == 0) latestDayExpanded else expandedOlderDays.contains(group.day)
+                    Column(Modifier.padding(vertical = 4.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth().clip(AiControlShape).background(AiTone.Field).aiTap {
+                                if (groupIndex == 0) latestDayExpanded = !latestDayExpanded
+                                else expandedOlderDays = if (expandedOlderDays.contains(group.day)) expandedOlderDays - group.day else expandedOlderDays + group.day
+                            }.padding(horizontal = 10.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(group.dayLabel, color = AiTone.Ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("${group.tasks.size} 次 · ${compactTokens(group.totalTokens.toInt())}", color = AiTone.Muted, fontSize = 11.sp)
+                        }
+                        if (expanded) {
+                            Spacer(Modifier.height(6.dp))
+                            group.tasks.forEachIndexed { index, record ->
+                                if (index > 0) HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
+                                Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text("${record.totalTokens} Token · ${if (record.status == "completed") "已完成" else "未完成"}", color = if (record.status == "completed") AiTone.Ink else AiTone.Danger, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text("${record.model} · 输入 ${record.promptTokens} · 输出 ${record.completionTokens}", color = AiTone.Muted, fontSize = 11.sp)
+                                    Text(formatAiUsageTime(record.createdAt), color = AiTone.Muted.copy(alpha = .78f), fontSize = 10.5.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -719,20 +739,104 @@ private fun formatAiStorage(bytes: Long): String = when {
     else -> "0 KB"
 }
 
+private class AiTaskDayAcc(val label: String) {
+    val tasks = mutableListOf<AiUsageRecord>()
+    var tokens = 0L
+}
+
+private data class AiTaskDayGroup(val day: String, val dayLabel: String, val totalTokens: Long, val tasks: List<AiUsageRecord>)
+
+private fun aiGroupTasksByDay(recent: List<AiUsageRecord>): List<AiTaskDayGroup> {
+    val zone = runCatching { java.time.ZoneId.of("Asia/Shanghai") }.getOrElse { java.time.ZoneId.systemDefault() }
+    val order = LinkedHashMap<String, AiTaskDayAcc>()
+    for (record in recent) {
+        val parsed = runCatching {
+            val day = java.time.Instant.parse(record.createdAt).atZone(zone).toLocalDate()
+            day.toString() to "${day.monthValue}月${day.dayOfMonth}日"
+        }.getOrElse { record.createdAt.take(10) to record.createdAt.take(10) }
+        val acc = order.getOrPut(parsed.first) { AiTaskDayAcc(parsed.second) }
+        acc.tasks += record
+        acc.tokens += record.totalTokens
+    }
+    return order.entries.take(7).map { (key, acc) -> AiTaskDayGroup(key, acc.label, acc.tokens, acc.tasks) }
+}
+
+/** Fills the trailing 14 days with zero-slots so the trend keeps its rhythm. */
+private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<Pair<String, Int>> {
+    val totals = daily.associate { it.date to it.totalTokens }
+    return runCatching {
+        val today = java.time.LocalDate.now()
+        (days - 1 downTo 0).map { offset ->
+            val day = today.minusDays(offset.toLong()).toString()
+            day to (totals[day] ?: 0)
+        }
+    }.getOrElse { daily.map { it.date to it.totalTokens } }
+}
+
 @Composable
 private fun AiDailyTrendChart(daily: List<AiUsageDay>) {
-    val maxTokens = (daily.maxOfOrNull { it.totalTokens } ?: 0).coerceAtLeast(1)
-    Canvas(Modifier.fillMaxWidth().height(88.dp)) {
-        val gap = 3.dp.toPx()
-        val barWidth = ((size.width - gap * (daily.size - 1)) / daily.size).coerceAtLeast(1f)
-        daily.forEachIndexed { index, day ->
-            val barHeight = (size.height * (day.totalTokens.toFloat() / maxTokens)).coerceAtLeast(2.dp.toPx())
-            drawRoundRect(
-                color = if (index == daily.lastIndex) AiTone.Mint else AiTone.Mint.copy(alpha = .42f),
-                topLeft = Offset(index * (barWidth + gap), size.height - barHeight),
-                size = Size(barWidth, barHeight),
-                cornerRadius = CornerRadius(barWidth.coerceAtMost(8.dp.toPx()) / 3f),
+    val slots = aiTrendSlots(daily)
+    if (slots.size < 2) return
+    val maxTokens = (slots.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
+    Canvas(Modifier.fillMaxWidth().height(96.dp)) {
+        val topPad = 6.dp.toPx()
+        val usable = size.height - topPad * 2
+        val step = size.width / (slots.size - 1)
+        val stroke = 2.dp.toPx()
+        var previous: Offset? = null
+        slots.forEachIndexed { index, (_, tokens) ->
+            val point = Offset(index * step, topPad + usable * (1f - tokens.toFloat() / maxTokens))
+            previous?.let { last -> drawLine(AiTone.Mint, last, point, strokeWidth = stroke) }
+            drawCircle(
+                if (index == slots.lastIndex) AiTone.Mint else AiTone.Mint.copy(alpha = .75f),
+                radius = stroke,
+                center = point,
             )
+            previous = point
+        }
+    }
+}
+
+@Composable
+private fun AiModelDonut(models: Map<String, Long>) {
+    val entries = models.entries.sortedByDescending { it.value }
+    val periodTotal = entries.sumOf { it.value }.coerceAtLeast(1L)
+    val palette = listOf(AiTone.Mint, Color(0xFF3E8E7E), Color(0xFF7FBFA9), Color(0xFFB7D9CC), AiTone.Warning, AiTone.Muted)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(108.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 15.dp.toPx()
+                val arcSize = Size(size.width - stroke, size.height - stroke)
+                var start = -90f
+                entries.forEachIndexed { index, (_, tokens) ->
+                    val sweep = (360f * (tokens.toFloat() / periodTotal)).coerceAtLeast(1.5f)
+                    drawArc(
+                        color = palette[index % palette.size],
+                        startAngle = start,
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        topLeft = Offset(stroke / 2, stroke / 2),
+                        size = arcSize,
+                        strokeWidth = stroke,
+                    )
+                    start += sweep
+                }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(compactTokens(periodTotal.toInt()), color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                Text("tokens", color = AiTone.Muted, fontSize = 10.sp)
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
+            entries.forEachIndexed { index, (model, tokens) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(palette[index % palette.size]))
+                    Spacer(Modifier.width(6.dp))
+                    Text(model, color = AiTone.Ink, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${compactTokens(tokens.toInt())} · ${tokens * 100 / periodTotal}%", color = AiTone.Muted, fontSize = 11.sp)
+                }
+            }
         }
     }
 }
@@ -813,7 +917,7 @@ private fun aiInlineMarkdown(text: String): AnnotatedString = buildAnnotatedStri
         if (bold.isNotEmpty()) {
             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(bold) }
         } else {
-            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = AiTone.MintSoft, color = AiTone.MintDark)) {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = AiTone.MintDark)) {
                 append(code)
             }
         }
@@ -823,8 +927,8 @@ private fun aiInlineMarkdown(text: String): AnnotatedString = buildAnnotatedStri
 }
 
 @Composable
-private fun AiMarkdownText(content: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+private fun AiMarkdownText(content: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
         for (block in aiMarkdownBlocks(content)) {
             when (block) {
                 is AiMdBlock.Heading -> Text(
@@ -857,7 +961,7 @@ private fun AiChatBubble(message: AiMessage) {
     if (user) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Surface(
-                shape = RoundedCornerShape(18.dp, 6.dp, 18.dp, 18.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = AiTone.MintSoft,
                 border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .32f)),
                 tonalElevation = 0.dp,
@@ -865,7 +969,7 @@ private fun AiChatBubble(message: AiMessage) {
             ) {
                 Text(
                     message.content,
-                    Modifier.widthIn(max = 264.dp).padding(12.dp),
+                    Modifier.widthIn(max = 264.dp).padding(horizontal = 13.dp, vertical = 10.dp),
                     color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
                 )
             }
@@ -885,14 +989,13 @@ private fun AiChatBubble(message: AiMessage) {
             Spacer(Modifier.width(8.dp))
             Surface(
                 modifier = Modifier.widthIn(max = 280.dp),
-                shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = AiTone.Surface,
                 border = BorderStroke(1.dp, AiTone.Border),
                 tonalElevation = 0.dp,
                 shadowElevation = 0.dp,
             ) {
-                AiMarkdownText(message.content)
-                Spacer(Modifier.height(1.dp))
+                AiMarkdownText(message.content, Modifier.padding(horizontal = 13.dp, vertical = 11.dp))
             }
         }
     }
@@ -943,6 +1046,10 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var usage by remember { mutableStateOf(AiTokenSummary()) }
+    var usageKnown by remember { mutableStateOf(true) }
+    var showHistory by remember { mutableStateOf(false) }
+    var conversations by remember { mutableStateOf<List<AiConversation>>(emptyList()) }
+    var loadingConversations by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size, sending, pendingConfirmation) {
@@ -985,17 +1092,95 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack, trailing = {
-            Surface(
-                modifier = Modifier.size(38.dp).aiTap(onClick = onOpenSettings),
-                shape = CircleShape,
-                color = AiTone.MintSoft,
-                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)),
-                tonalElevation = 0.dp,
-                shadowElevation = 0.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) { AiRobotMark(Modifier.fillMaxSize().padding(7.dp)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(onClick = {
+                        showHistory = !showHistory
+                        if (showHistory && conversations.isEmpty() && !loadingConversations) {
+                            loadingConversations = true
+                            scope.launch {
+                                runCatching { client.listConversations() }.onSuccess { conversations = it }
+                                loadingConversations = false
+                            }
+                        }
+                    }),
+                    shape = CircleShape,
+                    color = AiTone.Surface,
+                    border = BorderStroke(1.dp, AiTone.Border),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, "历史对话", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
+                }
+                Surface(
+                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(onClick = {
+                        AiChatSession.messages.clear()
+                        AiChatSession.conversationId = null
+                        messages.clear()
+                        conversationId = null
+                        pendingConfirmation = null
+                        messages += AiMessage("assistant", AI_GREETING)
+                        showHistory = false
+                    }),
+                    shape = CircleShape,
+                    color = AiTone.Surface,
+                    border = BorderStroke(1.dp, AiTone.Border),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.AddComment, "新对话", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
+                }
+                Surface(
+                    modifier = Modifier.size(34.dp).aiTap(onClick = onOpenSettings),
+                    shape = CircleShape,
+                    color = AiTone.MintSoft,
+                    border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) { AiRobotMark(Modifier.fillMaxSize().padding(6.dp)) }
+                }
             }
         })
+        if (showHistory) {
+            AiPanel {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("历史对话", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
+                        Text("收起", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap { showHistory = false })
+                    }
+                    when {
+                        loadingConversations -> Text("读取中…", color = AiTone.Muted, fontSize = 12.sp)
+                        conversations.isEmpty() -> Text("还没有历史对话。", color = AiTone.Muted, fontSize = 12.sp)
+                        else -> conversations.take(12).forEach { convo ->
+                            val current = convo.id == conversationId
+                            Row(
+                                Modifier.fillMaxWidth().clip(AiControlShape).background(if (current) AiTone.MintSoft else AiTone.Field).aiTap {
+                                    if (!current) {
+                                        scope.launch {
+                                            loadingConversations = true
+                                            runCatching { client.conversationMessages(convo.id) }
+                                                .onSuccess { loaded ->
+                                                    AiChatSession.conversationId = convo.id
+                                                    conversationId = convo.id
+                                                    messages.clear()
+                                                    if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
+                                                }
+                                            loadingConversations = false
+                                        }
+                                    }
+                                    showHistory = false
+                                }.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(convo.title.ifBlank { "对话 ${convo.updatedAt.take(16)}" }, color = AiTone.Ink, fontSize = 12.sp, fontWeight = if (current) FontWeight.Bold else FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
+                                if (current) Text("当前", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (toolHints.isNotEmpty()) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(end = 4.dp)) {
                 items(toolHints, key = { it.id }) { hint -> AiHintChip(hint) { input = hint.example } }
@@ -1072,7 +1257,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             shadowElevation = 0.dp,
         ) {
             Text(
-                "本次任务 Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）",
+                if (!usageKnown && usage.total == 0) "本次任务 Token：模型未上报"
+                else "本次任务 Token：${usage.total}（输入 ${usage.prompt} · 输出 ${usage.completion}）",
                 Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold,
             )
@@ -1091,15 +1277,28 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                         .onSuccess {
                             conversationId = it.conversationId ?: conversationId
                             AiChatSession.conversationId = conversationId
-                            messages += AiMessage("assistant", it.content)
+                            messages += AiMessage("assistant", "")
+                            val replyIndex = messages.lastIndex
                             while (messages.size > 120) messages.removeAt(0)
                             usage = it.usage
+                            usageKnown = it.usageKnown || it.usage.total > 0
                             pendingConfirmation = it.confirmation
+                            sending = false
                             it.clientActions.forEach { action ->
                                 when (action.type) {
                                     "navigate" -> if (action.route.isNotBlank()) onNavigate(action.route)
                                     "refresh" -> onRefreshData()
                                 }
+                            }
+                            // Typewriter reveal; hub streams are not used by the APP yet.
+                            var shown = 0
+                            while (shown < it.content.length && messages.getOrNull(replyIndex) != null) {
+                                shown = (shown + maxOf(1, it.content.length / 60)).coerceAtMost(it.content.length)
+                                messages[replyIndex] = AiMessage("assistant", it.content.substring(0, shown))
+                                delay(16)
+                            }
+                            if (messages.getOrNull(replyIndex) != null && shown < it.content.length) {
+                                messages[replyIndex] = AiMessage("assistant", it.content)
                             }
                         }
                         .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }

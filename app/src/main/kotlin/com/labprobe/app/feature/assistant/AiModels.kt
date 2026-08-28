@@ -23,6 +23,13 @@ data class AiReply(
     val conversationId: String? = null,
     val confirmation: AiToolConfirmation? = null,
     val clientActions: List<AiClientAction> = emptyList(),
+    val usageKnown: Boolean = true,
+)
+
+data class AiConversation(
+    val id: String,
+    val title: String,
+    val updatedAt: String,
 )
 
 data class AiClientAction(

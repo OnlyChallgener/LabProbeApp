@@ -243,7 +243,13 @@ class MainActivity : ComponentActivity() {
         // is opened. The repository waits briefly so WSS startup stays first.
         RouterRepositoryRegistry.get(prefs).start()
         applyLabProbeSystemBars()
+        intent?.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
         setContent { LabProbeApp(prefs) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
     }
 
     override fun onResume() {
@@ -257,9 +263,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Route requested from outside the composable tree (e.g. notification tap). */
+object AppNavigator {
+    var pendingRoute by mutableStateOf<String?>(null)
+}
+
 /** Maps assistant clientAction route names to app route strings. */
-private fun mapAssistantRoute(route: String): String = when (route) {
-    "home", "devices", "tools", "favorites", "settings", "ai_chat" -> route
+private fun mapAssistantRoute(route: String): String = when (route) {    "home", "devices", "tools", "favorites", "settings", "ai_chat" -> route
     "router" -> "router_settings"
     "wireguard" -> "tool_wireguard"
     "stun" -> "tool_stun"
@@ -1870,6 +1880,12 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 @Composable
 fun LabProbeApp(prefs: AppPrefs) {
     var route by remember { mutableStateOf("home") }
+    LaunchedEffect(AppNavigator.pendingRoute) {
+        AppNavigator.pendingRoute?.let { requested ->
+            AppNavigator.pendingRoute = null
+            route = requested
+        }
+    }
     var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("favorites") }
@@ -2156,7 +2172,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = aiReturnRoute }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
                         "ai_chat" -> AiChatScreen(
                             context,
-                            onBack = { route = "ai_settings" },
+                            onBack = { route = "home" },
                             onNavigate = { route = mapAssistantRoute(it) },
                             onRefreshData = { scope.launch { state.refreshAll(forceFull = true) } },
                             onOpenSettings = { aiReturnRoute = "ai_chat"; route = "ai_settings" },
