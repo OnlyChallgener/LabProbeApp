@@ -4,6 +4,7 @@ import android.content.Context
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.favoriteShortcuts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
