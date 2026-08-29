@@ -372,6 +372,15 @@ class AiApiClient(
         }
     }
 
+    suspend fun deleteConversation(conversationId: String) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val encoded = java.net.URLEncoder.encode(conversationId, "UTF-8")
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations/$encoded", "DELETE", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful && response.code != 204) error(apiFailure(response.code, body))
+        }
+    }
+
     suspend fun renameConversation(conversationId: String, title: String): AiConversation = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val cleanTitle = title.trim()
