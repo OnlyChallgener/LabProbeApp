@@ -667,16 +667,20 @@ fun AiSettingsScreen(
                                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         )
                                     }
-                                    AiToggle(config.enabled, compact = true) { enabled ->
-                                        scope.launch {
-                                            runCatching { client.saveProviderConfig(config.copy(enabled = enabled)) }
-                                                .onSuccess { saved ->
-                                                    configs = configs.map { if (it.id == config.id) saved else it }
-                                                    syncLocalSettings(configs)
-                                                }
-                                                .onFailure { state = AiConnectionState.Failure(it.message ?: "更新失败") }
-                                        }
-                                    }
+                                    AiToggle(
+                                        checked = config.enabled,
+                                        compact = true,
+                                        onCheckedChange = { enabled ->
+                                            scope.launch {
+                                                runCatching { client.saveProviderConfig(config.copy(enabled = enabled)) }
+                                                    .onSuccess { saved ->
+                                                        configs = configs.map { if (it.id == config.id) saved else it }
+                                                        syncLocalSettings(configs)
+                                                    }
+                                                    .onFailure { state = AiConnectionState.Failure(it.message ?: "更新失败") }
+                                            }
+                                        },
+                                    )
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -744,7 +748,7 @@ fun AiSettingsScreen(
                         Text("启用此配置", color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         Text("关闭后 Hub 不会选择这一项", color = AiTone.Muted, fontSize = 10.sp)
                     }
-                    AiToggle(configEnabled, compact = true) { configEnabled = it }
+                    AiToggle(checked = configEnabled, compact = true, onCheckedChange = { configEnabled = it })
                 }
                 AiFormField(
                     if (configHasKey) "API Key（已保存，可替换）" else "API Key",
@@ -1129,7 +1133,6 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
     var selected by remember { mutableStateOf<Int?>(null) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val slotWidth = maxWidth / slots.size
-        val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()))
         Canvas(
             Modifier
                 .fillMaxWidth()
@@ -1145,6 +1148,7 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
             val usable = size.height - topPad - bottomPad
             val slotWidthPx = size.width / slots.size
             val barWidth = (slotWidthPx * .58f).coerceAtMost(16.dp.toPx()).coerceAtLeast(4.dp.toPx())
+            val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()))
             drawLine(AiTone.Border, Offset(0f, size.height - bottomPad), Offset(size.width, size.height - bottomPad), strokeWidth = 1.dp.toPx())
             drawLine(AiTone.Border.copy(alpha = .65f), Offset(0f, topPad + usable / 2), Offset(size.width, topPad + usable / 2), strokeWidth = 1.dp.toPx())
             selected?.let { index ->
