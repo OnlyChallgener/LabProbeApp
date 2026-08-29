@@ -47,6 +47,43 @@ class AiApiClient(
     private val http: OkHttpClient = defaultAiHttpClient(),
     private val appPrefs: AppPrefs? = null,
 ) {
+    suspend fun configs(): AiConfigBundle = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/config", "GET", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+            parseConfigBundle(JSONObject(body))
+        }
+    }
+
+    suspend fun saveProviderConfig(config: AiProviderConfig, apiKey: String? = null): AiProviderConfig = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val payload = JSONObject()
+            .put("name", config.name.trim())
+            .put("provider", config.provider.trim().ifBlank { "openai_compatible" })
+            .put("enabled", config.enabled)
+            .put("model", config.model.trim())
+            .put("baseUrl", config.baseUrl.trim())
+            .put("tokenQuota", config.tokenQuota ?: JSONObject.NULL)
+        if (config.id.isNotBlank()) payload.put("id", config.id)
+        if (!apiKey.isNullOrBlank()) payload.put("apiKey", apiKey)
+        val method = if (config.id.isBlank()) "POST" else "PUT"
+        request(hubUrl.trimEnd('/') + "/api/ai/config", method, payload.toString()).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+            val root = JSONObject(body)
+            val rows = root.optJSONArray("configs")
+            val returned = if (rows != null) {
+                val parsedRows = buildList {
+                    for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { add(parseProviderConfig(it)) }
+                }
+                parsedRows.firstOrNull { config.id.isNotBlank() && it.id == config.id } ?: parsedRows.lastOrNull()
+            } else null
+            val parsed = returned ?: parseProviderConfig(root.optJSONObject("config") ?: root, config)
+            parsed.copy(hasApiKey = config.hasApiKey || !apiKey.isNullOrBlank() || parsed.hasApiKey)
+        }
+    }
+
     suspend fun saveConfig(config: AiSettings, apiKey: String? = null): AiSettings = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val payload = JSONObject()
@@ -67,9 +104,14 @@ class AiApiClient(
         }
     }
 
-    suspend fun testConnection(): String = withContext(Dispatchers.IO) {
+    suspend fun testConnection(configId: String? = null): String = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        request(hubUrl.trimEnd('/') + "/api/ai/test", "POST", "{}").use { response ->
+        val testUrl = if (!configId.isNullOrBlank() && configId != "legacy") {
+            hubUrl.trimEnd('/') + "/api/ai/config/${java.net.URLEncoder.encode(configId, "UTF-8")}/test"
+        } else {
+            hubUrl.trimEnd('/') + "/api/ai/test"
+        }
+        request(testUrl, "POST", "{}").use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, body))
             "连接成功"
@@ -127,6 +169,8 @@ class AiApiClient(
                             date = item.optString("date"),
                             requests = item.optInt("requests"),
                             totalTokens = item.optInt("total_tokens"),
+                            promptTokens = item.optInt("prompt_tokens", item.optInt("input_tokens", 0)),
+                            completionTokens = item.optInt("completion_tokens", item.optInt("output_tokens", 0)),
                             cacheHitTokens = item.optInt("cache_hit_tokens"),
                             cacheMissTokens = item.optInt("cache_miss_tokens"),
                             models = models,
@@ -134,6 +178,25 @@ class AiApiClient(
                     }
                 }
                 val storage = root.optJSONObject("storage") ?: JSONObject()
+                val configUsageRoot = root.optJSONArray("config_usage")
+                    ?: root.optJSONArray("configUsage")
+                    ?: root.optJSONArray("model_usage")
+                    ?: root.optJSONArray("modelUsage")
+                    ?: JSONArray()
+                val configUsage = buildList {
+                    for (index in 0 until configUsageRoot.length()) {
+                        val item = configUsageRoot.optJSONObject(index) ?: continue
+                        add(AiConfigUsage(
+                            configId = item.optString("config_id", item.optString("configId")),
+                            name = item.optString("name", item.optString("config_name", item.optString("configName"))),
+                            model = item.optString("model"),
+                            promptTokens = item.optLong("prompt_tokens", item.optLong("input_tokens", 0L)),
+                            completionTokens = item.optLong("completion_tokens", item.optLong("output_tokens", 0L)),
+                            totalTokens = item.optLong("total_tokens", item.optLong("used_tokens", 0L)),
+                            tokenQuota = item.optNullableLong("token_quota", "tokenQuota", "quota_tokens"),
+                        ))
+                    }
+                }
                 AiUsageSummary(
                     requests = root.optInt("requests", 0),
                     promptTokens = root.optInt("prompt_tokens", 0),
@@ -146,6 +209,7 @@ class AiApiClient(
                     storageConversations = storage.optInt("conversations", 0),
                     storageMessages = storage.optInt("messages", 0),
                     storageBytes = storage.optLong("bytes", 0L),
+                    configUsage = configUsage,
                 )
             }
     }
@@ -169,9 +233,10 @@ class AiApiClient(
         }
     }
 
-    suspend fun listConversations(limit: Int = 20): List<AiConversation> = withContext(Dispatchers.IO) {
+    suspend fun listConversations(limit: Int? = null): List<AiConversation> = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        request(hubUrl.trimEnd('/') + "/api/ai/conversations?limit=$limit", "GET", null).use { response ->
+        val suffix = limit?.let { "?limit=$it" }.orEmpty()
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations$suffix", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, text))
             val rows = JSONObject(text).optJSONArray("conversations") ?: JSONArray()
@@ -242,13 +307,11 @@ class AiApiClient(
         }
     }
 
-    suspend fun chat(messages: List<AiMessage>, conversationId: String? = null): AiReply = withContext(Dispatchers.IO) {
+    suspend fun chat(message: String, conversationId: String? = null): AiReply = withContext(Dispatchers.IO) {
         val current = settings.read()
         require(current.enabled) { "请先启用 Hub AI" }
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        val body = JSONObject().put("messages", JSONArray().apply {
-            messages.forEach { put(JSONObject().put("role", it.role).put("content", it.content)) }
-        }).apply {
+        val body = JSONObject().put("message", message).apply {
             if (!conversationId.isNullOrBlank()) put("conversationId", conversationId)
             localContext()?.let { put("clientContext", it) }
         }.toString()
@@ -309,6 +372,46 @@ class AiApiClient(
         }
     }
 
+    suspend fun renameConversation(conversationId: String, title: String): AiConversation = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val cleanTitle = title.trim()
+        require(cleanTitle.isNotBlank()) { "对话名称不能为空" }
+        val encoded = java.net.URLEncoder.encode(conversationId, "UTF-8")
+        val payload = JSONObject().put("title", cleanTitle).toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations/$encoded", "PATCH", payload).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+            val item = JSONObject(body).optJSONObject("conversation") ?: JSONObject(body)
+            AiConversation(
+                id = item.optString("id", conversationId),
+                title = item.optString("title", cleanTitle),
+                updatedAt = item.optString("updated_at", item.optString("updatedAt")),
+            )
+        }
+    }
+
+    suspend fun deleteProviderConfig(configId: String) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val encoded = java.net.URLEncoder.encode(configId, "UTF-8")
+        request(hubUrl.trimEnd('/') + "/api/ai/config/$encoded", "DELETE", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful && response.code != 204) error(apiFailure(response.code, body))
+        }
+    }
+
+    suspend fun completeClientTool(confirmationId: String, ok: Boolean, message: String): String = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("confirmationId", confirmationId)
+            .put("ok", ok)
+            .put("message", message)
+            .toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/tools/complete", "POST", payload).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
+            JSONObject(text).optJSONObject("result")?.optString("message").orEmpty().ifBlank { message }
+        }
+    }
+
     private fun localContext(): JSONObject? = appPrefs?.let { prefs ->
         JSONObject()
             .put("schemaVersion", 1)
@@ -335,6 +438,7 @@ class AiApiClient(
         when (method) {
             "POST" -> builder.post((json ?: "{}").toRequestBody("application/json".toMediaType()))
             "PUT" -> builder.put((json ?: "{}").toRequestBody("application/json".toMediaType()))
+            "PATCH" -> builder.patch((json ?: "{}").toRequestBody("application/json".toMediaType()))
             "DELETE" -> builder.delete()
             else -> builder.get()
         }
@@ -342,11 +446,66 @@ class AiApiClient(
     }
 }
 
+private fun parseConfigBundle(root: JSONObject): AiConfigBundle {
+    val configsRoot = root.optJSONArray("configs")
+    val configs = if (configsRoot != null) {
+        buildList {
+            for (index in 0 until configsRoot.length()) {
+                configsRoot.optJSONObject(index)?.let { add(parseProviderConfig(it)) }
+            }
+        }
+    } else {
+        val configured = root.optBoolean(
+            "configured",
+            root.optString("apiKeyStatus") == "configured" || root.optString("apiKey") == "configured",
+        )
+        if (configured) listOf(parseProviderConfig(root).copy(id = "legacy")) else emptyList()
+    }
+    return AiConfigBundle(
+        enabled = root.optBoolean("enabled", configs.any { it.enabled }),
+        configs = configs,
+    )
+}
+
+private fun parseProviderConfig(root: JSONObject, fallback: AiProviderConfig = AiProviderConfig()): AiProviderConfig {
+    val model = root.optString("model", fallback.model)
+    return AiProviderConfig(
+        id = root.optString("id", root.optString("configId", fallback.id)),
+        name = root.optString("name", root.optString("label", fallback.name)).ifBlank { model },
+        provider = root.optString("provider", fallback.provider),
+        enabled = root.optBoolean("enabled", fallback.enabled),
+        model = model,
+        baseUrl = root.optString("baseUrl", root.optString("base_url", fallback.baseUrl)),
+        hasApiKey = root.optString("apiKeyStatus", root.optString("apiKey")) == "configured" || fallback.hasApiKey,
+        tokenQuota = root.optNullableLong("tokenQuota", "token_quota", "modelQuotaTokens", "model_quota_tokens", "quota_tokens") ?: fallback.tokenQuota,
+    )
+}
+
+private fun JSONObject.optNullableLong(vararg names: String): Long? {
+    names.forEach { name ->
+        if (has(name) && !isNull(name)) {
+            val parsed = when (val value = opt(name)) {
+                is Number -> value.toLong()
+                else -> value?.toString()?.trim()?.toLongOrNull()
+            }
+            if (parsed != null && parsed > 0L) return parsed
+        }
+    }
+    return null
+}
+
 private fun apiFailure(code: Int, body: String): String {
-    val detail = runCatching { JSONObject(body).optString("error") }.getOrNull()
-        ?.takeIf { it.isNotBlank() }
-        ?: body.take(180).takeIf { it.isNotBlank() }
-        ?: "请求失败"
+    val jsonDetail = runCatching { JSONObject(body).optString("error") }.getOrNull()
+        ?.trim()
+        ?.takeIf { it.isNotBlank() && !it.contains("<html", ignoreCase = true) && !it.contains("<!doctype", ignoreCase = true) }
+    val plainBody = body.trim().takeIf {
+        it.isNotBlank() && !it.startsWith("<") && !it.contains("<html", ignoreCase = true)
+    }?.take(180)
+    val detail = jsonDetail ?: plainBody ?: when (code) {
+        502, 503, 504 -> "Hub 或上游 AI 服务暂时不可用，请稍后重试"
+        401, 403 -> "Hub 鉴权失败，请检查连接设置"
+        else -> "请求失败"
+    }
     return "HTTP $code：$detail"
 }
 

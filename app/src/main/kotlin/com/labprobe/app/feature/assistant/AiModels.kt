@@ -7,6 +7,22 @@ data class AiSettings(
     val hasApiKey: Boolean = false
 )
 
+data class AiProviderConfig(
+    val id: String = "",
+    val name: String = "",
+    val provider: String = "openai_compatible",
+    val enabled: Boolean = true,
+    val model: String = "deepseek-v4-flash",
+    val baseUrl: String = "https://api.deepseek.com",
+    val hasApiKey: Boolean = false,
+    val tokenQuota: Long? = null,
+)
+
+data class AiConfigBundle(
+    val enabled: Boolean = false,
+    val configs: List<AiProviderConfig> = emptyList(),
+)
+
 data class AiMessage(
     val role: String,
     val content: String,
@@ -73,12 +89,25 @@ data class AiUsageSummary(
     val storageConversations: Int = 0,
     val storageMessages: Int = 0,
     val storageBytes: Long = 0,
+    val configUsage: List<AiConfigUsage> = emptyList(),
+)
+
+data class AiConfigUsage(
+    val configId: String = "",
+    val name: String = "",
+    val model: String = "",
+    val promptTokens: Long = 0,
+    val completionTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val tokenQuota: Long? = null,
 )
 
 data class AiUsageDay(
     val date: String,
     val requests: Int,
     val totalTokens: Int,
+    val promptTokens: Int = 0,
+    val completionTokens: Int = 0,
     val cacheHitTokens: Int,
     val cacheMissTokens: Int,
     val models: Map<String, Long> = emptyMap(),

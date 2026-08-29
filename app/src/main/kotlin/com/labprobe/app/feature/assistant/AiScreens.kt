@@ -9,12 +9,13 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,7 +51,8 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.DataUsage
-import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Send
@@ -102,6 +104,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.LabTypography
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -121,6 +128,8 @@ private object AiTone {
     val Danger = Color(0xFFD85C5C)
 }
 
+private val AI_BEIJING_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
 private data class AiProviderPreset(val label: String, val model: String, val baseUrl: String)
 
 /** One-tap fills for common OpenAI-compatible providers; fields stay editable. */
@@ -130,7 +139,7 @@ private val AI_PROVIDER_PRESETS = listOf(
     AiProviderPreset("阿里千问", "qwen3.6-flash", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     AiProviderPreset("Gemini", "gemini-3.6-flash", "https://generativelanguage.googleapis.com/v1beta/openai"),
     AiProviderPreset("小米 MiMo", "mimo-v2.5", "https://api.xiaomimimo.com/v1"),
-    AiProviderPreset("腾讯混元", "hunyuan-turbos", "https://api.hunyuan.cloud.tencent.com/v1"),
+    AiProviderPreset("腾讯混元", "hunyuan-turbos", "https://tokenhub.tencentmaas.com/v1"),
 )
 
 private const val AI_GREETING = "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。"
@@ -146,6 +155,37 @@ object AiChatSession {
 private val AiPanelShape = RoundedCornerShape(24.dp)
 private val AiControlShape = RoundedCornerShape(18.dp)
 private val AiPillShape = RoundedCornerShape(99.dp)
+
+private data class AiHistoryDay(
+    val date: LocalDate,
+    val label: String,
+    val conversations: List<AiConversation>,
+)
+
+/** The Hub writes ISO UTC timestamps; all AI history is grouped by Beijing day. */
+private fun aiHistoryDate(value: String): LocalDate {
+    val raw = value.trim()
+    return runCatching { OffsetDateTime.parse(raw).toInstant().atZone(AI_BEIJING_ZONE).toLocalDate() }
+        .recoverCatching { LocalDateTime.parse(raw, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).toLocalDate() }
+        .recoverCatching { LocalDate.parse(raw.take(10)) }
+        .getOrDefault(LocalDate.MIN)
+}
+
+private fun aiHistoryDays(conversations: List<AiConversation>): List<AiHistoryDay> {
+    val today = LocalDate.now(AI_BEIJING_ZONE)
+    return conversations.groupBy { aiHistoryDate(it.updatedAt) }
+        .toList()
+        .sortedByDescending { it.first }
+        .map { (date, rows) ->
+            val label = when (date) {
+                LocalDate.MIN -> "更早"
+                today -> "今天"
+                today.minusDays(1) -> "昨天"
+                else -> date.format(DateTimeFormatter.ofPattern("M月d日", Locale.CHINA))
+            }
+            AiHistoryDay(date, label, rows)
+        }
+}
 
 private fun Modifier.aiTap(enabled: Boolean = true, onClick: () -> Unit): Modifier = composed {
     val interaction = remember { MutableInteractionSource() }
@@ -404,17 +444,29 @@ fun AiPetEntry(onOpen: () -> Unit) {
 
 /** Edge-docked, half-hidden pet. First tap reveals it; second tap enters chat. */
 @Composable
-fun AiFloatingPet(onOpen: () -> Unit) {
+fun AiFloatingPet(visible: Boolean = true, onOpen: () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
         val density = LocalDensity.current
         val petSize = 42.dp
-        val maxTravel = with(density) { (maxHeight - petSize - 24.dp).toPx().coerceAtLeast(0f) }
+        val maxTravelX = with(density) { (maxWidth - petSize).toPx().coerceAtLeast(0f) }
+        val maxTravelY = with(density) { (maxHeight - petSize - 24.dp).toPx().coerceAtLeast(0f) }
+        val revealedInsetPx = with(density) { 4.dp.toPx() }
+        val hiddenInsetPx = with(density) { 22.dp.toPx() }
+        var xPx by remember { mutableFloatStateOf(0f) }
         var yPx by remember { mutableFloatStateOf(0f) }
         var initialized by remember { mutableStateOf(false) }
         var revealed by remember { mutableStateOf(false) }
-        val horizontal by animateDpAsState(
-            targetValue = if (revealed) (-4).dp else 22.dp,
-            animationSpec = tween(240, easing = FastOutSlowInEasing),
+        var dragging by remember { mutableStateOf(false) }
+        var dockedRight by remember { mutableStateOf(true) }
+        val dockedXPx = when {
+            dockedRight && revealed -> maxTravelX - revealedInsetPx
+            dockedRight -> maxTravelX + hiddenInsetPx
+            revealed -> revealedInsetPx
+            else -> -hiddenInsetPx
+        }
+        val horizontalPx by animateFloatAsState(
+            targetValue = if (dragging) xPx else dockedXPx,
+            animationSpec = if (dragging) snap() else tween(240, easing = FastOutSlowInEasing),
             label = "assistant-edge-slide",
         )
         val scale by animateFloatAsState(
@@ -422,11 +474,15 @@ fun AiFloatingPet(onOpen: () -> Unit) {
             animationSpec = tween(220, easing = FastOutSlowInEasing),
             label = "assistant-pet-scale",
         )
-        LaunchedEffect(maxTravel) {
+        LaunchedEffect(maxTravelX, maxTravelY) {
             if (!initialized) {
-                yPx = maxTravel * .42f
+                xPx = maxTravelX
+                yPx = maxTravelY * .42f
                 initialized = true
-            } else yPx = yPx.coerceIn(0f, maxTravel)
+            } else {
+                xPx = xPx.coerceIn(0f, maxTravelX)
+                yPx = yPx.coerceIn(0f, maxTravelY)
+            }
         }
         LaunchedEffect(revealed) {
             if (revealed) {
@@ -434,20 +490,39 @@ fun AiFloatingPet(onOpen: () -> Unit) {
                 revealed = false
             }
         }
-        val y = with(density) { yPx.coerceIn(0f, maxTravel).toDp() }
+        val x = with(density) { horizontalPx.toDp() }
+        val y = with(density) { yPx.coerceIn(0f, maxTravelY).toDp() }
         Surface(
             modifier = Modifier
-                .align(Alignment.TopEnd)
+                .align(Alignment.TopStart)
                 .zIndex(20f)
-                .offset(x = horizontal, y = y)
+                .offset(x = x, y = y)
                 .size(petSize)
-                .graphicsLayer(scaleX = scale, scaleY = scale)
+                .graphicsLayer(scaleX = scale, scaleY = scale, alpha = if (visible) 1f else 0f)
                 .clip(CircleShape)
-                .aiTap { if (revealed) onOpen() else revealed = true }
-                .pointerInput(maxTravel) {
-                    detectVerticalDragGestures { change, dragAmount ->
-                        change.consume()
-                        yPx = (yPx + dragAmount).coerceIn(0f, maxTravel)
+                .aiTap(enabled = visible) { if (revealed) onOpen() else revealed = true }
+                .pointerInput(visible, maxTravelX, maxTravelY) {
+                    if (visible) {
+                        detectDragGestures(
+                            onDragStart = {
+                                dragging = true
+                                revealed = true
+                                xPx = if (dockedRight) maxTravelX else 0f
+                            },
+                            onDragEnd = {
+                                dockedRight = xPx >= maxTravelX / 2f
+                                dragging = false
+                                revealed = true
+                            },
+                            onDragCancel = {
+                                dockedRight = xPx >= maxTravelX / 2f
+                                dragging = false
+                            },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            xPx = (xPx + dragAmount.x).coerceIn(0f, maxTravelX)
+                            yPx = (yPx + dragAmount.y).coerceIn(0f, maxTravelY)
+                        }
                     }
                 },
             shape = CircleShape,
@@ -470,13 +545,55 @@ fun AiSettingsScreen(
 ) {
     val store = remember { AiSettingsStore(context) }
     var settings by remember { mutableStateOf(store.read()) }
+    var configs by remember { mutableStateOf<List<AiProviderConfig>>(emptyList()) }
+    var loadingConfigs by remember { mutableStateOf(true) }
+    var editingId by remember { mutableStateOf<String?>(null) }
+    var configName by remember { mutableStateOf("") }
+    var configProvider by remember { mutableStateOf("openai_compatible") }
     var model by remember { mutableStateOf(settings.model) }
     var baseUrl by remember { mutableStateOf(settings.baseUrl) }
+    var tokenQuota by remember { mutableStateOf("") }
+    var configEnabled by remember { mutableStateOf(true) }
+    var configHasKey by remember { mutableStateOf(false) }
     var key by remember { mutableStateOf("") }
     var state by remember { mutableStateOf<AiConnectionState>(AiConnectionState.Idle) }
     val scope = rememberCoroutineScope()
     val client = remember(hubUrl, hubToken) { AiApiClient(store, hubUrl, hubToken) }
-    val canSave = key.isNotBlank() || settings.hasApiKey
+    val editing = editingId != null
+    val canSave = editing && model.isNotBlank() && baseUrl.isNotBlank() && (key.isNotBlank() || configHasKey)
+    val beginEdit: (AiProviderConfig) -> Unit = { config ->
+        editingId = config.id
+        configName = config.name
+        configProvider = config.provider
+        model = config.model
+        baseUrl = config.baseUrl
+        tokenQuota = config.tokenQuota?.toString().orEmpty()
+        configEnabled = config.enabled
+        configHasKey = config.hasApiKey
+        key = ""
+        state = AiConnectionState.Idle
+    }
+    val syncLocalSettings: (List<AiProviderConfig>) -> Unit = { rows ->
+        val active = rows.firstOrNull { it.enabled && it.hasApiKey } ?: rows.firstOrNull()
+        val local = AiSettings(
+            enabled = rows.any { it.enabled && it.hasApiKey },
+            model = active?.model ?: settings.model,
+            baseUrl = active?.baseUrl ?: settings.baseUrl,
+            hasApiKey = rows.any { it.hasApiKey },
+        )
+        store.save(local)
+        settings = local
+    }
+
+    LaunchedEffect(hubUrl, hubToken) {
+        runCatching { client.configs() }
+            .onSuccess { bundle ->
+                configs = bundle.configs
+                syncLocalSettings(bundle.configs)
+            }
+            .onFailure { state = AiConnectionState.Failure(it.message ?: "读取配置失败") }
+        loadingConfigs = false
+    }
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
@@ -484,13 +601,76 @@ fun AiSettingsScreen(
     ) {
         AiHeader("AI 设置", "连接大模型与 Hub", onBack)
         AiPanel {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("启用 AI 助手", style = LabTypography.CardTitle, color = AiTone.Ink)
-                        Text("对话与 Token 用量由 Hub 统一保存", color = AiTone.Muted, fontSize = 11.5.sp)
+                        Text("API 配置", style = LabTypography.CardTitle, color = AiTone.Ink)
+                        Text("可添加多个服务；当前项不可用时 Hub 会按顺序切换", color = AiTone.Muted, fontSize = 11.5.sp)
                     }
-                    AiToggle(settings.enabled) { settings = settings.copy(enabled = it) }
+                    AiAction("添加", modifier = Modifier.width(72.dp), primary = true) {
+                        beginEdit(AiProviderConfig(name = "新配置", hasApiKey = false))
+                    }
+                }
+                when {
+                    loadingConfigs -> LinearProgressIndicator(Modifier.fillMaxWidth(), color = AiTone.Mint, trackColor = AiTone.MintSoft)
+                    configs.isEmpty() -> Text("还没有 API 配置，请添加第一项。", color = AiTone.Muted, fontSize = 12.sp)
+                    else -> configs.forEach { config ->
+                        Surface(
+                            shape = AiControlShape,
+                            color = if (config.enabled) AiTone.Field else AiTone.Surface,
+                            border = BorderStroke(1.dp, if (config.enabled) AiTone.Mint.copy(alpha = .35f) else AiTone.Border),
+                            tonalElevation = 0.dp,
+                            shadowElevation = 0.dp,
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(config.name.ifBlank { config.model }, color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text(config.model, color = AiTone.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    AiToggle(config.enabled) { enabled ->
+                                        scope.launch {
+                                            runCatching { client.saveProviderConfig(config.copy(enabled = enabled)) }
+                                                .onSuccess { saved ->
+                                                    configs = configs.map { if (it.id == config.id) saved else it }
+                                                    syncLocalSettings(configs)
+                                                }
+                                                .onFailure { state = AiConnectionState.Failure(it.message ?: "更新失败") }
+                                        }
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        config.tokenQuota?.let { "额度 ${compactTokensLong(it)} Token" } ?: "额度未设置",
+                                        color = AiTone.Muted,
+                                        fontSize = 10.5.sp,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text("编辑", color = AiTone.MintDark, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap { beginEdit(config) }.padding(6.dp))
+                                    Text("删除", color = AiTone.Danger, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap {
+                                        scope.launch {
+                                            runCatching {
+                                                if (config.id == "legacy") client.deleteConfig() else client.deleteProviderConfig(config.id)
+                                            }.onSuccess {
+                                                configs = configs.filterNot { it.id == config.id }
+                                                syncLocalSettings(configs)
+                                                if (editingId == config.id) editingId = null
+                                                state = AiConnectionState.Success("配置已删除")
+                                            }.onFailure { state = AiConnectionState.Failure(it.message ?: "删除失败") }
+                                        }
+                                    }.padding(6.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (editing) AiPanel(accent = AiTone.Mint.copy(alpha = .32f)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (editingId.isNullOrBlank()) "添加 API" else "编辑 API", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
+                    Text("取消", color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap { editingId = null }.padding(6.dp))
                 }
                 Text("常用服务商（点选自动填充，可再手动修改）", color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -498,6 +678,7 @@ fun AiSettingsScreen(
                         val active = baseUrl.equals(preset.baseUrl, ignoreCase = true)
                         Surface(
                             modifier = Modifier.clip(AiPillShape).aiTap {
+                                configName = preset.label
                                 model = preset.model
                                 baseUrl = preset.baseUrl
                             },
@@ -511,10 +692,19 @@ fun AiSettingsScreen(
                         }
                     }
                 }
+                AiFormField("配置名称", configName, { configName = it }, placeholder = "例如：主力 API")
                 AiFormField("模型", model, { model = it }, placeholder = "deepseek-v4-flash")
                 AiFormField("API 地址（OpenAI 兼容）", baseUrl, { baseUrl = it }, placeholder = "https://api.deepseek.com")
+                AiFormField("模型额度 Token（可不填）", tokenQuota, { value -> tokenQuota = value.filter(Char::isDigit) }, placeholder = "例如 1000000")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("启用此配置", color = AiTone.Ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        Text("关闭后 Hub 不会选择这一项", color = AiTone.Muted, fontSize = 10.5.sp)
+                    }
+                    AiToggle(configEnabled) { configEnabled = it }
+                }
                 AiFormField(
-                    if (settings.hasApiKey) "API Key（已保存，可替换）" else "DeepSeek API Key",
+                    if (configHasKey) "API Key（已保存，可替换）" else "API Key",
                     key,
                     { key = it },
                     placeholder = "sk-…",
@@ -545,9 +735,16 @@ fun AiSettingsScreen(
                     AiAction("保存设置", Modifier.weight(1f), enabled = canSave) {
                         scope.launch {
                             runCatching {
-                                val saved = client.saveConfig(settings.copy(model = model, baseUrl = baseUrl), key.takeIf { it.isNotBlank() })
-                                store.save(saved)
-                                settings = saved
+                                val draft = AiProviderConfig(
+                                    id = editingId.orEmpty(), name = configName.trim().ifBlank { model.trim() },
+                                    provider = configProvider,
+                                    enabled = configEnabled, model = model.trim(), baseUrl = baseUrl.trim(),
+                                    hasApiKey = configHasKey, tokenQuota = tokenQuota.toLongOrNull()?.takeIf { it > 0 },
+                                )
+                                val saved = client.saveProviderConfig(draft, key.takeIf { it.isNotBlank() })
+                                configs = if (draft.id.isBlank()) configs + saved else configs.map { if (it.id == draft.id) saved else it }
+                                syncLocalSettings(configs)
+                                editingId = null
                                 key = ""
                                 "已保存，API Key 仅由 Hub 加密托管"
                             }.onSuccess { state = AiConnectionState.Success(it) }
@@ -558,22 +755,20 @@ fun AiSettingsScreen(
                         state = AiConnectionState.Testing
                         scope.launch {
                             runCatching {
-                                val saved = client.saveConfig(settings.copy(model = model, baseUrl = baseUrl), key.takeIf { it.isNotBlank() })
-                                store.save(saved)
-                                settings = saved
+                                val draft = AiProviderConfig(
+                                    id = editingId.orEmpty(), name = configName.trim().ifBlank { model.trim() },
+                                    provider = configProvider,
+                                    enabled = configEnabled, model = model.trim(), baseUrl = baseUrl.trim(),
+                                    hasApiKey = configHasKey, tokenQuota = tokenQuota.toLongOrNull()?.takeIf { it > 0 },
+                                )
+                                val saved = client.saveProviderConfig(draft, key.takeIf { it.isNotBlank() })
+                                configs = if (draft.id.isBlank()) configs + saved else configs.map { if (it.id == draft.id) saved else it }
+                                syncLocalSettings(configs)
                                 key = ""
-                                client.testConnection()
+                                editingId = saved.id
+                                client.testConnection(saved.id.takeUnless { it == "legacy" })
                             }.onSuccess { state = AiConnectionState.Success(it) }
                                 .onFailure { state = AiConnectionState.Failure(it.message ?: "连接失败") }
-                        }
-                    }
-                }
-                if (settings.hasApiKey) {
-                    AiAction("删除 API Key", tone = AiTone.Danger, icon = Icons.Rounded.DeleteOutline) {
-                        scope.launch {
-                            runCatching { client.deleteConfig(); store.deleteKey(); settings = store.read(); key = "" }
-                                .onSuccess { state = AiConnectionState.Success("API Key 已删除") }
-                                .onFailure { state = AiConnectionState.Failure(it.message ?: "删除失败") }
                         }
                     }
                 }
@@ -627,7 +822,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 }
                 Text("${summary.todayTotalTokens} Token · ${summary.todayRequests} 次任务", color = AiTone.Ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 if (summary.todayTotalTokens == 0 && daily.isNotEmpty()) {
-                    val yesterdaysDate = runCatching { java.time.LocalDate.now().minusDays(1).toString() }.getOrDefault("")
+                    val yesterdaysDate = runCatching { java.time.LocalDate.now(AI_BEIJING_ZONE).minusDays(1).toString() }.getOrDefault("")
                     val yesterday = daily.firstOrNull { it.date == yesterdaysDate && it.totalTokens > 0 }
                     if (yesterday != null) {
                         Text("昨日 ${compactTokens(yesterday.totalTokens)} Token · ${yesterday.requests} 次任务", color = AiTone.Muted, fontSize = 12.sp)
@@ -650,7 +845,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
         AiPanel {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("近 14 天趋势", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
+                    Text("Token 用量", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
                     if (cacheHit + cacheMiss > 0) {
                         Text("缓存命中 ${cacheHit * 100 / (cacheHit + cacheMiss)}%", color = AiTone.MintDark, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
@@ -658,14 +853,25 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 if (daily.isEmpty()) {
                     Text("还没有用量数据。", color = AiTone.Muted, fontSize = 12.sp)
                 } else {
-                    AiDailyTrendChart(daily)
+                    val hasCacheBreakdown = daily.any { it.cacheHitTokens + it.cacheMissTokens > 0 }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (hasCacheBreakdown) {
+                            AiUsageLegend(Color(0xFFBCEAD9), "输入（缓存）")
+                            AiUsageLegend(Color(0xFF68C6A6), "输入")
+                        } else {
+                            AiUsageLegend(Color(0xFF68C6A6), "输入")
+                        }
+                        AiUsageLegend(AiTone.MintDark, "输出")
+                    }
+                    AiDailyUsageBars(daily)
                     Spacer(Modifier.height(2.dp))
+                    val slots = aiTrendSlots(daily)
                     Row(Modifier.fillMaxWidth()) {
-                        Text(daily.first().date.substring(5), color = AiTone.Muted, fontSize = 10.5.sp)
+                        Text(slots.firstOrNull()?.date?.takeLast(5).orEmpty(), color = AiTone.Muted, fontSize = 10.5.sp)
                         Spacer(Modifier.weight(1f))
                         Text("峰值 ${compactTokens(daily.maxOfOrNull { it.totalTokens } ?: 0)}", color = AiTone.Muted, fontSize = 10.5.sp)
                         Spacer(Modifier.weight(1f))
-                        Text(daily.last().date.substring(5), color = AiTone.Muted, fontSize = 10.5.sp)
+                        Text(slots.lastOrNull()?.date?.takeLast(5).orEmpty(), color = AiTone.Muted, fontSize = 10.5.sp)
                     }
                 }
             }
@@ -676,10 +882,17 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 val modelTotals = daily.flatMap { it.models.entries }
                     .groupingBy { it.key }
                     .fold(0L) { acc, entry -> acc + entry.value }
-                if (modelTotals.isEmpty()) {
+                if (modelTotals.isEmpty() && summary.configUsage.isEmpty()) {
                     Text("暂无模型维度数据。", color = AiTone.Muted, fontSize = 12.sp)
                 } else {
-                    AiModelDonut(modelTotals)
+                    if (modelTotals.isNotEmpty()) AiModelDonut(modelTotals)
+                    val quotaRows = if (summary.configUsage.isNotEmpty()) summary.configUsage else modelTotals.map { (model, tokens) ->
+                        AiConfigUsage(name = model, model = model, totalTokens = tokens)
+                    }
+                    if (summary.configUsage.isNotEmpty()) {
+                        Text("配置额度（累计）", color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    quotaRows.forEach { usage -> AiQuotaUsageRow(usage) }
                 }
             }
         }
@@ -720,14 +933,24 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     }
 }
 
-private fun formatAiUsageTime(value: String): String = value
-    .replace("T", " ")
-    .substringBefore("+")
-    .substringBefore("Z")
-    .take(19)
-    .ifBlank { "时间未知" }
+private fun formatAiUsageTime(value: String): String {
+    val raw = value.trim()
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
+    return runCatching { OffsetDateTime.parse(raw).toInstant().atZone(AI_BEIJING_ZONE).format(formatter) }
+        .recoverCatching { LocalDateTime.parse(raw, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).format(formatter) }
+        .getOrElse {
+            raw.replace("T", " ").substringBefore("+").substringBefore("Z").take(19).ifBlank { "时间未知" }
+        }
+}
 
 private fun compactTokens(value: Int): String = when {
+    value >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", value / 1_000_000.0)
+    value >= 1_000 -> String.format(Locale.ROOT, "%.1fk", value / 1_000.0)
+    else -> value.toString()
+}
+
+private fun compactTokensLong(value: Long): String = when {
+    value >= 1_000_000_000 -> String.format(Locale.ROOT, "%.1fB", value / 1_000_000_000.0)
     value >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", value / 1_000_000.0)
     value >= 1_000 -> String.format(Locale.ROOT, "%.1fk", value / 1_000.0)
     else -> value.toString()
@@ -747,13 +970,17 @@ private class AiTaskDayAcc(val label: String) {
 private data class AiTaskDayGroup(val day: String, val dayLabel: String, val totalTokens: Long, val tasks: List<AiUsageRecord>)
 
 private fun aiGroupTasksByDay(recent: List<AiUsageRecord>): List<AiTaskDayGroup> {
-    val zone = runCatching { java.time.ZoneId.of("Asia/Shanghai") }.getOrElse { java.time.ZoneId.systemDefault() }
+    val today = LocalDate.now(AI_BEIJING_ZONE)
     val order = LinkedHashMap<String, AiTaskDayAcc>()
     for (record in recent) {
-        val parsed = runCatching {
-            val day = java.time.Instant.parse(record.createdAt).atZone(zone).toLocalDate()
-            day.toString() to "${day.monthValue}月${day.dayOfMonth}日"
-        }.getOrElse { record.createdAt.take(10) to record.createdAt.take(10) }
+        val day = aiHistoryDate(record.createdAt)
+        val label = when (day) {
+            LocalDate.MIN -> "更早"
+            today -> "今天"
+            today.minusDays(1) -> "昨天"
+            else -> day.format(DateTimeFormatter.ofPattern("M月d日", Locale.CHINA))
+        }
+        val parsed = day.toString() to label
         val acc = order.getOrPut(parsed.first) { AiTaskDayAcc(parsed.second) }
         acc.tasks += record
         acc.tokens += record.totalTokens
@@ -761,38 +988,124 @@ private fun aiGroupTasksByDay(recent: List<AiUsageRecord>): List<AiTaskDayGroup>
     return order.entries.take(7).map { (key, acc) -> AiTaskDayGroup(key, acc.label, acc.tokens, acc.tasks) }
 }
 
-/** Fills the trailing 14 days with zero-slots so the trend keeps its rhythm. */
-private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<Pair<String, Int>> {
-    val totals = daily.associate { it.date to it.totalTokens }
+private data class AiUsageSlot(
+    val date: String,
+    val prompt: Int,
+    val completion: Int,
+    val cacheHit: Int,
+    val cacheMiss: Int,
+) {
+    val total: Int get() = prompt + completion
+}
+
+/** Fills at most the trailing 14 Beijing calendar days so sparse usage stays readable. */
+private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<AiUsageSlot> {
+    val byDate = daily.associateBy { it.date }
     return runCatching {
-        val today = java.time.LocalDate.now()
+        val today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
         (days - 1 downTo 0).map { offset ->
             val day = today.minusDays(offset.toLong()).toString()
-            day to (totals[day] ?: 0)
+            val source = byDate[day]
+            val knownInput = (source?.promptTokens ?: 0).coerceAtLeast(0)
+            val knownOutput = (source?.completionTokens ?: 0).coerceAtLeast(0)
+            val total = (source?.totalTokens ?: 0).coerceAtLeast(0)
+            val cacheInput = ((source?.cacheHitTokens ?: 0) + (source?.cacheMissTokens ?: 0)).coerceAtLeast(0)
+            val prompt = when {
+                knownInput > 0 || knownOutput > 0 -> knownInput
+                cacheInput > 0 -> cacheInput.coerceAtMost(total)
+                else -> (total - knownOutput).coerceAtLeast(0)
+            }
+            val completion = if (knownInput > 0 || knownOutput > 0) knownOutput else (total - prompt).coerceAtLeast(0)
+            AiUsageSlot(day, prompt, completion, source?.cacheHitTokens ?: 0, source?.cacheMissTokens ?: 0)
         }
-    }.getOrElse { daily.map { it.date to it.totalTokens } }
+    }.getOrElse {
+        daily.takeLast(days).map { source ->
+            AiUsageSlot(source.date, source.promptTokens, source.completionTokens, source.cacheHitTokens, source.cacheMissTokens)
+        }
+    }
 }
 
 @Composable
-private fun AiDailyTrendChart(daily: List<AiUsageDay>) {
+private fun AiUsageLegend(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(7.dp).clip(RoundedCornerShape(2.dp)).background(color))
+        Spacer(Modifier.width(4.dp))
+        Text(label, color = AiTone.Muted, fontSize = 10.5.sp)
+    }
+}
+
+@Composable
+private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
     val slots = aiTrendSlots(daily)
-    if (slots.size < 2) return
-    val maxTokens = (slots.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
-    Canvas(Modifier.fillMaxWidth().height(96.dp)) {
-        val topPad = 6.dp.toPx()
-        val usable = size.height - topPad * 2
-        val step = size.width / (slots.size - 1)
-        val stroke = 2.dp.toPx()
-        var previous: Offset? = null
-        slots.forEachIndexed { index, (_, tokens) ->
-            val point = Offset(index * step, topPad + usable * (1f - tokens.toFloat() / maxTokens))
-            previous?.let { last -> drawLine(AiTone.Mint, last, point, strokeWidth = stroke) }
-            drawCircle(
-                if (index == slots.lastIndex) AiTone.Mint else AiTone.Mint.copy(alpha = .75f),
-                radius = stroke,
-                center = point,
+    if (slots.isEmpty()) return
+    val maxTokens = (slots.maxOfOrNull { it.total } ?: 0).coerceAtLeast(1)
+    Canvas(Modifier.fillMaxWidth().height(112.dp)) {
+        val topPad = 8.dp.toPx()
+        val bottomPad = 3.dp.toPx()
+        val usable = size.height - topPad - bottomPad
+        val slotWidth = size.width / slots.size
+        val barWidth = (slotWidth * .58f).coerceAtMost(16.dp.toPx()).coerceAtLeast(4.dp.toPx())
+        drawLine(AiTone.Border, Offset(0f, size.height - bottomPad), Offset(size.width, size.height - bottomPad), strokeWidth = 1.dp.toPx())
+        drawLine(AiTone.Border.copy(alpha = .65f), Offset(0f, topPad + usable / 2), Offset(size.width, topPad + usable / 2), strokeWidth = 1.dp.toPx())
+        slots.forEachIndexed { index, slot ->
+            val left = index * slotWidth + (slotWidth - barWidth) / 2
+            var bottom = size.height - bottomPad
+            val hasCache = slot.cacheHit + slot.cacheMiss > 0
+            val cacheHit = if (hasCache) slot.cacheHit.coerceIn(0, slot.prompt) else 0
+            val cacheMiss = if (hasCache) (slot.prompt - cacheHit).coerceAtLeast(0) else slot.prompt
+            listOf(
+                cacheHit to Color(0xFFBCEAD9),
+                cacheMiss to Color(0xFF68C6A6),
+                slot.completion to AiTone.MintDark,
+            ).forEach { (tokens, color) ->
+                if (tokens > 0) {
+                    val height = usable * tokens.toFloat() / maxTokens
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(left, bottom - height),
+                        size = Size(barWidth, height),
+                        cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+                    )
+                    bottom -= height
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiQuotaUsageRow(usage: AiConfigUsage) {
+    val quota = usage.tokenQuota?.takeIf { it > 0 }
+    val used = usage.totalTokens.coerceAtLeast(0)
+    val usedPercent = quota?.let { ((used.coerceAtMost(it) * 100.0) / it).toInt() }
+    val remainingPercent = usedPercent?.let { (100 - it).coerceAtLeast(0) }
+    Column(
+        Modifier.fillMaxWidth().clip(AiControlShape).background(AiTone.Field).padding(horizontal = 11.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(usage.name.ifBlank { usage.model.ifBlank { "未命名配置" } }, color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                if (usage.name.isNotBlank() && usage.model.isNotBlank() && usage.name != usage.model) {
+                    Text(usage.model, color = AiTone.Muted, fontSize = 10.5.sp)
+                }
+            }
+            Text("已用 ${compactTokensLong(used)}", color = AiTone.Muted, fontSize = 10.5.sp)
+        }
+        if (quota == null) {
+            Text("模型额度未设置，暂不计算使用/剩余百分比", color = AiTone.Muted, fontSize = 10.5.sp)
+        } else {
+            LinearProgressIndicator(
+                progress = { (used.toFloat() / quota).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(5.dp).clip(AiPillShape),
+                color = if (used > quota) AiTone.Warning else AiTone.Mint,
+                trackColor = AiTone.MintSoft,
             )
-            previous = point
+            Row(Modifier.fillMaxWidth()) {
+                Text("额度 ${compactTokensLong(quota)} · 已用 $usedPercent%", color = AiTone.Muted, fontSize = 10.5.sp)
+                Spacer(Modifier.weight(1f))
+                Text("剩余 $remainingPercent%", color = if (remainingPercent == 0) AiTone.Warning else AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -1050,6 +1363,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var showHistory by remember { mutableStateOf(false) }
     var conversations by remember { mutableStateOf<List<AiConversation>>(emptyList()) }
     var loadingConversations by remember { mutableStateOf(false) }
+    var expandedHistoryDays by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
+    var editingConversationId by remember { mutableStateOf<String?>(null) }
+    var editingConversationTitle by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size, sending, pendingConfirmation) {
@@ -1099,7 +1415,10 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                         if (showHistory && conversations.isEmpty() && !loadingConversations) {
                             loadingConversations = true
                             scope.launch {
-                                runCatching { client.listConversations() }.onSuccess { conversations = it }
+                                runCatching { client.listConversations() }.onSuccess {
+                                    conversations = it
+                                    expandedHistoryDays = aiHistoryDays(it).firstOrNull()?.let { day -> setOf(day.date) }.orEmpty()
+                                }
                                 loadingConversations = false
                             }
                         }
@@ -1152,29 +1471,129 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     when {
                         loadingConversations -> Text("读取中…", color = AiTone.Muted, fontSize = 12.sp)
                         conversations.isEmpty() -> Text("还没有历史对话。", color = AiTone.Muted, fontSize = 12.sp)
-                        else -> conversations.take(12).forEach { convo ->
-                            val current = convo.id == conversationId
-                            Row(
-                                Modifier.fillMaxWidth().clip(AiControlShape).background(if (current) AiTone.MintSoft else AiTone.Field).aiTap {
-                                    if (!current) {
-                                        scope.launch {
-                                            loadingConversations = true
-                                            runCatching { client.conversationMessages(convo.id) }
-                                                .onSuccess { loaded ->
-                                                    AiChatSession.conversationId = convo.id
-                                                    conversationId = convo.id
-                                                    messages.clear()
-                                                    if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
+                        else -> {
+                            val days = aiHistoryDays(conversations)
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                days.forEach { day ->
+                                    val expanded = day.date in expandedHistoryDays
+                                    item(key = "history-day-${day.date}") {
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth().clip(AiControlShape).aiTap {
+                                                expandedHistoryDays = if (expanded) {
+                                                    expandedHistoryDays - day.date
+                                                } else {
+                                                    expandedHistoryDays + day.date
                                                 }
-                                            loadingConversations = false
+                                            },
+                                            shape = AiControlShape,
+                                            color = AiTone.Field,
+                                            border = BorderStroke(1.dp, AiTone.Border.copy(alpha = .9f)),
+                                            tonalElevation = 0.dp,
+                                            shadowElevation = 0.dp,
+                                        ) {
+                                            Row(
+                                                Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Text(day.label, color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Spacer(Modifier.width(7.dp))
+                                                Text("${day.conversations.size} 条", color = AiTone.Muted, fontSize = 10.5.sp, fontWeight = FontWeight.Medium)
+                                                Spacer(Modifier.weight(1f))
+                                                Icon(
+                                                    if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                                    if (expanded) "收起 ${day.label} 对话" else "展开 ${day.label} 对话",
+                                                    tint = AiTone.Muted,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
                                         }
                                     }
-                                    showHistory = false
-                                }.padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(convo.title.ifBlank { "对话 ${convo.updatedAt.take(16)}" }, color = AiTone.Ink, fontSize = 12.sp, fontWeight = if (current) FontWeight.Bold else FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
-                                if (current) Text("当前", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                    if (expanded) {
+                                        items(day.conversations, key = { "history-${it.id}" }) { convo ->
+                                            val current = convo.id == conversationId
+                                            Column(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(start = 6.dp)
+                                                    .clip(AiControlShape)
+                                                    .background(if (current) AiTone.MintSoft else AiTone.Field),
+                                            ) {
+                                                Row(
+                                                    Modifier.fillMaxWidth().aiTap {
+                                                        if (!current) {
+                                                            scope.launch {
+                                                                loadingConversations = true
+                                                                runCatching { client.conversationMessages(convo.id) }
+                                                                    .onSuccess { loaded ->
+                                                                        AiChatSession.conversationId = convo.id
+                                                                        conversationId = convo.id
+                                                                        messages.clear()
+                                                                        if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
+                                                                        expandedHistoryDays += aiHistoryDate(convo.updatedAt)
+                                                                    }
+                                                                loadingConversations = false
+                                                            }
+                                                        }
+                                                        showHistory = false
+                                                    }.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Text(
+                                                        convo.title.ifBlank { "对话 ${convo.updatedAt.take(16)}" },
+                                                        color = AiTone.Ink,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (current) FontWeight.Bold else FontWeight.Medium,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f),
+                                                    )
+                                                    Text(
+                                                        "编辑",
+                                                        color = AiTone.MintDark,
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.aiTap {
+                                                            editingConversationId = convo.id
+                                                            editingConversationTitle = convo.title
+                                                        }.padding(horizontal = 7.dp, vertical = 4.dp),
+                                                    )
+                                                    if (current) Text("当前", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                if (editingConversationId == convo.id) {
+                                                    Row(
+                                                        Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                    ) {
+                                                        BasicTextField(
+                                                            value = editingConversationTitle,
+                                                            onValueChange = { editingConversationTitle = it.take(40) },
+                                                            singleLine = true,
+                                                            textStyle = TextStyle(color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Medium),
+                                                            cursorBrush = SolidColor(AiTone.Mint),
+                                                            modifier = Modifier.weight(1f).clip(AiPillShape).background(AiTone.Surface).padding(horizontal = 10.dp, vertical = 8.dp),
+                                                        )
+                                                        Text("取消", color = AiTone.Muted, fontSize = 10.5.sp, modifier = Modifier.aiTap { editingConversationId = null }.padding(7.dp))
+                                                        Text("保存", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap(enabled = editingConversationTitle.isNotBlank()) {
+                                                            scope.launch {
+                                                                runCatching { client.renameConversation(convo.id, editingConversationTitle) }
+                                                                    .onSuccess { renamed ->
+                                                                        conversations = conversations.map { row ->
+                                                                            if (row.id == convo.id) row.copy(title = renamed.title) else row
+                                                                        }
+                                                                        editingConversationId = null
+                                                                    }
+                                                                    .onFailure { messages += AiMessage("assistant", "重命名失败：${it.message ?: "未知错误"}") }
+                                                            }
+                                                        }.padding(7.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1237,7 +1656,19 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                     scope.launch {
                                         runCatching {
                                             client.confirmHubTool(confirmation.confirmationId)
-                                            if (confirmation.executor == "app") localTools.execute(confirmation) else "操作已完成"
+                                            if (confirmation.executor == "app") {
+                                                runCatching { localTools.execute(confirmation) }.fold(
+                                                    onSuccess = { message ->
+                                                        client.completeClientTool(confirmation.confirmationId, true, message)
+                                                        message
+                                                    },
+                                                    onFailure = { error ->
+                                                        val message = error.message ?: "本机操作失败"
+                                                        client.completeClientTool(confirmation.confirmationId, false, message)
+                                                        throw error
+                                                    },
+                                                )
+                                            } else "操作已完成"
                                         }.onSuccess { messages += AiMessage("assistant", it); pendingConfirmation = null }
                                             .onFailure { messages += AiMessage("assistant", "执行失败：${it.message ?: "未知错误"}") }
                                         sending = false
@@ -1269,17 +1700,15 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 val text = input.trim()
                 input = ""
                 messages += AiMessage("user", text)
-                // Hub caps a request at 80 messages; send only the latest turns.
-                val history = messages.toList().takeLast(40)
                 sending = true
                 scope.launch {
-                    runCatching { client.chat(history, conversationId) }
+                    runCatching { client.chat(text, conversationId) }
                         .onSuccess {
                             conversationId = it.conversationId ?: conversationId
                             AiChatSession.conversationId = conversationId
+                            while (messages.size >= 120) messages.removeAt(0)
                             messages += AiMessage("assistant", "")
                             val replyIndex = messages.lastIndex
-                            while (messages.size > 120) messages.removeAt(0)
                             usage = it.usage
                             usageKnown = it.usageKnown || it.usage.total > 0
                             pendingConfirmation = it.confirmation

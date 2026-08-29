@@ -103,7 +103,7 @@ jobs:
               'AgentUpdateCoordinator.bind(prefs)',
               'setPrimaryClip(ClipData.newPlainText("极客网探", text))',
               'toast(ctx, "已复制")',
-              'AiFloatingPet { onNavigate("ai_chat") }',
+              'val assistantRoutes = setOf("ai_settings", "ai_chat", "ai_usage")',
               'Text("AI 助手"',
               '"配置 DeepSeek API"',
           ]
@@ -115,7 +115,7 @@ jobs:
           assert 'fun AppPrefs.syncHomeVpnFavoriteShortcuts(rows: List<Pair<String, String>>): Int {' in fav
           assert 'remoteEndpoint = wanUrl' in fav
           assert 'val backgroundAlpha = if (muted) .07f else .12f' in ui
-          assert 'fun AiFloatingPet(onOpen: () -> Unit)' in assistant
+          assert 'fun AiFloatingPet(visible: Boolean = true, onOpen: () -> Unit)' in assistant
           assert 'if (revealed) onOpen() else revealed = true' in assistant
           assert 'shadowElevation = 0.dp' in assistant
           assert 'OutlinedTextField' not in assistant

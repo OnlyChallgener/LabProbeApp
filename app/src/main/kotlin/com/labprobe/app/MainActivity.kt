@@ -116,6 +116,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.imageResource
@@ -1890,7 +1891,8 @@ fun LabProbeApp(prefs: AppPrefs) {
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("favorites") }
     var dailyReturnRoute by remember { mutableStateOf("events") }
-    var aiReturnRoute by remember { mutableStateOf("home") }
+    var aiChatReturnRoute by remember { mutableStateOf("home") }
+    var aiSettingsReturnRoute by remember { mutableStateOf("home") }
     var autoRefresh by remember { mutableStateOf("实时") }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
@@ -2060,7 +2062,8 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
-            if (target == "ai_settings") aiReturnRoute = if (route in mainRoutes) route else normalized
+            if (target == "ai_settings") aiSettingsReturnRoute = route
+            if (target == "ai_chat") aiChatReturnRoute = route
             route = target
         }
         BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
@@ -2074,8 +2077,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                 "device_traffic" -> "devices"
                 "device_detail" -> "devices"
                 "settings" -> settingsReturnRoute
-                "ai_settings" -> aiReturnRoute
-                "ai_chat" -> "ai_settings"
+                "ai_settings" -> aiSettingsReturnRoute
+                "ai_chat" -> aiChatReturnRoute
                 "ai_usage" -> "ai_settings"
                 "tool_nat_history" -> "tool_nat"
                 "tool_ssh_history" -> "tool_ssh"
@@ -2147,7 +2150,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         )
                         "tools" -> ToolsHomeScreen(prefs, topNav) {
                             toolReturnRoute = null
-                            if (it == "ai_settings") aiReturnRoute = "tools"
+                            if (it == "ai_settings") aiSettingsReturnRoute = "tools"
                             route = it
                         }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll(forceFull = true) } }, { dailyReturnRoute = "events"; route = "daily" }, topNav)
@@ -2167,15 +2170,25 @@ fun LabProbeApp(prefs: AppPrefs) {
                             autoRefresh = autoRefresh,
                             onAuto = { autoRefresh = it; prefs.autoRefresh = it },
                             onBack = { route = settingsReturnRoute },
-                            onOpenAi = { aiReturnRoute = "settings"; route = "ai_settings" },
+                            onOpenAi = { aiSettingsReturnRoute = "settings"; route = "ai_settings" },
                         )
-                        "ai_settings" -> AiSettingsScreen(context, prefs.hub, prefs.token, onBack = { route = aiReturnRoute }, onChat = { route = "ai_chat" }, onUsage = { route = "ai_usage" })
+                        "ai_settings" -> AiSettingsScreen(
+                            context,
+                            prefs.hub,
+                            prefs.token,
+                            onBack = { route = aiSettingsReturnRoute },
+                            onChat = {
+                                if (aiSettingsReturnRoute != "ai_chat") aiChatReturnRoute = aiSettingsReturnRoute
+                                route = "ai_chat"
+                            },
+                            onUsage = { route = "ai_usage" }
+                        )
                         "ai_chat" -> AiChatScreen(
                             context,
-                            onBack = { route = "home" },
+                            onBack = { route = aiChatReturnRoute },
                             onNavigate = { route = mapAssistantRoute(it) },
                             onRefreshData = { scope.launch { state.refreshAll(forceFull = true) } },
-                            onOpenSettings = { aiReturnRoute = "ai_chat"; route = "ai_settings" },
+                            onOpenSettings = { aiSettingsReturnRoute = "ai_chat"; route = "ai_settings" },
                         )
                         "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)
@@ -2203,6 +2216,16 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
+                    }
+                    val assistantRoutes = setOf("ai_settings", "ai_chat", "ai_usage")
+                    AiFloatingPet(
+                        visible = route !in assistantRoutes &&
+                            LocalWindowInfo.current.isWindowFocused &&
+                            !showUpdateDialog &&
+                            !showUpdateBar
+                    ) {
+                        aiChatReturnRoute = route
+                        route = "ai_chat"
                     }
                 }
                 if (showUpdateDialog && latestUpdate != null) {
@@ -3490,7 +3513,6 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
             }
         }
     }
-    AiFloatingPet { onNavigate("ai_chat") }
     }
 }
 
