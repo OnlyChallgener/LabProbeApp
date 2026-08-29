@@ -1188,7 +1188,7 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
         selected?.let { index ->
             val slot = slots[index]
             val tooltipWidth = 214.dp
-            val center = (index + 0.5f) * slotWidth
+            val center = slotWidth * (index + 0.5f)
             val x = (center - tooltipWidth / 2).coerceIn(0.dp, maxWidth - tooltipWidth)
             Surface(
                 modifier = Modifier
