@@ -1922,12 +1922,6 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             usageKnown = it.usageKnown || it.usage.total > 0
                             pendingConfirmation = it.confirmation
                             sending = false
-                            it.clientActions.forEach { action ->
-                                when (action.type) {
-                                    "navigate" -> if (action.route.isNotBlank()) onNavigate(action.route)
-                                    "refresh" -> onRefreshData()
-                                }
-                            }
                             // Typewriter reveal; hub streams are not used by the APP yet.
                             var shown = 0
                             while (shown < it.content.length && messages.getOrNull(replyIndex) != null) {
@@ -1937,6 +1931,15 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             }
                             if (messages.getOrNull(replyIndex) != null && shown < it.content.length) {
                                 messages[replyIndex] = AiMessage("assistant", it.content)
+                            }
+                            // Navigate only after the reveal finishes: leaving the
+                            // composition cancels this scope and would freeze the
+                            // bubble mid-animation.
+                            it.clientActions.forEach { action ->
+                                when (action.type) {
+                                    "navigate" -> if (action.route.isNotBlank()) onNavigate(action.route)
+                                    "refresh" -> onRefreshData()
+                                }
                             }
                         }
                         .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
