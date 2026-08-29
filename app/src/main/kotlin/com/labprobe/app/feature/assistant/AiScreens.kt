@@ -908,7 +908,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Token 用量", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("近 14 天 · 不含今日", color = AiTone.Muted, fontSize = 10.sp)
+                    Text("自昨日起 14 天", color = AiTone.Muted, fontSize = 10.sp)
                 }
                 if (daily.isEmpty()) {
                     Text("还没有用量数据。", color = AiTone.Muted, fontSize = 12.sp)
@@ -1089,13 +1089,13 @@ private data class AiUsageSlot(
     val total: Int get() = prompt + completion
 }
 
-/** Fills the trailing 14 Beijing calendar days ending yesterday; today is still in progress. */
+/** 14 slots starting yesterday and growing forward; today is the second day. */
 private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<AiUsageSlot> {
     val byDate = daily.associateBy { it.date }
     return runCatching {
-        val today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
-        (days downTo 1).map { offset ->
-            val day = today.minusDays(offset.toLong()).toString()
+        val yesterday = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).minusDays(1)
+        (0 until days).map { offset ->
+            val day = yesterday.plusDays(offset.toLong()).toString()
             val source = byDate[day]
             val knownInput = (source?.promptTokens ?: 0).coerceAtLeast(0)
             val knownOutput = (source?.completionTokens ?: 0).coerceAtLeast(0)

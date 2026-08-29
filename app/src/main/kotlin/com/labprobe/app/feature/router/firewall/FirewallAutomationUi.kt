@@ -328,7 +328,6 @@ private fun FollowCard(accent: Color, content: @Composable ColumnScope.() -> Uni
         shadowElevation = 2.dp,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.fillMaxWidth().height(2.dp).background(accent.copy(alpha = .18f), CircleShape))
             content()
         }
     }
