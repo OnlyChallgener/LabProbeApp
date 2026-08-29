@@ -318,47 +318,94 @@ class AiApiClient(
         request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val root = JSONObject(text)
-            val content = root.optJSONObject("message")?.optString("content").orEmpty()
-            require(content.isNotBlank()) { "AI 返回为空" }
-            val usage = root.optJSONObject("usage")
-            val confirmation = root.optJSONObject("confirmation")?.let { confirmationRoot ->
-                val preview = confirmationRoot.optJSONObject("preview") ?: JSONObject()
-                val arguments = preview.optJSONObject("arguments") ?: JSONObject()
-                AiToolConfirmation(
-                    confirmationId = confirmationRoot.optString("confirmationId"),
-                    toolId = preview.optString("toolId"),
-                    title = preview.optString("title", "需要确认"),
-                    summary = preview.optString("summary"),
-                    executor = preview.optString("executor", "hub"),
-                    arguments = buildMap {
-                        val keys = arguments.keys()
-                        while (keys.hasNext()) {
-                            val key = keys.next()
-                            put(key, arguments.opt(key)?.toString().orEmpty())
+            parseChatReply(JSONObject(text))
+        }
+    }
+
+    /**
+     * 流式对话：消费 Hub 的 typed SSE（delta/tool/confirmation/done/error）。
+     * onDelta 在主线程收到增量文本；返回值以 done/confirmation 载荷为准。
+     * 首字节之前失败时由调用方回退到同步 chat()。
+     */
+    suspend fun chatStream(
+        message: String,
+        conversationId: String? = null,
+        onDelta: (String) -> Unit,
+        onReset: () -> Unit = {},
+    ): AiReply {
+        val current = settings.read()
+        require(current.enabled) { "请先启用 Hub AI" }
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        return withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("message", message)
+                .put("stream", true)
+                .apply {
+                    if (!conversationId.isNullOrBlank()) put("conversationId", conversationId)
+                    localContext()?.let { put("clientContext", it) }
+                }.toString()
+            request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body).use { response ->
+                if (!response.isSuccessful) error(apiFailure(response.code, response.body?.string().orEmpty()))
+                if (!response.header("Content-Type").orEmpty().contains("text/event-stream")) {
+                    // 旧 Hub 直接返回完整 JSON。
+                    return@withContext parseChatReply(JSONObject(response.body?.string().orEmpty()))
+                }
+                val reader = response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
+                    ?: error("Hub 返回了空数据流")
+                var reply: AiReply? = null
+                reader.useLines { lines ->
+                    for (raw in lines) {
+                        if (!isActive) break
+                        val line = raw.trim()
+                        if (line.isEmpty() || line.startsWith(":") || !line.startsWith("data:")) continue
+                        val event = JSONObject(line.removePrefix("data:").trim())
+                        when (event.optString("type")) {
+                            "delta" -> {
+                                val piece = event.optString("content")
+                                if (piece.isNotEmpty()) withContext(Dispatchers.Main) { onDelta(piece) }
+                            }
+                            "reset" -> withContext(Dispatchers.Main) { onReset() }
+                            "confirmation", "done" -> reply = parseChatReply(event)
+                            "error" -> error(event.optString("error").ifBlank { "AI 服务暂不可用" })
                         }
-                    },
-                    expiresAt = confirmationRoot.optString("expiresAt"),
-                )
-            }
-            AiReply(
-                content,
-                AiTokenSummary(
-                    prompt = usage?.optInt("prompt_tokens", 0) ?: 0,
-                    completion = usage?.optInt("completion_tokens", 0) ?: 0,
-                ),
-                conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
-                confirmation = confirmation,
-                usageKnown = root.optBoolean("usageKnown", true),
-                clientActions = buildList {
-                    val actions = root.optJSONArray("clientActions") ?: JSONArray()
-                    for (index in 0 until actions.length()) {
-                        val item = actions.optJSONObject(index) ?: continue
-                        val type = item.optString("type")
-                        if (type.isNotBlank()) add(AiClientAction(type, item.optString("route")))
+                        if (reply != null) break
                     }
-                },
-            )
+                }
+                reply ?: error("AI 返回为空")
+            }
+        }
+    }
+
+    /**
+     * 订阅 Hub 通知 SSE，阻塞直到连接断开。onNotification 在主线程回调。
+     * HTTP 层错误（旧 Hub 无此端点、鉴权失败）抛 IllegalStateException，
+     * 网络中断抛 IOException，调用方据此决定回退轮询还是重连。
+     */
+    suspend fun notificationsStream(afterId: Int, onNotification: (AiNotification) -> Unit) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        withContext(Dispatchers.IO) {
+            request(hubUrl.trimEnd('/') + "/api/ai/notifications/stream?after=$afterId", "GET", null).use { response ->
+                if (!response.isSuccessful) error(apiFailure(response.code, response.body?.string().orEmpty()))
+                val reader = response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
+                    ?: error("Hub 返回了空数据流")
+                reader.useLines { lines ->
+                    for (raw in lines) {
+                        if (!isActive) break
+                        val line = raw.trim()
+                        if (line.isEmpty() || line.startsWith(":") || !line.startsWith("data:")) continue
+                        val event = JSONObject(line.removePrefix("data:").trim())
+                        if (event.optString("type") != "notification") continue
+                        val item = event.optJSONObject("notification") ?: continue
+                        val row = AiNotification(
+                            id = item.optInt("id"),
+                            kind = item.optString("kind"),
+                            title = item.optString("title"),
+                            content = item.optString("content"),
+                        )
+                        withContext(Dispatchers.Main) { onNotification(row) }
+                    }
+                }
+            }
         }
     }
 
@@ -453,6 +500,49 @@ class AiApiClient(
         }
         return http.newCall(builder.build()).execute()
     }
+}
+
+private fun parseChatReply(root: JSONObject): AiReply {
+    val content = root.optJSONObject("message")?.optString("content").orEmpty()
+    require(content.isNotBlank()) { "AI 返回为空" }
+    val usage = root.optJSONObject("usage")
+    val confirmation = root.optJSONObject("confirmation")?.let { confirmationRoot ->
+        val preview = confirmationRoot.optJSONObject("preview") ?: JSONObject()
+        val arguments = preview.optJSONObject("arguments") ?: JSONObject()
+        AiToolConfirmation(
+            confirmationId = confirmationRoot.optString("confirmationId"),
+            toolId = preview.optString("toolId"),
+            title = preview.optString("title", "需要确认"),
+            summary = preview.optString("summary"),
+            executor = preview.optString("executor", "hub"),
+            arguments = buildMap {
+                val keys = arguments.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    put(key, arguments.opt(key)?.toString().orEmpty())
+                }
+            },
+            expiresAt = confirmationRoot.optString("expiresAt"),
+        )
+    }
+    return AiReply(
+        content,
+        AiTokenSummary(
+            prompt = usage?.optInt("prompt_tokens", 0) ?: 0,
+            completion = usage?.optInt("completion_tokens", 0) ?: 0,
+        ),
+        conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
+        confirmation = confirmation,
+        usageKnown = root.optBoolean("usageKnown", true),
+        clientActions = buildList {
+            val actions = root.optJSONArray("clientActions") ?: JSONArray()
+            for (index in 0 until actions.length()) {
+                val item = actions.optJSONObject(index) ?: continue
+                val type = item.optString("type")
+                if (type.isNotBlank()) add(AiClientAction(type, item.optString("route")))
+            }
+        },
+    )
 }
 
 private fun parseConfigBundle(root: JSONObject): AiConfigBundle {

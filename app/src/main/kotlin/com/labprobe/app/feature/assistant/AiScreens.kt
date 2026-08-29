@@ -1533,6 +1533,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
 
     LaunchedEffect(Unit) {
         if (!AiChatSession.loaded) {
+            // 先渲染欢迎语，恢复期间不再整屏空白
+            if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING)
+            val hints = launch { runCatching { client.catalog() }.onSuccess { toolHints = it; AiChatSession.toolHints = it } }
             runCatching { client.latestConversation() }
                 .onSuccess { (id, history) ->
                     AiChatSession.conversationId = id
@@ -1542,21 +1545,35 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING) }
             AiChatSession.loaded = true
             conversationId = AiChatSession.conversationId
+            loadingHistory = false
+            hints.join()
+        } else {
+            loadingHistory = false
+            runCatching { client.catalog() }.onSuccess { toolHints = it; AiChatSession.toolHints = it }
         }
-        loadingHistory = false
-        runCatching { client.catalog() }.onSuccess { toolHints = it; AiChatSession.toolHints = it }
     }
     LaunchedEffect(Unit) {
         while (loadingHistory) delay(100)
-        while (true) {
-            runCatching { client.notifications(store.lastNotificationId()) }
-                .onSuccess { rows ->
-                    rows.forEach {
-                        messages += AiMessage("assistant", "${it.title}\n${it.content}")
-                        AiNotifier.notifyAssistantMessage(context, it.title, it.content)
-                    }
-                    rows.maxOfOrNull { it.id }?.let(store::saveLastNotificationId)
+        var streamBroken = false
+        fun deliver(row: AiNotification) {
+            messages += AiMessage("assistant", "${row.title}\n${row.content}")
+            AiNotifier.notifyAssistantMessage(context, row.title, row.content)
+            store.saveLastNotificationId(row.id)
+        }
+        while (isActive) {
+            if (!streamBroken) {
+                try {
+                    client.notificationsStream(store.lastNotificationId()) { row -> deliver(row) }
+                    continue
+                } catch (error: IllegalStateException) {
+                    streamBroken = true
+                } catch (error: Exception) {
+                    // 网络中断：稍后重连
                 }
+            }
+            runCatching { client.notifications(store.lastNotificationId()) }.onSuccess { rows ->
+                rows.forEach { deliver(it) }
+            }
             delay(15_000)
         }
     }
@@ -1864,7 +1881,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                     sending = true
                                     scope.launch {
                                         runCatching {
-                                            client.confirmHubTool(confirmation.confirmationId)
+                                            val hubMessage = client.confirmHubTool(confirmation.confirmationId)
                                             if (confirmation.executor == "app") {
                                                 runCatching { localTools.execute(confirmation) }.fold(
                                                     onSuccess = { message ->
@@ -1877,7 +1894,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                         throw error
                                                     },
                                                 )
-                                            } else "操作已完成"
+                                            } else hubMessage
                                         }.onSuccess { messages += AiMessage("assistant", it); pendingConfirmation = null }
                                             .onFailure { messages += AiMessage("assistant", "执行失败：${it.message ?: "未知错误"}") }
                                         sending = false
@@ -1911,38 +1928,79 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 messages += AiMessage("user", text)
                 sending = true
                 scope.launch {
-                    runCatching { client.chat(text, conversationId) }
-                        .onSuccess {
-                            conversationId = it.conversationId ?: conversationId
-                            AiChatSession.conversationId = conversationId
-                            while (messages.size >= 120) messages.removeAt(0)
+                    var streamed = false
+                    var liveIndex: Int? = null
+                    val outcome = runCatching {
+                        fun liveBubble(): Int {
+                            val index = liveIndex
+                            if (index != null && messages.getOrNull(index) != null) return index
                             messages += AiMessage("assistant", "")
-                            val replyIndex = messages.lastIndex
-                            usage = it.usage
-                            usageKnown = it.usageKnown || it.usage.total > 0
-                            pendingConfirmation = it.confirmation
-                            sending = false
-                            // Typewriter reveal; hub streams are not used by the APP yet.
-                            var shown = 0
-                            while (shown < it.content.length && messages.getOrNull(replyIndex) != null) {
-                                shown = (shown + maxOf(1, it.content.length / 60)).coerceAtMost(it.content.length)
-                                messages[replyIndex] = AiMessage("assistant", it.content.substring(0, shown))
-                                delay(16)
-                            }
-                            if (messages.getOrNull(replyIndex) != null && shown < it.content.length) {
-                                messages[replyIndex] = AiMessage("assistant", it.content)
-                            }
-                            // Navigate only after the reveal finishes: leaving the
-                            // composition cancels this scope and would freeze the
-                            // bubble mid-animation.
-                            it.clientActions.forEach { action ->
-                                when (action.type) {
-                                    "navigate" -> if (action.route.isNotBlank()) onNavigate(action.route)
-                                    "refresh" -> onRefreshData()
-                                }
+                            val created = messages.lastIndex
+                            liveIndex = created
+                            return created
+                        }
+                        try {
+                            client.chatStream(
+                                text, conversationId,
+                                onDelta = { piece ->
+                                    streamed = true
+                                    val index = liveBubble()
+                                    messages[index] = AiMessage("assistant", messages[index].content + piece)
+                                },
+                                onReset = {
+                                    liveIndex?.let { index ->
+                                        if (messages.getOrNull(index) != null) messages[index] = AiMessage("assistant", "")
+                                    }
+                                },
+                            )
+                        } catch (error: Throwable) {
+                            // 首字节前失败（旧 Hub / 网络瞬断）→ 回退同步请求；已输出增量则不重复请求
+                            if (streamed) throw error
+                            liveIndex = null
+                            client.chat(text, conversationId)
+                        }
+                    }
+                    outcome.onSuccess { reply ->
+                        conversationId = reply.conversationId ?: conversationId
+                        AiChatSession.conversationId = conversationId
+                        if (streamed) {
+                            val index = liveIndex
+                            val existing = index?.let { messages.getOrNull(it) }
+                            when {
+                                existing != null && index != null ->
+                                    messages[index] = AiMessage("assistant", reply.content.ifBlank { existing.content })
+                                reply.content.isNotBlank() -> messages += AiMessage("assistant", reply.content)
                             }
                         }
-                        .onFailure { messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}") }
+                        while (messages.size >= 120) messages.removeAt(0)
+                        usage = reply.usage
+                        usageKnown = reply.usageKnown || reply.usage.total > 0
+                        pendingConfirmation = reply.confirmation
+                        if (!streamed) {
+                            messages += AiMessage("assistant", "")
+                            val replyIndex = messages.lastIndex
+                            // 打字机揭示仅用于同步回退路径；流式路径由真实增量驱动
+                            var shown = 0
+                            while (shown < reply.content.length && messages.getOrNull(replyIndex) != null) {
+                                shown = (shown + maxOf(1, reply.content.length / 60)).coerceAtMost(reply.content.length)
+                                messages[replyIndex] = AiMessage("assistant", reply.content.substring(0, shown))
+                                delay(16)
+                            }
+                            if (messages.getOrNull(replyIndex) != null && shown < reply.content.length) {
+                                messages[replyIndex] = AiMessage("assistant", reply.content)
+                            }
+                        }
+                        // Navigate only after the bubble is final: leaving the
+                        // composition cancels this scope mid-navigation.
+                        reply.clientActions.forEach { action ->
+                            when (action.type) {
+                                "navigate" -> if (action.route.isNotBlank()) onNavigate(action.route)
+                                "refresh" -> onRefreshData()
+                            }
+                        }
+                    }.onFailure {
+                        messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}")
+                    }
                     sending = false
                 }
             }
