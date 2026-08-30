@@ -578,6 +578,8 @@ fun AiSettingsScreen(
     var settings by remember { mutableStateOf(store.read()) }
     var configs by remember { mutableStateOf<List<AiProviderConfig>>(emptyList()) }
     var loadingConfigs by remember { mutableStateOf(true) }
+    var configsError by remember { mutableStateOf<String?>(null) }
+    var configLoadGeneration by remember { mutableStateOf(0L) }
     var editingId by remember { mutableStateOf<String?>(null) }
     var configName by remember { mutableStateOf("") }
     var configProvider by remember { mutableStateOf("openai_compatible") }
@@ -616,15 +618,30 @@ fun AiSettingsScreen(
         settings = local
     }
 
-    LaunchedEffect(hubUrl, hubToken) {
-        runCatching { client.configs() }
-            .onSuccess { bundle ->
-                configs = bundle.configs
-                syncLocalSettings(bundle.configs)
-            }
-            .onFailure { state = AiConnectionState.Failure(it.message ?: "读取配置失败") }
-        loadingConfigs = false
+    suspend fun loadConfigs(clearExisting: Boolean = false) {
+        configLoadGeneration += 1
+        val generation = configLoadGeneration
+        loadingConfigs = true
+        configsError = null
+        if (clearExisting) configs = emptyList()
+        try {
+            val bundle = client.configs()
+            if (generation != configLoadGeneration) return
+            configs = bundle.configs
+            syncLocalSettings(bundle.configs)
+            state = AiConnectionState.Idle
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Throwable) {
+            if (generation != configLoadGeneration) return
+            // 读取失败表示“无法确认”，不能据此断言 Hub 中没有配置或配置仍然存在。
+            configsError = error.message ?: "读取配置失败"
+            state = AiConnectionState.Failure(error.message ?: "读取配置失败")
+        } finally {
+            if (generation == configLoadGeneration) loadingConfigs = false
+        }
     }
+    LaunchedEffect(hubUrl, hubToken) { loadConfigs(clearExisting = true) }
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
@@ -636,7 +653,7 @@ fun AiSettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("API 配置", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Text("按顺序尝试；当前项不可用时自动切换下一个", color = AiTone.Muted, fontSize = 10.5.sp)
+                        Text("使用第一个启用的配置；不可用时对话中会提醒你切换", color = AiTone.Muted, fontSize = 10.5.sp)
                     }
                     AiAction("添加", modifier = Modifier.width(64.dp), primary = true, compact = true) {
                         beginEdit(AiProviderConfig(name = "新配置", hasApiKey = false))
@@ -647,8 +664,7 @@ fun AiSettingsScreen(
                         Modifier.fillMaxWidth().height(4.dp).clip(AiPillShape),
                         color = AiTone.Mint, trackColor = AiTone.MintSoft,
                     )
-                    configs.isEmpty() -> Text("还没有 API 配置，点右上角“添加”。", color = AiTone.Muted, fontSize = 11.sp)
-                    else -> configs.forEachIndexed { index, config ->
+                    configs.isNotEmpty() && configsError == null -> configs.forEachIndexed { index, config ->
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = if (config.enabled) AiTone.Field else AiTone.Surface,
@@ -716,6 +732,16 @@ fun AiSettingsScreen(
                             }
                         }
                     }
+                    configsError != null -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(
+                            "配置读取失败：$configsError\n（未能确认当前配置；本次读取没有修改 Hub 数据）",
+                            color = AiTone.Danger, fontSize = 11.sp, lineHeight = 16.sp,
+                        )
+                        AiAction("重新读取", modifier = Modifier.fillMaxWidth(), primary = true, compact = true) {
+                            scope.launch { loadConfigs() }
+                        }
+                    }
+                    else -> Text("还没有 API 配置，点右上角“添加”。", color = AiTone.Muted, fontSize = 11.sp)
                 }
             }
         }
@@ -1631,27 +1657,18 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     }
     LaunchedEffect(Unit) {
         while (loadingHistory) delay(100)
-        var streamBroken = false
         fun deliver(row: AiNotification) {
             messages += AiMessage("assistant", "${row.title}\n${row.content}")
             AiNotifier.notifyAssistantMessage(context, row.title, row.content)
             store.saveLastNotificationId(row.id)
         }
         while (isActive) {
-            if (!streamBroken) {
-                try {
-                    client.notificationsStream(store.lastNotificationId()) { row -> deliver(row) }
-                    continue
-                } catch (cancel: CancellationException) {
-                    throw cancel
-                } catch (error: IllegalStateException) {
-                    streamBroken = true
-                } catch (error: Exception) {
-                    // 网络中断：稍后重连
-                }
-            }
-            runCatching { client.notifications(store.lastNotificationId()) }.onSuccess { rows ->
-                rows.forEach { deliver(it) }
+            try {
+                client.notifications(store.lastNotificationId()).forEach { deliver(it) }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                // 短轮询失败留到下一轮重试，不长期占用代理或 Hub 连接。
             }
             delay(15_000)
         }
