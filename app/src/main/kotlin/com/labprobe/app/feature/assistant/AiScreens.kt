@@ -14,6 +14,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -1384,7 +1385,7 @@ private fun AiTooltipRow(color: Color, label: String, tokens: Int) {
 }
 
 @Composable
-private fun AiQuotaUsageRow(usage: AiConfigUsage) {
+private fun AiQuotaUsageRow(usage: AiConfigUsage, onEdit: (() -> Unit)? = null) {
     val quota = usage.tokenQuota?.takeIf { it > 0 }
     val used = usage.totalTokens.coerceAtLeast(0)
     val usedPercent = quota?.let { ((used.coerceAtMost(it) * 100.0) / it).toInt() }
@@ -1399,6 +1400,12 @@ private fun AiQuotaUsageRow(usage: AiConfigUsage) {
                 if (usage.name.isNotBlank() && usage.model.isNotBlank() && usage.name != usage.model) {
                     Text(usage.model, color = AiTone.Muted, fontSize = 10.5.sp)
                 }
+            }
+            if (onEdit != null) {
+                Text(
+                    "校准", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.aiTap { onEdit() }.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
             }
             Text("已用 ${compactTokensLong(used)}", color = AiTone.Muted, fontSize = 10.5.sp)
         }
@@ -1830,6 +1837,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var showHistory by remember { mutableStateOf(false) }
     var multiSelectHistory by remember { mutableStateOf(false) }
     var selectedHistoryIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var historyBusy by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
     var conversations by remember { mutableStateOf<List<AiConversation>>(emptyList()) }
     var loadingConversations by remember { mutableStateOf(false) }
     var expandedHistoryDays by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
