@@ -7,7 +7,9 @@ import android.content.ContextWrapper
 import android.app.Activity
 import com.labprobe.app.feature.router.ipv6.Ipv6Screen
 import com.labprobe.app.feature.assistant.AiFloatingPet
-import com.labprobe.app.feature.assistant.AiForeground
+import com.labprobe.app.feature.assistant.AiApiClient
+import com.labprobe.app.feature.assistant.AiNotifier
+import com.labprobe.app.feature.assistant.AiSettingsStore
 import com.labprobe.app.feature.assistant.AiSettingsScreen
 import com.labprobe.app.feature.assistant.AiChatScreen
 import com.labprobe.app.feature.assistant.AiUsageScreen
@@ -253,15 +255,6 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
     }
 
-    override fun onResume() {
-        super.onResume()
-        AiForeground.visible = true
-    }
-
-    override fun onPause() {
-        super.onPause()
-        AiForeground.visible = false
-    }
 }
 
 /** Route requested from outside the composable tree (e.g. notification tap). */
@@ -1902,6 +1895,27 @@ fun LabProbeApp(prefs: AppPrefs) {
         if (granted) CertificateReminderCenter.notifyDue(context, prefs)
     }
     LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
+    // Keep AI notices alive for the main UI lifetime. They are system notifications,
+    // never synthetic chat messages or model context.
+    LaunchedEffect(prefs.hub, prefs.token) {
+        val aiStore = AiSettingsStore(context)
+        val aiClient = AiApiClient(aiStore, prefs.hub, prefs.token, appPrefs = prefs)
+        if (prefs.hub.isBlank()) return@LaunchedEffect
+        while (isActive) {
+            try {
+                aiClient.notifications(aiStore.lastNotificationId(aiClient.identity)).forEach { row ->
+                    if (AiNotifier.notifyAssistantMessage(context, row.title, row.content)) {
+                        aiStore.saveLastNotificationId(aiClient.identity, row.id)
+                    }
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                // A later poll recovers; notification delivery must not affect chat state.
+            }
+            delay(15_000)
+        }
+    }
     DisposableEffect(context) {
         val activity = context.findActivity() as? ComponentActivity
         var startedOnce = false

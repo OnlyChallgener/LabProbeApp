@@ -6,14 +6,20 @@ import com.labprobe.app.favoriteShortcuts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /** 流式请求在响应建立前失败；请求是否到达 Hub 不可判定，因此不得自动重跑。 */
 class AiStreamNotEstablished(message: String) : IllegalStateException(message)
@@ -23,6 +29,7 @@ class AiStreamProtocolException(
     message: String,
     val conversationId: String? = null,
     val userMessageId: Int = 0,
+    val messageId: Int = 0,
 ) : IllegalStateException(message)
 
 /** Only non-secret AI preferences and the Hub-reported key status live on the device. */
@@ -47,9 +54,24 @@ class AiSettingsStore(context: Context) {
 
     fun deleteKey() = prefs.edit().putBoolean("has_key", false).apply()
 
-    fun lastNotificationId(): Int = prefs.getInt("last_notification_id", 0).coerceAtLeast(0)
+    fun lastNotificationId(hubIdentity: String): Int {
+        val key = notificationCursorKey(hubIdentity)
+        if (prefs.contains(key)) return prefs.getInt(key, 0).coerceAtLeast(0)
+        // Preserve the cursor written by older builds while moving away from the
+        // collision-prone String.hashCode preference key.
+        return prefs.getInt("last_notification_id_${hubIdentity.hashCode()}", 0).coerceAtLeast(0)
+    }
 
-    fun saveLastNotificationId(value: Int) = prefs.edit().putInt("last_notification_id", value.coerceAtLeast(0)).apply()
+    fun saveLastNotificationId(hubIdentity: String, value: Int) = prefs.edit()
+        .putInt(notificationCursorKey(hubIdentity), value.coerceAtLeast(0)).apply()
+
+    private fun notificationCursorKey(hubIdentity: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(hubIdentity.toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(it) }
+        return "last_notification_id_$digest"
+    }
 }
 
 class AiApiClient(
@@ -59,6 +81,8 @@ class AiApiClient(
     private val http: OkHttpClient = defaultAiHttpClient(),
     private val appPrefs: AppPrefs? = null,
 ) {
+    /** Hub URL plus credential partitions process caches and notification cursors. */
+    val identity: String = "${hubUrl.trimEnd('/')}#${hubToken.trim()}"
     suspend fun configs(): AiConfigBundle = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         request(hubUrl.trimEnd('/') + "/api/ai/config", "GET", null).use { response ->
@@ -319,6 +343,32 @@ class AiApiClient(
         }
     }
 
+    /** Always ask the Hub which confirmation is still pending for this conversation. */
+    suspend fun pendingConfirmation(conversationId: String): AiToolConfirmation? = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val encoded = java.net.URLEncoder.encode(conversationId, "UTF-8")
+        request("${hubUrl.trimEnd('/')}/api/ai/conversations/$encoded/confirmations", "GET", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+            val root = JSONObject(body)
+            val item = root.optJSONArray("confirmations")?.optJSONObject(0)
+                ?: root.optJSONObject("confirmation")
+                ?: root.takeIf { it.has("confirmationId") }
+            item?.let(::parseToolConfirmation)
+        }
+    }
+
+    /** Used after an ambiguous execute response; do not claim success without Hub state. */
+    suspend fun toolConfirmationStatus(confirmationId: String): String = withContext(Dispatchers.IO) {
+        val encoded = java.net.URLEncoder.encode(confirmationId, "UTF-8")
+        request("${hubUrl.trimEnd('/')}/api/ai/tools/confirmations/$encoded", "GET", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+            val root = JSONObject(body)
+            root.optString("status").ifBlank { root.optJSONObject("confirmation")?.optString("status").orEmpty() }
+        }
+    }
+
     suspend fun chat(message: String, conversationId: String? = null): AiReply = withContext(Dispatchers.IO) {
         val current = settings.read()
         require(current.enabled) { "请先启用 Hub AI" }
@@ -360,78 +410,66 @@ class AiApiClient(
                     localContext()?.let { put("clientContext", it) }
                 }.toString()
             val response = try {
-                request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body)
+                request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body, longRead = true)
             } catch (io: java.io.IOException) {
                 throw AiStreamNotEstablished("连接 Hub 失败：${io.message ?: "网络错误"}")
             }
             response.use {
                 if (!response.isSuccessful) {
-                    throw AiStreamProtocolException(apiFailure(response.code, response.body?.string().orEmpty()))
+                    throw streamProtocolFailure(response.code, response.body?.string().orEmpty())
                 }
                 if (!response.header("Content-Type").orEmpty().contains("text/event-stream")) {
                     // 旧 Hub 直接返回完整 JSON。
                     return@withContext parseChatReply(JSONObject(response.body?.string().orEmpty()))
                 }
-                val reader = response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
-                    ?: throw AiStreamProtocolException("Hub 返回了空数据流")
                 var reply: AiReply? = null
-                reader.useLines { lines ->
-                    for (raw in lines) {
-                        if (!isActive) break
-                        val line = raw.trim()
-                        if (line.isEmpty() || line.startsWith(":") || !line.startsWith("data:")) continue
-                        val event = JSONObject(line.removePrefix("data:").trim())
-                        when (event.optString("type")) {
-                            "delta" -> {
-                                val piece = event.optString("content")
-                                if (piece.isNotEmpty()) withContext(Dispatchers.Main) { onDelta(piece) }
+                var eventConversationId: String? = conversationId
+                var eventUserMessageId = 0
+                try {
+                    val reader = response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
+                        ?: throw AiStreamProtocolException("Hub 返回了空数据流", eventConversationId, eventUserMessageId)
+                    reader.useLines { lines ->
+                        for (raw in lines) {
+                            if (!isActive) break
+                            val line = raw.trim()
+                            if (line.isEmpty() || line.startsWith(":") || !line.startsWith("data:")) continue
+                            val event = try {
+                                JSONObject(line.removePrefix("data:").trim())
+                            } catch (error: Throwable) {
+                                throw AiStreamProtocolException("AI 流数据格式错误：${error.message ?: "无法解析"}", eventConversationId, eventUserMessageId)
                             }
-                            "reset" -> withContext(Dispatchers.Main) { onReset() }
-                            "confirmation", "done" -> reply = parseChatReply(event)
-                            "error" -> throw AiStreamProtocolException(
-                                message = event.optString("error").ifBlank { "AI 服务暂不可用" },
-                                conversationId = event.optString("conversationId").takeIf { it.isNotBlank() },
-                                userMessageId = event.optInt("userMessageId"),
-                            )
+                            eventConversationId = event.optString("conversationId").takeIf { it.isNotBlank() } ?: eventConversationId
+                            eventUserMessageId = event.optInt("userMessageId", eventUserMessageId)
+                            when (event.optString("type")) {
+                                "delta" -> {
+                                    val piece = event.optString("content")
+                                    if (piece.isNotEmpty()) withContext(Dispatchers.Main) { onDelta(piece) }
+                                }
+                                "reset" -> withContext(Dispatchers.Main) { onReset() }
+                                "confirmation", "done" -> reply = try {
+                                    parseChatReply(event)
+                                } catch (error: Throwable) {
+                                    throw AiStreamProtocolException("AI 流响应无效：${error.message ?: "无法解析"}", eventConversationId, eventUserMessageId)
+                                }
+                                "error" -> throw AiStreamProtocolException(
+                                    message = event.optString("error").ifBlank { "AI 服务暂不可用" },
+                                    conversationId = eventConversationId,
+                                    userMessageId = eventUserMessageId,
+                                    messageId = event.optInt("messageId"),
+                                )
+                            }
+                            if (reply != null) break
                         }
-                        if (reply != null) break
                     }
+                } catch (io: java.io.IOException) {
+                    throw AiStreamProtocolException(
+                        message = "AI 流连接中断：${io.message ?: "网络连接已断开"}",
+                        conversationId = eventConversationId,
+                        userMessageId = eventUserMessageId,
+                    )
                 }
                 if (reply == null) ensureActive()
-                reply ?: throw AiStreamProtocolException("AI 返回为空")
-            }
-        }
-    }
-
-    /**
-     * 订阅 Hub 通知 SSE，阻塞直到连接断开。onNotification 在主线程回调。
-     * HTTP 层错误（旧 Hub 无此端点、鉴权失败）抛 IllegalStateException，
-     * 网络中断抛 IOException，调用方据此决定回退轮询还是重连。
-     */
-    suspend fun notificationsStream(afterId: Int, onNotification: (AiNotification) -> Unit) {
-        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        withContext(Dispatchers.IO) {
-            request(hubUrl.trimEnd('/') + "/api/ai/notifications/stream?after=$afterId", "GET", null).use { response ->
-                if (!response.isSuccessful) error(apiFailure(response.code, response.body?.string().orEmpty()))
-                val reader = response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
-                    ?: error("Hub 返回了空数据流")
-                reader.useLines { lines ->
-                    for (raw in lines) {
-                        if (!isActive) break
-                        val line = raw.trim()
-                        if (line.isEmpty() || line.startsWith(":") || !line.startsWith("data:")) continue
-                        val event = JSONObject(line.removePrefix("data:").trim())
-                        if (event.optString("type") != "notification") continue
-                        val item = event.optJSONObject("notification") ?: continue
-                        val row = AiNotification(
-                            id = item.optInt("id"),
-                            kind = item.optString("kind"),
-                            title = item.optString("title"),
-                            content = item.optString("content"),
-                        )
-                        withContext(Dispatchers.Main) { onNotification(row) }
-                    }
-                }
+                reply ?: throw AiStreamProtocolException("AI 返回为空", eventConversationId, eventUserMessageId)
             }
         }
     }
@@ -443,6 +481,15 @@ class AiApiClient(
             if (!response.isSuccessful) error(apiFailure(response.code, text))
             val result = JSONObject(text).optJSONObject("result") ?: JSONObject()
             result.optString("message").ifBlank { "操作已完成" }
+        }
+    }
+
+    suspend fun cancelHubTool(confirmationId: String): String = withContext(Dispatchers.IO) {
+        val payload = JSONObject().put("confirmationId", confirmationId).toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/tools/cancel", "POST", payload).use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, text))
+            JSONObject(text).optJSONObject("result")?.optString("message").orEmpty().ifBlank { "操作已取消" }
         }
     }
 
@@ -504,9 +551,11 @@ class AiApiClient(
     }
 
     /** 手动校准某配置的累计用量（插入带符号的调整行，历史保留）。 */
-    suspend fun adjustUsage(configId: String, totalTokens: Long) = withContext(Dispatchers.IO) {
+    /** Hub applies the calibration and quota update atomically. */
+    suspend fun adjustUsage(configId: String, totalTokens: Long, tokenQuota: Long? = null, updateQuota: Boolean = false) = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
-        val payload = JSONObject().put("configId", configId).put("totalTokens", totalTokens).toString()
+        val payload = JSONObject().put("configId", configId).put("totalTokens", totalTokens)
+        if (updateQuota) payload.put("tokenQuota", tokenQuota ?: JSONObject.NULL)
         request(hubUrl.trimEnd('/') + "/api/ai/usage/adjust", "POST", payload).use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, body))
@@ -545,7 +594,7 @@ class AiApiClient(
     }
 
     private fun localContext(): JSONObject? = appPrefs?.let { prefs ->
-        JSONObject()
+        val root = JSONObject()
             .put("schemaVersion", 1)
             .put("settings", JSONObject()
                 .put("privacyMode", prefs.privacyMode)
@@ -557,14 +606,20 @@ class AiApiClient(
                         .put("id", item.id)
                         .put("title", item.title)
                         .put("description", item.description)
-                        .put("localUrl", item.localEndpoint.ifBlank { item.lanUrl })
-                        .put("remoteUrl", item.remoteEndpoint.ifBlank { item.wanUrl })
+                        .put("localUrl", aiSafeContextUrl(item.localEndpoint.ifBlank { item.lanUrl }))
+                        .put("remoteUrl", aiSafeContextUrl(item.remoteEndpoint.ifBlank { item.wanUrl }))
                         .put("serviceType", item.serviceType))
                 }
             })
+        val favorites = root.optJSONArray("favorites") ?: JSONArray()
+        while (root.toString().toByteArray(Charsets.UTF_8).size > 32 * 1024 && favorites.length() > 0) {
+            favorites.remove(favorites.length() - 1)
+        }
+        if (root.toString().toByteArray(Charsets.UTF_8).size <= 32 * 1024) root
+        else JSONObject().put("schemaVersion", 1) // Never exceed the Hub's 32 KiB client-context cap.
     }
 
-    private fun request(url: String, method: String, json: String?): okhttp3.Response {
+    private suspend fun request(url: String, method: String, json: String?, longRead: Boolean = false): okhttp3.Response {
         val builder = Request.Builder().url(url).header("Accept", "application/json")
         if (hubToken.isNotBlank()) builder.header("Authorization", "Bearer ${hubToken.trim()}")
         when (method) {
@@ -574,33 +629,39 @@ class AiApiClient(
             "DELETE" -> builder.delete()
             else -> builder.get()
         }
-        return http.newCall(builder.build()).execute()
+        return suspendCancellableCoroutine { continuation ->
+            // Stream setup still uses the short connect timeout; only an established SSE read gets longer.
+            val call = (if (longRead) http.newBuilder().readTimeout(120, TimeUnit.SECONDS).build() else http).newCall(builder.build())
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: java.io.IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
+                override fun onResponse(call: Call, response: okhttp3.Response) {
+                    if (continuation.isActive) continuation.resume(response) else response.close()
+                }
+            })
+        }
     }
+}
+
+private fun aiSafeContextUrl(raw: String): String {
+    if (raw.isBlank()) return ""
+    return runCatching {
+        val uri = java.net.URI(raw)
+        val query = uri.rawQuery?.split('&')?.joinToString("&") { part ->
+            val key = part.substringBefore('=')
+            if (key.contains(Regex("token|key|secret|pass|auth|sign|session", RegexOption.IGNORE_CASE))) "$key=<redacted>" else part
+        }
+        java.net.URI(uri.scheme, null, uri.host, uri.port, uri.rawPath, query, null).toString()
+    }.getOrDefault("")
 }
 
 private fun parseChatReply(root: JSONObject): AiReply {
     val content = root.optJSONObject("message")?.optString("content").orEmpty()
     require(content.isNotBlank()) { "AI 返回为空" }
     val usage = root.optJSONObject("usage")
-    val confirmation = root.optJSONObject("confirmation")?.let { confirmationRoot ->
-        val preview = confirmationRoot.optJSONObject("preview") ?: JSONObject()
-        val arguments = preview.optJSONObject("arguments") ?: JSONObject()
-        AiToolConfirmation(
-            confirmationId = confirmationRoot.optString("confirmationId"),
-            toolId = preview.optString("toolId"),
-            title = preview.optString("title", "需要确认"),
-            summary = preview.optString("summary"),
-            executor = preview.optString("executor", "hub"),
-            arguments = buildMap {
-                val keys = arguments.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    put(key, arguments.opt(key)?.toString().orEmpty())
-                }
-            },
-            expiresAt = confirmationRoot.optString("expiresAt"),
-        )
-    }
+    val confirmation = root.optJSONObject("confirmation")?.let(::parseToolConfirmation)
     return AiReply(
         content,
         AiTokenSummary(
@@ -620,6 +681,26 @@ private fun parseChatReply(root: JSONObject): AiReply {
                 if (type.isNotBlank()) add(AiClientAction(type, item.optString("route")))
             }
         },
+    )
+}
+
+private fun parseToolConfirmation(confirmationRoot: JSONObject): AiToolConfirmation {
+    val preview = confirmationRoot.optJSONObject("preview") ?: confirmationRoot
+    val arguments = preview.optJSONObject("arguments") ?: JSONObject()
+    return AiToolConfirmation(
+        confirmationId = confirmationRoot.optString("confirmationId", confirmationRoot.optString("id")),
+        toolId = preview.optString("toolId"),
+        title = preview.optString("title", "需要确认"),
+        summary = preview.optString("summary"),
+        executor = preview.optString("executor", "hub"),
+        arguments = buildMap {
+            val keys = arguments.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                put(key, arguments.opt(key)?.toString().orEmpty())
+            }
+        },
+        expiresAt = confirmationRoot.optString("expiresAt"),
     )
 }
 
@@ -684,6 +765,20 @@ private fun apiFailure(code: Int, body: String): String {
         else -> "请求失败"
     }
     return "HTTP $code：$detail"
+}
+
+/** Preserve the Hub-side persisted message identities even when SSE returns HTTP 4xx/5xx. */
+private fun streamProtocolFailure(code: Int, body: String): AiStreamProtocolException {
+    val root = runCatching { JSONObject(body) }.getOrNull()
+    val messageRoot = root?.optJSONObject("message")
+    return AiStreamProtocolException(
+        message = apiFailure(code, body),
+        conversationId = root?.optString("conversationId")?.takeIf { it.isNotBlank() },
+        userMessageId = root?.optInt("userMessageId") ?: 0,
+        messageId = root?.optInt("messageId")?.takeIf { it > 0 }
+            ?: messageRoot?.optInt("id")?.takeIf { it > 0 }
+            ?: 0,
+    )
 }
 
 private fun defaultAiHttpClient() = OkHttpClient.Builder()

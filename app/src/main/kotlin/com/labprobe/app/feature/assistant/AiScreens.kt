@@ -164,6 +164,16 @@ object AiChatSession {
     var conversationId: String? = null
     var loaded: Boolean = false
     var toolHints: List<AiToolHint> = emptyList()
+    var hubIdentity: String? = null
+
+    fun resetForHub(identity: String) {
+        if (hubIdentity == identity) return
+        hubIdentity = identity
+        messages.clear()
+        conversationId = null
+        loaded = false
+        toolHints = emptyList()
+    }
 }
 
 private val AiPanelShape = RoundedCornerShape(24.dp)
@@ -896,13 +906,13 @@ fun AiSettingsScreen(
 fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     val store = remember { AiSettingsStore(context) }
     val prefs = remember { AppPrefs(context) }
-    val client = remember { AiApiClient(store, prefs.hub, prefs.token) }
+    val client = remember(prefs.hub, prefs.token) { AiApiClient(store, prefs.hub, prefs.token) }
     val scope = rememberCoroutineScope()
-    var summary by remember { mutableStateOf(AiUsageSummary()) }
-    var message by remember { mutableStateOf("正在读取") }
-    var latestDayExpanded by remember { mutableStateOf(true) }
-    var expandedOlderDays by remember { mutableStateOf(setOf<String>()) }
-    var editingUsage by remember { mutableStateOf<AiConfigUsage?>(null) }
+    var summary by remember(client.identity) { mutableStateOf(AiUsageSummary()) }
+    var message by remember(client.identity) { mutableStateOf("正在读取") }
+    var latestDayExpanded by remember(client.identity) { mutableStateOf(true) }
+    var expandedOlderDays by remember(client.identity) { mutableStateOf(setOf<String>()) }
+    var editingUsage by remember(client.identity) { mutableStateOf<AiConfigUsage?>(null) }
     val refreshUsage: () -> Unit = {
         scope.launch {
             runCatching { client.usage() }
@@ -910,7 +920,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 .onFailure { message = it.message ?: "读取失败" }
         }
     }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(client.identity) {
         runCatching { client.usage() }
             .onSuccess { summary = it; message = "已更新" }
             .onFailure { message = it.message ?: "读取失败" }
@@ -918,6 +928,10 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     val daily = summary.daily
     val cacheHit = daily.sumOf { it.cacheHitTokens }
     val cacheMiss = daily.sumOf { it.cacheMissTokens }
+    val trendSlots = aiTrendSlots(daily)
+    val trendPeriodLabel = trendSlots.takeIf { it.isNotEmpty() }
+        ?.let { "${it.first().date.takeLast(5)} 至 ${it.last().date.takeLast(5)}" }
+        ?: "14 天"
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -966,7 +980,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Token 用量", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text("自昨日起 14 天", color = AiTone.Muted, fontSize = 10.sp)
+                    Text(trendPeriodLabel, color = AiTone.Muted, fontSize = 10.sp)
                 }
                 if (daily.isEmpty()) {
                     Text("还没有用量数据。", color = AiTone.Muted, fontSize = 12.sp)
@@ -980,6 +994,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                             AiUsageLegend(Color(0xFF68C6A6), "输入")
                         }
                         AiUsageLegend(AiTone.MintDark, "输出")
+                        if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准/其他")
                         Spacer(Modifier.weight(1f))
                         if (cacheHit + cacheMiss > 0) {
                             Text("缓存命中 ${cacheHit * 100 / (cacheHit + cacheMiss)}%", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
@@ -987,12 +1002,12 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                     }
                     AiDailyUsageBars(daily)
                     Spacer(Modifier.height(2.dp))
-                    val slots = aiTrendSlots(daily)
+                    val slots = trendSlots
                     Text("点击柱子查看当日明细", color = AiTone.Muted.copy(alpha = .8f), fontSize = 10.sp)
                     Row(Modifier.fillMaxWidth()) {
                         Text(slots.firstOrNull()?.date?.takeLast(5).orEmpty(), color = AiTone.Muted, fontSize = 10.5.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("峰值 ${compactTokens(daily.maxOfOrNull { it.totalTokens } ?: 0)}", color = AiTone.Muted, fontSize = 10.5.sp)
+                        Text("峰值 ${compactTokens(slots.maxOfOrNull { it.total } ?: 0)}", color = AiTone.Muted, fontSize = 10.5.sp)
                         Spacer(Modifier.weight(1f))
                         Text(slots.lastOrNull()?.date?.takeLast(5).orEmpty(), color = AiTone.Muted, fontSize = 10.5.sp)
                     }
@@ -1001,8 +1016,9 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
         }
         AiPanel {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text("模型分布（近 14 天）", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                val modelTotals = daily.flatMap { it.models.entries }
+                Text("模型分布（同上周期）", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                val trendDates = trendSlots.mapTo(mutableSetOf()) { it.date }
+                val modelTotals = daily.filter { it.date in trendDates }.flatMap { it.models.entries }
                     .groupingBy { it.key }
                     .fold(0L) { acc, entry -> acc + entry.value }
                     .filterValues { it > 0 }
@@ -1014,7 +1030,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                         HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
                         Text("API 配置额度（累计）", color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            "上方分布按模型统计近 14 天；下方为每个 API 配置的累计用量与设置额度的对比。",
+                            "上方分布按模型统计图表所示周期；下方为每个 API 配置的累计用量与设置额度的对比。",
                             color = AiTone.Muted.copy(alpha = .85f), fontSize = 10.sp, lineHeight = 14.sp,
                         )
                         summary.configUsage.forEach { usage ->
@@ -1060,8 +1076,8 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                                                 scope.launch {
                                                     runCatching { client.deleteUsageRecord(record.id) }
                                                         .onSuccess {
-                                                            summary = summary.copy(recent = summary.recent.filterNot { it.id == record.id })
-                                                            message = "记录已删除"
+                                                            message = "记录已删除，正在刷新统计"
+                                                            refreshUsage()
                                                         }
                                                         .onFailure { message = it.message ?: "删除失败" }
                                                 }
@@ -1086,16 +1102,13 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
             onSave = { usageTarget, quota ->
                 scope.launch {
                     runCatching {
-                        if (usageTarget >= 0) client.adjustUsage(target.configId, usageTarget)
-                        if (quota != target.tokenQuota) {
-                            client.saveProviderConfig(
-                                AiProviderConfig(
-                                    id = target.configId, name = target.name, provider = "",
-                                    model = target.model, baseUrl = "", hasApiKey = true,
-                                    tokenQuota = quota,
-                                ),
-                            )
-                        }
+                        require(usageTarget >= 0) { "请输入有效的累计用量" }
+                        client.adjustUsage(
+                            configId = target.configId,
+                            totalTokens = usageTarget,
+                            tokenQuota = quota,
+                            updateQuota = quota != target.tokenQuota,
+                        )
                     }
                         .onSuccess { editingUsage = null; message = "已更新"; refreshUsage() }
                         .onFailure { message = it.message ?: "更新失败" }
@@ -1225,35 +1238,37 @@ private data class AiUsageSlot(
     val date: String,
     val prompt: Int,
     val completion: Int,
+    val other: Int,
     val cacheHit: Int,
     val cacheMiss: Int,
 ) {
-    val total: Int get() = prompt + completion
+    val total: Int get() = prompt + completion + other
 }
 
-/** 14 slots starting yesterday and growing forward; today is the second day. */
+/** Use the user's actual visible period: 14 days from first data, otherwise latest 14 days. */
 private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<AiUsageSlot> {
     val byDate = daily.associateBy { it.date }
     return runCatching {
-        val yesterday = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).minusDays(1)
+        val dates = daily.mapNotNull { runCatching { LocalDate.parse(it.date) }.getOrNull() }
+        if (dates.isEmpty()) return@runCatching emptyList()
+        val first = dates.minOrNull()!!
+        val last = dates.maxOrNull()!!
+        val start = if (java.time.temporal.ChronoUnit.DAYS.between(first, last) < days - 1) first else last.minusDays((days - 1).toLong())
         (0 until days).map { offset ->
-            val day = yesterday.plusDays(offset.toLong()).toString()
+            val day = start.plusDays(offset.toLong()).toString()
             val source = byDate[day]
-            val knownInput = (source?.promptTokens ?: 0).coerceAtLeast(0)
-            val knownOutput = (source?.completionTokens ?: 0).coerceAtLeast(0)
             val total = (source?.totalTokens ?: 0).coerceAtLeast(0)
-            val cacheInput = ((source?.cacheHitTokens ?: 0) + (source?.cacheMissTokens ?: 0)).coerceAtLeast(0)
-            val prompt = when {
-                knownInput > 0 || knownOutput > 0 -> knownInput
-                cacheInput > 0 -> cacheInput.coerceAtMost(total)
-                else -> (total - knownOutput).coerceAtLeast(0)
-            }
-            val completion = if (knownInput > 0 || knownOutput > 0) knownOutput else (total - prompt).coerceAtLeast(0)
-            AiUsageSlot(day, prompt, completion, source?.cacheHitTokens ?: 0, source?.cacheMissTokens ?: 0)
+            val prompt = (source?.promptTokens ?: 0).coerceAtLeast(0).coerceAtMost(total)
+            val completion = (source?.completionTokens ?: 0).coerceAtLeast(0).coerceAtMost(total - prompt)
+            val other = (total - prompt - completion).coerceAtLeast(0)
+            AiUsageSlot(day, prompt, completion, other, (source?.cacheHitTokens ?: 0).coerceAtMost(prompt), (source?.cacheMissTokens ?: 0).coerceAtMost(prompt))
         }
     }.getOrElse {
         daily.takeLast(days).map { source ->
-            AiUsageSlot(source.date, source.promptTokens, source.completionTokens, source.cacheHitTokens, source.cacheMissTokens)
+            val total = source.totalTokens.coerceAtLeast(0)
+            val prompt = source.promptTokens.coerceAtLeast(0).coerceAtMost(total)
+            val completion = source.completionTokens.coerceAtLeast(0).coerceAtMost(total - prompt)
+            AiUsageSlot(source.date, prompt, completion, (total - prompt - completion).coerceAtLeast(0), source.cacheHitTokens.coerceAtMost(prompt), source.cacheMissTokens.coerceAtMost(prompt))
         }
     }
 }
@@ -1325,6 +1340,7 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
                     cacheHit to Color(0xFFBCEAD9),
                     cacheMiss to Color(0xFF68C6A6),
                     slot.completion to AiTone.MintDark,
+                    slot.other to AiTone.Warning,
                 ).forEach { (tokens, color) ->
                     if (tokens > 0) {
                         val height = usable * tokens.toFloat() / maxTokens
@@ -1367,6 +1383,7 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
                         if (hasCache) AiTooltipRow(Color(0xFFBCEAD9), "输入（命中缓存）", slot.cacheHit)
                         AiTooltipRow(Color(0xFF68C6A6), if (hasCache) "输入（未命中缓存）" else "输入", if (hasCache) slot.cacheMiss else slot.prompt)
                         AiTooltipRow(AiTone.MintDark, "输出", slot.completion)
+                        if (slot.other > 0) AiTooltipRow(AiTone.Warning, "校准/其他", slot.other)
                     }
                 }
             }
@@ -1587,9 +1604,14 @@ private fun AiMarkdownText(content: String, modifier: Modifier = Modifier) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AiChatBubble(message: AiMessage, onDelete: (() -> Unit)? = null) {
+private fun AiChatBubble(
+    message: AiMessage,
+    menuOpen: Boolean,
+    onOpenMenu: () -> Unit,
+    onDismissMenu: () -> Unit,
+    onDelete: (() -> Unit)? = null,
+) {
     val clipboard = LocalClipboardManager.current
-    var menuOpen by remember { mutableStateOf(false) }
     val user = message.role == "user"
     // 长按气泡边缘弹出菜单；直接长按文字则走系统文本选择（可局部复制）。
     val bubbleInteractionSource = remember { MutableInteractionSource() }
@@ -1599,7 +1621,7 @@ private fun AiChatBubble(message: AiMessage, onDelete: (() -> Unit)? = null) {
             interactionSource = bubbleInteractionSource,
             indication = null,
             onClick = {},
-            onLongClick = { menuOpen = true },
+            onLongClick = onOpenMenu,
         )
     val bubbleContent: @Composable () -> Unit = {
         if (user) {
@@ -1625,7 +1647,7 @@ private fun AiChatBubble(message: AiMessage, onDelete: (() -> Unit)? = null) {
                 ) {
                     SelectionContainer { bubbleContent() }
                 }
-                AiBubbleMenu(menuOpen, { menuOpen = false }, message.content, clipboard, onDelete)
+                AiBubbleMenu(menuOpen, onDismissMenu, message.content, clipboard, onDelete)
             }
         }
     } else {
@@ -1652,7 +1674,7 @@ private fun AiChatBubble(message: AiMessage, onDelete: (() -> Unit)? = null) {
                 ) {
                     SelectionContainer { bubbleContent() }
                 }
-                AiBubbleMenu(menuOpen, { menuOpen = false }, message.content, clipboard, onDelete)
+                AiBubbleMenu(menuOpen, onDismissMenu, message.content, clipboard, onDelete)
             }
         }
     }
@@ -1738,6 +1760,7 @@ private fun AiBubbleMenu(
     clipboard: ClipboardManager,
     onDelete: (() -> Unit)?,
 ) {
+    if (!expanded) return
     Popup(
         onDismissRequest = onDismiss,
         alignment = Alignment.TopEnd,
@@ -1820,31 +1843,34 @@ private fun AiTypingBubble() {
 fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}, onOpenSettings: () -> Unit = {}) {
     val store = remember { AiSettingsStore(context) }
     val prefs = remember { AppPrefs(context) }
-    val client = remember { AiApiClient(store, prefs.hub, prefs.token, appPrefs = prefs) }
+    val client = remember(prefs.hub, prefs.token) { AiApiClient(store, prefs.hub, prefs.token, appPrefs = prefs) }
     val localTools = remember { AiLocalToolExecutor(prefs) }
     val messages = AiChatSession.messages
-    var toolHints by remember { mutableStateOf(AiChatSession.toolHints) }
-    var pendingConfirmation by remember { mutableStateOf<AiToolConfirmation?>(null) }
-    var retryText by remember { mutableStateOf<String?>(null) }
-    var modelPickerOpen by remember { mutableStateOf(false) }
-    var pickerConfigs by remember { mutableStateOf<List<AiProviderConfig>>(emptyList()) }
-    var conversationId by remember { mutableStateOf(AiChatSession.conversationId) }
-    var loadingHistory by remember { mutableStateOf(!AiChatSession.loaded) }
-    var input by remember { mutableStateOf("") }
-    var sending by remember { mutableStateOf(false) }
-    var usage by remember { mutableStateOf(AiTokenSummary()) }
-    var usageKnown by remember { mutableStateOf(true) }
-    var showHistory by remember { mutableStateOf(false) }
-    var multiSelectHistory by remember { mutableStateOf(false) }
-    var selectedHistoryIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var historyBusy by remember { mutableStateOf(false) }
+    var toolHints by remember(client.identity) { mutableStateOf(AiChatSession.toolHints) }
+    var pendingConfirmation by remember(client.identity) { mutableStateOf<AiToolConfirmation?>(null) }
+    var retryText by remember(client.identity) { mutableStateOf<String?>(null) }
+    var modelPickerOpen by remember(client.identity) { mutableStateOf(false) }
+    var pickerConfigs by remember(client.identity) { mutableStateOf<List<AiProviderConfig>>(emptyList()) }
+    var conversationId by remember(client.identity) { mutableStateOf(AiChatSession.conversationId) }
+    var loadingHistory by remember(client.identity) { mutableStateOf(AiChatSession.hubIdentity != client.identity || !AiChatSession.loaded) }
+    var historyError by remember(client.identity) { mutableStateOf<String?>(null) }
+    var restoreNonce by remember(client.identity) { mutableStateOf(0) }
+    var input by remember(client.identity) { mutableStateOf("") }
+    var sending by remember(client.identity) { mutableStateOf(false) }
+    var usage by remember(client.identity) { mutableStateOf(AiTokenSummary()) }
+    var usageKnown by remember(client.identity) { mutableStateOf(true) }
+    var showHistory by remember(client.identity) { mutableStateOf(false) }
+    var multiSelectHistory by remember(client.identity) { mutableStateOf(false) }
+    var selectedHistoryIds by remember(client.identity) { mutableStateOf<Set<String>>(emptySet()) }
+    var historyBusy by remember(client.identity) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
-    var conversations by remember { mutableStateOf<List<AiConversation>>(emptyList()) }
-    var loadingConversations by remember { mutableStateOf(false) }
-    var expandedHistoryDays by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
-    var editingConversationId by remember { mutableStateOf<String?>(null) }
-    var editingConversationTitle by remember { mutableStateOf("") }
-    var pendingDeleteConversation by remember { mutableStateOf<AiConversation?>(null) }
+    var conversations by remember(client.identity) { mutableStateOf<List<AiConversation>>(emptyList()) }
+    var loadingConversations by remember(client.identity) { mutableStateOf(false) }
+    var expandedHistoryDays by remember(client.identity) { mutableStateOf<Set<LocalDate>>(emptySet()) }
+    var editingConversationId by remember(client.identity) { mutableStateOf<String?>(null) }
+    var editingConversationTitle by remember(client.identity) { mutableStateOf("") }
+    var pendingDeleteConversation by remember(client.identity) { mutableStateOf<AiConversation?>(null) }
+    var menuMessage by remember(client.identity) { mutableStateOf<AiMessage?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size, sending, pendingConfirmation) {
@@ -1852,7 +1878,15 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         if (target >= 0) runCatching { listState.animateScrollToItem(target) }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(client.identity, restoreNonce) {
+        val hubChanged = AiChatSession.hubIdentity != client.identity
+        AiChatSession.resetForHub(client.identity)
+        if (hubChanged) {
+            conversationId = null
+            pendingConfirmation = null
+            historyError = null
+            loadingHistory = true
+        }
         if (!AiChatSession.loaded) {
             // 先渲染欢迎语，恢复期间不再整屏空白
             if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING)
@@ -1863,35 +1897,29 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     messages.clear()
                     if (history.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(history)
                 }
-                .onFailure { if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING) }
-            AiChatSession.loaded = true
+                .onFailure { error ->
+                    historyError = "恢复最近对话失败：${error.message ?: "未知错误"}"
+                    if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING)
+                }
+            AiChatSession.loaded = historyError == null
             conversationId = AiChatSession.conversationId
+            if (conversationId != null && historyError == null) {
+                runCatching { client.pendingConfirmation(conversationId!!) }
+                    .onSuccess { pendingConfirmation = it }
+                    .onFailure { historyError = "读取待确认操作失败：${it.message ?: "未知错误"}" }
+            }
             loadingHistory = false
             hints.join()
         } else {
             loadingHistory = false
             runCatching { client.catalog() }.onSuccess { toolHints = it; AiChatSession.toolHints = it }
-        }
-    }
-    LaunchedEffect(Unit) {
-        while (loadingHistory) delay(100)
-        fun deliver(row: AiNotification) {
-            messages += AiMessage("assistant", "${row.title}\n${row.content}")
-            AiNotifier.notifyAssistantMessage(context, row.title, row.content)
-            store.saveLastNotificationId(row.id)
-        }
-        while (isActive) {
-            try {
-                client.notifications(store.lastNotificationId()).forEach { deliver(it) }
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (_: Exception) {
-                // 短轮询失败留到下一轮重试，不长期占用代理或 Hub 连接。
+            AiChatSession.conversationId?.let { id ->
+                runCatching { client.pendingConfirmation(id) }
+                    .onSuccess { pendingConfirmation = it }
+                    .onFailure { historyError = "读取待确认操作失败：${it.message ?: "未知错误"}" }
             }
-            delay(15_000)
         }
     }
-
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).imePadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1899,15 +1927,15 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack, trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(onClick = {
+                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
                         showHistory = !showHistory
                         if (showHistory && conversations.isEmpty() && !loadingConversations) {
                             loadingConversations = true
                             scope.launch {
-                                runCatching { client.listConversations() }.onSuccess {
-                                    conversations = it
-                                    expandedHistoryDays = aiHistoryDays(it).firstOrNull()?.let { day -> setOf(day.date) }.orEmpty()
-                                }
+                                 runCatching { client.listConversations() }.onSuccess {
+                                     conversations = it
+                                     expandedHistoryDays = aiHistoryDays(it).firstOrNull()?.let { day -> setOf(day.date) }.orEmpty()
+                                }.onFailure { historyError = "读取历史失败：${it.message ?: "未知错误"}" }
                                 loadingConversations = false
                             }
                         }
@@ -1921,7 +1949,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, "历史对话", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
                 }
                 Surface(
-                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(onClick = {
+                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
                         AiChatSession.messages.clear()
                         AiChatSession.conversationId = null
                         messages.clear()
@@ -1939,7 +1967,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.AddComment, "新对话", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
                 }
                 Surface(
-                    modifier = Modifier.size(34.dp).aiTap(onClick = onOpenSettings),
+                    modifier = Modifier.size(34.dp).aiTap(enabled = !sending, onClick = onOpenSettings),
                     shape = CircleShape,
                     color = AiTone.MintSoft,
                     border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)),
@@ -1975,6 +2003,17 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     }
                     when {
                         loadingConversations -> Text("读取中…", color = AiTone.Muted, fontSize = 12.sp)
+                        historyError != null -> Text(
+                            "$historyError · 重试恢复",
+                            color = AiTone.Danger,
+                            fontSize = 12.sp,
+                            modifier = Modifier.aiTap(enabled = !sending) {
+                                AiChatSession.loaded = false
+                                loadingHistory = true
+                                historyError = null
+                                restoreNonce++
+                            },
+                        )
                         conversations.isEmpty() -> Text("还没有历史对话。", color = AiTone.Muted, fontSize = 12.sp)
                         else -> {
                             val days = aiHistoryDays(conversations)
@@ -2027,7 +2066,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                     .background(if (current) AiTone.MintSoft else AiTone.Field),
                                             ) {
                                                 Row(
-                                                    Modifier.fillMaxWidth().aiTap {
+                                                    Modifier.fillMaxWidth().aiTap(enabled = !sending && !historyBusy) {
                                                         if (multiSelectHistory) {
                                                             selectedHistoryIds = if (convo.id in selectedHistoryIds) {
                                                                 selectedHistoryIds - convo.id
@@ -2038,14 +2077,19 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                             if (!current) {
                                                                 scope.launch {
                                                                     loadingConversations = true
-                                                                    runCatching { client.conversationMessages(convo.id) }
-                                                                        .onSuccess { loaded ->
+                                                                     runCatching { client.conversationMessages(convo.id) }
+                                                                         .onSuccess { loaded ->
+                                                                            pendingConfirmation = null
                                                                             AiChatSession.conversationId = convo.id
                                                                             conversationId = convo.id
                                                                             messages.clear()
                                                                             if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
                                                                             expandedHistoryDays += aiHistoryDate(convo.updatedAt)
-                                                                        }
+                                                                            runCatching { client.pendingConfirmation(convo.id) }
+                                                                                .onSuccess { pendingConfirmation = it }
+                                                                                .onFailure { messages += AiMessage("assistant", "读取待确认操作失败：${it.message ?: "未知错误"}") }
+                                                                         }
+                                                                        .onFailure { messages += AiMessage("assistant", "读取对话失败：${it.message ?: "未知错误"}") }
                                                                     loadingConversations = false
                                                                 }
                                                             }
@@ -2285,7 +2329,13 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             contentPadding = PaddingValues(bottom = 4.dp),
         ) {
             if (loadingHistory) item { Text("正在恢复最近对话…", color = AiTone.Muted, fontSize = 12.sp) }
-            items(messages) { message ->
+            items(
+                items = messages,
+                key = { message ->
+                    if (message.serverId > 0) "server-${message.serverId}"
+                    else "local-${System.identityHashCode(message)}"
+                },
+            ) { message ->
                 val deleteMessage: (() -> Unit)? = if (sending) {
                     null
                 } else {
@@ -2295,7 +2345,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             scope.launch {
                                 try {
                                     client.deleteConversationMessage(convoId, message.serverId)
-                                    messages.remove(message)
+                                    val index = messages.indexOfFirst { it === message }
+                                    if (index >= 0) messages.removeAt(index)
                                 } catch (cancel: CancellationException) {
                                     throw cancel
                                 } catch (error: Throwable) {
@@ -2303,11 +2354,18 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                 }
                             }
                         } else {
-                            messages.remove(message)
+                            val index = messages.indexOfFirst { it === message }
+                            if (index >= 0) messages.removeAt(index)
                         }
                     }
                 }
-                AiChatBubble(message, onDelete = deleteMessage)
+                AiChatBubble(
+                    message = message,
+                    menuOpen = menuMessage === message,
+                    onOpenMenu = { menuMessage = message },
+                    onDismissMenu = { if (menuMessage === message) menuMessage = null },
+                    onDelete = deleteMessage,
+                )
             }
             retryText?.let { retry ->
                 item(key = "switch-model-card") {
@@ -2360,11 +2418,27 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             Text("确认后仅执行以上操作；确认有效期为 5 分钟。", color = AiTone.Muted, fontSize = 11.sp)
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                                 AiAction("取消", Modifier.weight(1f), tone = AiTone.Danger, enabled = !sending) {
-                                    pendingConfirmation = null
-                                    messages += AiMessage("assistant", "已取消操作。")
+                                    sending = true
+                                    val confirmationConversationId = conversationId
+                                    scope.launch {
+                                        try {
+                                            val message = client.cancelHubTool(confirmation.confirmationId)
+                                            if (conversationId == confirmationConversationId && pendingConfirmation?.confirmationId == confirmation.confirmationId) {
+                                                pendingConfirmation = null
+                                                messages += AiMessage("assistant", message)
+                                            }
+                                        } catch (cancel: CancellationException) {
+                                            throw cancel
+                                        } catch (error: Throwable) {
+                                            messages += AiMessage("assistant", "取消失败：${error.message ?: "未知错误"}")
+                                        } finally {
+                                            sending = false
+                                        }
+                                    }
                                 }
                                 AiAction("确认执行", Modifier.weight(1f), primary = true, enabled = !sending) {
                                     sending = true
+                                    val confirmationConversationId = conversationId
                                     scope.launch {
                                         try {
                                             val hubMessage = client.confirmHubTool(confirmation.confirmationId)
@@ -2387,12 +2461,32 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                     throw error
                                                 }
                                             } else hubMessage
-                                            messages += AiMessage("assistant", message)
-                                            pendingConfirmation = null
+                                            if (conversationId == confirmationConversationId && pendingConfirmation?.confirmationId == confirmation.confirmationId) {
+                                                messages += AiMessage("assistant", message)
+                                                pendingConfirmation = null
+                                            }
                                         } catch (cancel: CancellationException) {
                                             throw cancel
                                         } catch (error: Throwable) {
-                                            messages += AiMessage("assistant", "执行失败：${error.message ?: "未知错误"}")
+                                            val status = runCatching { client.toolConfirmationStatus(confirmation.confirmationId) }.getOrNull()
+                                            val detail = when (status) {
+                                                "completed" -> {
+                                                    pendingConfirmation = null
+                                                    "Hub 已确认操作执行完成；仅执行结果响应在传输中丢失，不会重复执行。"
+                                                }
+                                                "failed" -> {
+                                                    pendingConfirmation = null
+                                                    "Hub 已确认操作执行失败；不会自动重试。"
+                                                }
+                                                "cancelled", "expired" -> {
+                                                    pendingConfirmation = null
+                                                    if (status == "cancelled") "操作已取消，未执行。" else "确认已过期，操作未执行。"
+                                                }
+                                                "pending", "executing" -> "执行响应丢失，Hub 当前状态：$status；请勿重复确认。"
+                                                null, "" -> "执行响应丢失，Hub 状态未确认：${error.message ?: "未知错误"}"
+                                                else -> "执行响应丢失，Hub 当前状态：$status"
+                                            }
+                                            messages += AiMessage("assistant", detail)
                                         }
                                         sending = false
                                     }
@@ -2419,8 +2513,10 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         }
         val canSend = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null
         val sendNow = {
-            if (canSend) {
+            if (input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null) {
                 val text = input.trim()
+                val requestConversationId = conversationId
+                retryText = null
                 input = ""
                 val userMessage = AiMessage("user", text)
                 messages += userMessage
@@ -2438,19 +2534,25 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     }
                     try {
                         val reply = client.chatStream(
-                            text, conversationId,
-                            onDelta = { piece ->
+                            text, requestConversationId,
+                            onDelta = delta@{ piece ->
+                                if (conversationId != requestConversationId) return@delta
                                 streamed = true
                                 val index = liveBubble()
                                 messages[index] = AiMessage("assistant", messages[index].content + piece)
                             },
-                            onReset = {
+                            onReset = reset@{
+                                if (conversationId != requestConversationId) return@reset
                                 liveIndex?.let { index ->
                                     if (messages.getOrNull(index) != null) messages[index] = AiMessage("assistant", "")
                                 }
                             },
                         )
-                        conversationId = reply.conversationId ?: conversationId
+                        if (conversationId != requestConversationId) {
+                            sending = false
+                            return@launch
+                        }
+                        conversationId = reply.conversationId ?: requestConversationId
                         AiChatSession.conversationId = conversationId
                         if (reply.userMessageId > 0) {
                             val userIndex = messages.indexOfFirst { it === userMessage }
@@ -2496,7 +2598,11 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     } catch (cancel: CancellationException) {
                         throw cancel
                     } catch (error: AiStreamProtocolException) {
-                        conversationId = error.conversationId ?: conversationId
+                        if (conversationId != requestConversationId) {
+                            sending = false
+                            return@launch
+                        }
+                        conversationId = error.conversationId ?: requestConversationId
                         AiChatSession.conversationId = conversationId
                         if (error.userMessageId > 0) {
                             val userIndex = messages.indexOfFirst { it === userMessage }
@@ -2504,10 +2610,21 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                 messages[userIndex] = userMessage.copy(serverId = error.userMessageId)
                             }
                         }
-                        messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
+                        val existing = liveIndex?.let { messages.getOrNull(it) }
+                        val failure = AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}", serverId = error.messageId)
+                        if (error.messageId > 0 && liveIndex != null && messages.getOrNull(liveIndex!!) != null) {
+                            messages[liveIndex!!] = failure
+                        } else {
+                            if (existing != null && existing.content.isBlank()) messages.removeAt(liveIndex!!)
+                            if (error.messageId > 0 || existing == null || existing.content.isNotBlank()) messages += failure
+                        }
                         if ((error.message ?: "").contains("自动切换已停用")) retryText = text
                     } catch (error: Throwable) {
-                        messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
+                        val existing = liveIndex?.let { messages.getOrNull(it) }
+                        if (existing != null && existing.content.isBlank()) messages.removeAt(liveIndex!!)
+                        if (existing == null || existing.content.isNotBlank()) {
+                            messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
+                        }
                         if ((error.message ?: "").contains("自动切换已停用")) retryText = text
                     }
                     sending = false

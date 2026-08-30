@@ -12,13 +12,7 @@ import androidx.core.app.NotificationCompat
 import com.labprobe.app.MainActivity
 import com.labprobe.app.R
 
-/** Foreground flag: while the app is visible, chat bubbles are enough. */
-object AiForeground {
-    @Volatile
-    var visible: Boolean = true
-}
-
-/** System notifications for assistant messages that arrive while backgrounded. */
+/** System notifications for assistant messages, independent from chat history. */
 object AiNotifier {
     private const val CHANNEL_ID = "labprobe_ai_assistant"
     private var nextNotifyId = 4200
@@ -33,11 +27,14 @@ object AiNotifier {
         }
     }
 
-    fun notifyAssistantMessage(context: Context, title: String, content: String) {
-        if (AiForeground.visible) return
-        if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+    /** Returns true only after Android accepted the notification for delivery. */
+    fun notifyAssistantMessage(context: Context, title: String, content: String): Boolean {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return false
         ensureChannel(context)
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
         val openApp = PendingIntent.getActivity(
             context,
             4300,
@@ -60,5 +57,6 @@ object AiNotifier {
         val id = nextNotifyId
         nextNotifyId = if (nextNotifyId >= 2_000_000_000) 4200 else nextNotifyId + 1
         manager.notify(id, notification)
+        return true
     }
 }
