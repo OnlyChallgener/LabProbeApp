@@ -634,8 +634,15 @@ class AiApiClient(
             else -> builder.get()
         }
         return suspendCancellableCoroutine { continuation ->
-            // Stream setup still uses the short connect timeout; only an established SSE read gets longer.
-            val call = (if (longRead) http.newBuilder().readTimeout(120, TimeUnit.SECONDS).build() else http).newCall(builder.build())
+            // Hub reads fail fast so cached screens can keep the old snapshot.
+            // Writes retain the normal client timeout; streaming chat opts in
+            // to the longer established-stream timeout.
+            val callClient = when {
+                longRead -> http.newBuilder().readTimeout(120, TimeUnit.SECONDS).build()
+                method == "GET" -> http.newBuilder().readTimeout(10, TimeUnit.SECONDS).build()
+                else -> http
+            }
+            val call = callClient.newCall(builder.build())
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, error: java.io.IOException) {
