@@ -993,24 +993,29 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                     Text("还没有用量数据。", color = AiTone.Muted, fontSize = 12.sp)
                 } else {
                     val hasCacheBreakdown = cacheReported > 0
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         if (hasCacheBreakdown) {
-                            AiUsageLegend(Color(0xFFBCEAD9), "输入（缓存）")
-                            AiUsageLegend(Color(0xFF68C6A6), "输入")
+                            AiUsageLegend(Color(0xFFBCEAD9), "命中缓存")
+                            AiUsageLegend(Color(0xFF68C6A6), "其他输入")
                         } else {
                             AiUsageLegend(Color(0xFF68C6A6), "输入")
                         }
                         AiUsageLegend(AiTone.MintDark, "输出")
                         if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准/其他")
-                        Spacer(Modifier.weight(1f))
-                        if (cacheReported > 0) {
-                            Text(
-                                "已上报范围命中 ${cacheHit * 100 / cacheReported}% · 覆盖 ${compactTokens(cacheReported)} / ${compactTokens(periodPrompt)} 输入",
-                                color = AiTone.MintDark,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
+                    }
+                    if (cacheReported > 0 && periodPrompt > 0) {
+                        Text(
+                            "缓存命中 ${cacheHit * 100 / cacheReported}% · ${compactTokens(cacheReported)}/${compactTokens(periodPrompt)} 输入",
+                            modifier = Modifier.fillMaxWidth(),
+                            color = AiTone.Muted,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     AiDailyUsageBars(daily)
                     Spacer(Modifier.height(2.dp))
@@ -1372,10 +1377,10 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
     if (slots.isEmpty()) return
     val maxTokens = (slots.maxOfOrNull { it.total } ?: 0).coerceAtLeast(1)
     var selected by remember { mutableStateOf<Int?>(null) }
-    // 悬浮明细 3 秒自动收起；点空白格或再点当前柱立即收起，避免一直挂着
+    // 悬浮明细 5 秒自动收起；点空白格或再点当前柱立即收起，避免一直挂着
     LaunchedEffect(selected) {
         if (selected != null) {
-            delay(3000)
+            delay(5000)
             selected = null
         }
     }
@@ -1419,10 +1424,11 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
                 var bottom = size.height - bottomPad
                 val hasCache = slot.cacheReported > 0
                 val cacheHit = if (hasCache) slot.cacheHit.coerceIn(0, slot.prompt) else 0
-                val cacheMiss = if (hasCache) (slot.prompt - cacheHit).coerceAtLeast(0) else slot.prompt
+                // 其余输入包含已上报的未命中部分和服务商未拆分的输入，统一以普通输入显示。
+                val otherInput = (slot.prompt - cacheHit).coerceAtLeast(0)
                 listOf(
                     cacheHit to Color(0xFFBCEAD9),
-                    cacheMiss to Color(0xFF68C6A6),
+                    otherInput to Color(0xFF68C6A6),
                     slot.completion to AiTone.MintDark,
                     slot.other to AiTone.Warning,
                 ).forEach { (tokens, color) ->
@@ -1441,7 +1447,7 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
         }
         selected?.let { index ->
             val slot = slots[index]
-            val tooltipWidth = 214.dp
+            val tooltipWidth = minOf(280.dp, maxWidth - 20.dp)
             val center = slotWidth * (index + 0.5f)
             val x = (center - tooltipWidth / 2).coerceIn(0.dp, maxWidth - tooltipWidth)
             Surface(
@@ -1455,28 +1461,25 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
                 tonalElevation = 0.dp,
                 shadowElevation = 0.dp,
             ) {
-                Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(slot.date, color = AiTone.Ink, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        if (slot.total > 0) Text(formatInt(slot.total), color = AiTone.Ink, fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(slot.date, color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        if (slot.total > 0) Text("${formatInt(slot.total)} Token", color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                     }
                     if (slot.total == 0) {
                         Text("当日无用量", color = AiTone.Muted, fontSize = 10.5.sp)
                     } else {
-                        val hasCache = slot.cacheReported > 0
-                        if (hasCache) AiTooltipRow(Color(0xFFBCEAD9), "输入（命中缓存）", slot.cacheHit)
-                        AiTooltipRow(
-                            Color(0xFF68C6A6),
-                            if (hasCache) "其余输入（未命中/未上报）" else "输入",
-                            if (hasCache) (slot.prompt - slot.cacheHit).coerceAtLeast(0) else slot.prompt,
-                        )
+                        HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
+                        Text("用量构成", color = AiTone.Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        AiTooltipRow(Color(0xFF68C6A6), "输入", slot.prompt)
                         AiTooltipRow(AiTone.MintDark, "输出", slot.completion)
-                        if (slot.other > 0) AiTooltipRow(AiTone.Warning, "校准/其他", slot.other)
-                        if (hasCache && slot.cacheReported < slot.prompt) {
-                            Text(
-                                "缓存明细仅覆盖 ${formatInt(slot.cacheReported)} / ${formatInt(slot.prompt)} 输入 Token",
-                                color = AiTone.Muted.copy(alpha = .78f), fontSize = 9.5.sp,
-                            )
+                        if (slot.other > 0) AiTooltipRow(AiTone.Warning, "其他/校准", slot.other)
+                        val hasCache = slot.cacheReported > 0
+                        if (hasCache && (slot.cacheHit > 0 || slot.cacheMiss > 0)) {
+                            HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
+                            Text("缓存明细（已上报）", color = AiTone.Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            if (slot.cacheHit > 0) AiTooltipRow(Color(0xFFBCEAD9), "命中缓存", slot.cacheHit)
+                            if (slot.cacheMiss > 0) AiTooltipRow(Color(0xFF68C6A6), "未命中缓存", slot.cacheMiss)
                         }
                     }
                 }
