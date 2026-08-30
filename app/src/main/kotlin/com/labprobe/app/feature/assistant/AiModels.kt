@@ -113,6 +113,7 @@ data class AiUsageDay(
     val completionTokens: Int = 0,
     val cacheHitTokens: Int,
     val cacheMissTokens: Int,
+    val cacheReportedInputTokens: Int = 0,
     val models: Map<String, Long> = emptyMap(),
 )
 

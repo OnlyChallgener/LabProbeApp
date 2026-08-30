@@ -259,7 +259,10 @@ private fun AiAction(
     }
     Surface(
         modifier = modifier
-            .heightIn(min = if (compact) 40.dp else 48.dp)
+            // A Dialog can offer effectively unbounded height.  A minimum
+            // alone lets weighted sibling actions stretch to the whole
+            // remaining screen; keep every action at its designed height.
+            .height(if (compact) 40.dp else 48.dp)
             .clip(AiControlShape)
             .aiTap(enabled, onClick),
         shape = AiControlShape,
@@ -783,6 +786,7 @@ fun AiSettingsScreen(
                         Surface(
                             modifier = Modifier.clip(AiPillShape).aiTap {
                                 configName = preset.label
+                                if (model != preset.model) tokenQuota = ""
                                 model = preset.model
                                 baseUrl = preset.baseUrl
                             },
@@ -797,7 +801,10 @@ fun AiSettingsScreen(
                     }
                 }
                 AiFormField("配置名称", configName, { configName = it }, placeholder = "例如：主力 API")
-                AiFormField("模型", model, { model = it }, placeholder = "deepseek-v4-flash")
+                AiFormField("模型", model, { next ->
+                    if (next != model) tokenQuota = ""
+                    model = next
+                }, placeholder = "deepseek-v4-flash")
                 AiFormField("API 地址（OpenAI 兼容）", baseUrl, { baseUrl = it }, placeholder = "https://api.deepseek.com")
                 AiFormField("模型额度 Token（可不填）", tokenQuota, { value -> tokenQuota = value.filter(Char::isDigit) }, placeholder = "例如 1000000")
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -911,6 +918,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     var latestDayExpanded by remember(client.identity) { mutableStateOf(true) }
     var expandedOlderDays by remember(client.identity) { mutableStateOf(setOf<String>()) }
     var editingUsage by remember(client.identity) { mutableStateOf<AiConfigUsage?>(null) }
+    var deletingUsage by remember(client.identity) { mutableStateOf<AiConfigUsage?>(null) }
     val refreshUsage: () -> Unit = {
         scope.launch {
             runCatching { client.usage() }
@@ -924,8 +932,9 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
             .onFailure { message = it.message ?: "读取失败" }
     }
     val daily = summary.daily
-    val cacheHit = daily.sumOf { it.cacheHitTokens }
-    val cacheMiss = daily.sumOf { it.cacheMissTokens }
+    val periodPrompt = daily.sumOf { it.promptTokens }.coerceAtLeast(0)
+    val cacheReported = daily.sumOf { it.cacheReportedInputTokens }.coerceIn(0, periodPrompt)
+    val cacheHit = daily.sumOf { it.cacheHitTokens }.coerceIn(0, cacheReported)
     val trendSlots = aiTrendSlots(daily)
     val trendPeriodLabel = trendSlots.takeIf { it.isNotEmpty() }
         ?.let { "${it.first().date.takeLast(5)} 至 ${it.last().date.takeLast(5)}" }
@@ -961,12 +970,12 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 }
                 HorizontalDivider(color = AiTone.Border)
                 Row(Modifier.fillMaxWidth()) {
-                    AiStatColumn("累计 Token", formatInt(summary.totalTokens), Modifier.weight(1.2f))
+                    AiStatColumn("累计 Token（校准优先）", formatInt(summary.totalTokens), Modifier.weight(1.2f))
                     AiStatColumn("累计任务", "${summary.requests} 次", Modifier.weight(1f))
                     AiStatColumn("对话存储", formatAiStorage(summary.storageBytes), Modifier.weight(1f))
                 }
                 Text(
-                    "输入 ${formatInt(summary.promptTokens)} · 输出 ${formatInt(summary.completionTokens)} · 消息 ${summary.storageMessages} 条",
+                    "任务上报：输入 ${formatInt(summary.promptTokens)} · 输出 ${formatInt(summary.completionTokens)} · 消息 ${summary.storageMessages} 条",
                     color = AiTone.Muted, fontSize = 10.sp,
                 )
                 if (summary.storageBytes > 8L * 1024 * 1024) {
@@ -983,7 +992,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                 if (daily.isEmpty()) {
                     Text("还没有用量数据。", color = AiTone.Muted, fontSize = 12.sp)
                 } else {
-                    val hasCacheBreakdown = daily.any { it.cacheHitTokens + it.cacheMissTokens > 0 }
+                    val hasCacheBreakdown = cacheReported > 0
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (hasCacheBreakdown) {
                             AiUsageLegend(Color(0xFFBCEAD9), "输入（缓存）")
@@ -994,8 +1003,13 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                         AiUsageLegend(AiTone.MintDark, "输出")
                         if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准/其他")
                         Spacer(Modifier.weight(1f))
-                        if (cacheHit + cacheMiss > 0) {
-                            Text("缓存命中 ${cacheHit * 100 / (cacheHit + cacheMiss)}%", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        if (cacheReported > 0) {
+                            Text(
+                                "已上报范围命中 ${cacheHit * 100 / cacheReported}% · 覆盖 ${compactTokens(cacheReported)} / ${compactTokens(periodPrompt)} 输入",
+                                color = AiTone.MintDark,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
                     }
                     AiDailyUsageBars(daily)
@@ -1032,7 +1046,11 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                             color = AiTone.Muted.copy(alpha = .85f), fontSize = 10.sp, lineHeight = 14.sp,
                         )
                         summary.configUsage.forEach { usage ->
-                            AiQuotaUsageRow(usage, onEdit = { editingUsage = usage })
+                            AiQuotaUsageRow(
+                                usage,
+                                onEdit = { editingUsage = usage },
+                                onDelete = { deletingUsage = usage },
+                            )
                         }
                     }
                 }
@@ -1063,7 +1081,7 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                                 Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            "${record.totalTokens} Token · ${if (record.status == "completed") "已完成" else "未完成"}",
+                                            "${if (record.usageKnown) "${record.totalTokens} Token" else "Token 未上报"} · ${if (record.status == "completed") "已完成" else "未完成"}",
                                             color = if (record.status == "completed") AiTone.Ink else AiTone.Danger,
                                             fontSize = 13.sp, fontWeight = FontWeight.Bold,
                                             modifier = Modifier.weight(1f),
@@ -1082,7 +1100,15 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                                             }.padding(horizontal = 6.dp, vertical = 2.dp),
                                         )
                                     }
-                                    Text("${record.model} · 输入 ${record.promptTokens} · 输出 ${record.completionTokens}", color = AiTone.Muted, fontSize = 11.sp)
+                                    Text(
+                                        when {
+                                            !record.usageKnown -> "${record.model} · 服务商未返回 usage，本次不估算"
+                                            record.promptTokens + record.completionTokens == 0 && record.totalTokens > 0 ->
+                                                "${record.model} · 服务商只返回总量，未返回输入/输出拆分"
+                                            else -> "${record.model} · 输入 ${record.promptTokens} · 输出 ${record.completionTokens}"
+                                        },
+                                        color = AiTone.Muted, fontSize = 11.sp,
+                                    )
                                     Text(formatAiUsageTime(record.createdAt), color = AiTone.Muted.copy(alpha = .78f), fontSize = 10.5.sp)
                                 }
                             }
@@ -1110,6 +1136,23 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                     }
                         .onSuccess { editingUsage = null; message = "已更新"; refreshUsage() }
                         .onFailure { message = it.message ?: "更新失败" }
+                }
+            },
+        )
+    }
+    deletingUsage?.let { target ->
+        AiUsageDeleteDialog(
+            usage = target,
+            onDismiss = { deletingUsage = null },
+            onDelete = {
+                scope.launch {
+                    runCatching { client.deleteConfigUsageRecord(target.configId) }
+                        .onSuccess {
+                            deletingUsage = null
+                            message = "额度记录已删除；API 配置和任务记录均已保留"
+                            refreshUsage()
+                        }
+                        .onFailure { message = it.message ?: "删除失败" }
                 }
             },
         )
@@ -1239,8 +1282,41 @@ private data class AiUsageSlot(
     val other: Int,
     val cacheHit: Int,
     val cacheMiss: Int,
+    val cacheReported: Int,
 ) {
     val total: Int get() = prompt + completion + other
+}
+
+@Composable
+private fun AiUsageDeleteDialog(
+    usage: AiConfigUsage,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = AiTone.Surface,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                Modifier.padding(horizontal = 16.dp, vertical = 14.dp).widthIn(max = 330.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("删除额度记录 · ${usage.name.ifBlank { usage.model }}", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "只删除这个模型的额度与手动校准累计。腾讯 TokenHub/API 配置、API Key、启用状态和每次任务记录都不会删除；以后可直接在原配置中更换模型。",
+                    color = AiTone.Muted, fontSize = 11.sp, lineHeight = 16.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    AiAction("取消", Modifier.weight(1f), compact = true) { onDismiss() }
+                    AiAction("删除额度记录", Modifier.weight(1f), primary = true, tone = AiTone.Danger, compact = true) { onDelete() }
+                }
+            }
+        }
+    }
 }
 
 /** Always show the latest 14 Beijing calendar days (including zero days).
@@ -1257,14 +1333,26 @@ private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<AiUsageS
             val prompt = (source?.promptTokens ?: 0).coerceAtLeast(0).coerceAtMost(total)
             val completion = (source?.completionTokens ?: 0).coerceAtLeast(0).coerceAtMost(total - prompt)
             val other = (total - prompt - completion).coerceAtLeast(0)
-            AiUsageSlot(day, prompt, completion, other, (source?.cacheHitTokens ?: 0).coerceAtMost(prompt), (source?.cacheMissTokens ?: 0).coerceAtMost(prompt))
+            val reported = (source?.cacheReportedInputTokens ?: 0).coerceIn(0, prompt)
+            AiUsageSlot(
+                day, prompt, completion, other,
+                (source?.cacheHitTokens ?: 0).coerceIn(0, reported),
+                (source?.cacheMissTokens ?: 0).coerceIn(0, reported),
+                reported,
+            )
         }
     }.getOrElse {
         daily.takeLast(days).map { source ->
             val total = source.totalTokens.coerceAtLeast(0)
             val prompt = source.promptTokens.coerceAtLeast(0).coerceAtMost(total)
             val completion = source.completionTokens.coerceAtLeast(0).coerceAtMost(total - prompt)
-            AiUsageSlot(source.date, prompt, completion, (total - prompt - completion).coerceAtLeast(0), source.cacheHitTokens.coerceAtMost(prompt), source.cacheMissTokens.coerceAtMost(prompt))
+            val reported = source.cacheReportedInputTokens.coerceIn(0, prompt)
+            AiUsageSlot(
+                source.date, prompt, completion, (total - prompt - completion).coerceAtLeast(0),
+                source.cacheHitTokens.coerceIn(0, reported),
+                source.cacheMissTokens.coerceIn(0, reported),
+                reported,
+            )
         }
     }
 }
@@ -1329,7 +1417,7 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
             slots.forEachIndexed { index, slot ->
                 val left = index * slotWidthPx + (slotWidthPx - barWidth) / 2
                 var bottom = size.height - bottomPad
-                val hasCache = slot.cacheHit + slot.cacheMiss > 0
+                val hasCache = slot.cacheReported > 0
                 val cacheHit = if (hasCache) slot.cacheHit.coerceIn(0, slot.prompt) else 0
                 val cacheMiss = if (hasCache) (slot.prompt - cacheHit).coerceAtLeast(0) else slot.prompt
                 listOf(
@@ -1375,11 +1463,21 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
                     if (slot.total == 0) {
                         Text("当日无用量", color = AiTone.Muted, fontSize = 10.5.sp)
                     } else {
-                        val hasCache = slot.cacheHit + slot.cacheMiss > 0
+                        val hasCache = slot.cacheReported > 0
                         if (hasCache) AiTooltipRow(Color(0xFFBCEAD9), "输入（命中缓存）", slot.cacheHit)
-                        AiTooltipRow(Color(0xFF68C6A6), if (hasCache) "输入（未命中缓存）" else "输入", if (hasCache) slot.cacheMiss else slot.prompt)
+                        AiTooltipRow(
+                            Color(0xFF68C6A6),
+                            if (hasCache) "其余输入（未命中/未上报）" else "输入",
+                            if (hasCache) (slot.prompt - slot.cacheHit).coerceAtLeast(0) else slot.prompt,
+                        )
                         AiTooltipRow(AiTone.MintDark, "输出", slot.completion)
                         if (slot.other > 0) AiTooltipRow(AiTone.Warning, "校准/其他", slot.other)
+                        if (hasCache && slot.cacheReported < slot.prompt) {
+                            Text(
+                                "缓存明细仅覆盖 ${formatInt(slot.cacheReported)} / ${formatInt(slot.prompt)} 输入 Token",
+                                color = AiTone.Muted.copy(alpha = .78f), fontSize = 9.5.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -1398,7 +1496,11 @@ private fun AiTooltipRow(color: Color, label: String, tokens: Int) {
 }
 
 @Composable
-private fun AiQuotaUsageRow(usage: AiConfigUsage, onEdit: (() -> Unit)? = null) {
+private fun AiQuotaUsageRow(
+    usage: AiConfigUsage,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+) {
     val quota = usage.tokenQuota?.takeIf { it > 0 }
     val used = usage.totalTokens.coerceAtLeast(0)
     val usedPercent = quota?.let { ((used.coerceAtMost(it) * 100.0) / it).toInt() }
@@ -1418,6 +1520,12 @@ private fun AiQuotaUsageRow(usage: AiConfigUsage, onEdit: (() -> Unit)? = null) 
                 Text(
                     "校准", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.aiTap { onEdit() }.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            if (onDelete != null) {
+                Text(
+                    "删除", color = AiTone.Danger, fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.aiTap { onDelete() }.padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
             Text("已用 ${compactTokensLong(used)}", color = AiTone.Muted, fontSize = 10.5.sp)

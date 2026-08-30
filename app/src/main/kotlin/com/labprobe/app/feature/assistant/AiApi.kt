@@ -209,6 +209,10 @@ class AiApiClient(
                             completionTokens = item.optInt("completion_tokens", item.optInt("output_tokens", 0)),
                             cacheHitTokens = item.optInt("cache_hit_tokens"),
                             cacheMissTokens = item.optInt("cache_miss_tokens"),
+                            cacheReportedInputTokens = item.optInt(
+                                "cache_reported_input_tokens",
+                                item.optInt("cache_hit_tokens") + item.optInt("cache_miss_tokens"),
+                            ),
                             models = models,
                         ))
                     }
@@ -641,6 +645,16 @@ class AiApiClient(
                     if (continuation.isActive) continuation.resume(response) else response.close()
                 }
             })
+        }
+    }
+
+    /** 删除额度/校准卡片；API 配置、密钥和逐任务用量均由 Hub 保留。 */
+    suspend fun deleteConfigUsageRecord(configId: String) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val encoded = java.net.URLEncoder.encode(configId, "UTF-8")
+        request(hubUrl.trimEnd('/') + "/api/ai/usage/config/$encoded", "DELETE", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
         }
     }
 }
