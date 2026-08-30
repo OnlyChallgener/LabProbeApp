@@ -556,7 +556,7 @@ class AiApiClient(
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val payload = JSONObject().put("configId", configId).put("totalTokens", totalTokens)
         if (updateQuota) payload.put("tokenQuota", tokenQuota ?: JSONObject.NULL)
-        request(hubUrl.trimEnd('/') + "/api/ai/usage/adjust", "POST", payload).use { response ->
+        request(hubUrl.trimEnd('/') + "/api/ai/usage/adjust", "POST", payload.toString()).use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, body))
         }
