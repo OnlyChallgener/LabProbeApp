@@ -137,6 +137,8 @@ App 与 Hub 已做静态路径和字段对照。
 
 首个测试 tag `test-bundle/20260830-1` 的 App workflow 在编译阶段发现 `usage/adjust` 请求把 `JSONObject` 直接传给字符串参数（`AiApi.kt`），已修复为序列化字符串并提交 `74a4021`。Hub 同一 tag 的 Python、LabRelay 和发布步骤已通过；修复后的最终测试发布改用下一个不可变 tag `test-bundle/20260830-2`。
 
+最终 tag `test-bundle/20260830-2` 已发布成功：App workflow [33294546619](https://github.com/OnlyChallgener/LabProbeApp/actions/runs/33294546619) 与 Hub workflow [33294546091](https://github.com/OnlyChallgener/labprobe-hub/actions/runs/33294546091) 均通过。对应 prerelease：[App 测试 APK](https://github.com/OnlyChallgener/LabProbeApp/releases/tag/test-bundle/20260830-2)，[Hub/LabRelay 测试包](https://github.com/OnlyChallgener/labprobe-hub/releases/tag/test-bundle/20260830-2)。
+
 ## 6. 修改文件
 
 ### App：`D:\Github\LabProbeApp`
