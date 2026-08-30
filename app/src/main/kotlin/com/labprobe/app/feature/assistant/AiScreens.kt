@@ -63,8 +63,6 @@ import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -96,6 +94,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -152,7 +152,7 @@ private val AI_PROVIDER_PRESETS = listOf(
     AiProviderPreset("阿里千问", "qwen3.6-flash", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     AiProviderPreset("Gemini", "gemini-3.6-flash", "https://generativelanguage.googleapis.com/v1beta/openai"),
     AiProviderPreset("小米 MiMo", "mimo-v2.5", "https://api.xiaomimimo.com/v1"),
-    AiProviderPreset("腾讯混元", "hunyuan-turbos", "https://tokenhub.tencentmaas.com/v1"),
+    AiProviderPreset("腾讯混元", "hy3", "https://tokenhub.tencentmaas.com/v1"),
 )
 
 private const val AI_GREETING = "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。"
@@ -715,6 +715,18 @@ fun AiSettingsScreen(
                                         fontSize = 10.5.sp,
                                         modifier = Modifier.weight(1f),
                                     )
+                                    if (index > 0) Text(
+                                        "↑", color = AiTone.MintDark, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                                        modifier = Modifier.aiTap {
+                                            scope.launch { runCatching { client.moveConfig(config.id, "up") }; loadConfigs() }
+                                        }.padding(horizontal = 7.dp, vertical = 6.dp),
+                                    )
+                                    if (index < configs.lastIndex) Text(
+                                        "↓", color = AiTone.MintDark, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                                        modifier = Modifier.aiTap {
+                                            scope.launch { runCatching { client.moveConfig(config.id, "down") }; loadConfigs() }
+                                        }.padding(horizontal = 7.dp, vertical = 6.dp),
+                                    )
                                     Text("编辑", color = AiTone.MintDark, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap { beginEdit(config) }.padding(6.dp))
                                     Text("删除", color = AiTone.Danger, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap {
                                         scope.launch {
@@ -884,10 +896,19 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     val store = remember { AiSettingsStore(context) }
     val prefs = remember { AppPrefs(context) }
     val client = remember { AiApiClient(store, prefs.hub, prefs.token) }
+    val scope = rememberCoroutineScope()
     var summary by remember { mutableStateOf(AiUsageSummary()) }
     var message by remember { mutableStateOf("正在读取") }
     var latestDayExpanded by remember { mutableStateOf(true) }
     var expandedOlderDays by remember { mutableStateOf(setOf<String>()) }
+    var editingUsage by remember { mutableStateOf<AiConfigUsage?>(null) }
+    val refreshUsage: () -> Unit = {
+        scope.launch {
+            runCatching { client.usage() }
+                .onSuccess { summary = it; message = "已更新" }
+                .onFailure { message = it.message ?: "读取失败" }
+        }
+    }
     LaunchedEffect(Unit) {
         runCatching { client.usage() }
             .onSuccess { summary = it; message = "已更新" }
@@ -995,7 +1016,9 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                             "上方分布按模型统计近 14 天；下方为每个 API 配置的累计用量与设置额度的对比。",
                             color = AiTone.Muted.copy(alpha = .85f), fontSize = 10.sp, lineHeight = 14.sp,
                         )
-                        summary.configUsage.forEach { usage -> AiQuotaUsageRow(usage) }
+                        summary.configUsage.forEach { usage ->
+                            AiQuotaUsageRow(usage, onEdit = { editingUsage = usage })
+                        }
                     }
                 }
             }
@@ -1023,7 +1046,27 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                             group.tasks.forEachIndexed { index, record ->
                                 if (index > 0) HorizontalDivider(color = AiTone.Border.copy(alpha = .72f))
                                 Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text("${record.totalTokens} Token · ${if (record.status == "completed") "已完成" else "未完成"}", color = if (record.status == "completed") AiTone.Ink else AiTone.Danger, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "${record.totalTokens} Token · ${if (record.status == "completed") "已完成" else "未完成"}",
+                                            color = if (record.status == "completed") AiTone.Ink else AiTone.Danger,
+                                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Text(
+                                            "删除", color = AiTone.Danger, fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.aiTap {
+                                                scope.launch {
+                                                    runCatching { client.deleteUsageRecord(record.id) }
+                                                        .onSuccess {
+                                                            summary = summary.copy(recent = summary.recent.filterNot { it.id == record.id })
+                                                            message = "记录已删除"
+                                                        }
+                                                        .onFailure { message = it.message ?: "删除失败" }
+                                                }
+                                            }.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        )
+                                    }
                                     Text("${record.model} · 输入 ${record.promptTokens} · 输出 ${record.completionTokens}", color = AiTone.Muted, fontSize = 11.sp)
                                     Text(formatAiUsageTime(record.createdAt), color = AiTone.Muted.copy(alpha = .78f), fontSize = 10.5.sp)
                                 }
@@ -1034,6 +1077,68 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
             }
         }
         Spacer(Modifier.height(8.dp))
+    }
+    editingUsage?.let { target ->
+        AiUsageEditDialog(
+            usage = target,
+            onDismiss = { editingUsage = null },
+            onSave = { usageTarget, quota ->
+                scope.launch {
+                    runCatching {
+                        if (usageTarget >= 0) client.adjustUsage(target.configId, usageTarget)
+                        if (quota != target.tokenQuota) {
+                            client.saveProviderConfig(
+                                AiProviderConfig(
+                                    id = target.configId, name = target.name, provider = "",
+                                    model = target.model, baseUrl = "", hasApiKey = true,
+                                    tokenQuota = quota,
+                                ),
+                            )
+                        }
+                    }
+                        .onSuccess { editingUsage = null; message = "已更新"; refreshUsage() }
+                        .onFailure { message = it.message ?: "更新失败" }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun AiUsageEditDialog(
+    usage: AiConfigUsage,
+    onDismiss: () -> Unit,
+    onSave: (usageTarget: Long, quota: Long?) -> Unit,
+) {
+    var usageText by remember { mutableStateOf(usage.totalTokens.toString()) }
+    var quotaText by remember { mutableStateOf(usage.tokenQuota?.toString().orEmpty()) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = AiTone.Surface,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                Modifier.padding(horizontal = 16.dp, vertical = 14.dp).widthIn(max = 330.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Text("校准用量 · ${usage.name.ifBlank { usage.model }}", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "把累计用量调整为平台后台的实际值（当前 ${compactTokensLong(usage.totalTokens)} Token）。额度留空表示不设置。",
+                    color = AiTone.Muted, fontSize = 11.sp, lineHeight = 15.sp,
+                )
+                AiFormField("累计用量（Token）", usageText, { value -> usageText = value.filter(Char::isDigit) }, placeholder = "例如 586800")
+                AiFormField("额度（Token，可留空）", quotaText, { value -> quotaText = value.filter(Char::isDigit) }, placeholder = "例如 1000000")
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    AiAction("取消", Modifier.weight(1f), compact = true) { onDismiss() }
+                    AiAction("保存", Modifier.weight(1f), primary = true, compact = true, enabled = usageText.isNotBlank()) {
+                        onSave(usageText.toLongOrNull() ?: -1L, quotaText.toLongOrNull())
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1547,6 +1652,78 @@ private fun AiChatBubble(message: AiMessage, onDelete: (() -> Unit)? = null) {
 }
 
 @Composable
+private fun AiSwitchModelCard(retryPreview: String, onSwitch: () -> Unit, onDismiss: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = AiTone.Surface,
+        border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .45f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("当前模型不可用，要换一个再试吗？", color = AiTone.Ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "刚才的消息：「${retryPreview.take(24)}${if (retryPreview.length > 24) "…" else ""}」",
+                color = AiTone.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                AiAction("切换模型", Modifier.weight(1f), primary = true, compact = true, onClick = onSwitch)
+                AiAction("忽略", Modifier.weight(1f), compact = true, onClick = onDismiss)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiModelPickerDialog(
+    configs: List<AiProviderConfig>,
+    onDismiss: () -> Unit,
+    onPick: (AiProviderConfig) -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = AiTone.Surface,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                Modifier.padding(horizontal = 16.dp, vertical = 14.dp).widthIn(max = 330.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Text("切换对话模型", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("选中后该配置会被置顶，并自动重试刚才的消息", color = AiTone.Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                if (configs.isEmpty()) {
+                    Text("没有已启用的配置，请先到 AI 设置中启用。", color = AiTone.Muted, fontSize = 12.sp)
+                } else {
+                    configs.forEachIndexed { index, config ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).aiTap { onPick(config) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (index == 0) AiTone.MintSoft else AiTone.Field,
+                            border = BorderStroke(1.dp, AiTone.Border.copy(alpha = .8f)),
+                            tonalElevation = 0.dp,
+                            shadowElevation = 0.dp,
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(config.name.ifBlank { config.model }, color = AiTone.Ink, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(config.model, color = AiTone.Muted, fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (index == 0) Text("当前", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+                Text("取消", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.End).aiTap { onDismiss() }.padding(6.dp))
+            }
+        }
+    }
+}
+
+@Composable
 private fun AiBubbleMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
@@ -1554,24 +1731,51 @@ private fun AiBubbleMenu(
     clipboard: ClipboardManager,
     onDelete: (() -> Unit)?,
 ) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        DropdownMenuItem(
-            text = { Text("复制全文", fontSize = 13.sp) },
-            onClick = {
-                clipboard.setText(AnnotatedString(content))
-                onDismiss()
-            },
-        )
-        if (onDelete != null) {
-            DropdownMenuItem(
-                text = { Text("删除消息", fontSize = 13.sp, color = AiTone.Danger) },
-                onClick = {
+    Popup(
+        onDismissRequest = onDismiss,
+        alignment = Alignment.TopEnd,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = AiTone.Surface,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.width(136.dp).padding(vertical = 5.dp)) {
+                AiMenuRow("复制全文") {
+                    clipboard.setText(AnnotatedString(content))
                     onDismiss()
-                    onDelete()
-                },
-            )
+                }
+                if (onDelete != null) {
+                    HorizontalDivider(color = AiTone.Border.copy(alpha = .45f), modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp))
+                    AiMenuRow("删除消息", danger = true) {
+                        onDismiss()
+                        onDelete()
+                    }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun AiMenuRow(label: String, danger: Boolean = false, onClick: () -> Unit) {
+    Text(
+        label,
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 13.dp, vertical = 9.dp),
+        color = if (danger) AiTone.Danger else AiTone.Ink,
+        fontSize = 12.5.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
 }
 
 @Composable
@@ -1614,6 +1818,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     val messages = AiChatSession.messages
     var toolHints by remember { mutableStateOf(AiChatSession.toolHints) }
     var pendingConfirmation by remember { mutableStateOf<AiToolConfirmation?>(null) }
+    var retryText by remember { mutableStateOf<String?>(null) }
+    var modelPickerOpen by remember { mutableStateOf(false) }
+    var pickerConfigs by remember { mutableStateOf<List<AiProviderConfig>>(emptyList()) }
     var conversationId by remember { mutableStateOf(AiChatSession.conversationId) }
     var loadingHistory by remember { mutableStateOf(!AiChatSession.loaded) }
     var input by remember { mutableStateOf("") }
@@ -1621,6 +1828,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var usage by remember { mutableStateOf(AiTokenSummary()) }
     var usageKnown by remember { mutableStateOf(true) }
     var showHistory by remember { mutableStateOf(false) }
+    var multiSelectHistory by remember { mutableStateOf(false) }
+    var selectedHistoryIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var conversations by remember { mutableStateOf<List<AiConversation>>(emptyList()) }
     var loadingConversations by remember { mutableStateOf(false) }
     var expandedHistoryDays by remember { mutableStateOf<Set<LocalDate>>(emptySet()) }
@@ -1737,7 +1946,23 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("历史对话", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
-                        Text("收起", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap { showHistory = false })
+                        if (selectedHistoryIds.isNotEmpty()) {
+                            Text("已选 ${selectedHistoryIds.size} 项", color = AiTone.MintDark, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp))
+                        }
+                        Text(
+                            if (multiSelectHistory) "取消多选" else "多选",
+                            color = if (multiSelectHistory) AiTone.Danger else AiTone.MintDark,
+                            fontSize = 11.5.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.aiTap {
+                                multiSelectHistory = !multiSelectHistory
+                                selectedHistoryIds = emptySet()
+                            }.padding(horizontal = 8.dp),
+                        )
+                        Text("收起", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap {
+                            showHistory = false
+                            multiSelectHistory = false
+                            selectedHistoryIds = emptySet()
+                        })
                     }
                     when {
                         loadingConversations -> Text("读取中…", color = AiTone.Muted, fontSize = 12.sp)
@@ -1794,21 +2019,29 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                             ) {
                                                 Row(
                                                     Modifier.fillMaxWidth().aiTap {
-                                                        if (!current) {
-                                                            scope.launch {
-                                                                loadingConversations = true
-                                                                runCatching { client.conversationMessages(convo.id) }
-                                                                    .onSuccess { loaded ->
-                                                                        AiChatSession.conversationId = convo.id
-                                                                        conversationId = convo.id
-                                                                        messages.clear()
-                                                                        if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
-                                                                        expandedHistoryDays += aiHistoryDate(convo.updatedAt)
-                                                                    }
-                                                                loadingConversations = false
+                                                        if (multiSelectHistory) {
+                                                            selectedHistoryIds = if (convo.id in selectedHistoryIds) {
+                                                                selectedHistoryIds - convo.id
+                                                            } else {
+                                                                selectedHistoryIds + convo.id
                                                             }
+                                                        } else {
+                                                            if (!current) {
+                                                                scope.launch {
+                                                                    loadingConversations = true
+                                                                    runCatching { client.conversationMessages(convo.id) }
+                                                                        .onSuccess { loaded ->
+                                                                            AiChatSession.conversationId = convo.id
+                                                                            conversationId = convo.id
+                                                                            messages.clear()
+                                                                            if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
+                                                                            expandedHistoryDays += aiHistoryDate(convo.updatedAt)
+                                                                        }
+                                                                    loadingConversations = false
+                                                                }
+                                                            }
+                                                            showHistory = false
                                                         }
-                                                        showHistory = false
                                                     }.padding(horizontal = 10.dp, vertical = 8.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                 ) {
@@ -1821,27 +2054,50 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                         overflow = TextOverflow.Ellipsis,
                                                         modifier = Modifier.weight(1f),
                                                     )
-                                                    Text(
-                                                        "编辑",
-                                                        color = AiTone.MintDark,
-                                                        fontSize = 10.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.aiTap {
-                                                            editingConversationId = convo.id
-                                                            editingConversationTitle = convo.title
-                                                            pendingDeleteConversation = null
-                                                        }.padding(horizontal = 7.dp, vertical = 4.dp),
-                                                    )
-                                                    Text(
-                                                        "删除",
-                                                        color = AiTone.Danger,
-                                                        fontSize = 10.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.aiTap {
-                                                            editingConversationId = null
-                                                            pendingDeleteConversation = if (pendingDeleteConversation?.id == convo.id) null else convo
-                                                        }.padding(horizontal = 7.dp, vertical = 4.dp),
-                                                    )
+                                                    if (multiSelectHistory) {
+                                                        Box(
+                                                            Modifier
+                                                                .size(18.dp)
+                                                                .clip(CircleShape)
+                                                                .background(if (convo.id in selectedHistoryIds) AiTone.Mint else AiTone.Surface)
+                                                                .aiTap {
+                                                                    selectedHistoryIds = if (convo.id in selectedHistoryIds) {
+                                                                        selectedHistoryIds - convo.id
+                                                                    } else {
+                                                                        selectedHistoryIds + convo.id
+                                                                    }
+                                                                },
+                                                            contentAlignment = Alignment.Center,
+                                                        ) {
+                                                            if (convo.id in selectedHistoryIds) {
+                                                                Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                                                            } else {
+                                                                Box(Modifier.size(14.dp).clip(CircleShape).border(BorderStroke(1.dp, AiTone.Border), CircleShape))
+                                                            }
+                                                        }
+                                                    } else {
+                                                        Text(
+                                                            "编辑",
+                                                            color = AiTone.MintDark,
+                                                            fontSize = 10.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.aiTap {
+                                                                editingConversationId = convo.id
+                                                                editingConversationTitle = convo.title
+                                                                pendingDeleteConversation = null
+                                                            }.padding(horizontal = 7.dp, vertical = 4.dp),
+                                                        )
+                                                        Text(
+                                                            "删除",
+                                                            color = AiTone.Danger,
+                                                            fontSize = 10.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.aiTap {
+                                                                editingConversationId = null
+                                                                pendingDeleteConversation = if (pendingDeleteConversation?.id == convo.id) null else convo
+                                                            }.padding(horizontal = 7.dp, vertical = 4.dp),
+                                                        )
+                                                    }
                                                     if (current && pendingDeleteConversation?.id != convo.id) {
                                                         Text("当前", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                                                     }
@@ -1919,6 +2175,92 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             }
                         }
                     }
+                    if (multiSelectHistory) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            color = AiTone.Field,
+                            border = BorderStroke(1.dp, AiTone.Border),
+                            tonalElevation = 0.dp,
+                            shadowElevation = 0.dp,
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "全选",
+                                    color = AiTone.MintDark, fontSize = 11.5.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.aiTap {
+                                        selectedHistoryIds = if (selectedHistoryIds.size == conversations.size) {
+                                            emptySet()
+                                        } else {
+                                            conversations.map { it.id }.toSet()
+                                        }
+                                    }.padding(horizontal = 6.dp, vertical = 4.dp),
+                                )
+                                Spacer(Modifier.weight(1f))
+                                AiAction(
+                                    "复制内容",
+                                    modifier = Modifier.weight(1.2f),
+                                    compact = true,
+                                    enabled = selectedHistoryIds.isNotEmpty() && !historyBusy,
+                                ) {
+                                    scope.launch {
+                                        historyBusy = true
+                                        val parts = mutableListOf<String>()
+                                        conversations.filter { it.id in selectedHistoryIds }.forEach { convo ->
+                                            runCatching { client.conversationMessages(convo.id) }.onSuccess { rows ->
+                                                val title = convo.title.ifBlank { "对话 ${convo.updatedAt.take(16)}" }
+                                                val body = rows.joinToString("\n") { row ->
+                                                    (if (row.role == "user") "我" else "助手") + "：" + row.content
+                                                }
+                                                parts += "【$title】\n$body"
+                                            }
+                                        }
+                                        historyBusy = false
+                                        if (parts.isEmpty()) {
+                                            messages += AiMessage("assistant", "没有可复制的内容。")
+                                        } else {
+                                            clipboard.setText(AnnotatedString(parts.joinToString("\n\n")))
+                                            messages += AiMessage("assistant", "已复制 ${parts.size} 个对话的内容。")
+                                        }
+                                        multiSelectHistory = false
+                                        selectedHistoryIds = emptySet()
+                                        showHistory = false
+                                    }
+                                }
+                                AiAction(
+                                    "删除(${selectedHistoryIds.size})",
+                                    modifier = Modifier.weight(1.2f),
+                                    tone = AiTone.Danger,
+                                    compact = true,
+                                    enabled = selectedHistoryIds.isNotEmpty() && !historyBusy,
+                                ) {
+                                    scope.launch {
+                                        historyBusy = true
+                                        var removedCurrent = false
+                                        selectedHistoryIds.forEach { id ->
+                                            runCatching { client.deleteConversation(id) }
+                                            if (AiChatSession.conversationId == id) removedCurrent = true
+                                        }
+                                        conversations = conversations.filterNot { it.id in selectedHistoryIds }
+                                        if (removedCurrent) {
+                                            AiChatSession.conversationId = null
+                                            AiChatSession.messages.clear()
+                                            messages.clear()
+                                            conversationId = null
+                                            messages += AiMessage("assistant", AI_GREETING)
+                                        }
+                                        historyBusy = false
+                                        multiSelectHistory = false
+                                        selectedHistoryIds = emptySet()
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1957,6 +2299,22 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     }
                 }
                 AiChatBubble(message, onDelete = deleteMessage)
+            }
+            retryText?.let { retry ->
+                item(key = "switch-model-card") {
+                    AiSwitchModelCard(
+                        retryPreview = retry,
+                        onSwitch = {
+                            scope.launch {
+                                runCatching { client.configs() }.onSuccess { bundle ->
+                                    pickerConfigs = bundle.configs.filter { it.enabled }
+                                    modelPickerOpen = true
+                                }.onFailure { messages += AiMessage("assistant", "读取配置失败：${it.message ?: "未知错误"}") }
+                            }
+                        },
+                        onDismiss = { retryText = null },
+                    )
+                }
             }
             if (sending) item { AiTypingBubble() }
             pendingConfirmation?.let { confirmation ->
@@ -2138,8 +2496,10 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             }
                         }
                         messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
+                        if ((error.message ?: "").contains("自动切换已停用")) retryText = text
                     } catch (error: Throwable) {
                         messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
+                        if ((error.message ?: "").contains("自动切换已停用")) retryText = text
                     }
                     sending = false
                 }
@@ -2162,6 +2522,25 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             ) {
                 Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Send, "发送", tint = Color.White) }
             }
+        }
+        if (modelPickerOpen) {
+            AiModelPickerDialog(
+                configs = pickerConfigs,
+                onDismiss = { modelPickerOpen = false },
+                onPick = { config ->
+                    modelPickerOpen = false
+                    val retry = retryText
+                    scope.launch {
+                        runCatching { client.promoteConfig(config.id) }
+                            .onSuccess { saved ->
+                                messages += AiMessage("assistant", "已切换到 ${saved.name.ifBlank { saved.model }}（${saved.model}），正在重试…")
+                                retryText = null
+                                retry?.let { input = it; sendNow() }
+                            }
+                            .onFailure { messages += AiMessage("assistant", "切换失败：${it.message ?: "未知错误"}") }
+                    }
+                },
+            )
         }
     }
 }

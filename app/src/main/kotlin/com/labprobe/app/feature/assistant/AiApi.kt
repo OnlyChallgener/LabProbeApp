@@ -483,6 +483,45 @@ class AiApiClient(
         }
     }
 
+    /** 把某配置置顶：对话固定使用第一个启用的配置。 */
+    suspend fun promoteConfig(configId: String): AiProviderConfig = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/config/$configId/promote", "POST", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+            parseProviderConfig(JSONObject(body))
+        }
+    }
+
+    /** 上移/下移配置（用户自定义排序，不再受添加时间约束）。 */
+    suspend fun moveConfig(configId: String, direction: String) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val payload = JSONObject().put("direction", direction).toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/config/$configId/move", "POST", payload).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+        }
+    }
+
+    /** 手动校准某配置的累计用量（插入带符号的调整行，历史保留）。 */
+    suspend fun adjustUsage(configId: String, totalTokens: Long) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val payload = JSONObject().put("configId", configId).put("totalTokens", totalTokens).toString()
+        request(hubUrl.trimEnd('/') + "/api/ai/usage/adjust", "POST", payload).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+        }
+    }
+
+    /** 删除一条任务用量记录（不影响其他统计）。 */
+    suspend fun deleteUsageRecord(usageId: Int) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        request(hubUrl.trimEnd('/') + "/api/ai/usage/$usageId", "DELETE", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
+        }
+    }
+
     suspend fun deleteProviderConfig(configId: String) = withContext(Dispatchers.IO) {
         require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
         val encoded = java.net.URLEncoder.encode(configId, "UTF-8")
