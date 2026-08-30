@@ -209,10 +209,10 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · Agent 控制链路恢复" to listOf(
-                "STUN 远端校验改为后台恢复，不再阻塞其他路由设置页面和 Agent 指令",
-                "检查更新与一键清理可从短暂连接中断中恢复，失败提示统一显示中文",
-                "设置页的 DeepSeek 专属文案改为通用 AI 文案"
+            "v$NAME build$CODE · Hub 首帧连接恢复" to listOf(
+                "APP 启动不再强制访问 Agent 更新仓，避免拖慢 Hub 首帧与路由配置读取",
+                "Agent 检查更新改由 Hub 后台执行，不再占用路由数据锁",
+                "路由配置读取短暂失败时保留并显示上次成功保存的名称与地址"
             )
         )
 }
@@ -240,7 +240,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val prefs = AppPrefs(this)
         AgentUpdateCoordinator.bind(prefs)
-        AgentUpdateCoordinator.check(prefs, silent = true)
         // Preload the shared router-control repository before any settings page
         // is opened. The repository waits briefly so WSS startup stays first.
         RouterRepositoryRegistry.get(prefs).start()
@@ -10570,9 +10569,9 @@ fun SettingsScreen(
     var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
-    var routerName by remember { mutableStateOf("") }
-    var routerUsername by remember { mutableStateOf("") }
-    var routerAddress by remember { mutableStateOf("") }
+    var routerName by remember { mutableStateOf(prefs.routerDisplayName) }
+    var routerUsername by remember { mutableStateOf("admin") }
+    var routerAddress by remember { mutableStateOf(prefs.routerLanUrl) }
     var routerPassword by remember { mutableStateOf("") }
     var routerPasswordConfigured by remember { mutableStateOf(false) }
     var routerConfigLoading by remember { mutableStateOf(false) }
