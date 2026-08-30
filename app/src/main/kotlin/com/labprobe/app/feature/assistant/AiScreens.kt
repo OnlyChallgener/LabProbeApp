@@ -106,6 +106,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -996,26 +997,32 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        if (hasCacheBreakdown) {
-                            AiUsageLegend(Color(0xFFBCEAD9), "命中缓存")
-                            AiUsageLegend(Color(0xFF68C6A6), "其他")
-                        } else {
-                            AiUsageLegend(Color(0xFF68C6A6), "输入")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (hasCacheBreakdown) {
+                                AiUsageLegend(Color(0xFFBCEAD9), "命中缓存")
+                                AiUsageLegend(Color(0xFF68C6A6), "其他")
+                            } else {
+                                AiUsageLegend(Color(0xFF68C6A6), "输入")
+                            }
+                            AiUsageLegend(AiTone.MintDark, "输出")
+                            if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准")
                         }
-                        AiUsageLegend(AiTone.MintDark, "输出")
-                        if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准")
-                    }
-                    if (cacheReported > 0 && periodPrompt > 0) {
-                        Text(
-                            "缓存命中 ${cacheHit * 100 / cacheReported}% · ${compactTokens(cacheReported)}/${compactTokens(periodPrompt)} 输入",
-                            modifier = Modifier.fillMaxWidth(),
-                            color = AiTone.Muted,
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        if (cacheReported > 0 && periodPrompt > 0) {
+                            Text(
+                                "缓存命中 ${cacheHit * 100 / cacheReported}% · ${compactTokens(cacheReported)}/${compactTokens(periodPrompt)} 输入",
+                                modifier = Modifier.weight(1f),
+                                color = AiTone.Muted,
+                                fontSize = 10.sp,
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                     AiDailyUsageBars(daily)
                     Spacer(Modifier.height(2.dp))
