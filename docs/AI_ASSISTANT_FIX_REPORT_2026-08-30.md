@@ -2,7 +2,7 @@
 
 日期：2026-08-30  
 分支：`codex/ai-assistant`  
-状态：**全部改动仅保留在本地，未提交、未推送、未触发 GitHub 测试发布**
+状态：修复已提交并推送；`test-bundle/20260830-1` 的 App CI 曾捕获并修正一个请求序列化编译错误，最终测试发布使用 `test-bundle/20260830-2`。
 
 ## 1. 结论
 
@@ -133,6 +133,10 @@ App 与 Hub 已做静态路径和字段对照。
 
 使用 Python 完成 7 组源码/契约断言，全部通过：HTTP 错误消息 ID、SSE 建立后断流身份、Hub 身份恢复、用量身份隔离、唯一气泡菜单、通知权限与游标、确认/校准接口契约。另完成 Kotlin 源码差异检查，无补丁格式错误。
 
+### 5.3 GitHub CI 反馈
+
+首个测试 tag `test-bundle/20260830-1` 的 App workflow 在编译阶段发现 `usage/adjust` 请求把 `JSONObject` 直接传给字符串参数（`AiApi.kt`），已修复为序列化字符串并提交 `74a4021`。Hub 同一 tag 的 Python、LabRelay 和发布步骤已通过；修复后的最终测试发布改用下一个不可变 tag `test-bundle/20260830-2`。
+
 ## 6. 修改文件
 
 ### App：`D:\Github\LabProbeApp`
@@ -164,4 +168,4 @@ App 与 Hub 已做静态路径和字段对照。
 
 ## 8. Git 状态
 
-两个仓库均在 `codex/ai-assistant`，所有修改均未提交、未推送。当前等待用户确认；确认前不创建提交、不推送 GitHub、不打测试发布标签。
+两个仓库均在 `codex/ai-assistant`，修复提交已推送。测试发布使用同名 `test-bundle/20260830-2` tag，正式 `v*` release 未触碰。
