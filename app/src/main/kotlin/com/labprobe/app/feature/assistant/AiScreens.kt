@@ -1000,12 +1000,12 @@ fun AiUsageScreen(context: Context, onBack: () -> Unit) {
                     ) {
                         if (hasCacheBreakdown) {
                             AiUsageLegend(Color(0xFFBCEAD9), "命中缓存")
-                            AiUsageLegend(Color(0xFF68C6A6), "其他输入")
+                            AiUsageLegend(Color(0xFF68C6A6), "其他")
                         } else {
                             AiUsageLegend(Color(0xFF68C6A6), "输入")
                         }
                         AiUsageLegend(AiTone.MintDark, "输出")
-                        if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准/其他")
+                        if (trendSlots.any { it.other > 0 }) AiUsageLegend(AiTone.Warning, "校准")
                     }
                     if (cacheReported > 0 && periodPrompt > 0) {
                         Text(
