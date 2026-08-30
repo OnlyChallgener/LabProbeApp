@@ -1,6 +1,7 @@
 package com.labprobe.app.feature.assistant
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -21,7 +22,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,6 +45,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -95,9 +96,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -153,7 +151,7 @@ private val AI_PROVIDER_PRESETS = listOf(
     AiProviderPreset("阿里千问", "qwen3.6-flash", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     AiProviderPreset("Gemini", "gemini-3.6-flash", "https://generativelanguage.googleapis.com/v1beta/openai"),
     AiProviderPreset("小米 MiMo", "mimo-v2.5", "https://api.xiaomimimo.com/v1"),
-    AiProviderPreset("腾讯混元", "hy3", "https://tokenhub.tencentmaas.com/v1"),
+    AiProviderPreset("腾讯混元 TokenHub", "hy4-preview", "https://tokenhub.tencentmaas.com/v1"),
 )
 
 private const val AI_GREETING = "你好，我可以查询设备与网络状态，也能在确认后帮你控制端口映射、STUN 穿透或升级 Agent。"
@@ -1160,7 +1158,7 @@ private fun formatAiUsageTime(value: String): String {
     val raw = value.trim()
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
     return runCatching { OffsetDateTime.parse(raw).toInstant().atZone(AI_BEIJING_ZONE).format(formatter) }
-        .recoverCatching { LocalDateTime.parse(raw, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).format(formatter) }
+        .recoverCatching { LocalDateTime.parse(raw, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).atZone(AI_BEIJING_ZONE).format(formatter) }
         .getOrElse {
             raw.replace("T", " ").substringBefore("+").substringBefore("Z").take(19).ifBlank { "时间未知" }
         }
@@ -1245,15 +1243,13 @@ private data class AiUsageSlot(
     val total: Int get() = prompt + completion + other
 }
 
-/** Use the user's actual visible period: 14 days from first data, otherwise latest 14 days. */
+/** Always show the latest 14 Beijing calendar days (including zero days).
+ * The old first-data anchor could generate dates after today when the user
+ * had only just started using the assistant. */
 private fun aiTrendSlots(daily: List<AiUsageDay>, days: Int = 14): List<AiUsageSlot> {
     val byDate = daily.associateBy { it.date }
     return runCatching {
-        val dates = daily.mapNotNull { runCatching { LocalDate.parse(it.date) }.getOrNull() }
-        if (dates.isEmpty()) return@runCatching emptyList()
-        val first = dates.minOrNull()!!
-        val last = dates.maxOrNull()!!
-        val start = if (java.time.temporal.ChronoUnit.DAYS.between(first, last) < days - 1) first else last.minusDays((days - 1).toLong())
+        val start = LocalDate.now(AI_BEIJING_ZONE).minusDays((days - 1).toLong())
         (0 until days).map { offset ->
             val day = start.plusDays(offset.toLong()).toString()
             val source = byDate[day]
@@ -1606,22 +1602,28 @@ private fun AiMarkdownText(content: String, modifier: Modifier = Modifier) {
 @Composable
 private fun AiChatBubble(
     message: AiMessage,
-    menuOpen: Boolean,
-    onOpenMenu: () -> Unit,
-    onDismissMenu: () -> Unit,
-    onDelete: (() -> Unit)? = null,
+    multiSelectMode: Boolean,
+    selected: Boolean,
+    interactionEnabled: Boolean,
+    onToggleSelection: () -> Unit,
+    onOpenActions: () -> Unit,
 ) {
-    val clipboard = LocalClipboardManager.current
     val user = message.role == "user"
-    // 长按气泡边缘弹出菜单；直接长按文字则走系统文本选择（可局部复制）。
+    // Normal bubbles never host SelectionContainer. A long press opens the
+    // in-page single-message actions; text selection lives in its own dialog,
+    // so the Android selection toolbar and app actions cannot overlap.
     val bubbleInteractionSource = remember { MutableInteractionSource() }
     fun bubbleModifier(maxWidth: Dp): Modifier = Modifier
         .widthIn(max = maxWidth)
         .combinedClickable(
             interactionSource = bubbleInteractionSource,
             indication = null,
-            onClick = {},
-            onLongClick = onOpenMenu,
+            onClick = { if (multiSelectMode && interactionEnabled) onToggleSelection() },
+            onLongClick = {
+                if (interactionEnabled) {
+                    if (multiSelectMode) onToggleSelection() else onOpenActions()
+                }
+            },
         )
     val bubbleContent: @Composable () -> Unit = {
         if (user) {
@@ -1640,14 +1642,14 @@ private fun AiChatBubble(
                 Surface(
                     modifier = bubbleModifier(264.dp),
                     shape = RoundedCornerShape(16.dp),
-                    color = AiTone.MintSoft,
-                    border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .32f)),
+                    color = if (selected) AiTone.Mint.copy(alpha = .22f) else AiTone.MintSoft,
+                    border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) AiTone.MintDark else AiTone.Mint.copy(alpha = .32f)),
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
-                    SelectionContainer { bubbleContent() }
+                    bubbleContent()
                 }
-                AiBubbleMenu(menuOpen, onDismissMenu, message.content, clipboard, onDelete)
+                if (selected) AiSelectedBadge(Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp))
             }
         }
     } else {
@@ -1667,14 +1669,79 @@ private fun AiChatBubble(
                 Surface(
                     modifier = bubbleModifier(280.dp),
                     shape = RoundedCornerShape(16.dp),
-                    color = AiTone.Surface,
-                    border = BorderStroke(1.dp, AiTone.Border),
+                    color = if (selected) AiTone.Mint.copy(alpha = .14f) else AiTone.Surface,
+                    border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) AiTone.MintDark else AiTone.Border),
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
-                    SelectionContainer { bubbleContent() }
+                    bubbleContent()
                 }
-                AiBubbleMenu(menuOpen, onDismissMenu, message.content, clipboard, onDelete)
+                if (selected) AiSelectedBadge(Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiSelectedBadge(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.size(20.dp),
+        shape = CircleShape,
+        color = AiTone.MintDark,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text("✓", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+private fun aiMessageSelectionKey(message: AiMessage): String =
+    if (message.serverId > 0) "server-${message.serverId}"
+    else "local-${System.identityHashCode(message)}"
+
+private fun aiSelectedMessagesText(messages: List<AiMessage>): String = messages.joinToString("\n\n") { message ->
+    val speaker = if (message.role == "user") "我" else "助手"
+    "$speaker：${message.content}"
+}
+
+@Composable
+private fun AiPartialCopyDialog(message: AiMessage, onDismiss: () -> Unit) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = AiTone.Surface,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("选择并复制文字", color = AiTone.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("关闭", color = AiTone.MintDark, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap { onDismiss() }.padding(6.dp))
+                }
+                Text("长按下方文字后拖动选区，再点系统的“复制”。", color = AiTone.Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                Surface(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = AiTone.Field,
+                    border = BorderStroke(1.dp, AiTone.Border.copy(alpha = .75f)),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    SelectionContainer {
+                        Text(
+                            message.content,
+                            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(13.dp),
+                            color = AiTone.Ink,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            lineHeight = 19.sp,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1753,62 +1820,6 @@ private fun AiModelPickerDialog(
 }
 
 @Composable
-private fun AiBubbleMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    content: String,
-    clipboard: ClipboardManager,
-    onDelete: (() -> Unit)?,
-) {
-    if (!expanded) return
-    Popup(
-        onDismissRequest = onDismiss,
-        alignment = Alignment.TopEnd,
-        properties = PopupProperties(focusable = true),
-    ) {
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = AiTone.Surface,
-            border = BorderStroke(1.dp, AiTone.Border),
-            tonalElevation = 0.dp,
-            shadowElevation = 8.dp,
-        ) {
-            Column(Modifier.width(136.dp).padding(vertical = 5.dp)) {
-                AiMenuRow("复制全文") {
-                    clipboard.setText(AnnotatedString(content))
-                    onDismiss()
-                }
-                if (onDelete != null) {
-                    HorizontalDivider(color = AiTone.Border.copy(alpha = .45f), modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp))
-                    AiMenuRow("删除消息", danger = true) {
-                        onDismiss()
-                        onDelete()
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiMenuRow(label: String, danger: Boolean = false, onClick: () -> Unit) {
-    Text(
-        label,
-        Modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            )
-            .padding(horizontal = 13.dp, vertical = 9.dp),
-        color = if (danger) AiTone.Danger else AiTone.Ink,
-        fontSize = 12.5.sp,
-        fontWeight = FontWeight.SemiBold,
-    )
-}
-
-@Composable
 private fun AiTypingBubble() {
     val dots = rememberInfiniteTransition(label = "ai-typing")
     val phase by dots.animateFloat(
@@ -1870,9 +1881,66 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var editingConversationId by remember(client.identity) { mutableStateOf<String?>(null) }
     var editingConversationTitle by remember(client.identity) { mutableStateOf("") }
     var pendingDeleteConversation by remember(client.identity) { mutableStateOf<AiConversation?>(null) }
-    var menuMessage by remember(client.identity) { mutableStateOf<AiMessage?>(null) }
+    var singleActionMessageKey by remember(client.identity) { mutableStateOf<String?>(null) }
+    var partialCopyMessage by remember(client.identity) { mutableStateOf<AiMessage?>(null) }
+    var multiSelectMessages by remember(client.identity) { mutableStateOf(false) }
+    var selectedMessageKeys by remember(client.identity) { mutableStateOf<Set<String>>(emptySet()) }
+    var messageSelectionBusy by remember(client.identity) { mutableStateOf(false) }
+    var messageSelectionError by remember(client.identity) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    fun clearMessageActions() {
+        singleActionMessageKey = null
+        multiSelectMessages = false
+        selectedMessageKeys = emptySet()
+        messageSelectionError = null
+    }
+    fun deleteChatMessages(targets: List<AiMessage>) {
+        if (messageSelectionBusy || targets.isEmpty()) return
+        val targetConversationId = conversationId
+        scope.launch {
+            messageSelectionBusy = true
+            messageSelectionError = null
+            val removedKeys = mutableSetOf<String>()
+            val failed = mutableListOf<String>()
+            try {
+                for (target in targets) {
+                    val key = aiMessageSelectionKey(target)
+                    if (target.serverId <= 0) {
+                        removedKeys += key
+                        continue
+                    }
+                    if (targetConversationId == null) {
+                        failed += "消息 ${target.serverId}：未找到所属对话"
+                        continue
+                    }
+                    try {
+                        client.deleteConversationMessage(targetConversationId, target.serverId)
+                        removedKeys += key
+                    } catch (cancel: CancellationException) {
+                        throw cancel
+                    } catch (error: Throwable) {
+                        failed += "消息 ${target.serverId}：${error.message ?: "未知错误"}"
+                    }
+                }
+                if (conversationId == targetConversationId) {
+                    messages.removeAll { aiMessageSelectionKey(it) in removedKeys }
+                    selectedMessageKeys = selectedMessageKeys - removedKeys
+                    singleActionMessageKey?.let { key -> if (key in removedKeys) singleActionMessageKey = null }
+                    if (multiSelectMessages && failed.isEmpty()) {
+                        multiSelectMessages = false
+                        selectedMessageKeys = emptySet()
+                    }
+                }
+                messageSelectionError = if (failed.isEmpty()) null
+                else "${failed.size} 条消息删除失败；已保留未删除项。"
+            } finally {
+                messageSelectionBusy = false
+            }
+        }
+    }
+    val messageActionActive = singleActionMessageKey != null || multiSelectMessages
+    BackHandler(enabled = messageActionActive && !messageSelectionBusy) { clearMessageActions() }
     LaunchedEffect(messages.size, sending, pendingConfirmation) {
         val target = messages.size - 1 + if (pendingConfirmation != null || sending) 1 else 0
         if (target >= 0) runCatching { listState.animateScrollToItem(target) }
@@ -1885,9 +1953,13 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             conversationId = null
             pendingConfirmation = null
             historyError = null
+            clearMessageActions()
+            partialCopyMessage = null
             loadingHistory = true
         }
         if (!AiChatSession.loaded) {
+            clearMessageActions()
+            partialCopyMessage = null
             // 先渲染欢迎语，恢复期间不再整屏空白
             if (messages.isEmpty()) messages += AiMessage("assistant", AI_GREETING)
             val hints = launch { runCatching { client.catalog() }.onSuccess { toolHints = it; AiChatSession.toolHints = it } }
@@ -1924,10 +1996,13 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).imePadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack, trailing = {
+        AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack = {
+            if (messageActionActive && !messageSelectionBusy) clearMessageActions() else onBack()
+        }, trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
+                        clearMessageActions()
                         showHistory = !showHistory
                         if (showHistory && conversations.isEmpty() && !loadingConversations) {
                             loadingConversations = true
@@ -1955,6 +2030,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                         messages.clear()
                         conversationId = null
                         pendingConfirmation = null
+                        clearMessageActions()
+                        partialCopyMessage = null
                         messages += AiMessage("assistant", AI_GREETING)
                         showHistory = false
                     }),
@@ -2058,6 +2135,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                     if (expanded) {
                                         items(day.conversations, key = { "history-${it.id}" }) { convo ->
                                             val current = convo.id == conversationId
+                                            val historyInteractionSource = remember(convo.id) { MutableInteractionSource() }
                                             Column(
                                                 Modifier
                                                     .fillMaxWidth()
@@ -2066,7 +2144,17 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                     .background(if (current) AiTone.MintSoft else AiTone.Field),
                                             ) {
                                                 Row(
-                                                    Modifier.fillMaxWidth().aiTap(enabled = !sending && !historyBusy) {
+                                                    Modifier.fillMaxWidth().combinedClickable(
+                                                        interactionSource = historyInteractionSource,
+                                                        indication = null,
+                                                        enabled = !sending && !historyBusy,
+                                                        onLongClick = {
+                                                            // 长按历史条目直接进入多选并选中当前项；
+                                                            // 再点其它条目即可连续选择，支持批量复制/删除。
+                                                            multiSelectHistory = true
+                                                            selectedHistoryIds = selectedHistoryIds + convo.id
+                                                        },
+                                                        onClick = {
                                                         if (multiSelectHistory) {
                                                             selectedHistoryIds = if (convo.id in selectedHistoryIds) {
                                                                 selectedHistoryIds - convo.id
@@ -2083,6 +2171,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                                             AiChatSession.conversationId = convo.id
                                                                             conversationId = convo.id
                                                                             messages.clear()
+                                                                            clearMessageActions()
+                                                                            partialCopyMessage = null
                                                                             if (loaded.isEmpty()) messages += AiMessage("assistant", AI_GREETING) else messages.addAll(loaded)
                                                                             expandedHistoryDays += aiHistoryDate(convo.updatedAt)
                                                                             runCatching { client.pendingConfirmation(convo.id) }
@@ -2095,7 +2185,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                             }
                                                             showHistory = false
                                                         }
-                                                    }.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    },
+                                                    ).padding(horizontal = 10.dp, vertical = 8.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                 ) {
                                                     Text(
@@ -2210,6 +2301,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                                                     AiChatSession.messages.clear()
                                                                                     messages.clear()
                                                                                     conversationId = null
+                                                                                    clearMessageActions()
+                                                                                    partialCopyMessage = null
                                                                                     messages += AiMessage("assistant", AI_GREETING)
                                                                                 }
                                                                                 pendingDeleteConversation = null
@@ -2255,7 +2348,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                 )
                                 Spacer(Modifier.weight(1f))
                                 AiAction(
-                                    "复制内容",
+                                    "复制选定对话",
                                     modifier = Modifier.weight(1.2f),
                                     compact = true,
                                     enabled = selectedHistoryIds.isNotEmpty() && !historyBusy,
@@ -2294,16 +2387,24 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                     scope.launch {
                                         historyBusy = true
                                         var removedCurrent = false
-                                        selectedHistoryIds.forEach { id ->
-                                            runCatching { client.deleteConversation(id) }
-                                            if (AiChatSession.conversationId == id) removedCurrent = true
+                                        val removedIds = buildSet {
+                                            selectedHistoryIds.forEach { id ->
+                                                runCatching { client.deleteConversation(id) }
+                                                    .onSuccess {
+                                                        add(id)
+                                                        if (AiChatSession.conversationId == id) removedCurrent = true
+                                                    }
+                                                    .onFailure { messages += AiMessage("assistant", "删除对话失败：${it.message ?: "未知错误"}") }
+                                            }
                                         }
-                                        conversations = conversations.filterNot { it.id in selectedHistoryIds }
+                                        conversations = conversations.filterNot { it.id in removedIds }
                                         if (removedCurrent) {
                                             AiChatSession.conversationId = null
                                             AiChatSession.messages.clear()
                                             messages.clear()
                                             conversationId = null
+                                            clearMessageActions()
+                                            partialCopyMessage = null
                                             messages += AiMessage("assistant", AI_GREETING)
                                         }
                                         historyBusy = false
@@ -2331,40 +2432,26 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             if (loadingHistory) item { Text("正在恢复最近对话…", color = AiTone.Muted, fontSize = 12.sp) }
             items(
                 items = messages,
-                key = { message ->
-                    if (message.serverId > 0) "server-${message.serverId}"
-                    else "local-${System.identityHashCode(message)}"
-                },
+                key = { message -> aiMessageSelectionKey(message) },
             ) { message ->
-                val deleteMessage: (() -> Unit)? = if (sending) {
-                    null
-                } else {
-                    {
-                        val convoId = conversationId
-                        if (message.serverId > 0 && convoId != null) {
-                            scope.launch {
-                                try {
-                                    client.deleteConversationMessage(convoId, message.serverId)
-                                    val index = messages.indexOfFirst { it === message }
-                                    if (index >= 0) messages.removeAt(index)
-                                } catch (cancel: CancellationException) {
-                                    throw cancel
-                                } catch (error: Throwable) {
-                                    messages += AiMessage("assistant", "删除失败：${error.message ?: "未知错误"}")
-                                }
-                            }
-                        } else {
-                            val index = messages.indexOfFirst { it === message }
-                            if (index >= 0) messages.removeAt(index)
-                        }
-                    }
-                }
+                val selectionKey = aiMessageSelectionKey(message)
                 AiChatBubble(
                     message = message,
-                    menuOpen = menuMessage === message,
-                    onOpenMenu = { menuMessage = message },
-                    onDismissMenu = { if (menuMessage === message) menuMessage = null },
-                    onDelete = deleteMessage,
+                    multiSelectMode = multiSelectMessages,
+                    selected = selectionKey in selectedMessageKeys,
+                    interactionEnabled = !sending && !messageSelectionBusy,
+                    onToggleSelection = {
+                        messageSelectionError = null
+                        selectedMessageKeys = if (selectionKey in selectedMessageKeys) {
+                            selectedMessageKeys - selectionKey
+                        } else {
+                            selectedMessageKeys + selectionKey
+                        }
+                    },
+                    onOpenActions = {
+                        singleActionMessageKey = selectionKey
+                        messageSelectionError = null
+                    },
                 )
             }
             retryText?.let { retry ->
@@ -2497,6 +2584,113 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 }
             }
         }
+        singleActionMessageKey?.let { key -> messages.firstOrNull { aiMessageSelectionKey(it) == key } }?.let { targetMessage ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = AiTone.Field,
+                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .45f)),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("当前消息", color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "关闭",
+                            color = AiTone.Muted,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.aiTap(enabled = !messageSelectionBusy) {
+                                singleActionMessageKey = null
+                                messageSelectionError = null
+                            }.padding(horizontal = 7.dp, vertical = 4.dp),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiAction("复制全文", Modifier.weight(1f), compact = true, enabled = !messageSelectionBusy) {
+                            clipboard.setText(AnnotatedString(targetMessage.content))
+                            singleActionMessageKey = null
+                            messageSelectionError = null
+                        }
+                        AiAction("局部复制", Modifier.weight(1f), compact = true, enabled = !messageSelectionBusy) {
+                            partialCopyMessage = targetMessage
+                            singleActionMessageKey = null
+                            messageSelectionError = null
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiAction(
+                            "删除消息",
+                            Modifier.weight(1f),
+                            tone = AiTone.Danger,
+                            compact = true,
+                            enabled = !messageSelectionBusy && !sending,
+                        ) { deleteChatMessages(listOf(targetMessage)) }
+                        AiAction("多选", Modifier.weight(1f), compact = true, enabled = !messageSelectionBusy && !sending) {
+                            selectedMessageKeys = setOf(aiMessageSelectionKey(targetMessage))
+                            multiSelectMessages = true
+                            singleActionMessageKey = null
+                            messageSelectionError = null
+                        }
+                    }
+                    messageSelectionError?.let { error ->
+                        Text(error, color = AiTone.Danger, fontSize = 10.5.sp, lineHeight = 14.sp)
+                    }
+                }
+            }
+        }
+        if (multiSelectMessages) {
+            val selectedMessages = messages.filter { aiMessageSelectionKey(it) in selectedMessageKeys }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = AiTone.Field,
+                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .45f)),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("已选 ${selectedMessages.size} 条消息", color = AiTone.Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "取消",
+                            color = AiTone.Muted,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.aiTap(enabled = !messageSelectionBusy) {
+                                clearMessageActions()
+                            }.padding(horizontal = 7.dp, vertical = 4.dp),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiAction(
+                            "复制选定对话",
+                            modifier = Modifier.weight(1f),
+                            compact = true,
+                            enabled = selectedMessages.isNotEmpty() && !messageSelectionBusy,
+                        ) {
+                            clipboard.setText(AnnotatedString(aiSelectedMessagesText(selectedMessages)))
+                            clearMessageActions()
+                        }
+                        AiAction(
+                            "删除(${selectedMessages.size})",
+                            modifier = Modifier.weight(1f),
+                            tone = AiTone.Danger,
+                            compact = true,
+                            enabled = selectedMessages.isNotEmpty() && !messageSelectionBusy && !sending,
+                        ) {
+                            deleteChatMessages(selectedMessages)
+                        }
+                    }
+                    messageSelectionError?.let { error ->
+                        Text(error, color = AiTone.Danger, fontSize = 10.5.sp, lineHeight = 14.sp)
+                    }
+                }
+            }
+        }
         Surface(
             shape = AiPillShape,
             color = AiTone.Field,
@@ -2511,9 +2705,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold,
             )
         }
-        val canSend = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null
+        val canSend = input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null && !messageActionActive && partialCopyMessage == null
         val sendNow = {
-            if (input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null) {
+            if (input.isNotBlank() && !sending && !loadingHistory && pendingConfirmation == null && !messageActionActive && partialCopyMessage == null) {
                 val text = input.trim()
                 val requestConversationId = conversationId
                 retryText = null
@@ -2636,7 +2830,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 value = input,
                 onValueChange = { input = it },
                 onSend = sendNow,
-                enabled = !sending && !loadingHistory && pendingConfirmation == null,
+                enabled = !sending && !loadingHistory && pendingConfirmation == null && !messageActionActive && partialCopyMessage == null,
                 modifier = Modifier.weight(1f),
             )
             Surface(
@@ -2667,6 +2861,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     }
                 },
             )
+        }
+        partialCopyMessage?.let { message ->
+            AiPartialCopyDialog(message = message, onDismiss = { partialCopyMessage = null })
         }
     }
 }
