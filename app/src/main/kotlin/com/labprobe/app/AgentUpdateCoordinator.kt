@@ -78,7 +78,7 @@ object AgentUpdateCoordinator {
                 )
                 try {
                     val api = HubApi(prefs)
-                    api.requestAgentUpdateCheck()
+                    requestCheckWithRetry(api)
                     val info = pollCheck(api)
                     publish(prefs, normalizeSettledInfo(info))
                 } catch (cancelled: CancellationException) {
@@ -161,16 +161,44 @@ object AgentUpdateCoordinator {
         prefs.hub.isNotBlank() && prefs.token.isNotBlank()
 
     private suspend fun pollCheck(api: HubApi): AgentUpdateInfo {
-        var info = api.getAgentUpdateStatus()
+        var info: AgentUpdateInfo? = null
+        var lastTransient: Throwable? = null
         repeat(15) {
-            val checking = info.state.equals("checking", ignoreCase = true) ||
-                info.message.contains("后台检查") ||
-                info.latestVersion.isUnknownVersion()
-            if (!checking) return info
+            val latest = try {
+                api.getAgentUpdateStatus()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (!isTransientAgentTransportError(error.message)) throw error
+                lastTransient = error
+                delay(800L)
+                return@repeat
+            }
+            info = latest
+            val checking = latest.state.equals("checking", ignoreCase = true) ||
+                latest.message.contains("后台检查") ||
+                latest.latestVersion.isUnknownVersion()
+            if (!checking) return latest
             delay(800L)
-            info = api.getAgentUpdateStatus()
         }
-        return info
+        return info ?: throw (lastTransient ?: IllegalStateException("版本状态暂未同步"))
+    }
+
+    private suspend fun requestCheckWithRetry(api: HubApi) {
+        var lastTransient: Throwable? = null
+        repeat(3) { attempt ->
+            try {
+                api.requestAgentUpdateCheck()
+                return
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (!isTransientAgentTransportError(error.message)) throw error
+                lastTransient = error
+                if (attempt < 2) delay(400L * (attempt + 1))
+            }
+        }
+        throw (lastTransient ?: IllegalStateException("版本检查连接暂时中断"))
     }
 
     private suspend fun pollUpdate(api: HubApi): AgentUpdateInfo {
@@ -311,8 +339,28 @@ internal fun agentUpdateErrorMessage(
                 commandAccepted -> "更新指令已下发，等待 Relay 重新上报"
                 else -> "更新请求超时，尚未确认 Hub 已接收指令"
             }
+        isTransientAgentTransportError(text) ->
+            if (update && commandAccepted) {
+                "更新指令已下发，连接暂时中断，等待 Relay 重新上报"
+            } else {
+                "$prefix：${uiMessageZh(text)}"
+            }
         "502" in lower || "<!doctype" in lower || "<html" in lower ->
             "更新源暂不可用，已保留上次版本信息"
         else -> "$prefix：${text.take(140)}"
     }
+}
+
+internal fun isTransientAgentTransportError(raw: String?): Boolean {
+    val lower = raw.orEmpty().lowercase()
+    return listOf(
+        "connection closed",
+        "socket closed",
+        "closed channel",
+        "connection reset",
+        "reset by peer",
+        "broken pipe",
+        "timeout",
+        "timed out",
+    ).any(lower::contains)
 }

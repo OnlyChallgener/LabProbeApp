@@ -105,4 +105,17 @@ class AgentUpdateCoordinatorTest {
             ),
         )
     }
+
+    @Test
+    fun closedConnectionIsRetryableAndLocalized() {
+        assertTrue(isTransientAgentTransportError("connection closed"))
+        assertEquals(
+            "版本检查失败：连接已关闭，正在尝试恢复",
+            agentUpdateErrorMessage(
+                raw = "connection closed",
+                update = false,
+                commandAccepted = false,
+            ),
+        )
+    }
 }

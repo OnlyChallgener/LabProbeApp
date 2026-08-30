@@ -306,7 +306,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             error = if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
                 "Agent 在线，状态暂未同步；已保留全部穿透设置"
             } else {
-                it.message ?: "无法读取 STUN 穿透状态"
+                uiMessageZh(it.message).ifBlank { "无法读取 STUN 穿透状态" }
             }
         }
         loading = false
@@ -586,7 +586,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
             sequenceOf(rule.syncError, rule.nativeMappingMessage.takeIf { rule.enabled }.orEmpty(), rule.runtime.lastError.takeIf { rule.enabled }.orEmpty())
                 .firstOrNull { it.isNotBlank() && !liveReady }
-                ?.let { Text(it, color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                ?.let { Text(uiMessageZh(it), color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
         }
     }
 }

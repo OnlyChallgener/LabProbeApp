@@ -209,11 +209,10 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · WireGuard 连接前置状态检查" to listOf(
-                "启动 DDNS、STUN 或手动配置前重新读取 WireGuard 网关状态，避免服务端停用时进入无效握手",
-                "网关停用时由用户确认启用，保留完整服务端配置并等待 Agent revision 与 applyResult 成功",
-                "兼容通过 kernel-netlink 成功应用但运行状态不可观测的路由器，不再误判为网关未就绪",
-                "VPN 授权返回后重新检查网关状态，并修复 Agent 空错误显示为 null"
+            "v$NAME build$CODE · Agent 控制链路恢复" to listOf(
+                "STUN 远端校验改为后台恢复，不再阻塞其他路由设置页面和 Agent 指令",
+                "检查更新与一键清理可从短暂连接中断中恢复，失败提示统一显示中文",
+                "设置页的 DeepSeek 专属文案改为通用 AI 文案"
             )
         )
 }
@@ -3945,9 +3944,18 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                                 val commandId = requested.optString("commandId")
                                 if (commandId.isBlank()) error("Hub 未返回清理任务编号")
                                 var finished: JSONObject? = null
+                                var transientPollFailure: Throwable? = null
                                 for (attempt in 0 until 45) {
                                     delay(1_000)
-                                    val status = HubApi(prefs).getAgentCleanupStatus(commandId)
+                                    val status = try {
+                                        HubApi(prefs).getAgentCleanupStatus(commandId)
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: Throwable) {
+                                        if (!isTransientAgentTransportError(failure.message)) throw failure
+                                        transientPollFailure = failure
+                                        continue
+                                    }
                                     when (status.optString("state")) {
                                         "completed" -> {
                                             finished = status
@@ -3956,11 +3964,17 @@ fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit
                                         "failed" -> error(status.optString("message").ifBlank { "路由器清理失败" })
                                     }
                                 }
-                                finished ?: error("清理任务等待超时，请稍后重新查看")
+                                finished ?: error(
+                                    if (transientPollFailure != null) {
+                                        "清理状态连接暂时中断，请稍后重新查看"
+                                    } else {
+                                        "清理任务等待超时，请稍后重新查看"
+                                    }
+                                )
                             }.onSuccess {
                                 cleanupMessage = agentCleanupSummary(it)
                             }.onFailure {
-                                cleanupMessage = "清理失败：${it.message}"
+                                cleanupMessage = "清理失败：${uiMessageZh(it.message).ifBlank { "连接异常，请稍后重试" }}"
                             }
                             cleanupBusy = false
                         }
@@ -10684,8 +10698,8 @@ fun SettingsScreen(
             }
         }
     }
-    ExpressiveCard("AI 与模型", "配置 DeepSeek 模型、API 地址与密钥；密钥交由 Hub 加密托管。", Icons.Rounded.SmartToy, LabV2.Cyan) {
-        PillButton("配置 DeepSeek API", Icons.Rounded.Key, accent = settingsMint, onClick = onOpenAi)
+    ExpressiveCard("AI 与模型", "配置 AI 模型、API 地址与密钥；密钥交由 Hub 加密托管。", Icons.Rounded.SmartToy, LabV2.Cyan) {
+        PillButton("配置 AI API", Icons.Rounded.Key, accent = settingsMint, onClick = onOpenAi)
     }
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
     ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, LabV2.Cyan) {
