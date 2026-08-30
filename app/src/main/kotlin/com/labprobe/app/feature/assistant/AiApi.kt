@@ -4,6 +4,7 @@ import android.content.Context
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.favoriteShortcuts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,6 +14,16 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+
+/** 流式请求在响应建立前失败；请求是否到达 Hub 不可判定，因此不得自动重跑。 */
+class AiStreamNotEstablished(message: String) : IllegalStateException(message)
+
+/** 流式协议已建立后的失败（上游报错、中断）——重跑会双倍消耗 token，调用方必须原样呈现。 */
+class AiStreamProtocolException(
+    message: String,
+    val conversationId: String? = null,
+    val userMessageId: Int = 0,
+) : IllegalStateException(message)
 
 /** Only non-secret AI preferences and the Hub-reported key status live on the device. */
 class AiSettingsStore(context: Context) {
@@ -227,7 +238,7 @@ class AiApiClient(
                     val role = item.optString("role")
                     val content = item.optString("content")
                     if (role in setOf("user", "assistant", "system") && content.isNotBlank()) {
-                        add(AiMessage(role, content))
+                        add(AiMessage(role, content, serverId = item.optInt("id")))
                     }
                 }
             }
@@ -326,7 +337,10 @@ class AiApiClient(
     /**
      * 流式对话：消费 Hub 的 typed SSE（delta/tool/confirmation/done/error）。
      * onDelta 在主线程收到增量文本；返回值以 done/confirmation 载荷为准。
-     * 首字节之前失败时由调用方回退到同步 chat()。
+     *
+     * 回退语义（用户视角：绝不因重试而双倍烧 token）：
+     * - 响应建立前失败会抛 [AiStreamNotEstablished]；请求可能已经到达 Hub，不得自动重跑；
+     * - 协议建立后的一切失败（上游报错、中断、超时）抛 [AiStreamProtocolException]，最终失败。
      */
     suspend fun chatStream(
         message: String,
@@ -345,14 +359,21 @@ class AiApiClient(
                     if (!conversationId.isNullOrBlank()) put("conversationId", conversationId)
                     localContext()?.let { put("clientContext", it) }
                 }.toString()
-            request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body).use { response ->
-                if (!response.isSuccessful) error(apiFailure(response.code, response.body?.string().orEmpty()))
+            val response = try {
+                request(hubUrl.trimEnd('/') + "/api/ai/chat", "POST", body)
+            } catch (io: java.io.IOException) {
+                throw AiStreamNotEstablished("连接 Hub 失败：${io.message ?: "网络错误"}")
+            }
+            response.use {
+                if (!response.isSuccessful) {
+                    throw AiStreamProtocolException(apiFailure(response.code, response.body?.string().orEmpty()))
+                }
                 if (!response.header("Content-Type").orEmpty().contains("text/event-stream")) {
                     // 旧 Hub 直接返回完整 JSON。
                     return@withContext parseChatReply(JSONObject(response.body?.string().orEmpty()))
                 }
                 val reader = response.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
-                    ?: error("Hub 返回了空数据流")
+                    ?: throw AiStreamProtocolException("Hub 返回了空数据流")
                 var reply: AiReply? = null
                 reader.useLines { lines ->
                     for (raw in lines) {
@@ -367,12 +388,17 @@ class AiApiClient(
                             }
                             "reset" -> withContext(Dispatchers.Main) { onReset() }
                             "confirmation", "done" -> reply = parseChatReply(event)
-                            "error" -> error(event.optString("error").ifBlank { "AI 服务暂不可用" })
+                            "error" -> throw AiStreamProtocolException(
+                                message = event.optString("error").ifBlank { "AI 服务暂不可用" },
+                                conversationId = event.optString("conversationId").takeIf { it.isNotBlank() },
+                                userMessageId = event.optInt("userMessageId"),
+                            )
                         }
                         if (reply != null) break
                     }
                 }
-                reply ?: error("AI 返回为空")
+                if (reply == null) ensureActive()
+                reply ?: throw AiStreamProtocolException("AI 返回为空")
             }
         }
     }
@@ -426,6 +452,16 @@ class AiApiClient(
         request(hubUrl.trimEnd('/') + "/api/ai/conversations/$encoded", "DELETE", null).use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful && response.code != 204) error(apiFailure(response.code, body))
+        }
+    }
+
+    /** 删除会话中的单条消息（不影响已记录的 Token 用量）。 */
+    suspend fun deleteConversationMessage(conversationId: String, messageId: Int) = withContext(Dispatchers.IO) {
+        require(hubUrl.isNotBlank()) { "请先填写 Hub 地址" }
+        val encoded = java.net.URLEncoder.encode(conversationId, "UTF-8")
+        request(hubUrl.trimEnd('/') + "/api/ai/conversations/$encoded/messages/$messageId", "DELETE", null).use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiFailure(response.code, body))
         }
     }
 
@@ -535,6 +571,8 @@ private fun parseChatReply(root: JSONObject): AiReply {
         conversationId = root.optString("conversationId").takeIf { it.isNotBlank() },
         confirmation = confirmation,
         usageKnown = root.optBoolean("usageKnown", true),
+        messageId = root.optInt("messageId"),
+        userMessageId = root.optInt("userMessageId"),
         clientActions = buildList {
             val actions = root.optJSONArray("clientActions") ?: JSONArray()
             for (index in 0 until actions.length()) {

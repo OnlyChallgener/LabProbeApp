@@ -27,6 +27,7 @@ data class AiMessage(
     val role: String,
     val content: String,
     val createdAt: Long = System.currentTimeMillis(),
+    val serverId: Int = 0,
 )
 
 data class AiTokenSummary(val prompt: Int = 0, val completion: Int = 0) {
@@ -40,6 +41,8 @@ data class AiReply(
     val confirmation: AiToolConfirmation? = null,
     val clientActions: List<AiClientAction> = emptyList(),
     val usageKnown: Boolean = true,
+    val messageId: Int = 0,
+    val userMessageId: Int = 0,
 )
 
 data class AiConversation(

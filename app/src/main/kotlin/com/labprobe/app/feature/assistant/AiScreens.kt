@@ -15,9 +15,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -60,6 +63,8 @@ import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,6 +95,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -102,6 +109,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -113,6 +121,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -1132,6 +1141,13 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
     if (slots.isEmpty()) return
     val maxTokens = (slots.maxOfOrNull { it.total } ?: 0).coerceAtLeast(1)
     var selected by remember { mutableStateOf<Int?>(null) }
+    // 悬浮明细 3 秒自动收起；点空白格或再点当前柱立即收起，避免一直挂着
+    LaunchedEffect(selected) {
+        if (selected != null) {
+            delay(3000)
+            selected = null
+        }
+    }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val slotWidth = maxWidth / slots.size
         Canvas(
@@ -1140,7 +1156,12 @@ private fun AiDailyUsageBars(daily: List<AiUsageDay>) {
                 .height(112.dp)
                 .pointerInput(slots) {
                     detectTapGestures { offset ->
-                        selected = (offset.x / (size.width / slots.size)).toInt().coerceIn(0, slots.lastIndex)
+                        val index = (offset.x / (size.width / slots.size)).toInt().coerceIn(0, slots.lastIndex)
+                        selected = when {
+                            index == selected -> null
+                            slots[index].total <= 0 -> null
+                            else -> index
+                        }
                     }
                 },
         ) {
@@ -1426,23 +1447,47 @@ private fun AiMarkdownText(content: String, modifier: Modifier = Modifier) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AiChatBubble(message: AiMessage) {
+private fun AiChatBubble(message: AiMessage, onDelete: (() -> Unit)? = null) {
+    val clipboard = LocalClipboardManager.current
+    var menuOpen by remember { mutableStateOf(false) }
     val user = message.role == "user"
+    // 长按气泡边缘弹出菜单；直接长按文字则走系统文本选择（可局部复制）。
+    val bubbleInteractionSource = remember { MutableInteractionSource() }
+    fun bubbleModifier(maxWidth: Dp): Modifier = Modifier
+        .widthIn(max = maxWidth)
+        .combinedClickable(
+            interactionSource = bubbleInteractionSource,
+            indication = null,
+            onClick = {},
+            onLongClick = { menuOpen = true },
+        )
+    val bubbleContent: @Composable () -> Unit = {
+        if (user) {
+            Text(
+                message.content,
+                Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
+                color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
+            )
+        } else {
+            AiMarkdownText(message.content, Modifier.padding(horizontal = 13.dp, vertical = 11.dp))
+        }
+    }
     if (user) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = AiTone.MintSoft,
-                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .32f)),
-                tonalElevation = 0.dp,
-                shadowElevation = 0.dp,
-            ) {
-                Text(
-                    message.content,
-                    Modifier.widthIn(max = 264.dp).padding(horizontal = 13.dp, vertical = 10.dp),
-                    color = AiTone.Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 19.sp,
-                )
+            Box {
+                Surface(
+                    modifier = bubbleModifier(264.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = AiTone.MintSoft,
+                    border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .32f)),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    SelectionContainer { bubbleContent() }
+                }
+                AiBubbleMenu(menuOpen, { menuOpen = false }, message.content, clipboard, onDelete)
             }
         }
     } else {
@@ -1458,16 +1503,47 @@ private fun AiChatBubble(message: AiMessage) {
                 Box(contentAlignment = Alignment.Center) { AiRobotMark(Modifier.fillMaxSize().padding(5.dp)) }
             }
             Spacer(Modifier.width(8.dp))
-            Surface(
-                modifier = Modifier.widthIn(max = 280.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = AiTone.Surface,
-                border = BorderStroke(1.dp, AiTone.Border),
-                tonalElevation = 0.dp,
-                shadowElevation = 0.dp,
-            ) {
-                AiMarkdownText(message.content, Modifier.padding(horizontal = 13.dp, vertical = 11.dp))
+            Box {
+                Surface(
+                    modifier = bubbleModifier(280.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = AiTone.Surface,
+                    border = BorderStroke(1.dp, AiTone.Border),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    SelectionContainer { bubbleContent() }
+                }
+                AiBubbleMenu(menuOpen, { menuOpen = false }, message.content, clipboard, onDelete)
             }
+        }
+    }
+}
+
+@Composable
+private fun AiBubbleMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    content: String,
+    clipboard: ClipboardManager,
+    onDelete: (() -> Unit)?,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text("复制全文", fontSize = 13.sp) },
+            onClick = {
+                clipboard.setText(AnnotatedString(content))
+                onDismiss()
+            },
+        )
+        if (onDelete != null) {
+            DropdownMenuItem(
+                text = { Text("删除消息", fontSize = 13.sp, color = AiTone.Danger) },
+                onClick = {
+                    onDismiss()
+                    onDelete()
+                },
+            )
         }
     }
 }
@@ -1566,6 +1642,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 try {
                     client.notificationsStream(store.lastNotificationId()) { row -> deliver(row) }
                     continue
+                } catch (cancel: CancellationException) {
+                    throw cancel
                 } catch (error: IllegalStateException) {
                     streamBroken = true
                 } catch (error: Exception) {
@@ -1839,7 +1917,30 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             contentPadding = PaddingValues(bottom = 4.dp),
         ) {
             if (loadingHistory) item { Text("正在恢复最近对话…", color = AiTone.Muted, fontSize = 12.sp) }
-            items(messages) { message -> AiChatBubble(message) }
+            items(messages) { message ->
+                val deleteMessage: (() -> Unit)? = if (sending) {
+                    null
+                } else {
+                    {
+                        val convoId = conversationId
+                        if (message.serverId > 0 && convoId != null) {
+                            scope.launch {
+                                try {
+                                    client.deleteConversationMessage(convoId, message.serverId)
+                                    messages.remove(message)
+                                } catch (cancel: CancellationException) {
+                                    throw cancel
+                                } catch (error: Throwable) {
+                                    messages += AiMessage("assistant", "删除失败：${error.message ?: "未知错误"}")
+                                }
+                            }
+                        } else {
+                            messages.remove(message)
+                        }
+                    }
+                }
+                AiChatBubble(message, onDelete = deleteMessage)
+            }
             if (sending) item { AiTypingBubble() }
             pendingConfirmation?.let { confirmation ->
                 item {
@@ -1881,23 +1982,34 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                 AiAction("确认执行", Modifier.weight(1f), primary = true, enabled = !sending) {
                                     sending = true
                                     scope.launch {
-                                        runCatching {
+                                        try {
                                             val hubMessage = client.confirmHubTool(confirmation.confirmationId)
-                                            if (confirmation.executor == "app") {
-                                                runCatching { localTools.execute(confirmation) }.fold(
-                                                    onSuccess = { message ->
-                                                        client.completeClientTool(confirmation.confirmationId, true, message)
-                                                        message
-                                                    },
-                                                    onFailure = { error ->
-                                                        val message = error.message ?: "本机操作失败"
-                                                        client.completeClientTool(confirmation.confirmationId, false, message)
-                                                        throw error
-                                                    },
-                                                )
+                                            val message = if (confirmation.executor == "app") {
+                                                try {
+                                                    localTools.execute(confirmation).also { result ->
+                                                        client.completeClientTool(confirmation.confirmationId, true, result)
+                                                    }
+                                                } catch (cancel: CancellationException) {
+                                                    throw cancel
+                                                } catch (error: Throwable) {
+                                                    val failureMessage = error.message ?: "本机操作失败"
+                                                    try {
+                                                        client.completeClientTool(confirmation.confirmationId, false, failureMessage)
+                                                    } catch (cancel: CancellationException) {
+                                                        throw cancel
+                                                    } catch (_: Throwable) {
+                                                        // Preserve the original local-tool failure below.
+                                                    }
+                                                    throw error
+                                                }
                                             } else hubMessage
-                                        }.onSuccess { messages += AiMessage("assistant", it); pendingConfirmation = null }
-                                            .onFailure { messages += AiMessage("assistant", "执行失败：${it.message ?: "未知错误"}") }
+                                            messages += AiMessage("assistant", message)
+                                            pendingConfirmation = null
+                                        } catch (cancel: CancellationException) {
+                                            throw cancel
+                                        } catch (error: Throwable) {
+                                            messages += AiMessage("assistant", "执行失败：${error.message ?: "未知错误"}")
+                                        }
                                         sending = false
                                     }
                                 }
@@ -1926,51 +2038,49 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             if (canSend) {
                 val text = input.trim()
                 input = ""
-                messages += AiMessage("user", text)
+                val userMessage = AiMessage("user", text)
+                messages += userMessage
                 sending = true
                 scope.launch {
                     var streamed = false
                     var liveIndex: Int? = null
-                    val outcome = runCatching {
-                        fun liveBubble(): Int {
-                            val index = liveIndex
-                            if (index != null && messages.getOrNull(index) != null) return index
-                            messages += AiMessage("assistant", "")
-                            val created = messages.lastIndex
-                            liveIndex = created
-                            return created
-                        }
-                        try {
-                            client.chatStream(
-                                text, conversationId,
-                                onDelta = { piece ->
-                                    streamed = true
-                                    val index = liveBubble()
-                                    messages[index] = AiMessage("assistant", messages[index].content + piece)
-                                },
-                                onReset = {
-                                    liveIndex?.let { index ->
-                                        if (messages.getOrNull(index) != null) messages[index] = AiMessage("assistant", "")
-                                    }
-                                },
-                            )
-                        } catch (error: Throwable) {
-                            // 首字节前失败（旧 Hub / 网络瞬断）→ 回退同步请求；已输出增量则不重复请求
-                            if (streamed) throw error
-                            liveIndex = null
-                            client.chat(text, conversationId)
-                        }
+                    fun liveBubble(): Int {
+                        val index = liveIndex
+                        if (index != null && messages.getOrNull(index) != null) return index
+                        messages += AiMessage("assistant", "")
+                        val created = messages.lastIndex
+                        liveIndex = created
+                        return created
                     }
-                    outcome.onSuccess { reply ->
+                    try {
+                        val reply = client.chatStream(
+                            text, conversationId,
+                            onDelta = { piece ->
+                                streamed = true
+                                val index = liveBubble()
+                                messages[index] = AiMessage("assistant", messages[index].content + piece)
+                            },
+                            onReset = {
+                                liveIndex?.let { index ->
+                                    if (messages.getOrNull(index) != null) messages[index] = AiMessage("assistant", "")
+                                }
+                            },
+                        )
                         conversationId = reply.conversationId ?: conversationId
                         AiChatSession.conversationId = conversationId
+                        if (reply.userMessageId > 0) {
+                            val userIndex = messages.indexOfFirst { it === userMessage }
+                            if (userIndex >= 0) {
+                                messages[userIndex] = userMessage.copy(serverId = reply.userMessageId)
+                            }
+                        }
                         if (streamed) {
                             val index = liveIndex
                             val existing = index?.let { messages.getOrNull(it) }
                             when {
                                 existing != null && index != null ->
-                                    messages[index] = AiMessage("assistant", reply.content.ifBlank { existing.content })
-                                reply.content.isNotBlank() -> messages += AiMessage("assistant", reply.content)
+                                    messages[index] = AiMessage("assistant", reply.content.ifBlank { existing.content }, serverId = reply.messageId)
+                                reply.content.isNotBlank() -> messages += AiMessage("assistant", reply.content, serverId = reply.messageId)
                             }
                         }
                         while (messages.size >= 120) messages.removeAt(0)
@@ -1978,17 +2088,17 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                         usageKnown = reply.usageKnown || reply.usage.total > 0
                         pendingConfirmation = reply.confirmation
                         if (!streamed) {
-                            messages += AiMessage("assistant", "")
+                            messages += AiMessage("assistant", "", serverId = reply.messageId)
                             val replyIndex = messages.lastIndex
-                            // 打字机揭示仅用于同步回退路径；流式路径由真实增量驱动
+                            // 旧 Hub 返回完整 JSON 时使用打字机揭示；SSE 路径由真实增量驱动。
                             var shown = 0
                             while (shown < reply.content.length && messages.getOrNull(replyIndex) != null) {
                                 shown = (shown + maxOf(1, reply.content.length / 60)).coerceAtMost(reply.content.length)
-                                messages[replyIndex] = AiMessage("assistant", reply.content.substring(0, shown))
+                                messages[replyIndex] = AiMessage("assistant", reply.content.substring(0, shown), serverId = reply.messageId)
                                 delay(16)
                             }
                             if (messages.getOrNull(replyIndex) != null && shown < reply.content.length) {
-                                messages[replyIndex] = AiMessage("assistant", reply.content)
+                                messages[replyIndex] = AiMessage("assistant", reply.content, serverId = reply.messageId)
                             }
                         }
                         // Navigate only after the bubble is final: leaving the
@@ -1999,8 +2109,20 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                 "refresh" -> onRefreshData()
                             }
                         }
-                    }.onFailure {
-                        messages += AiMessage("assistant", "请求失败：${it.message ?: "未知错误"}")
+                    } catch (cancel: CancellationException) {
+                        throw cancel
+                    } catch (error: AiStreamProtocolException) {
+                        conversationId = error.conversationId ?: conversationId
+                        AiChatSession.conversationId = conversationId
+                        if (error.userMessageId > 0) {
+                            val userIndex = messages.indexOfFirst { it === userMessage }
+                            if (userIndex >= 0) {
+                                messages[userIndex] = userMessage.copy(serverId = error.userMessageId)
+                            }
+                        }
+                        messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
+                    } catch (error: Throwable) {
+                        messages += AiMessage("assistant", "请求失败：${error.message ?: "未知错误"}")
                     }
                     sending = false
                 }
