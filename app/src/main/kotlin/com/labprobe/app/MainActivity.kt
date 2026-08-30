@@ -209,9 +209,9 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · Hub 首帧连接恢复" to listOf(
-                "APP 启动不再强制访问 Agent 更新仓，避免拖慢 Hub 首帧与路由配置读取",
-                "Agent 检查更新改由 Hub 后台执行，不再占用路由数据锁",
+            "v$NAME build$CODE · 合并版稳定性与 AI 本地缓存" to listOf(
+                "Hub 首帧/路由读取不再被 Agent 更新检查阻塞",
+                "AI 对话、API 配置、Token 用量按 Hub 身份本地缓存，先显示缓存后后台刷新，失败保留旧数据",
                 "路由配置读取短暂失败时保留并显示上次成功保存的名称与地址"
             )
         )
