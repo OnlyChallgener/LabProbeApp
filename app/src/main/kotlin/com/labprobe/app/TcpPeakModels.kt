@@ -44,6 +44,52 @@ data class TcpPeakConfig(
     }
 }
 
+/** One-shot handoff from an AI confirmation to the canonical screen controller. */
+data class TcpPeakPendingAiCommand(
+    val id: String,
+    val config: TcpPeakConfig,
+    val expiresAtEpochMs: Long
+) {
+    fun toJson(): String = JSONObject()
+        .put("id", id)
+        .put("expiresAtEpochMs", expiresAtEpochMs)
+        .put("host", config.host)
+        .put("port", config.port)
+        .put("family", config.family.wireValue)
+        .put("targetConnections", config.targetConnections)
+        .put("cps", config.cps)
+        .put("connectTimeoutMs", config.connectTimeoutMs)
+        .put("maxDurationSeconds", config.maxDurationSeconds)
+        .toString()
+
+    companion object {
+        fun fromJson(raw: String, nowEpochMs: Long = System.currentTimeMillis()): TcpPeakPendingAiCommand? {
+            val row = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+            val expiresAt = row.optLong("expiresAtEpochMs")
+            if (expiresAt <= nowEpochMs) return null
+            val family = TcpPeakFamily.entries.firstOrNull {
+                it.wireValue == row.optString("family").lowercase(Locale.ROOT)
+            } ?: return null
+            val config = TcpPeakConfig(
+                side = TcpPeakSide.APP,
+                host = row.optString("host"),
+                port = row.optInt("port"),
+                family = family,
+                targetConnections = row.optInt("targetConnections"),
+                cps = row.optInt("cps"),
+                connectTimeoutMs = row.optInt("connectTimeoutMs", 1_500),
+                maxDurationSeconds = row.optInt("maxDurationSeconds", 180)
+            )
+            if (config.validationError() != null) return null
+            return TcpPeakPendingAiCommand(
+                id = row.optString("id").ifBlank { return null },
+                config = config.normalized(),
+                expiresAtEpochMs = expiresAt
+            )
+        }
+    }
+}
+
 data class TcpPeakMetric(
     val current: Int = 0,
     val peak: Int = 0,

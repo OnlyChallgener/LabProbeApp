@@ -2,6 +2,10 @@ package com.labprobe.app.feature.assistant
 
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.FavoriteShortcut
+import com.labprobe.app.TcpPeakConfig
+import com.labprobe.app.TcpPeakFamily
+import com.labprobe.app.TcpPeakPendingAiCommand
+import com.labprobe.app.TcpPeakSide
 import com.labprobe.app.favoriteShortcuts
 import com.labprobe.app.saveFavoriteShortcuts
 import java.net.URI
@@ -19,8 +23,46 @@ class AiLocalToolExecutor(private val prefs: AppPrefs) {
             "app.setting.update" -> updateSetting(confirmation.arguments)
             "app.favorite.add" -> addFavorite(confirmation.arguments)
             "app.favorite.remove" -> removeFavorite(confirmation.arguments)
+            "tcp.peak.start" -> prepareTcpPeakStart(confirmation, expiresAt)
             else -> error("APP 不支持该操作")
         }
+    }
+
+    private fun prepareTcpPeakStart(confirmation: AiToolConfirmation, expiresAt: Long): String {
+        val arguments = confirmation.arguments
+        require(arguments["side"] == "app") { "该测试端不是本机 APP" }
+        fun requiredInt(name: String): Int {
+            val label = mapOf(
+                "port" to "目标端口",
+                "targetConnections" to "连接量程",
+                "cps" to "CPS",
+            )[name] ?: "数值"
+            return arguments[name]?.toIntOrNull() ?: error("测试参数“$label”必须是整数")
+        }
+        val family = TcpPeakFamily.entries.firstOrNull { it.wireValue == arguments["family"] }
+            ?: error("测试协议只能选择 IPv4、IPv6 或分别测试")
+        val config = TcpPeakConfig(
+            side = TcpPeakSide.APP,
+            host = arguments["host"].orEmpty(),
+            port = requiredInt("port"),
+            family = family,
+            targetConnections = requiredInt("targetConnections"),
+            cps = requiredInt("cps"),
+            connectTimeoutMs = arguments["connectTimeoutMs"]?.toIntOrNull() ?: 1_500,
+            maxDurationSeconds = arguments["maxDurationSeconds"]?.toIntOrNull() ?: 180,
+        )
+        config.validationError()?.let { error(it) }
+        val canonical = config.normalized()
+        prefs.tcpPeakHost = canonical.host
+        prefs.tcpPeakPort = canonical.port.toString()
+        prefs.tcpPeakTarget = canonical.targetConnections.toString()
+        prefs.tcpPeakCps = canonical.cps.toString()
+        prefs.tcpPeakPendingAiCommandJson = TcpPeakPendingAiCommand(
+            id = confirmation.confirmationId,
+            config = canonical,
+            expiresAtEpochMs = expiresAt.takeIf { it > 0L } ?: (System.currentTimeMillis() + 5 * 60_000L),
+        ).toJson()
+        return "已准备本机 TCP 峰值连接数测试，正在打开测试页"
     }
 
     private fun updateSetting(arguments: Map<String, String>): String {

@@ -269,6 +269,7 @@ private fun mapAssistantRoute(route: String): String = when (route) {    "home",
     "ipv6" -> "tool_router_ipv6"
     "ddns" -> "tool_router_ddns"
     "nat" -> "tool_nat"
+    "tcp_peak" -> "tool_tcp_peak"
     "wol" -> "wol"
     else -> "home"
 }
@@ -557,6 +558,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("tcp_peak_cps_v1", v.trim()).apply()
     var tcpPeakHistoryJson: String get() = sp.getString("tcp_peak_history_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("tcp_peak_history_v1", v).apply()
+    var tcpPeakPendingAiCommandJson: String get() = sp.getString("tcp_peak_ai_command_v1", "") ?: ""
+        set(v) = sp.edit().putString("tcp_peak_ai_command_v1", v).apply()
     var portProtocol: String get() = sp.getString("port_protocol", "TCP") ?: "TCP"
         set(v) = sp.edit().putString("port_protocol", v).apply()
 

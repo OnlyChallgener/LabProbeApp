@@ -67,4 +67,24 @@ class TcpPeakModelsTest {
         assertEquals(65_535, config.targetConnections)
         assertEquals(2_000, config.cps)
     }
+
+    @Test
+    fun aiCommandIsOneShotBoundedAndExpires() {
+        val now = 1_000_000L
+        val command = TcpPeakPendingAiCommand(
+            id = "confirm-1",
+            config = TcpPeakConfig(
+                side = TcpPeakSide.APP,
+                host = "example.com",
+                port = 443,
+                family = TcpPeakFamily.IPV4,
+                targetConnections = 2_000,
+                cps = 200,
+            ),
+            expiresAtEpochMs = now + 60_000L,
+        )
+
+        assertEquals(command.config, TcpPeakPendingAiCommand.fromJson(command.toJson(), now)?.config)
+        assertEquals(null, TcpPeakPendingAiCommand.fromJson(command.toJson(), now + 60_001L))
+    }
 }

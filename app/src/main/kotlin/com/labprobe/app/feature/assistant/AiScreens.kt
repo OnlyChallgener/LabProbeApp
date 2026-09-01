@@ -1669,6 +1669,20 @@ private fun AiHintChip(hint: AiToolHint, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun AiQuickHintsRow(hints: List<AiToolHint>, onSelect: (String) -> Unit) {
+    val state = rememberLazyListState()
+    LazyRow(
+        state = state,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(end = 4.dp),
+    ) {
+        items(hints, key = { it.id }, contentType = { "ai-quick-hint" }) { hint ->
+            AiHintChip(hint) { onSelect(hint.example) }
+        }
+    }
+}
+
 /** Minimal markdown: headings, bullets, ordered lists, **bold**, `code`. */
 private sealed interface AiMdBlock {
     data class Paragraph(val text: String) : AiMdBlock
@@ -2032,6 +2046,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var historyError by remember(client.identity) { mutableStateOf<String?>(null) }
     var restoreNonce by remember(client.identity) { mutableStateOf(0) }
     var input by remember(client.identity) { mutableStateOf("") }
+    val selectToolHint: (String) -> Unit = remember(client.identity) { { example -> input = example } }
     var sending by remember(client.identity) { mutableStateOf(false) }
     var usage by remember(client.identity) { mutableStateOf(AiTokenSummary()) }
     var usageKnown by remember(client.identity) { mutableStateOf(true) }
@@ -2651,9 +2666,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
             }
         }
         if (toolHints.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(end = 4.dp)) {
-                items(toolHints, key = { it.id }) { hint -> AiHintChip(hint) { input = hint.example } }
-            }
+            AiQuickHintsRow(toolHints, selectToolHint)
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
@@ -2783,6 +2796,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                             if (conversationId == confirmationConversationId && pendingConfirmation?.confirmationId == confirmation.confirmationId) {
                                                 messages += AiMessage("assistant", message)
                                                 pendingConfirmation = null
+                                                if (confirmation.executor == "app" && confirmation.toolId == "tcp.peak.start") {
+                                                    onNavigate("tcp_peak")
+                                                }
                                             }
                                         } catch (cancel: CancellationException) {
                                             throw cancel
@@ -2950,6 +2966,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 scope.launch {
                     var streamed = false
                     var liveIndex: Int? = null
+                    val streamedText = StringBuilder()
+                    var lastStreamRenderAt = 0L
                     fun liveBubble(): Int {
                         val index = liveIndex
                         if (index != null && messages.getOrNull(index) != null) return index
@@ -2964,11 +2982,18 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                             onDelta = delta@{ piece ->
                                 if (conversationId != requestConversationId) return@delta
                                 streamed = true
-                                val index = liveBubble()
-                                messages[index] = AiMessage("assistant", messages[index].content + piece)
+                                streamedText.append(piece)
+                                val now = System.nanoTime() / 1_000_000L
+                                if (lastStreamRenderAt == 0L || now - lastStreamRenderAt >= 80L) {
+                                    val index = liveBubble()
+                                    messages[index] = AiMessage("assistant", streamedText.toString())
+                                    lastStreamRenderAt = now
+                                }
                             },
                             onReset = reset@{
                                 if (conversationId != requestConversationId) return@reset
+                                streamedText.setLength(0)
+                                lastStreamRenderAt = 0L
                                 liveIndex?.let { index ->
                                     if (messages.getOrNull(index) != null) messages[index] = AiMessage("assistant", "")
                                 }
@@ -2999,19 +3024,17 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                         usage = reply.usage
                         usageKnown = reply.usageKnown || reply.usage.total > 0
                         pendingConfirmation = reply.confirmation
-                        if (!streamed) {
-                            messages += AiMessage("assistant", "", serverId = reply.messageId)
-                            val replyIndex = messages.lastIndex
-                            // 旧 Hub 返回完整 JSON 时使用打字机揭示；SSE 路径由真实增量驱动。
-                            var shown = 0
-                            while (shown < reply.content.length && messages.getOrNull(replyIndex) != null) {
-                                shown = (shown + maxOf(1, reply.content.length / 60)).coerceAtMost(reply.content.length)
-                                messages[replyIndex] = AiMessage("assistant", reply.content.substring(0, shown), serverId = reply.messageId)
-                                delay(16)
-                            }
-                            if (messages.getOrNull(replyIndex) != null && shown < reply.content.length) {
-                                messages[replyIndex] = AiMessage("assistant", reply.content, serverId = reply.messageId)
-                            }
+                        if (streamed) {
+                            // The final delta can arrive inside the 80 ms render
+                            // window. Always flush the authoritative final text
+                            // before caching or accepting the next user turn.
+                            val index = liveBubble()
+                            val finalText = reply.content.ifBlank { streamedText.toString() }
+                            messages[index] = AiMessage("assistant", finalText, serverId = reply.messageId)
+                        } else {
+                            // 旧 Hub 返回完整 JSON 时直接写入最终文本。半截打字机
+                            // 内容不进入会话状态，也就不会被缓存或带入下一轮。
+                            messages += AiMessage("assistant", reply.content, serverId = reply.messageId)
                         }
                         localCache.writeConversation(conversationId, messages)
                         // Navigate only after the bubble is final: leaving the

@@ -3,6 +3,7 @@ package com.labprobe.app.feature.assistant
 import android.content.Context
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.favoriteShortcuts
+import com.labprobe.app.parseTcpPeakHistory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
@@ -598,6 +599,35 @@ class AiApiClient(
     }
 
     private fun localContext(): JSONObject? = appPrefs?.let { prefs ->
+        val latestTcpPeak = parseTcpPeakHistory(prefs.tcpPeakHistoryJson).firstOrNull()
+        val tcpPeak = latestTcpPeak?.let { history ->
+            fun metric(value: com.labprobe.app.TcpPeakMetric): JSONObject = JSONObject()
+                .put("current", value.current)
+                .put("peak", value.peak)
+                .put("success", value.success)
+                .put("failure", value.failure)
+                .put("cps", value.cps)
+                .put("status", value.status)
+                .put("elapsedMs", value.elapsedMs)
+                .put("finishReason", value.finishReason)
+            JSONObject()
+                .put("taskId", history.snapshot.taskId)
+                .put("side", history.side.name.lowercase())
+                .put("state", history.snapshot.state)
+                .put("status", history.snapshot.status)
+                .put("finishReason", history.snapshot.finishReason)
+                .put("host", history.host)
+                .put("port", history.port)
+                .put("ipv4", metric(history.snapshot.ipv4))
+                .put("ipv6", metric(history.snapshot.ipv6))
+                .put("conntrackPeak", history.snapshot.conntrackPeak)
+                .put("cpuPeak", history.snapshot.cpuPeak)
+                .put("memoryMinAvailableMb", history.snapshot.memoryMinAvailableMb)
+                .put("resourcesReleased", history.snapshot.resourcesReleased)
+                .put("releaseStatus", history.snapshot.releaseStatus)
+                .put("startedEpoch", history.snapshot.startedEpochMs)
+                .put("finishedEpoch", history.snapshot.finishedEpochMs)
+        } ?: JSONObject()
         val root = JSONObject()
             .put("schemaVersion", 1)
             .put("settings", JSONObject()
@@ -615,6 +645,7 @@ class AiApiClient(
                         .put("serviceType", item.serviceType))
                 }
             })
+            .put("tcpPeak", tcpPeak)
         val favorites = root.optJSONArray("favorites") ?: JSONArray()
         while (root.toString().toByteArray(Charsets.UTF_8).size > 32 * 1024 && favorites.length() > 0) {
             favorites.remove(favorites.length() - 1)

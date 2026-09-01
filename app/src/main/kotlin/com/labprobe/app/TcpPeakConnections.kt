@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -247,13 +248,16 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
 fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val controller = remember(prefs) { TcpPeakController(context, prefs) }
+    val pendingAiCommand = remember(prefs) {
+        TcpPeakPendingAiCommand.fromJson(prefs.tcpPeakPendingAiCommandJson)
+    }
     val ui by controller.state.collectAsState()
-    var side by remember { mutableStateOf(TcpPeakSide.APP) }
-    var family by remember { mutableStateOf(TcpPeakFamily.BOTH) }
-    var host by remember { mutableStateOf(prefs.tcpPeakHost) }
-    var port by remember { mutableStateOf(prefs.tcpPeakPort) }
-    var target by remember { mutableStateOf(prefs.tcpPeakTarget) }
-    var cps by remember { mutableStateOf(prefs.tcpPeakCps) }
+    var side by remember { mutableStateOf(pendingAiCommand?.config?.side ?: TcpPeakSide.APP) }
+    var family by remember { mutableStateOf(pendingAiCommand?.config?.family ?: TcpPeakFamily.BOTH) }
+    var host by remember { mutableStateOf(pendingAiCommand?.config?.host ?: prefs.tcpPeakHost) }
+    var port by remember { mutableStateOf(pendingAiCommand?.config?.port?.toString() ?: prefs.tcpPeakPort) }
+    var target by remember { mutableStateOf(pendingAiCommand?.config?.targetConnections?.toString() ?: prefs.tcpPeakTarget) }
+    var cps by remember { mutableStateOf(pendingAiCommand?.config?.cps?.toString() ?: prefs.tcpPeakCps) }
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
@@ -272,6 +276,14 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     DisposableEffect(controller) {
         onDispose { controller.dispose() }
+    }
+    LaunchedEffect(controller, pendingAiCommand?.id) {
+        if (prefs.tcpPeakPendingAiCommandJson.isNotBlank()) {
+            // One-shot handoff: clearing before start prevents a recomposition
+            // or process restore from launching a duplicate task.
+            prefs.tcpPeakPendingAiCommandJson = ""
+        }
+        pendingAiCommand?.let { controller.start(it.config) }
     }
 
     DetailShell(
