@@ -159,10 +159,12 @@ internal class TcpPeakLocalRunner {
         var consecutiveFailures = 0
         var finishReason = "达到设定连接数"
         val maximumPending = (config.cps * 4).coerceIn(500, 4_000)
+        val recentOutcomes = ArrayDeque<Boolean>()
 
         try {
             while (currentCoroutineContext().isActive && !stopRequested.get()) {
                 val now = SystemClock.elapsedRealtime()
+                var qualityStopReason: String? = null
                 val iterator = pending.iterator()
                 while (iterator.hasNext()) {
                     val deferred = iterator.next()
@@ -173,13 +175,26 @@ internal class TcpPeakLocalRunner {
                         success++
                         consecutiveFailures = 0
                         lastGrowth = now
+                        recentOutcomes.addLast(true)
                     } else if (!result.discarded) {
                         failure++
                         consecutiveFailures++
+                        recentOutcomes.addLast(false)
                         if (result.reason == "本机 FD 已耗尽") {
                             finishReason = "达到本机 APP 的 FD 安全上限"
                         }
                     }
+                    while (recentOutcomes.size > TCP_PEAK_RECENT_OUTCOME_WINDOW) recentOutcomes.removeFirst()
+                    qualityStopReason = tcpPeakFailureStopReason(
+                        consecutiveFailures = consecutiveFailures,
+                        recentOutcomes = recentOutcomes,
+                        noGrowthMs = now - lastGrowth
+                    )
+                    if (qualityStopReason != null) break
+                }
+                if (qualityStopReason != null) {
+                    finishReason = qualityStopReason
+                    break
                 }
                 val current = heldCount(family)
                 peak = maxOf(peak, current)
@@ -190,10 +205,6 @@ internal class TcpPeakLocalRunner {
                 if (finishReason.contains("FD 安全上限")) break
                 if (now - started >= config.maxDurationSeconds * 1_000L) {
                     finishReason = "达到最长测试时间"
-                    break
-                }
-                if (consecutiveFailures >= 200) {
-                    finishReason = "连续连接失败，停止新增连接"
                     break
                 }
                 if (failure > 0 && now - lastGrowth >= 4_000L && current >= safeTarget * 9 / 10) {
@@ -218,6 +229,7 @@ internal class TcpPeakLocalRunner {
                 val launches = floor(tokenCarry).toInt()
                     .coerceAtMost(room)
                     .coerceAtMost((maximumPending - pending.size).coerceAtLeast(0))
+                    .coerceAtMost(tcpPeakRemainingFailureBudget(consecutiveFailures, pending.size))
                 tokenCarry -= launches
                 repeat(launches) {
                     val address = addresses[addressIndex++ % addresses.size]

@@ -36,6 +36,30 @@ class TcpPeakModelsTest {
     }
 
     @Test
+    fun failureGuardStopsAtConsecutiveLimitAndBoundsPending() {
+        val outcomes = List(TCP_PEAK_CONSECUTIVE_FAILURE_LIMIT) { false }
+
+        assertEquals(
+            "连续连接失败 200 次，停止新增连接",
+            tcpPeakFailureStopReason(TCP_PEAK_CONSECUTIVE_FAILURE_LIMIT, outcomes, 500L)
+        )
+        assertEquals(0, tcpPeakRemainingFailureBudget(150, 50))
+        assertEquals(80, tcpPeakRemainingFailureBudget(40, 80))
+    }
+
+    @Test
+    fun failureGuardConfirmsPlatformOnlyWithRateStreakAndNoGrowth() {
+        val poorWindow = List(20) { true } + List(80) { false }
+
+        assertEquals(
+            "连接成功率持续过低，已确认增长平台",
+            tcpPeakFailureStopReason(50, poorWindow, 3_000L)
+        )
+        assertEquals(null, tcpPeakFailureStopReason(49, poorWindow, 3_000L))
+        assertEquals(null, tcpPeakFailureStopReason(50, poorWindow, 2_999L))
+    }
+
+    @Test
     fun historyOnlyRetainsFourteenDays() {
         val now = 20L * 24L * 60L * 60L * 1_000L
         fun row(id: String, ageDays: Long) = TcpPeakHistory(

@@ -187,6 +187,33 @@ data class TcpPeakTrendPoint(
     val ipv6Current: Int
 )
 
+internal const val TCP_PEAK_CONSECUTIVE_FAILURE_LIMIT = 200
+internal const val TCP_PEAK_RECENT_OUTCOME_WINDOW = 200
+
+internal fun tcpPeakFailureStopReason(
+    consecutiveFailures: Int,
+    recentOutcomes: Collection<Boolean>,
+    noGrowthMs: Long
+): String? {
+    if (consecutiveFailures >= TCP_PEAK_CONSECUTIVE_FAILURE_LIMIT) {
+        return "连续连接失败 200 次，停止新增连接"
+    }
+    if (
+        recentOutcomes.size >= 100 &&
+        consecutiveFailures >= 50 &&
+        noGrowthMs >= 3_000L
+    ) {
+        val failures = recentOutcomes.count { !it }
+        if (failures * 100 >= recentOutcomes.size * 80) {
+            return "连接成功率持续过低，已确认增长平台"
+        }
+    }
+    return null
+}
+
+internal fun tcpPeakRemainingFailureBudget(consecutiveFailures: Int, pending: Int): Int =
+    (TCP_PEAK_CONSECUTIVE_FAILURE_LIMIT - consecutiveFailures - pending).coerceAtLeast(0)
+
 fun appendTcpPeakTrend(
     current: List<TcpPeakTrendPoint>,
     snapshot: TcpPeakSnapshot,
