@@ -171,8 +171,8 @@ private fun favoriteServiceScheme(rule: PortMapRule): String = favoriteServiceSc
 
 /** Only client-addressable protocols can use Android's generic open action. */
 private fun favoriteServiceSupportsDirectOpen(serviceType: String): Boolean = when (serviceType.trim().uppercase(Locale.ROOT)) {
-    "", "HTTP", "HTTPS", "SSH", "RDP", "TELNET" -> true
-    else -> false
+    "" -> true
+    else -> serviceSupportsQuickAccess(serviceType)
 }
 
 private const val ROUTER_DDNS_ID_PREFIX = "router:"
@@ -747,29 +747,7 @@ private fun FavoriteShortcut.openUrl(mode: String): String = when (mode) {
 }
 
 internal fun favoriteAddressForCopy(rawAddress: String, serviceType: String = ""): String {
-    val raw = rawAddress.trim()
-    if (raw.isBlank()) return ""
-    val normalized = normalizeFavoriteUrl(raw)
-    val uri = runCatching { URI(normalized) }.getOrNull() ?: return raw
-    val scheme = uri.scheme.orEmpty().lowercase(Locale.ROOT)
-    val type = serviceType.trim().uppercase(Locale.ROOT)
-    val hostPortService = scheme in setOf("ssh", "rdp", "telnet", "tcp", "udp") ||
-        type in setOf("SSH", "RDP", "TELNET", "TCP", "UDP", "OPENVPN", "DNS", "WIREGUARD", "CUSTOM")
-    if (!hostPortService) return raw
-    val host = uri.host
-        ?.trim()
-        ?.removePrefix("[")
-        ?.removeSuffix("]")
-        ?.takeIf { it.isNotBlank() }
-        ?: return raw
-    val renderedHost = if (host.contains(':')) "[$host]" else host
-    val port = if (uri.port >= 0) uri.port else when (scheme) {
-        "ssh" -> 22
-        "rdp" -> 3389
-        "telnet" -> 23
-        else -> -1
-    }
-    return if (port in 1..65535) "$renderedHost:$port" else renderedHost
+    return serviceAddressForCopy(serviceType, rawAddress)
 }
 
 private fun FavoriteShortcut.addressForCopy(mode: String): String = when (mode) {
@@ -785,14 +763,18 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
     }.onFailure { toast(context, "无法打开该地址") }
 }
 
-private fun openFavoriteEndpoint(context: Context, endpoint: String) {
-    runCatching {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(endpoint)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }.onFailure { toast(context, "未找到可打开该服务的应用") }
-}
-
 @Composable
-fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable () -> Unit = {}, onOpenDns: () -> Unit, onOpenPortMapping: () -> Unit, onOpenSettings: () -> Unit, onBeforeOpenShortcut: () -> Unit = {}) {
+fun FavoritesScreen(
+    prefs: AppPrefs,
+    syncVersion: Int = 0,
+    topNav: @Composable () -> Unit = {},
+    onOpenDns: () -> Unit,
+    onOpenPortMapping: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenSsh: (String, Int) -> Unit = { _, _ -> },
+    onOpenWireGuard: () -> Unit = {},
+    onBeforeOpenShortcut: () -> Unit = {},
+) {
     val context = LocalContext.current
     var mappingRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
@@ -928,8 +910,16 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                             val serviceType = shortcut.serviceType.ifBlank { linkedRule?.let(::favoriteServiceType).orEmpty() }
                             if (!favoriteServiceSupportsDirectOpen(serviceType)) {
                                 toast(context, "该服务请复制地址并使用对应客户端连接")
+                            } else if (serviceType.equals("WireGuard", true)) {
+                                launchServiceQuickAccess(context, ServiceQuickAccessTarget.WireGuard, onOpenSsh, onOpenWireGuard)
                             } else if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank() && shortcut.ddnsRecordId == null) {
-                                openFavorite(context, shortcut, mode)
+                                if (serviceType.isBlank()) {
+                                    openFavorite(context, shortcut, mode)
+                                } else {
+                                    val target = serviceQuickAccessTarget(serviceType, shortcut.openUrl(mode))
+                                    if (target == null) toast(context, "暂未取得可用的快捷访问地址")
+                                    else launchServiceQuickAccess(context, target, onOpenSsh, onOpenWireGuard)
+                                }
                             } else {
                                 scope.launch {
                                     val remoteEndpoint = resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsResource.value.orEmpty())
@@ -941,19 +931,29 @@ fun FavoritesScreen(prefs: AppPrefs, syncVersion: Int = 0, topNav: @Composable (
                                         transportProtocol = linkedRule?.transportProtocol?.ifBlank { "TCP" } ?: "TCP",
                                     )
                                     accessReports[shortcut.id] = decision.report
-                                    decision.endpoint?.let { openFavoriteEndpoint(context, it) } ?: run {
-                                val fallbackEndpoint = if (mode == "wan") remoteEndpoint else resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices)
-                                if (serviceType.equals("HTTP", true) || serviceType.equals("HTTPS", true)) {
-                                    if (fallbackEndpoint.isNotBlank()) {
-                                        toast(context, decision.report.reason.ifBlank { "快速检测未确认，继续在浏览器尝试" })
-                                        openFavoriteEndpoint(context, fallbackEndpoint)
-                                    } else {
-                                        toast(context, decision.report.reason.ifBlank { "未配置可打开地址" })
+                                    decision.endpoint?.let { endpoint ->
+                                        serviceQuickAccessTarget(serviceType, endpoint)?.let {
+                                            launchServiceQuickAccess(context, it, onOpenSsh, onOpenWireGuard)
+                                        } ?: toast(context, "暂未取得可用的快捷访问地址")
+                                    } ?: run {
+                                        val fallbackEndpoint = if (mode == "wan") {
+                                            remoteEndpoint
+                                        } else {
+                                            resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices)
+                                        }
+                                        if (serviceType.equals("HTTP", true) || serviceType.equals("HTTPS", true)) {
+                                            if (fallbackEndpoint.isNotBlank()) {
+                                                toast(context, decision.report.reason.ifBlank { "快速检测未确认，继续在浏览器尝试" })
+                                                serviceQuickAccessTarget(serviceType, fallbackEndpoint)?.let {
+                                                    launchServiceQuickAccess(context, it, onOpenSsh, onOpenWireGuard)
+                                                }
+                                            } else {
+                                                toast(context, decision.report.reason.ifBlank { "未配置可打开地址" })
+                                            }
+                                        } else {
+                                            toast(context, decision.report.reason.ifBlank { "服务不可达" })
+                                        }
                                     }
-                                } else {
-                                    toast(context, decision.report.reason.ifBlank { "服务不可达" })
-                                }
-                            }
                                 }
                             }
                         },

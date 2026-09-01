@@ -318,10 +318,7 @@ internal fun stunDraftValidationError(draft: StunDraft): String? {
     return null
 }
 internal fun stunAddressForCopy(serviceType: String, endpoint: String): String {
-    val value = endpoint.trim()
-    if (!serviceType.equals("HTTPS", ignoreCase = true) || value.isBlank()) return value
-    val withoutScheme = value.replaceFirst(Regex("^[A-Za-z][A-Za-z0-9+.-]*://"), "")
-    return "https://$withoutScheme"
+    return serviceAddressForCopy(serviceType, endpoint)
 }
 private fun formatStunBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
@@ -337,7 +334,12 @@ private fun copyStunAddress(context: Context, serviceType: String, endpoint: Str
 }
 
 @Composable
-fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
+fun StunPenetrationScreen(
+    prefs: AppPrefs,
+    onBack: () -> Unit,
+    onOpenSsh: (String, Int) -> Unit = { _, _ -> },
+    onOpenWireGuard: () -> Unit = {},
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { StunApi(prefs) }
@@ -425,6 +427,8 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     rule = rule,
                     agentOnline = snapshot.agentOnline,
                     menuOpen = menuFor == rule.id,
+                    onOpenSsh = onOpenSsh,
+                    onOpenWireGuard = onOpenWireGuard,
                     onMenu = { menuFor = if (menuFor == rule.id) null else rule.id },
                     onCopy = { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { copyStunAddress(context, rule.serviceType, it) } },
                     onHistory = {
@@ -523,7 +527,19 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 }
 
-@Composable private fun StunRuleCard(rule: StunRule, agentOnline: Boolean, menuOpen: Boolean, onMenu: () -> Unit, onCopy: () -> Unit, onHistory: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
+@Composable private fun StunRuleCard(
+    rule: StunRule,
+    agentOnline: Boolean,
+    menuOpen: Boolean,
+    onOpenSsh: (String, Int) -> Unit,
+    onOpenWireGuard: () -> Unit,
+    onMenu: () -> Unit,
+    onCopy: () -> Unit,
+    onHistory: () -> Unit,
+    onEdit: () -> Unit,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val liveReady = agentOnline && rule.ready
     val stateText = when {
         rule.syncError.isNotBlank() -> "Agent 同步失败"
@@ -563,7 +579,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     Text(stateText, color = stateColor, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
                 }
                 Box {
-                    IconButton(onClick = onMenu) { Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted) }
+                    IconButton(onClick = onMenu, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted, modifier = Modifier.size(18.dp)) }
                     DropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = onMenu,
@@ -626,7 +642,6 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (endpoint.isNotBlank()) IconButton(onClick = onCopy) { Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(19.dp)) }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -650,6 +665,22 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         Icon(Icons.Rounded.History, null, tint = StunBlue, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(3.dp))
                         Text("地址记录", style = LabTypography.Caption.copy(color = StunBlue, fontWeight = FontWeight.SemiBold))
+                    }
+                }
+            }
+            if (serviceSupportsQuickAccess(rule.serviceType) || endpoint.isNotBlank()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    ServiceQuickAccessIconButton(
+                        serviceType = rule.serviceType,
+                        endpoint = endpoint,
+                        tint = StunBlue,
+                        onOpenSsh = onOpenSsh,
+                        onOpenWireGuard = onOpenWireGuard,
+                    )
+                    if (endpoint.isNotBlank()) {
+                        IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }

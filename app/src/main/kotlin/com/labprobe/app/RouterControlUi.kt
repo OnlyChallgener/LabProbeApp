@@ -290,7 +290,12 @@ internal fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifie
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MappingAndUpnpScreen(prefs: AppPrefs, onBack: () -> Unit) {
+fun MappingAndUpnpScreen(
+    prefs: AppPrefs,
+    onBack: () -> Unit,
+    onOpenSsh: (String, Int) -> Unit = { _, _ -> },
+    onOpenWireGuard: () -> Unit = {},
+) {
     val scope = rememberCoroutineScope()
     val pager = rememberPagerState(initialPage = 0, pageCount = { 3 })
     Scaffold(
@@ -306,7 +311,7 @@ fun MappingAndUpnpScreen(prefs: AppPrefs, onBack: () -> Unit) {
     ) { padding ->
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().padding(padding), key = { it }) { page ->
             when (page) {
-                0 -> LegacyIpv6MappingPage(prefs, onBack)
+                0 -> LegacyIpv6MappingPage(prefs, onBack, onOpenSsh, onOpenWireGuard)
                 1 -> NativePortMappingPage(prefs)
                 else -> UpnpPage(prefs)
             }
@@ -315,8 +320,19 @@ fun MappingAndUpnpScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable
-private fun LegacyIpv6MappingPage(prefs: AppPrefs, onBack: () -> Unit) {
-    PortMappingScreen(prefs = prefs, onBack = onBack, embedded = true)
+private fun LegacyIpv6MappingPage(
+    prefs: AppPrefs,
+    onBack: () -> Unit,
+    onOpenSsh: (String, Int) -> Unit,
+    onOpenWireGuard: () -> Unit,
+) {
+    PortMappingScreen(
+        prefs = prefs,
+        onBack = onBack,
+        embedded = true,
+        onOpenSsh = onOpenSsh,
+        onOpenWireGuard = onOpenWireGuard,
+    )
 }
 
 @Composable

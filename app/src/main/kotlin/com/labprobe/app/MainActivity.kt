@@ -1880,6 +1880,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     }
     var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
     var toolReturnRoute by remember { mutableStateOf<String?>(null) }
+    var nestedToolReturnRoute by remember { mutableStateOf<String?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("favorites") }
     var dailyReturnRoute by remember { mutableStateOf("events") }
     var aiChatReturnRoute by remember { mutableStateOf("home") }
@@ -2104,8 +2105,10 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
         val saveableStateHolder = rememberSaveableStateHolder()
         val backFromTool: () -> Unit = {
-            route = toolReturnRoute ?: "tools"
-            toolReturnRoute = null
+            val destination = toolReturnRoute ?: "tools"
+            route = destination
+            toolReturnRoute = if (destination == "tool_portmap" || destination == "tool_stun") nestedToolReturnRoute else null
+            nestedToolReturnRoute = null
         }
 
         var pageSwipeOffset by remember { mutableStateOf(0f) }
@@ -2174,6 +2177,13 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenDns = { toolReturnRoute = "favorites"; route = "tool_dns" },
                             onOpenPortMapping = { toolReturnRoute = "favorites"; route = "tool_portmap" },
                             onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" },
+                            onOpenSsh = { host, port ->
+                                prefs.sshHost = host
+                                prefs.sshPort = port.toString()
+                                toolReturnRoute = "favorites"
+                                route = "tool_ssh"
+                            },
+                            onOpenWireGuard = { toolReturnRoute = "favorites"; route = "tool_wireguard" },
                             onBeforeOpenShortcut = {}
                         )
                         "settings" -> SettingsScreen(
@@ -2216,8 +2226,38 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_roam" -> WifiRoamingScreen(prefs, backFromTool)
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
-                        "tool_portmap" -> MappingAndUpnpScreen(prefs, backFromTool)
-                        "tool_stun" -> StunPenetrationScreen(prefs, backFromTool)
+                        "tool_portmap" -> MappingAndUpnpScreen(
+                            prefs,
+                            backFromTool,
+                            onOpenSsh = { host, port ->
+                                prefs.sshHost = host
+                                prefs.sshPort = port.toString()
+                                nestedToolReturnRoute = toolReturnRoute
+                                toolReturnRoute = "tool_portmap"
+                                route = "tool_ssh"
+                            },
+                            onOpenWireGuard = {
+                                nestedToolReturnRoute = toolReturnRoute
+                                toolReturnRoute = "tool_portmap"
+                                route = "tool_wireguard"
+                            },
+                        )
+                        "tool_stun" -> StunPenetrationScreen(
+                            prefs,
+                            backFromTool,
+                            onOpenSsh = { host, port ->
+                                prefs.sshHost = host
+                                prefs.sshPort = port.toString()
+                                nestedToolReturnRoute = toolReturnRoute
+                                toolReturnRoute = "tool_stun"
+                                route = "tool_ssh"
+                            },
+                            onOpenWireGuard = {
+                                nestedToolReturnRoute = toolReturnRoute
+                                toolReturnRoute = "tool_stun"
+                                route = "tool_wireguard"
+                            },
+                        )
                         "tool_wireguard" -> WireGuardScreen(prefs, backFromTool)
                         "tool_router_ddns" -> RouterDdnsScreen(prefs, backFromTool)
                         "tool_router_firewall" -> RouterFirewallScreen(prefs, backFromTool)

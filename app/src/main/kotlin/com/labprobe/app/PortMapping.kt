@@ -570,7 +570,13 @@ internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, forceRefresh: 
 
 
 @Composable
-fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = false) {
+fun PortMappingScreen(
+    prefs: AppPrefs,
+    onBack: () -> Unit,
+    embedded: Boolean = false,
+    onOpenSsh: (String, Int) -> Unit = { _, _ -> },
+    onOpenWireGuard: () -> Unit = {},
+) {
     val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
@@ -711,6 +717,7 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = f
         }
     }
 
+    val favoriteShortcuts = prefs.favoriteShortcuts()
     val visible = rules.filter {
         when (filter) {
             "运行中" -> it.effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || it.syncState == "syncing" || (it.syncState == "stale" && it.effectiveDesiredState == "running")
@@ -723,8 +730,8 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = f
 
     if (selected != null) {
         BackHandler { selectedId = null }
-        val linkedFavorite = prefs.favoriteShortcuts().firstOrNull { it.id == "mapping-${selected.id}" }
-            ?: prefs.favoriteShortcuts().firstOrNull { it.mappingId == selected.id }
+        val linkedFavorite = favoriteShortcuts.firstOrNull { it.id == "mapping-${selected.id}" }
+            ?: favoriteShortcuts.firstOrNull { it.mappingId == selected.id }
         PortMapDetailPage(
             rule = selected,
             api = api,
@@ -808,8 +815,19 @@ fun PortMappingScreen(prefs: AppPrefs, onBack: () -> Unit, embedded: Boolean = f
             PortMapEmptyCard { editDraft = PortMapDraft.new(nextPort(rules, agent).toString()) }
         } else {
             visible.forEach { rule ->
+                val linkedFavorite = favoriteShortcuts.firstOrNull { it.mappingId == rule.id }
+                val detectedIpv6 = ddnsSnapshot?.address?.detectedIpv6.orEmpty()
+                    .ifBlank { nativeDdnsResource.value.orEmpty().firstOrNull { it.enabled && it.useIpv6 }?.ip.orEmpty() }
+                val quickEndpoint = linkedFavorite?.let {
+                    resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules, nativeDdnsResource.value.orEmpty())
+                }.orEmpty().ifBlank {
+                    normalizeIpv6(detectedIpv6)?.let { formatServiceHostPort(it, rule.listenPort) }.orEmpty()
+                }
                 PortMapRuleCard(
                     rule = rule,
+                    quickEndpoint = quickEndpoint,
+                    onOpenSsh = onOpenSsh,
+                    onOpenWireGuard = onOpenWireGuard,
                     onOpen = { selectedId = rule.id },
                     onEdit = { editDraft = PortMapDraft.from(rule) },
                     onToggle = {
@@ -930,7 +948,15 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 }
 
 @Composable
-private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () -> Unit, onToggle: () -> Unit) {
+private fun PortMapRuleCard(
+    rule: PortMapRule,
+    quickEndpoint: String,
+    onOpenSsh: (String, Int) -> Unit,
+    onOpenWireGuard: () -> Unit,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onToggle: () -> Unit,
+) {
     val status = portMapStatus(rule)
     LabCoreCard(modifier = Modifier.clip(LabCoreSurface.CardShape).clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -947,6 +973,17 @@ private fun PortMapRuleCard(rule: PortMapRule, onOpen: () -> Unit, onEdit: () ->
             Text("→ ${rule.targetText}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
             if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
                 Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Clip)
+            }
+            if (serviceSupportsQuickAccess(rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) })) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    ServiceQuickAccessIconButton(
+                        serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) },
+                        endpoint = quickEndpoint,
+                        tint = PortBlue,
+                        onOpenSsh = onOpenSsh,
+                        onOpenWireGuard = onOpenWireGuard,
+                    )
+                }
             }
             Text(portMapStateTrail(rule), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = status.color, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
