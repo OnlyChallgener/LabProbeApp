@@ -63,7 +63,12 @@ private fun isRejectedIpv6State(state: String?): Boolean {
         normalized == "incomplete" ||
         normalized == "noarp" ||
         normalized.contains("failed") ||
-        normalized.contains("incomplete")
+        normalized.contains("incomplete") ||
+        normalized.contains("tentative") ||
+        normalized.contains("dadfailed") ||
+        normalized.contains("deprecated") ||
+        normalized.contains("duplicate") ||
+        normalized.contains("invalid")
 }
 
 private fun ipv6StateRank(state: String?): Int {
@@ -81,6 +86,24 @@ private fun ipv6ScopeRank(ip: String): Int = when {
     isGlobalIpv6(ip) -> 2
     isUlaIpv6(ip) -> 1
     else -> 0
+}
+
+private fun ipv6CompactnessRank(ip: String): Int {
+    val bytes = ipv6Bytes(ip) ?: return Int.MIN_VALUE
+    var zeroGroups = 0
+    var longestZeroRun = 0
+    var currentZeroRun = 0
+    for (index in bytes.indices step 2) {
+        val zero = bytes[index].toInt() == 0 && bytes[index + 1].toInt() == 0
+        if (zero) {
+            zeroGroups += 1
+            currentZeroRun += 1
+            longestZeroRun = maxOf(longestZeroRun, currentZeroRun)
+        } else {
+            currentZeroRun = 0
+        }
+    }
+    return zeroGroups * 16 + longestZeroRun
 }
 
 private fun isVerifiedNeighborIpv6(candidate: Ipv6AddressCandidate): Boolean {
@@ -211,15 +234,22 @@ fun pickBestIpv6(addresses: List<String>, candidates: List<Ipv6AddressCandidate>
     val rawCandidates = candidates + addresses.map { Ipv6AddressCandidate(it) }
     val normalized = mergeIpv6Candidates(rawCandidates)
     val eligible = normalized.filterNot { isInvalidIpv6(it.address) || isRejectedIpv6State(it.state) }
-    val explicitPrimary = eligible.filter { it.primary && !it.historical }
-    val pickPool = explicitPrimary.ifEmpty { eligible.filter(::isVerifiedNeighborIpv6).ifEmpty { eligible } }
-    val latest = eligible.mapNotNull { it.lastSeenAt }.maxOrNull()
-    val best = pickPool.maxWithOrNull(
-        compareBy<Ipv6AddressCandidate> { ipv6ScopeRank(it.address) }
+
+    // Prefer live/current records first, then public scope. Within a usable
+    // public set, prefer a compact/stable address (for example ::1c3b)
+    // instead of a long privacy-style IID. Reachability and recency remain
+    // tie-breakers, and rejected states never enter the pool.
+    val active = eligible.filterNot { it.historical }.ifEmpty { eligible }
+    val publicPool = active.filter { isGlobalIpv6(it.address) }.ifEmpty { active }
+    val prefixPool = publicPool.filter { it.currentPrefix }.ifEmpty { publicPool }
+    val stablePool = prefixPool.filterNot { isSuspectedTemporaryIpv6(it.address, it.source) }.ifEmpty { prefixPool }
+    val best = stablePool.maxWithOrNull(
+        compareBy<Ipv6AddressCandidate> { ipv6CompactnessRank(it.address) }
             .thenBy { ipv6StateRank(it.state) }
-            .thenBy { scoreIpv6Candidate(it) + if (latest != null && it.lastSeenAt == latest) 5 else 0 }
+            .thenBy { if (isVerifiedNeighborIpv6(it)) 1 else 0 }
+            .thenBy { if (it.primary) 1 else 0 }
+            .thenBy(::scoreIpv6Candidate)
             .thenBy { it.lastSeenAt ?: 0L }
-            .thenBy { it.address }
     )
     return Ipv6PickResult(
         best = best?.address,
