@@ -79,7 +79,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -372,15 +371,12 @@ fun StunPenetrationScreen(
     var historyTarget by remember { mutableStateOf<StunRule?>(null) }
     var history by remember { mutableStateOf<List<StunAddressRecord>>(emptyList()) }
     var menuFor by remember { mutableStateOf<String?>(null) }
-    var leaving by remember { mutableStateOf(false) }
     val refreshMutex = remember { Mutex() }
     fun refresh(silent: Boolean = false) = scope.launch {
         if (!refreshMutex.tryLock()) return@launch
         try {
-            if (leaving) return@launch
             if (!silent) loading = true
             val latest = api.list()
-            if (leaving) return@launch
             val effectiveAgent = liveAgent
             val effectiveAgentOnline = effectiveAgent?.online == true || latest.agentOnline
             snapshot = latest.copy(
@@ -399,26 +395,17 @@ fun StunPenetrationScreen(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            if (leaving) return@launch
             error = if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
                 "Agent 在线，状态暂未同步；已保留全部穿透设置"
             } else {
                 uiMessageZh(failure.message).ifBlank { "无法读取 STUN 穿透状态" }
             }
         } finally {
-            if (!leaving) loading = false
+            loading = false
             refreshMutex.unlock()
         }
     }
-    val leavePage: () -> Unit = {
-        if (!leaving) {
-            leaving = true
-            loading = false
-            scope.coroutineContext.cancelChildren()
-            onBack()
-        }
-    }
-    BackHandler(enabled = editor == null && historyTarget == null, onBack = leavePage)
+    BackHandler(enabled = editor == null && historyTarget == null, onBack = onBack)
     LaunchedEffect(Unit) {
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
@@ -433,7 +420,7 @@ fun StunPenetrationScreen(
     DetailShell(
         title = "STUN 穿透",
         subtitle = "公网 IPv4 · NAT 映射 · Agent 自动保活",
-        onBack = leavePage,
+        onBack = onBack,
         unifiedTypography = true,
         sectionGap = LabV2.SectionGap,
     ) {
