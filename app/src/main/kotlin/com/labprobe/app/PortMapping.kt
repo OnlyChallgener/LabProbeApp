@@ -991,21 +991,11 @@ private fun PortMapRuleCard(
                 }
             }
             val targetTypeText = when (rule.targetType) { "router_self" -> "路由器本机"; "device" -> "内网设备"; else -> "手动目标" }
-            Text("${rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }} · ${rule.modeText} · $targetTypeText · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+            val serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }
+            Text("$serviceType · ${rule.modeText} · $targetTypeText · :${rule.listenPort}${if (rule.targetMode == "ipv6_suffix") " · 后缀匹配" else ""}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
             Text("→ ${rule.targetText}", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = if (rule.mode == "6to4") 1 else 2, overflow = TextOverflow.Clip)
             if (rule.runtime.resolvedTarget.isNotBlank() && rule.targetMode == "ipv6_suffix") {
                 Text("实际目标 ${rule.runtime.resolvedTarget}", color = PortBlue, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Clip)
-            }
-            if (serviceSupportsQuickAccess(rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) })) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    ServiceQuickAccessIconButton(
-                        serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) },
-                        endpoint = quickEndpoint,
-                        tint = PortBlue,
-                        onOpenSsh = onOpenSsh,
-                        onOpenWireGuard = onOpenWireGuard,
-                    )
-                }
             }
             Text(portMapStateTrail(rule), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = status.color, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1021,6 +1011,16 @@ private fun PortMapRuleCard(
                         Text(rule.firewallMessage.ifBlank { "IPv6 入站规则未就绪" }, style = LabTypography.Supporting.copy(color = PortRed), maxLines = 2, overflow = TextOverflow.Clip)
                     }
                     Text(portMapTimeText(rule), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                }
+                if (serviceSupportsQuickAccess(serviceType)) {
+                    ServiceQuickAccessIconButton(
+                        serviceType = serviceType,
+                        endpoint = quickEndpoint,
+                        tint = PortBlue,
+                        onOpenSsh = onOpenSsh,
+                        onOpenWireGuard = onOpenWireGuard,
+                    )
+                    Spacer(Modifier.width(3.dp))
                 }
                 OutlinedButton(onClick = onToggle, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.shouldStop) PortRed else PortBlue)) {
                     Text(if (rule.shouldStop) "停止" else "启动", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)

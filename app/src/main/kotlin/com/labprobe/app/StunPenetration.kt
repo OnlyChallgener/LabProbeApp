@@ -5,6 +5,7 @@ import androidx.compose.ui.draw.clip
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -76,9 +77,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -368,33 +372,53 @@ fun StunPenetrationScreen(
     var historyTarget by remember { mutableStateOf<StunRule?>(null) }
     var history by remember { mutableStateOf<List<StunAddressRecord>>(emptyList()) }
     var menuFor by remember { mutableStateOf<String?>(null) }
+    var leaving by remember { mutableStateOf(false) }
+    val refreshMutex = remember { Mutex() }
     fun refresh(silent: Boolean = false) = scope.launch {
-        if (!silent) loading = true
-        runCatching { api.list() }.onSuccess {
+        if (!refreshMutex.tryLock()) return@launch
+        try {
+            if (leaving) return@launch
+            if (!silent) loading = true
+            val latest = api.list()
+            if (leaving) return@launch
             val effectiveAgent = liveAgent
-            val effectiveAgentOnline = effectiveAgent?.online == true || it.agentOnline
-            snapshot = it.copy(
-                rules = if (it.rulesLoaded) it.rules else snapshot.rules,
+            val effectiveAgentOnline = effectiveAgent?.online == true || latest.agentOnline
+            snapshot = latest.copy(
+                rules = if (latest.rulesLoaded) latest.rules else snapshot.rules,
                 agentOnline = effectiveAgentOnline,
-                agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { it.agentLastSeenAt } ?: it.agentLastSeenAt,
+                agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { latest.agentLastSeenAt } ?: latest.agentLastSeenAt,
             )
-            error = if (!it.rulesLoaded) {
+            error = if (!latest.rulesLoaded) {
                 "Hub 本次未返回 STUN 规则，已保留现有设置"
             } else {
                 ""
             }
-            if (it.rulesLoaded) {
-                reconcileStunFavorites(prefs, it.rules, ddnsSnapshot, nativeDdnsRecords)
+            if (latest.rulesLoaded) {
+                reconcileStunFavorites(prefs, latest.rules, ddnsSnapshot, nativeDdnsRecords)
             }
-        }.onFailure {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            if (leaving) return@launch
             error = if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
                 "Agent 在线，状态暂未同步；已保留全部穿透设置"
             } else {
-                uiMessageZh(it.message).ifBlank { "无法读取 STUN 穿透状态" }
+                uiMessageZh(failure.message).ifBlank { "无法读取 STUN 穿透状态" }
             }
+        } finally {
+            if (!leaving) loading = false
+            refreshMutex.unlock()
         }
-        loading = false
     }
+    val leavePage: () -> Unit = {
+        if (!leaving) {
+            leaving = true
+            loading = false
+            scope.coroutineContext.cancelChildren()
+            onBack()
+        }
+    }
+    BackHandler(enabled = editor == null && historyTarget == null, onBack = leavePage)
     LaunchedEffect(Unit) {
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
@@ -409,7 +433,7 @@ fun StunPenetrationScreen(
     DetailShell(
         title = "STUN 穿透",
         subtitle = "公网 IPv4 · NAT 映射 · Agent 自动保活",
-        onBack = onBack,
+        onBack = leavePage,
         unifiedTypography = true,
         sectionGap = LabV2.SectionGap,
     ) {
@@ -663,14 +687,22 @@ fun StunPenetrationScreen(
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (rule.usesRouterNativeMapping) {
-                    Text("路由器直连 · 流量不经过 LabRelay", color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize)
-                } else {
-                    StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
-                    Spacer(Modifier.width(16.dp)); StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    if (rule.usesRouterNativeMapping) {
+                        Text(
+                            "路由器直连 · 流量不经过 LabRelay",
+                            color = LabV2.InkMuted,
+                            fontSize = LabTypography.Caption.fontSize,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
+                        Spacer(Modifier.width(12.dp))
+                        StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
+                    }
                 }
-                Spacer(Modifier.weight(1f))
                 Surface(
                     modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onHistory),
                     shape = RoundedCornerShape(12.dp),
@@ -686,9 +718,8 @@ fun StunPenetrationScreen(
                         Text("地址记录", style = LabTypography.Caption.copy(color = StunBlue, fontWeight = FontWeight.SemiBold))
                     }
                 }
-            }
-            if (serviceSupportsQuickAccess(rule.serviceType) || endpoint.isNotBlank()) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                if (serviceSupportsQuickAccess(rule.serviceType)) {
+                    Spacer(Modifier.width(2.dp))
                     ServiceQuickAccessIconButton(
                         serviceType = rule.serviceType,
                         endpoint = endpoint,
@@ -696,10 +727,10 @@ fun StunPenetrationScreen(
                         onOpenSsh = onOpenSsh,
                         onOpenWireGuard = onOpenWireGuard,
                     )
-                    if (endpoint.isNotBlank()) {
-                        IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(18.dp))
-                        }
+                }
+                if (endpoint.isNotBlank()) {
+                    IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(18.dp))
                     }
                 }
             }
