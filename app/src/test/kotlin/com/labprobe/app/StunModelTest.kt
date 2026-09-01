@@ -52,6 +52,29 @@ class StunModelTest {
     }
 
     @Test
+    fun draftCarriesOptionalUserSelectedMiddlePort() {
+        val automatic = StunDraft(
+            targetIpv4 = "192.168.5.46",
+            targetPort = "9443",
+        ).toJson()
+        assertFalse(automatic.has("listenPort"))
+
+        val manualDraft = StunDraft(
+            targetType = "router_self",
+            targetIpv4 = "127.0.0.1",
+            targetPort = "54133",
+            listenPort = "3499",
+        )
+        val manual = manualDraft.toJson()
+        assertEquals(3499, manual.getInt("listenPort"))
+        assertEquals(null, stunDraftValidationError(manualDraft))
+        assertEquals(
+            "中间端口必须是 1024–65535",
+            stunDraftValidationError(manualDraft.copy(listenPort = "1023")),
+        )
+    }
+
+    @Test
     fun generatedTitleUsesStableServiceFallbackAndDoesNotPopulateRemark() {
         val rule = StunRule(
             id = "stun-1",

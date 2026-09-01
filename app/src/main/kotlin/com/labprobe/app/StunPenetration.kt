@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
@@ -278,6 +279,7 @@ data class StunDraft(
     val targetType: String = "manual",
     val targetIpv4: String = "",
     val targetPort: String = "443",
+    val listenPort: String = "",
     val name: String = "",
 ) {
     fun toJson() = JSONObject().apply {
@@ -287,6 +289,7 @@ data class StunDraft(
         put("targetType", targetType)
         put("targetIpv4", targetIpv4.trim())
         put("targetPort", targetPort.toIntOrNull() ?: 0)
+        if (listenPort.isNotBlank()) put("listenPort", listenPort.toIntOrNull() ?: 0)
         put("name", name.trim())
         put("enabled", enabled)
     }
@@ -299,6 +302,7 @@ data class StunDraft(
             targetType = rule.targetType,
             targetIpv4 = rule.targetIpv4,
             targetPort = rule.targetPort.toString(),
+            listenPort = rule.listenPort.takeIf { it > 0 }?.toString().orEmpty(),
             name = rule.name.takeUnless(::isGeneratedStunRuleName).orEmpty(),
         )
     }
@@ -326,6 +330,8 @@ internal fun stunDraftValidationError(draft: StunDraft): String? {
     val validIpv4 = ipv4.split('.').let { parts -> parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && (part.toIntOrNull() ?: -1) in 0..255 } }
     if (draft.targetType != "router_self" && !validIpv4) return "请输入有效的内网 IPv4 地址"
     if ((draft.targetPort.toIntOrNull() ?: 0) !in 1..65535) return "目标端口必须是 1–65535"
+    val listenPort = draft.listenPort.trim()
+    if (listenPort.isNotEmpty() && (listenPort.toIntOrNull() ?: 0) !in 1024..65535) return "中间端口必须是 1024–65535"
     if (draft.name.trim().length > 64) return "规则备注最多 64 个字符"
     return null
 }
@@ -613,7 +619,7 @@ fun StunPenetrationScreen(
                     DropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = onMenu,
-                        modifier = Modifier.width(154.dp),
+                        modifier = Modifier.width(140.dp),
                         shape = LabV2.CompactCardShape,
                         containerColor = Color.White,
                         tonalElevation = 0.dp,
@@ -622,6 +628,7 @@ fun StunPenetrationScreen(
                     ) {
                         DropdownMenuItem(
                             text = { Text("编辑", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
+                            leadingIcon = { Icon(Icons.Rounded.Edit, null, tint = LabV2.InkMuted) },
                             onClick = onEdit,
                         )
                         DropdownMenuItem(
@@ -889,6 +896,23 @@ fun StunPenetrationScreen(
                         ),
                     )
                 }
+                OutlinedTextField(
+                    value = draft.listenPort,
+                    onValueChange = { draft = draft.copy(listenPort = it.filter(Char::isDigit).take(5)) },
+                    label = { Text("中间端口") },
+                    placeholder = { Text("留空自动分配") },
+                    supportingText = { Text("路由器本地通道端口；留空自动分配 30000–32767") },
+                    singleLine = true,
+                    enabled = !saving,
+                    shape = LabV2.FieldShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = LabCoreSurface.Inner,
+                        focusedBorderColor = StunBlue,
+                        unfocusedBorderColor = LabCoreSurface.Border,
+                    ),
+                )
                 OutlinedTextField(
                     value = draft.name,
                     onValueChange = { draft = draft.copy(name = it.take(64)) },
