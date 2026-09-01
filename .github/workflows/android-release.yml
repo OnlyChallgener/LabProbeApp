@@ -105,7 +105,7 @@ jobs:
               'toast(ctx, "已复制")',
               'val assistantRoutes = setOf("ai_settings", "ai_chat", "ai_usage")',
               'Text("AI 助手"',
-              '"配置 DeepSeek API"',
+              '"配置 AI API"',
           ]
           for needle in required_main:
               assert needle in main, f'missing MainActivity invariant: {needle}'
