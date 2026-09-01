@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.PauseCircleOutline
 import androidx.compose.material.icons.rounded.PlayCircleOutline
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Button
@@ -125,6 +126,7 @@ data class StunRule(
     val name: String,
     val enabled: Boolean,
     val listenPort: Int,
+    val targetType: String = "manual",
     val targetIpv4: String,
     val targetPort: Int,
     val serviceType: String,
@@ -132,6 +134,8 @@ data class StunRule(
     val forwardMode: String,
     val actualState: String,
     val firewallState: String,
+    val firewallMessage: String = "",
+    val firewallOwner: String = "",
     val nativeMappingState: String,
     val nativeMappingMessage: String = "",
     val syncError: String = "",
@@ -178,6 +182,7 @@ private fun parseStunRule(json: JSONObject): StunRule {
         name = cleanApiText(json.optString("name")),
         enabled = json.optBoolean("enabled", false),
         listenPort = json.optInt("listenPort"),
+        targetType = cleanApiText(json.optString("targetType")).ifBlank { if (cleanApiText(json.optString("targetIpv4")) == "127.0.0.1") "router_self" else "manual" },
         targetIpv4 = cleanApiText(json.optString("targetIpv4")),
         targetPort = json.optInt("targetPort"),
         serviceType = cleanApiText(json.optString("serviceType", "Custom")).ifBlank { "Custom" },
@@ -187,6 +192,8 @@ private fun parseStunRule(json: JSONObject): StunRule {
         },
         actualState = cleanApiText(json.optString("actualState", runtime.optString("state", "stopped"))),
         firewallState = cleanApiText(json.optString("firewallState", "pending")),
+        firewallMessage = cleanApiText(json.optString("firewallMessage")),
+        firewallOwner = cleanApiText(json.optString("firewallOwner")),
         nativeMappingState = cleanApiText(json.optString("nativeMappingState", "pending")),
         nativeMappingMessage = cleanApiText(json.optString("nativeMappingMessage")),
         syncError = cleanApiText(json.optString("syncError")),
@@ -256,6 +263,7 @@ data class StunDraft(
     val enabled: Boolean = true,
     val serviceType: String = "HTTPS",
     val transportProtocol: String = "TCP",
+    val targetType: String = "manual",
     val targetIpv4: String = "",
     val targetPort: String = "443",
     val name: String = "",
@@ -264,6 +272,7 @@ data class StunDraft(
         if (id.isNotBlank()) put("id", id)
         put("serviceType", serviceType)
         put("transportProtocol", transportProtocol)
+        put("targetType", targetType)
         put("targetIpv4", targetIpv4.trim())
         put("targetPort", targetPort.toIntOrNull() ?: 0)
         put("name", name.trim())
@@ -275,6 +284,7 @@ data class StunDraft(
             enabled = rule.enabled,
             serviceType = rule.serviceType,
             transportProtocol = rule.transportProtocol,
+            targetType = rule.targetType,
             targetIpv4 = rule.targetIpv4,
             targetPort = rule.targetPort.toString(),
             name = rule.name.takeUnless(::isGeneratedStunRuleName).orEmpty(),
@@ -284,7 +294,12 @@ data class StunDraft(
 
 internal fun stunTemplate(type: String): PortMapServiceTemplate = PORT_MAP_SERVICE_TEMPLATES.firstOrNull { it.serviceType.equals(type, true) } ?: PORT_MAP_SERVICE_TEMPLATES.last()
 internal fun applyStunService(draft: StunDraft, template: PortMapServiceTemplate) = draft.copy(serviceType = template.serviceType, transportProtocol = template.defaultProtocol, targetPort = template.targetPort?.toString().orEmpty())
-private val generatedStunRuleNamePattern = Regex("^.+ · (?:\\d{1,3}\\.){3}\\d{1,3}:\\d+$")
+internal fun switchStunTargetType(draft: StunDraft, targetType: String): StunDraft = when (targetType) {
+    "router_self" -> draft.copy(targetType = "router_self", targetIpv4 = "127.0.0.1")
+    "device" -> draft.copy(targetType = "device", targetIpv4 = if (draft.targetType == "router_self") "" else draft.targetIpv4)
+    else -> draft.copy(targetType = "manual", targetIpv4 = if (draft.targetType == "router_self") "" else draft.targetIpv4)
+}
+private val generatedStunRuleNamePattern = Regex("^.+ · (?:(?:\\d{1,3}\\.){3}\\d{1,3}|路由器本机):\\d+$")
 private fun isGeneratedStunRuleName(value: String): Boolean = generatedStunRuleNamePattern.matches(value.trim())
 internal fun stunRuleTitle(rule: StunRule): String = rule.name.trim().let {
     if (it.isBlank() || isGeneratedStunRuleName(it)) {
@@ -294,9 +309,10 @@ internal fun stunRuleTitle(rule: StunRule): String = rule.name.trim().let {
     }
 }
 internal fun stunDraftValidationError(draft: StunDraft): String? {
+    if (draft.targetType !in setOf("router_self", "device", "manual")) return "请选择目标类型"
     val ipv4 = draft.targetIpv4.trim()
     val validIpv4 = ipv4.split('.').let { parts -> parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && (part.toIntOrNull() ?: -1) in 0..255 } }
-    if (!validIpv4) return "请输入有效的内网 IPv4 地址"
+    if (draft.targetType != "router_self" && !validIpv4) return "请输入有效的内网 IPv4 地址"
     if ((draft.targetPort.toIntOrNull() ?: 0) !in 1..65535) return "目标端口必须是 1–65535"
     if (draft.name.trim().length > 64) return "规则备注最多 64 个字符"
     return null
@@ -599,10 +615,11 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 Text("动态地址", color = StunAmber, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
                             }
                         }
+                        val targetText = if (rule.targetType == "router_self") "路由器本机:${rule.targetPort}" else "${rule.targetIpv4}:${rule.targetPort}"
                         Text(
-                            if (!agentOnline && endpoint.isNotBlank()) "上次映射至 ${rule.targetIpv4}:${rule.targetPort} · 当前未验证"
-                            else if (rule.usesRouterNativeMapping) "路由器直连至 ${rule.targetIpv4}:${rule.targetPort} · 外网可达性取决于上级 NAT"
-                            else "LabRelay 转发至 ${rule.targetIpv4}:${rule.targetPort}",
+                            if (!agentOnline && endpoint.isNotBlank()) "上次映射至 $targetText · 当前未验证"
+                            else if (rule.usesRouterNativeMapping) "路由器直连至 $targetText · 外网可达性取决于上级 NAT"
+                            else "LabRelay 本地代理至 $targetText",
                             color = LabV2.InkMuted,
                             fontSize = LabTypography.Caption.fontSize,
                             maxLines = 1,
@@ -636,7 +653,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     }
                 }
             }
-            sequenceOf(rule.syncError, rule.nativeMappingMessage.takeIf { rule.enabled }.orEmpty(), rule.runtime.lastError.takeIf { rule.enabled }.orEmpty())
+            sequenceOf(rule.syncError, rule.nativeMappingMessage.takeIf { rule.enabled }.orEmpty(), rule.firewallMessage.takeIf { rule.enabled }.orEmpty(), rule.runtime.lastError.takeIf { rule.enabled }.orEmpty())
                 .firstOrNull { it.isNotBlank() && !liveReady }
                 ?.let { Text(uiMessageZh(it), color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
         }
@@ -665,7 +682,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var showDevicePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val template = stunTemplate(draft.serviceType)
-    val selectedDevice = if (draft.targetIpv4.isBlank()) null else devices.firstOrNull { it.ip.isNotBlank() && it.ip == draft.targetIpv4.trim() }
+    val selectedDevice = if (draft.targetType != "device" || draft.targetIpv4.isBlank()) null else devices.firstOrNull { it.ip.isNotBlank() && it.ip == draft.targetIpv4.trim() }
     fun refreshDevices(force: Boolean = false) {
         scope.launch {
             if (devices.isEmpty() || force) {
@@ -723,30 +740,70 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                     }
                 }
-                Text("内网终端", style = LabTypography.SectionTitle)
-                StunSelectedDevice(
-                    device = selectedDevice,
-                    loading = devicesLoading,
-                    onClick = { showDevicePicker = true },
+                Text("目标", style = LabTypography.SectionTitle)
+                val targetTypeLabel = when (draft.targetType) {
+                    "router_self" -> "路由器本机"
+                    "device" -> "内网设备"
+                    else -> "手动目标"
+                }
+                LabV2SegmentedControl(
+                    options = listOf("路由器本机", "内网设备", "手动目标"),
+                    selected = targetTypeLabel,
+                    onSelect = { selected ->
+                        draft = switchStunTargetType(
+                            draft,
+                            when (selected) {
+                                "路由器本机" -> "router_self"
+                                "内网设备" -> "device"
+                                else -> "manual"
+                            },
+                        )
+                    },
+                    textStyle = LabTypography.CompactButton,
                 )
-                Text("从在线设备选择 IPv4；也可以继续手动填写。", style = LabTypography.Caption, color = LabV2.InkMuted)
+                when (draft.targetType) {
+                    "router_self" -> {
+                        Surface(shape = LabV2.FieldShape, color = LabCoreSurface.Inner, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                LabV2ToolIcon(Icons.Rounded.Router, StunBlue, size = 34)
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("路由器本机", style = LabTypography.Value, fontWeight = FontWeight.SemiBold)
+                                    Text("由 LabRelay 本地代理处理，不作为普通 LAN 设备", style = LabTypography.Caption, color = LabV2.InkMuted)
+                                }
+                            }
+                        }
+                    }
+                    "device" -> {
+                        StunSelectedDevice(
+                            device = selectedDevice,
+                            loading = devicesLoading,
+                            onClick = { showDevicePicker = true },
+                        )
+                        Text("从在线设备选择 IPv4；设备暂时离线不会被当作目标已删除。", style = LabTypography.Caption, color = LabV2.InkMuted)
+                    }
+                    else -> Text("手动目标不依赖设备列表，请填写已确认的内网 IPv4 地址。", style = LabTypography.Caption, color = LabV2.InkMuted)
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = draft.targetIpv4,
-                        onValueChange = { draft = draft.copy(targetIpv4 = it) },
-                        label = { Text("内网地址") },
-                        placeholder = { Text("192.168.5.46") },
-                        singleLine = true,
-                        enabled = !saving,
-                        shape = LabV2.FieldShape,
-                        modifier = Modifier.weight(1.65f),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color.White,
-                            unfocusedContainerColor = LabCoreSurface.Inner,
-                            focusedBorderColor = StunBlue,
-                            unfocusedBorderColor = LabCoreSurface.Border,
-                        ),
-                    )
+                    if (draft.targetType != "router_self") {
+                        OutlinedTextField(
+                            value = draft.targetIpv4,
+                            onValueChange = { draft = draft.copy(targetIpv4 = it) },
+                            label = { Text(if (draft.targetType == "device") "设备 IPv4" else "内网地址") },
+                            placeholder = { Text("192.168.5.46") },
+                            singleLine = true,
+                            readOnly = draft.targetType == "device",
+                            enabled = !saving,
+                            shape = LabV2.FieldShape,
+                            modifier = Modifier.weight(1.65f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = LabCoreSurface.Inner,
+                                focusedBorderColor = StunBlue,
+                                unfocusedBorderColor = LabCoreSurface.Border,
+                            ),
+                        )
+                    }
                     OutlinedTextField(
                         value = draft.targetPort,
                         onValueChange = { draft = draft.copy(targetPort = it.filter(Char::isDigit)) },
@@ -755,7 +812,7 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         singleLine = true,
                         enabled = !saving,
                         shape = LabV2.FieldShape,
-                        modifier = Modifier.weight(.85f),
+                        modifier = Modifier.weight(if (draft.targetType == "router_self") 1f else .85f),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = Color.White,
                             unfocusedContainerColor = LabCoreSurface.Inner,
@@ -809,14 +866,14 @@ fun StunPenetrationScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
         }
     }
-    if (showDevicePicker) {
+    if (showDevicePicker && draft.targetType == "device") {
         StunDevicePickerDialog(
             devices = devices,
             loading = devicesLoading,
             onRefresh = { refreshDevices(force = true) },
             onDismiss = { showDevicePicker = false },
             onPick = { device ->
-                draft = draft.copy(targetIpv4 = device.ip)
+                draft = draft.copy(targetType = "device", targetIpv4 = device.ip)
                 showDevicePicker = false
             },
         )

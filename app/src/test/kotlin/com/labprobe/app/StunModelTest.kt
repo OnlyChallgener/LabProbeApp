@@ -35,7 +35,8 @@ class StunModelTest {
         assertEquals(22, json.getInt("targetPort"))
         assertEquals("", json.getString("name"))
         assertTrue(json.getBoolean("enabled"))
-        assertEquals(6, json.length())
+        assertEquals("manual", json.getString("targetType"))
+        assertEquals(7, json.length())
     }
 
     @Test

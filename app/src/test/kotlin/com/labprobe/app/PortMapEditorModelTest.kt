@@ -7,6 +7,19 @@ import org.junit.Test
 
 class PortMapEditorModelTest {
     @Test
+    fun routerSelfUsesExplicitLoopbackTargetsForBothModes() {
+        val ipv4 = switchPortMapTargetType(PortMapDraft(mode = "6to4"), "router_self")
+        assertEquals("router_self", ipv4.targetType)
+        assertEquals("127.0.0.1", ipv4.targetIpv4)
+        assertEquals("ipv4", ipv4.targetMode)
+
+        val ipv6 = switchPortMapMode(ipv4, "6to6")
+        assertEquals("router_self", ipv6.targetType)
+        assertEquals("::1", ipv6.targetIpv6)
+        assertEquals("ipv6_full", ipv6.targetMode)
+    }
+
+    @Test
     fun httpsTemplateUses443OnlyForNewDraft() {
         val draft = applyPortMapServiceTemplate(PortMapDraft.new("20001"), PORT_MAP_SERVICE_TEMPLATES.first { it.label == "HTTPS" })
         assertEquals("443", draft.targetPort)

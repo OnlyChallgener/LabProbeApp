@@ -70,12 +70,15 @@ object PortMappingRuleStore {
         .put("enabled", rule.enabled)
         .put("mode", rule.mode)
         .put("listenPort", rule.listenPort)
+        .put("targetType", rule.targetType)
         .put("targetMode", rule.targetMode)
         .put("targetIpv4", rule.targetIpv4)
         .put("targetIpv6", rule.targetIpv6)
+        .put("targetIpv6Snapshot", rule.targetIpv6Snapshot)
         .put("targetIpv6Suffix", rule.targetIpv6Suffix)
         .put("targetMac", rule.targetMac)
         .put("targetPort", rule.targetPort)
+        .put("transportProtocol", rule.transportProtocol)
         .apply { rule.serviceType.trim().takeIf { it.isNotBlank() }?.let { put("serviceType", it) } }
         .put("preferCurrentPrefix", rule.preferCurrentPrefix)
         .put("leaseSeconds", rule.leaseSeconds)
@@ -100,13 +103,18 @@ object PortMappingRuleStore {
             enabled = enabled,
             mode = cleanApiText(root.optString("mode", "6to4")),
             listenPort = root.optInt("listenPort"),
+            targetType = cleanApiText(root.optString("targetType")).ifBlank {
+                if (cleanApiText(root.optString("targetIpv4")) == "127.0.0.1" || cleanApiText(root.optString("targetIpv6")) == "::1") "router_self" else "manual"
+            },
             targetMode = cleanApiText(root.optString("targetMode")),
             targetIpv4 = cleanApiText(root.optString("targetIpv4")),
             targetIpv6 = cleanApiText(root.optString("targetIpv6")),
+            targetIpv6Snapshot = cleanApiText(root.optString("targetIpv6Snapshot")),
             targetIpv6Suffix = cleanApiText(root.optString("targetIpv6Suffix")),
             targetMac = cleanMac(root.optString("targetMac")),
             targetPort = root.optInt("targetPort"),
             serviceType = cleanApiText(root.optString("serviceType")),
+            transportProtocol = cleanApiText(root.optString("transportProtocol", "TCP")).ifBlank { "TCP" },
             preferCurrentPrefix = root.optBoolean("preferCurrentPrefix", true),
             expiresAt = expiresAt,
             leaseSeconds = root.optLong("leaseSeconds", 0L).coerceAtLeast(0L),
