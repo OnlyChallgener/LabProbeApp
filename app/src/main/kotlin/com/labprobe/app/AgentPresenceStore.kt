@@ -36,7 +36,7 @@ internal class AgentPresenceStore {
             router = root.optString("router").ifBlank { previous?.router ?: "router" },
             lastSeenAt = root.optString("agentLastSeenAt").ifBlank { previous?.lastSeenAt.orEmpty() },
             portMin = previous?.portMin ?: 20000,
-            portMax = previous?.portMax ?: 20020,
+            portMax = previous?.portMax ?: 29999,
             protocolVersion = previous?.protocolVersion.orEmpty(),
             hubVersion = previous?.hubVersion.orEmpty(),
             agentVersion = root.optString("agentVersion").ifBlank { previous?.agentVersion.orEmpty() },
