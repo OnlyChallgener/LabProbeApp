@@ -89,6 +89,7 @@ private val StunBlue = LabV2.Primary
 private val StunGreen = LabV2.Green
 private val StunAmber = LabV2.Amber
 private val StunRed = LabV2.Red
+private const val STUN_MAPPING_FRESH_SECONDS = 90L
 
 data class StunRuntime(
     val state: String = "stopped",
@@ -97,11 +98,26 @@ data class StunRuntime(
     val publicIp: String = "",
     val publicPort: Int = 0,
     val mappingUpdatedAt: Long? = null,
+    val mappingFresh: Boolean = false,
+    val mappingAgeSeconds: Long? = null,
     val activeConnections: Long = 0,
     val activePeers: Long = 0,
     val totalUploadBytes: Long = 0,
     val totalDownloadBytes: Long = 0,
     val lastError: String = "",
+)
+
+data class StunAddressLayer(
+    val host: String = "",
+    val port: Int = 0,
+    val endpoint: String = "",
+)
+
+data class StunAddressLayers(
+    val target: StunAddressLayer = StunAddressLayer(),
+    val channel: StunAddressLayer = StunAddressLayer(),
+    val public: StunAddressLayer = StunAddressLayer(),
+    val publicReachabilityState: String = "unknown",
 )
 
 data class StunRule(
@@ -120,9 +136,10 @@ data class StunRule(
     val nativeMappingMessage: String = "",
     val syncError: String = "",
     val runtime: StunRuntime,
+    val addresses: StunAddressLayers = StunAddressLayers(),
 ) {
     val usesRouterNativeMapping: Boolean get() = forwardMode == "router_native"
-    val ready: Boolean get() = enabled && actualState == "mapped" && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
+    val ready: Boolean get() = enabled && actualState == "mapped" && runtime.mappingFresh && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
 }
 
 data class StunAddressRecord(val endpoint: String, val updatedAt: Long)
@@ -141,6 +158,21 @@ private fun parseEpoch(obj: JSONObject, key: String): Long? {
 
 private fun parseStunRule(json: JSONObject): StunRule {
     val runtime = json.optJSONObject("runtime") ?: JSONObject()
+    val addresses = json.optJSONObject("addresses") ?: JSONObject()
+    val targetAddress = addresses.optJSONObject("target") ?: JSONObject()
+    val channelAddress = addresses.optJSONObject("channel") ?: JSONObject()
+    val publicAddress = addresses.optJSONObject("public") ?: JSONObject()
+    val mappingUpdatedAt = parseEpoch(runtime, "mappingUpdatedAt")
+    val mappingAgeSeconds = if (runtime.has("mappingAgeSeconds") && !runtime.isNull("mappingAgeSeconds")) {
+        runtime.optLong("mappingAgeSeconds").coerceAtLeast(0L)
+    } else {
+        mappingUpdatedAt?.let { (System.currentTimeMillis() / 1000L - it).coerceAtLeast(0L) }
+    }
+    val mappingFresh = if (runtime.has("mappingFresh")) {
+        runtime.optBoolean("mappingFresh", false)
+    } else {
+        mappingAgeSeconds != null && mappingAgeSeconds <= STUN_MAPPING_FRESH_SECONDS
+    }
     return StunRule(
         id = cleanApiText(json.optString("id")),
         name = cleanApiText(json.optString("name")),
@@ -164,12 +196,32 @@ private fun parseStunRule(json: JSONObject): StunRule {
             publicEndpoint = cleanApiText(runtime.optString("publicEndpoint")),
             publicIp = cleanApiText(runtime.optString("publicIp")),
             publicPort = runtime.optInt("publicPort"),
-            mappingUpdatedAt = parseEpoch(runtime, "mappingUpdatedAt"),
+            mappingUpdatedAt = mappingUpdatedAt,
+            mappingFresh = mappingFresh,
+            mappingAgeSeconds = mappingAgeSeconds,
             activeConnections = runtime.optLong("activeConnections"),
             activePeers = runtime.optLong("activePeers"),
             totalUploadBytes = runtime.optLong("totalUploadBytes"),
             totalDownloadBytes = runtime.optLong("totalDownloadBytes"),
             lastError = cleanApiText(runtime.optString("lastError")),
+        ),
+        addresses = StunAddressLayers(
+            target = StunAddressLayer(
+                host = cleanApiText(targetAddress.optString("host", json.optString("targetIpv4"))),
+                port = targetAddress.optInt("port", json.optInt("targetPort")),
+                endpoint = cleanApiText(targetAddress.optString("endpoint")),
+            ),
+            channel = StunAddressLayer(
+                host = cleanApiText(channelAddress.optString("host", "0.0.0.0")),
+                port = channelAddress.optInt("port", json.optInt("listenPort")),
+                endpoint = cleanApiText(channelAddress.optString("endpoint")),
+            ),
+            public = StunAddressLayer(
+                host = cleanApiText(publicAddress.optString("host", runtime.optString("publicIp"))),
+                port = publicAddress.optInt("port", runtime.optInt("publicPort")),
+                endpoint = cleanApiText(publicAddress.optString("endpoint", runtime.optString("publicEndpoint"))),
+            ),
+            publicReachabilityState = cleanApiText(publicAddress.optString("reachabilityState", "unknown")),
         ),
     )
 }
