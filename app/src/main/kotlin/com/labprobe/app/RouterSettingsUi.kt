@@ -169,6 +169,13 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
 
         RouterSettingsSection("诊断与升级") {
             RouterSettingsTile(
+                title = "TCP 峰值连接数",
+                subtitle = "本机 APP 与 Relay 分别测试 IPv4/IPv6 TCP 会话",
+                icon = Icons.Rounded.DataUsage,
+                color = SettingsBlue,
+                enabled = true
+            ) { onOpen("tool_tcp_peak") }
+            RouterSettingsTile(
                 title = "网络自检",
                 subtitle = "仅在手动点击时检测物理接线与协商速率",
                 icon = Icons.Rounded.MonitorHeart,

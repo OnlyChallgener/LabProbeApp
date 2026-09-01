@@ -547,6 +547,16 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("tcp_port", v).apply()
     var tcpTimeout: String get() = sp.getString("tcp_timeout", "1000") ?: "1000"
         set(v) = sp.edit().putString("tcp_timeout", v).apply()
+    var tcpPeakHost: String get() = sp.getString("tcp_peak_host_v1", "") ?: ""
+        set(v) = sp.edit().putString("tcp_peak_host_v1", v.trim()).apply()
+    var tcpPeakPort: String get() = sp.getString("tcp_peak_port_v1", "443") ?: "443"
+        set(v) = sp.edit().putString("tcp_peak_port_v1", v.trim()).apply()
+    var tcpPeakTarget: String get() = sp.getString("tcp_peak_target_v1", "10000") ?: "10000"
+        set(v) = sp.edit().putString("tcp_peak_target_v1", v.trim()).apply()
+    var tcpPeakCps: String get() = sp.getString("tcp_peak_cps_v1", "500") ?: "500"
+        set(v) = sp.edit().putString("tcp_peak_cps_v1", v.trim()).apply()
+    var tcpPeakHistoryJson: String get() = sp.getString("tcp_peak_history_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("tcp_peak_history_v1", v).apply()
     var portProtocol: String get() = sp.getString("port_protocol", "TCP") ?: "TCP"
         set(v) = sp.edit().putString("port_protocol", v).apply()
 
@@ -2226,6 +2236,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_roam" -> WifiRoamingScreen(prefs, backFromTool)
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
+                        "tool_tcp_peak" -> TcpPeakConnectionsScreen(prefs, backFromTool)
                         "tool_portmap" -> MappingAndUpnpScreen(
                             prefs,
                             backFromTool,
@@ -10780,6 +10791,11 @@ class HubApi(private val prefs: AppPrefs) {
         .writeTimeout(20, TimeUnit.SECONDS)
         .addInterceptor(HubAuthInterceptor { prefs.token })
         .build()
+    private val shortControlClient = client.newBuilder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
+        .build()
 
     suspend fun health(): String = withContext(Dispatchers.IO) {
         if (prefs.hub.isBlank()) return@withContext "失败：Hub 地址为空"
@@ -10885,6 +10901,26 @@ class HubApi(private val prefs: AppPrefs) {
     suspend fun requestAgentCleanup(): JSONObject = withContext(Dispatchers.IO) {
         requestJson("/api/agent/cleanup", "POST", JSONObject())
     }
+    suspend fun getTcpPeakTask(): TcpPeakSnapshot = withContext(Dispatchers.IO) {
+        TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test"))
+    }
+    suspend fun startTcpPeakTask(config: TcpPeakConfig): TcpPeakSnapshot = withContext(Dispatchers.IO) {
+        val value = config.normalized()
+        val body = JSONObject()
+            .put("host", value.host)
+            .put("port", value.port)
+            .put("family", value.family.wireValue)
+            .put("targetConnections", value.targetConnections)
+            .put("cps", value.cps)
+            .put("connectTimeoutMs", value.connectTimeoutMs)
+            .put("maxDurationSeconds", value.maxDurationSeconds)
+        TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test/start", "POST", body))
+    }
+    suspend fun stopTcpPeakTask(taskId: String): TcpPeakSnapshot = withContext(Dispatchers.IO) {
+        TcpPeakSnapshot.fromRelayJson(
+            requestJsonShort("/api/tcp-session-test/stop", "POST", JSONObject().put("taskId", taskId))
+        )
+    }
     suspend fun getAgentCleanupStatus(commandId: String): JSONObject = withContext(Dispatchers.IO) {
         requestJson("/api/agent/cleanup/status?commandId=${URLEncoder.encode(commandId, "UTF-8")}")
     }
@@ -10919,7 +10955,15 @@ class HubApi(private val prefs: AppPrefs) {
     internal fun requestJson(path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
         JSONObject(requestText(path, method, body?.toString()))
 
-    internal fun requestText(path: String, method: String = "GET", json: String? = null): String {
+    private fun requestJsonShort(path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
+        JSONObject(requestText(path, method, body?.toString(), shortControlClient))
+
+    internal fun requestText(
+        path: String,
+        method: String = "GET",
+        json: String? = null,
+        requestClient: OkHttpClient = client
+    ): String {
         if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         val safeHub = validateHubTransportAddress(prefs.hub)
         val requestBuilder = Request.Builder()
@@ -10935,14 +10979,16 @@ class HubApi(private val prefs: AppPrefs) {
             else -> error("Unsupported method $method")
         }
 
-        client.newCall(request).execute().use { response ->
+        requestClient.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             routerApiException(request.url.encodedPath, text)?.let { throw it }
             if (response.code == 401 || response.code == 403) {
                 throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
             }
             if (!response.isSuccessful) {
-                val serverMsg = runCatching { JSONObject(text).optString("message") }.getOrNull()?.takeIf { it.isNotBlank() }
+                val serverMsg = runCatching {
+                    JSONObject(text).let { root -> root.optString("message").ifBlank { root.optString("error") } }
+                }.getOrNull()?.takeIf { it.isNotBlank() }
                 if (serverMsg != null) {
                     throw HubHttpException(response.code, serverMsg)
                 }
