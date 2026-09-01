@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import java.net.URI
 import java.util.Locale
 
-internal data class ServiceEndpoint(val host: String, val port: Int? = null)
+internal data class ServiceQuickAccessEndpoint(val host: String, val port: Int? = null)
 
 internal sealed interface ServiceQuickAccessTarget {
     data class Browser(val url: String) : ServiceQuickAccessTarget
@@ -44,7 +44,7 @@ private fun serviceDefaultPort(serviceType: String): Int? = when (normalizedServ
     else -> null
 }
 
-private fun parseAuthority(raw: String): ServiceEndpoint? {
+private fun parseQuickAccessAuthority(raw: String): ServiceQuickAccessEndpoint? {
     val authority = raw.substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@').trim()
     if (authority.isBlank()) return null
     if (authority.startsWith('[')) {
@@ -52,32 +52,32 @@ private fun parseAuthority(raw: String): ServiceEndpoint? {
         if (end <= 1) return null
         val host = authority.substring(1, end)
         val port = authority.substring(end + 1).removePrefix(":").toIntOrNull()?.takeIf { it in 1..65535 }
-        return ServiceEndpoint(host, port)
+        return ServiceQuickAccessEndpoint(host, port)
     }
     val colonCount = authority.count { it == ':' }
-    if (colonCount == 0) return ServiceEndpoint(authority)
+    if (colonCount == 0) return ServiceQuickAccessEndpoint(authority)
     if (colonCount == 1) {
         val host = authority.substringBefore(':').trim()
         val port = authority.substringAfter(':').toIntOrNull()?.takeIf { it in 1..65535 }
-        return host.takeIf { it.isNotBlank() }?.let { ServiceEndpoint(it, port) }
+        return host.takeIf { it.isNotBlank() }?.let { ServiceQuickAccessEndpoint(it, port) }
     }
-    normalizeIpv6(authority)?.let { return ServiceEndpoint(it) }
+    normalizeIpv6(authority)?.let { return ServiceQuickAccessEndpoint(it) }
     val lastColon = authority.lastIndexOf(':')
     val hostCandidate = authority.substring(0, lastColon)
     val port = authority.substring(lastColon + 1).toIntOrNull()?.takeIf { it in 1..65535 }
     val host = port?.let { normalizeIpv6(hostCandidate) } ?: return null
-    return ServiceEndpoint(host, port)
+    return ServiceQuickAccessEndpoint(host, port)
 }
 
-internal fun parseServiceEndpoint(rawAddress: String): ServiceEndpoint? {
+internal fun parseQuickAccessEndpoint(rawAddress: String): ServiceQuickAccessEndpoint? {
     val raw = rawAddress.trim()
     if (raw.isBlank()) return null
     val uri = runCatching { URI(if (raw.contains("://")) raw else "tcp://$raw") }.getOrNull()
     val uriHost = uri?.host?.trim()?.removePrefix("[")?.removeSuffix("]").orEmpty()
     if (uriHost.isNotBlank()) {
-        return ServiceEndpoint(uriHost, uri?.port?.takeIf { it in 1..65535 })
+        return ServiceQuickAccessEndpoint(uriHost, uri?.port?.takeIf { it in 1..65535 })
     }
-    return parseAuthority(raw.substringAfter("://", raw))
+    return parseQuickAccessAuthority(raw.substringAfter("://", raw))
 }
 
 internal fun formatServiceHostPort(host: String, port: Int? = null): String {
@@ -91,7 +91,7 @@ private fun webUrl(rawAddress: String, scheme: String): String {
     val raw = rawAddress.trim()
     if (raw.isBlank()) return ""
     val source = runCatching { URI(if (raw.contains("://")) raw else "$scheme://$raw") }.getOrNull()
-    val endpoint = parseServiceEndpoint(raw) ?: return ""
+    val endpoint = parseQuickAccessEndpoint(raw) ?: return ""
     val suffix = buildString {
         source?.rawPath?.takeIf { it.isNotBlank() }?.let(::append)
         source?.rawQuery?.takeIf { it.isNotBlank() }?.let { append('?').append(it) }
@@ -105,7 +105,7 @@ internal fun serviceAddressForCopy(serviceType: String, rawAddress: String): Str
     if (rawAddress.isBlank()) return ""
     if (type == "HTTPS") return webUrl(rawAddress, "https").ifBlank { rawAddress.trim() }
     if (type in setOf("HTTP", "SSH", "RDP", "WIREGUARD", "TCP", "UDP", "OPENVPN", "TELNET", "DNS", "CUSTOM")) {
-        val endpoint = parseServiceEndpoint(rawAddress) ?: return rawAddress.trim()
+        val endpoint = parseQuickAccessEndpoint(rawAddress) ?: return rawAddress.trim()
         return formatServiceHostPort(endpoint.host, endpoint.port ?: serviceDefaultPort(type))
     }
     return rawAddress.trim()
@@ -115,10 +115,10 @@ internal fun serviceQuickAccessTarget(serviceType: String, rawAddress: String): 
     return when (normalizedServiceType(serviceType)) {
         "HTTPS" -> webUrl(rawAddress, "https").takeIf { it.isNotBlank() }?.let { ServiceQuickAccessTarget.Browser(it) }
         "HTTP" -> webUrl(rawAddress, "http").takeIf { it.isNotBlank() }?.let { ServiceQuickAccessTarget.Browser(it) }
-        "RDP" -> parseServiceEndpoint(rawAddress)?.let { endpoint ->
+        "RDP" -> parseQuickAccessEndpoint(rawAddress)?.let { endpoint ->
             ServiceQuickAccessTarget.Rdp("rdp://${formatServiceHostPort(endpoint.host, endpoint.port ?: 3389)}")
         }
-        "SSH" -> parseServiceEndpoint(rawAddress)?.let { ServiceQuickAccessTarget.Ssh(it.host, it.port ?: 22) }
+        "SSH" -> parseQuickAccessEndpoint(rawAddress)?.let { ServiceQuickAccessTarget.Ssh(it.host, it.port ?: 22) }
         "WIREGUARD" -> ServiceQuickAccessTarget.WireGuard
         else -> null
     }
