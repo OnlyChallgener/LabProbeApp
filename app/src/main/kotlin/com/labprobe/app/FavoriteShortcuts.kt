@@ -148,6 +148,13 @@ data class FavoriteMappingResolution(
     val missing: Boolean,
 )
 
+data class FavoriteStunResolution(
+    val rule: StunRule?,
+    val known: Boolean,
+) {
+    val missing: Boolean get() = known && rule == null
+}
+
 internal fun resolveFavoriteMapping(favorite: FavoriteShortcut, rules: List<PortMapRule>): FavoriteMappingResolution {
     if (normalizeFavoriteType(favorite.type) != "mapping") return FavoriteMappingResolution(rule = null, missing = false)
     val id = optionalFavoriteId(favorite.mappingId)
@@ -173,6 +180,12 @@ private fun favoriteServiceScheme(rule: PortMapRule): String = favoriteServiceSc
 private fun favoriteServiceSupportsDirectOpen(serviceType: String): Boolean = when (serviceType.trim().uppercase(Locale.ROOT)) {
     "" -> true
     else -> serviceSupportsQuickAccess(serviceType)
+}
+
+internal fun resolveFavoriteStun(favorite: FavoriteShortcut, rules: List<StunRule>?): FavoriteStunResolution {
+    if (normalizeFavoriteType(favorite.type) != "stun") return FavoriteStunResolution(rule = null, known = false)
+    val id = optionalFavoriteId(favorite.stunRuleId) ?: return FavoriteStunResolution(rule = null, known = rules != null)
+    return FavoriteStunResolution(rule = rules?.firstOrNull { it.id == id }, known = rules != null)
 }
 
 private const val ROUTER_DDNS_ID_PREFIX = "router:"
@@ -321,35 +334,46 @@ internal fun upsertMappingFavorite(
     return saved
 }
 
-/** A STUN shortcut is system-owned: it always follows the Agent's latest public endpoint. */
-internal fun upsertStunFavorite(
-    prefs: AppPrefs,
+/** A STUN shortcut is system-owned and follows the latest authoritative rule snapshot. */
+private fun favoriteFromStunRule(
     rule: StunRule,
+    existing: FavoriteShortcut? = null,
+    order: Int = 0,
     ddnsSnapshot: LabProbeDdnsSnapshot? = null,
     nativeDdnsRecords: List<DdnsRecord> = emptyList(),
 ): FavoriteShortcut? {
-    if (!rule.ready || rule.runtime.publicEndpoint.isBlank()) return null
-    val current = prefs.favoriteShortcuts().toMutableList()
-    val index = current.indexOfFirst { it.stunRuleId == rule.id }
+    if (existing == null && (!rule.ready || rule.runtime.publicEndpoint.isBlank())) return null
     val scheme = favoriteServiceScheme(rule.serviceType)
-    val local = "$scheme://${rule.targetIpv4}:${rule.targetPort}"
-    val existing = current.getOrNull(index)
+    val localAuthority = formatServiceHostPort(rule.targetIpv4, rule.targetPort)
+    val local = localAuthority.takeIf { it.isNotBlank() }?.let { "$scheme://$it" }.orEmpty()
     val ddnsRecordId = existing?.ddnsRecordId
     val hostname = favoriteDdnsHostname(ddnsRecordId, ddnsSnapshot, nativeDdnsRecords)
-    val publicPort = rule.runtime.publicPort.takeIf { it in 1..65535 }
-        ?: rule.runtime.publicEndpoint.substringAfterLast(':').toIntOrNull()?.takeIf { it in 1..65535 }
-    val publicEndpoint = "$scheme://${rule.runtime.publicEndpoint}"
-    val remote = if (hostname != null) {
-        replaceFavoriteUrlHost(
-            publicEndpoint,
-            hostname,
-            publicPort,
-            scheme,
-        ).orEmpty().ifBlank {
-            if (publicPort != null) "$scheme://$hostname:$publicPort" else "$scheme://$hostname"
+    val parsedPublicEndpoint = parseServiceEndpoint(rule.runtime.publicEndpoint)
+    val publicPort = rule.runtime.publicPort.takeIf { it in 1..65535 } ?: parsedPublicEndpoint?.port
+    val publicAuthority = parsedPublicEndpoint?.let {
+        formatServiceHostPort(it.host, publicPort)
+    }.orEmpty()
+    val publicEndpoint = publicAuthority.takeIf { it.isNotBlank() }?.let { "$scheme://$it" }.orEmpty()
+    val previousRemote = existing?.remoteEndpoint?.ifBlank { existing.wanUrl }.orEmpty()
+    val remote = if (rule.ready && publicEndpoint.isNotBlank()) {
+        if (hostname != null) {
+            replaceFavoriteUrlHost(
+                publicEndpoint,
+                hostname,
+                publicPort,
+                scheme,
+            ).orEmpty().ifBlank {
+                if (publicPort != null) "$scheme://$hostname:$publicPort" else "$scheme://$hostname"
+            }
+        } else {
+            publicEndpoint
         }
-    } else publicEndpoint
-    val generated = FavoriteShortcut(
+    } else {
+        parseServiceEndpoint(previousRemote)?.let { endpoint ->
+            replaceFavoriteUrlHost(previousRemote, endpoint.host, endpoint.port, scheme)
+        }.orEmpty().ifBlank { previousRemote }
+    }
+    return FavoriteShortcut(
         id = "stun-${rule.id}",
         title = rule.name.ifBlank { "STUN ${rule.serviceType}" },
         description = "STUN 穿透 · ${rule.serviceType}",
@@ -357,7 +381,7 @@ internal fun upsertStunFavorite(
         iconValue = "server",
         lanUrl = local,
         wanUrl = remote,
-        order = if (index >= 0) current[index].order else current.size,
+        order = existing?.order ?: order,
         type = "stun",
         stunRuleId = rule.id,
         ddnsRecordId = ddnsRecordId,
@@ -365,15 +389,38 @@ internal fun upsertStunFavorite(
         remoteEndpoint = remote,
         serviceType = rule.serviceType,
     )
-    val saved = if (index >= 0) {
-        current[index] = generated
-        generated
-    } else {
-        current += generated
-        generated
+}
+
+internal fun reconcileStunFavoriteItems(
+    current: List<FavoriteShortcut>,
+    rules: List<StunRule>,
+    ddnsSnapshot: LabProbeDdnsSnapshot? = null,
+    nativeDdnsRecords: List<DdnsRecord> = emptyList(),
+): List<FavoriteShortcut> {
+    val ruleIds = rules.mapTo(hashSetOf()) { it.id }
+    val updated = current.filterNot { optionalFavoriteId(it.stunRuleId)?.let { id -> id !in ruleIds } == true }.toMutableList()
+    rules.forEach { rule ->
+        val index = updated.indexOfFirst { it.stunRuleId == rule.id }
+        val existing = updated.getOrNull(index)
+        val synced = favoriteFromStunRule(rule, existing, updated.size, ddnsSnapshot, nativeDdnsRecords)
+        if (synced != null) {
+            if (index >= 0) updated[index] = synced else updated += synced
+        }
     }
-    prefs.saveFavoriteShortcuts(current.mapIndexed { order, item -> item.copy(order = order) })
-    return saved
+    return updated.mapIndexed { order, item -> item.copy(order = order) }
+}
+
+internal fun reconcileStunFavorites(
+    prefs: AppPrefs,
+    rules: List<StunRule>,
+    ddnsSnapshot: LabProbeDdnsSnapshot? = null,
+    nativeDdnsRecords: List<DdnsRecord> = emptyList(),
+): Boolean {
+    val current = prefs.favoriteShortcuts()
+    val updated = reconcileStunFavoriteItems(current, rules, ddnsSnapshot, nativeDdnsRecords)
+    if (updated == current) return false
+    prefs.saveFavoriteShortcuts(updated)
+    return true
 }
 
 internal fun removeStunFavorite(prefs: AppPrefs, ruleId: String): Int {
@@ -402,9 +449,9 @@ internal fun favoriteServiceStatus(
     mode: String,
     mapping: FavoriteMappingResolution? = null,
     devices: List<DeviceItem> = emptyList(),
+    stun: FavoriteStunResolution? = null,
 ): String {
-    if (mapping?.missing == true) return "当前不可达"
-    if (mapping?.rule?.enabled == false) return "当前不可达"
+    favoriteLinkedRuleStatus(favorite, mapping, stun)?.let { return it }
     val endpoint = if (mode == "wan") {
         if (normalizeFavoriteType(favorite.type) == "mapping") {
             favorite.remoteEndpoint
@@ -422,6 +469,18 @@ internal fun favoriteServiceStatus(
         mode != "wan" && endpoint.isNotBlank() -> "内网"
         else -> "当前不可达"
     }
+}
+
+internal fun favoriteLinkedRuleStatus(
+    favorite: FavoriteShortcut,
+    mapping: FavoriteMappingResolution? = null,
+    stun: FavoriteStunResolution? = null,
+): String? {
+    if (mapping?.missing == true || stun?.missing == true) return "当前不可达"
+    if (mapping?.rule?.enabled == false || stun?.rule?.enabled == false) return "已停止"
+    if (stun?.known == false && normalizeFavoriteType(favorite.type) == "stun") return "状态待同步"
+    if (stun?.rule != null && !stun.rule.ready) return "当前不可达"
+    return null
 }
 
 private fun favoriteAccessStatus(report: ServiceAccessReport): String = when {
@@ -521,8 +580,10 @@ internal fun resolveFavoriteRemoteEndpoint(
     mappingRules: List<PortMapRule> = emptyList(),
     nativeDdnsRecords: List<DdnsRecord> = emptyList(),
 ): String {
-    val mapping = resolveFavoriteMapping(favorite, mappingRules).rule
+    val mappingResolution = resolveFavoriteMapping(favorite, mappingRules)
+    val mapping = mappingResolution.rule
     val isMapping = normalizeFavoriteType(favorite.type) == "mapping"
+    if (isMapping && mappingResolution.missing) return ""
     val raw = if (isMapping) favorite.remoteEndpoint else favorite.remoteEndpoint.ifBlank { favorite.wanUrl }
         .takeUnless(::isWildcardServiceEndpoint).orEmpty()
     val fallback = favorite.wanUrl.ifBlank { favorite.remoteEndpoint }
@@ -548,20 +609,23 @@ internal fun resolveFavoriteRemoteEndpoint(
 internal fun resolveFavoriteRemoteUrl(favorite: FavoriteShortcut, snapshot: LabProbeDdnsSnapshot?): String =
     resolveFavoriteRemoteEndpoint(favorite.copy(remoteEndpoint = favorite.wanUrl), snapshot)
 
-/** A deleted mapping leaves its shortcut usable as a normal, user-owned favorite. */
-internal fun detachMappingFavorites(prefs: AppPrefs, mappingId: String): Int {
+internal fun withoutMappingFavorites(current: List<FavoriteShortcut>, mappingId: String): List<FavoriteShortcut> =
+    current.filterNot { it.mappingId == mappingId }.mapIndexed { order, item -> item.copy(order = order) }
+
+internal fun removeMappingFavorites(prefs: AppPrefs, mappingId: String): Int {
     val current = prefs.favoriteShortcuts()
-    var detached = 0
-    val updated = current.map { favorite ->
-        if (favorite.mappingId == mappingId) {
-            detached += 1
-            favorite.copy(type = "manual", mappingId = null)
-        } else {
-            favorite
-        }
-    }
-    if (detached > 0) prefs.saveFavoriteShortcuts(updated)
-    return detached
+    val updated = withoutMappingFavorites(current, mappingId)
+    if (updated.size != current.size) prefs.saveFavoriteShortcuts(updated)
+    return current.size - updated.size
+}
+
+internal fun removeMissingMappingFavorites(prefs: AppPrefs, ruleIds: Set<String>): Int {
+    val current = prefs.favoriteShortcuts()
+    val updated = current.filterNot { favorite ->
+        optionalFavoriteId(favorite.mappingId)?.let { it !in ruleIds } == true
+    }.mapIndexed { order, item -> item.copy(order = order) }
+    if (updated.size != current.size) prefs.saveFavoriteShortcuts(updated)
+    return current.size - updated.size
 }
 
 private data class FavoriteDraft(
@@ -779,11 +843,13 @@ fun FavoritesScreen(
     var mappingRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
+    val mappingApi = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val stunApi = remember(prefs.hub, prefs.token, prefs.hubDns) { StunApi(prefs) }
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val ddnsSnapshot = ddnsResource.value
     var mappingDevices by remember(prefs.hub, prefs.hubDns) { mutableStateOf(emptyList<DeviceItem>()) }
+    var stunRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
     val scope = rememberCoroutineScope()
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -797,14 +863,47 @@ fun FavoritesScreen(
         routerRepository.refreshDdns(false)
         mappingDevices = runCatching { deviceApi.getDevices(false) }.getOrDefault(mappingDevices)
     }
+    LaunchedEffect(mappingApi) {
+        val persisted = PortMappingRuleStore.load(context, prefs)
+        val currentRules = PortMappingMemoryCache.rules.ifEmpty { persisted.rules }
+        val currentRulesRevision = maxOf(PortMappingMemoryCache.rulesRevision, persisted.revision)
+        runCatching { kotlinx.coroutines.withTimeout(4_000L) { mappingApi.list() } }.getOrNull()?.let { snapshot ->
+            if (shouldAcceptPortMapSnapshot(
+                    snapshot = snapshot,
+                    currentRules = currentRules,
+                    currentRulesRevision = currentRulesRevision,
+                    currentSnapshotRevision = PortMappingMemoryCache.snapshotRevision,
+                    hasPersistedDocument = persisted.hasDocument,
+                )
+            ) {
+                mappingRules = snapshot.rules
+                PortMappingMemoryCache.rules = snapshot.rules
+                PortMappingMemoryCache.rulesRevision = snapshot.rulesRevision
+                PortMappingMemoryCache.rulesUpdatedAt = snapshot.rulesUpdatedAt
+                PortMappingMemoryCache.snapshotRevision = snapshot.revision
+                PortMappingRuleStore.save(context, prefs, snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt)
+                if (snapshot.rulesLoaded) {
+                    removeMissingMappingFavorites(prefs, snapshot.rules.mapTo(hashSetOf()) { it.id })
+                }
+                shortcuts = prefs.favoriteShortcuts()
+            }
+        }
+    }
     LaunchedEffect(syncVersion) {
         if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
         mappingRules = PortMappingRuleStore.load(context, prefs).rules
     }
+    LaunchedEffect(mappingRules, mappingDevices, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
+        mappingRules.forEach {
+            syncExistingMappingFavorite(prefs, it, mappingDevices, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
+        }
+        shortcuts = prefs.favoriteShortcuts()
+    }
     LaunchedEffect(stunApi, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
         while (true) {
-            runCatching { stunApi.list() }.getOrNull()?.rules?.filter { it.ready }?.forEach {
-                upsertStunFavorite(prefs, it, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
+            runCatching { stunApi.list() }.getOrNull()?.takeIf { it.rulesLoaded }?.let { snapshot ->
+                stunRules = snapshot.rules
+                reconcileStunFavorites(prefs, snapshot.rules, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
             }
             shortcuts = prefs.favoriteShortcuts()
             delay(5_000)
@@ -895,20 +994,37 @@ fun FavoritesScreen(
                 }
             } else {
                 items(visible, key = { it.id }) { shortcut ->
+                    val mappingResolution = resolveFavoriteMapping(shortcut, mappingRules)
+                    val stunResolution = resolveFavoriteStun(shortcut, stunRules)
                     FavoriteShortcutCard(
                         shortcut = shortcut,
                         mode = mode,
                         columns = columns,
-                        mapping = resolveFavoriteMapping(shortcut, mappingRules),
+                        mapping = mappingResolution,
+                        stun = stunResolution,
                         devices = mappingDevices,
                         accessReport = accessReports[shortcut.id],
                         dragEnabled = query.isBlank(),
                         onOpen = {
                             onBeforeOpenShortcut()
                             mappingRules = PortMappingRuleStore.load(context, prefs).rules
-                            val linkedRule = resolveFavoriteMapping(shortcut, mappingRules).rule
+                            val currentMapping = resolveFavoriteMapping(shortcut, mappingRules)
+                            val currentStun = resolveFavoriteStun(shortcut, stunRules)
+                            val linkedRule = currentMapping.rule
                             val serviceType = shortcut.serviceType.ifBlank { linkedRule?.let(::favoriteServiceType).orEmpty() }
-                            if (!favoriteServiceSupportsDirectOpen(serviceType)) {
+                            if (currentMapping.missing) {
+                                toast(context, "关联映射已删除，收藏入口已失效")
+                            } else if (currentStun.missing) {
+                                toast(context, "关联 STUN 规则已删除，收藏入口已失效")
+                            } else if (linkedRule?.enabled == false) {
+                                toast(context, "关联映射已停止")
+                            } else if (currentStun.rule?.enabled == false) {
+                                toast(context, "关联 STUN 规则已停止")
+                            } else if (normalizeFavoriteType(shortcut.type) == "stun" && !currentStun.known) {
+                                toast(context, "STUN 状态尚未同步，请稍后再试")
+                            } else if (currentStun.rule != null && !currentStun.rule.ready) {
+                                toast(context, "STUN 穿透当前不可用")
+                            } else if (!favoriteServiceSupportsDirectOpen(serviceType)) {
                                 toast(context, "该服务请复制地址并使用对应客户端连接")
                             } else if (serviceType.equals("WireGuard", true)) {
                                 launchServiceQuickAccess(context, ServiceQuickAccessTarget.WireGuard, onOpenSsh, onOpenWireGuard)
@@ -959,15 +1075,23 @@ fun FavoritesScreen(
                         },
                         onEdit = { editing = shortcut },
                         onCopyAddress = {
-                            val address = if (mode == "wan" && shortcut.ddnsRecordId != null) {
-                                favoriteAddressForCopy(
-                                    resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsResource.value.orEmpty()),
-                                    shortcut.serviceType,
-                                )
+                            val currentMapping = resolveFavoriteMapping(shortcut, mappingRules)
+                            val currentStun = resolveFavoriteStun(shortcut, stunRules)
+                            if (currentMapping.missing) {
+                                toast(context, "关联映射已删除，无法复制旧地址")
+                            } else if (currentStun.missing) {
+                                toast(context, "关联 STUN 规则已删除，无法复制旧地址")
                             } else {
-                                shortcut.addressForCopy(mode)
+                                val address = if (mode == "wan" && shortcut.ddnsRecordId != null) {
+                                    favoriteAddressForCopy(
+                                        resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsResource.value.orEmpty()),
+                                        shortcut.serviceType,
+                                    )
+                                } else {
+                                    shortcut.addressForCopy(mode)
+                                }
+                                copy(context, address)
                             }
-                            copy(context, address)
                         },
                         onViewMapping = {
                             if (resolveFavoriteMapping(shortcut, mappingRules).missing) toast(context, "关联映射不存在") else onOpenPortMapping()
@@ -1047,6 +1171,7 @@ private fun FavoriteShortcutCard(
     mode: String,
     columns: Int,
     mapping: FavoriteMappingResolution,
+    stun: FavoriteStunResolution,
     devices: List<DeviceItem> = emptyList(),
     accessReport: ServiceAccessReport?,
     dragEnabled: Boolean,
@@ -1100,9 +1225,13 @@ private fun FavoriteShortcutCard(
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val status = accessReport?.let(::favoriteAccessStatus) ?: favoriteServiceStatus(shortcut, mode, mapping, devices)
+                val status = favoriteLinkedRuleStatus(shortcut, mapping, stun)
+                    ?: accessReport?.let(::favoriteAccessStatus)
+                    ?: favoriteServiceStatus(shortcut, mode, mapping, devices, stun)
                 val statusLabel = when (status) {
                     "内网", "外网" -> "可达"
+                    "已停止" -> "已停止"
+                    "状态待同步" -> "待同步"
                     else -> "不可达"
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1124,6 +1253,7 @@ private fun FavoriteShortcutCard(
                         color = when {
                             status == "内网" -> LabV2.Green
                             status == "外网" -> LabV2.Primary
+                            status == "已停止" || status == "状态待同步" -> LabV2.InkMuted
                             else -> LabV2.Red
                         },
                         maxLines = 1,

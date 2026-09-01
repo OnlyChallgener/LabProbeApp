@@ -129,7 +129,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     suspend fun applyManagedEndpoint(profile: WireGuardProfile, previousEndpoint: String) {
         if (profile.endpoint == previousEndpoint || profile.endpoint.isBlank()) return
         runCatching { wireGuardHubApi.patchManagedEndpoint(profile) }
-            .onFailure { store.markEndpointError(profile.id, profile.endpointSource, "地址已保存在手机，Hub 同步失败：${it.message.orEmpty()}") }
+            .onFailure { store.markEndpointError(profile.id, profile.endpointSource, "地址已保存在手机，Hub 同步失败：${uiMessageZh(it.message)}") }
         if (runtime.running && runtime.profileId == profile.id) {
             when (val result = controller.start(profile, store.privateKey(profile.id))) {
                 WireGuardStartResult.Started -> message = "${profile.endpointSource.displayName} 地址已更新，连接已自动重载"
@@ -181,7 +181,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     else -> startClient(profile)
                 }
             }
-            .onFailure { error -> message = error.message ?: "WireGuard 网关状态读取失败" }
+            .onFailure { error -> message = uiMessageZh(error.message).ifBlank { "WireGuard 网关状态读取失败" } }
         startCheckInProgress = false
         requestedStart = null
     }
@@ -218,6 +218,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             val current = store.load()
             if (current.any { it.endpointSource == WireGuardEndpointSource.STUN }) {
                 runCatching { stunApi.list() }.onSuccess { snapshot ->
+                    if (!snapshot.rulesLoaded) return@onSuccess
                     stunRules = snapshot.rules.filter { it.transportProtocol == "UDP" && it.targetPort == DEFAULT_WIREGUARD_PORT }
                     WireGuardEndpointCoordinator.applyStunSnapshot(store, current, snapshot.rules)
                     val updated = store.load()
@@ -231,6 +232,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 }
             } else {
                 runCatching { stunApi.list() }.onSuccess { snapshot ->
+                    if (!snapshot.rulesLoaded) return@onSuccess
                     stunRules = snapshot.rules.filter { it.transportProtocol == "UDP" && it.targetPort == DEFAULT_WIREGUARD_PORT }
                 }
             }
@@ -359,7 +361,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         managed.forEach { provisionManaged(it, announce = false) }
                     }.onSuccess {
                         message = if (managed.isEmpty()) "没有需要同步的自动配置" else "${managed.size} 个自动配置已同步到 Agent"
-                    }.onFailure { message = "WireGuard 同步失败：${it.message.orEmpty()}" }
+                    }.onFailure { message = "WireGuard 同步失败：${uiMessageZh(it.message)}" }
                     syncing = false
                 }
             },
@@ -391,7 +393,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         showServerSettings = false
                         message = "网关参数已更新（${if (enabled) "已启用" else "已停用"} · 端口 $listenPort · MTU $mtu），已同步至 Agent"
                     }.onFailure {
-                        message = "更新网关参数失败：${it.message.orEmpty()}"
+                        message = "更新网关参数失败：${uiMessageZh(it.message)}"
                     }
                     syncing = false
                 }
@@ -416,7 +418,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             serverConfig = state.config
                             enabledSuccessfully = true
                         }
-                        .onFailure { error -> message = error.message ?: "WireGuard 网关启动失败/未就绪" }
+                        .onFailure { error -> message = uiMessageZh(error.message).ifBlank { "WireGuard 网关启动失败/未就绪" } }
                     startCheckInProgress = false
                     if (enabledSuccessfully) requestStart(profile)
                 }
@@ -449,7 +451,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             "已删除 ${profile.name}，Agent 端 Peer 也已移除"
                         }
                     }.onFailure {
-                        message = "Agent 端清理失败，已保留本机配置：${it.message.orEmpty()}"
+                        message = "Agent 端清理失败，已保留本机配置：${uiMessageZh(it.message)}"
                     }
                 }
             },
@@ -467,8 +469,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         val saved = store.load().first { it.id == edited.id }
                         runCatching { provisionManaged(saved) }
                             .onFailure { error ->
-                                store.markEndpointError(saved.id, saved.endpointSource, error.message ?: "Agent 同步失败")
-                                message = "配置已保存在本机，但 Agent 同步失败：${error.message.orEmpty()}"
+                                store.markEndpointError(saved.id, saved.endpointSource, uiMessageZh(error.message).ifBlank { "Agent 同步失败" })
+                                message = "配置已保存在本机，但 Agent 同步失败：${uiMessageZh(error.message)}"
                                 reload()
                             }
                         syncing = false

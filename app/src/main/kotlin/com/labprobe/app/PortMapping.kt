@@ -217,6 +217,21 @@ data class PortMapListSnapshot(
     val revision: Long,
 )
 
+internal fun shouldAcceptPortMapSnapshot(
+    snapshot: PortMapListSnapshot,
+    currentRules: List<PortMapRule>,
+    currentRulesRevision: Long,
+    currentSnapshotRevision: Long,
+    hasPersistedDocument: Boolean,
+): Boolean {
+    val explicitNewerEmpty = snapshot.rulesLoaded && snapshot.rules.isEmpty() && snapshot.rulesRevision > currentRulesRevision
+    val sourceIsCurrent = snapshot.revision >= currentSnapshotRevision
+    return sourceIsCurrent && snapshot.rulesLoaded && (
+        snapshot.rules.isNotEmpty() || explicitNewerEmpty ||
+            (currentRules.isEmpty() && !hasPersistedDocument && snapshot.rulesLoaded)
+        )
+}
+
 class PortMapApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
 
@@ -657,9 +672,13 @@ fun PortMappingScreen(
         try {
             val snapshot = kotlinx.coroutines.withTimeout(4_000L) { api.list() }
             val newAgent = snapshot.agent
-            val explicitNewerEmpty = snapshot.rulesLoaded && snapshot.rules.isEmpty() && snapshot.rulesRevision > rulesRevision
-            val sourceIsCurrent = snapshot.revision >= snapshotRevision
-            val mayAccept = sourceIsCurrent && (snapshot.rules.isNotEmpty() || explicitNewerEmpty || (rules.isEmpty() && !persistentRules.hasDocument))
+            val mayAccept = shouldAcceptPortMapSnapshot(
+                snapshot = snapshot,
+                currentRules = rules,
+                currentRulesRevision = rulesRevision,
+                currentSnapshotRevision = snapshotRevision,
+                hasPersistedDocument = persistentRules.hasDocument,
+            )
             if (mayAccept) {
                 commitRulesLocally(snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt, snapshot.revision)
             }
@@ -682,6 +701,9 @@ fun PortMappingScreen(
                     nativeDdnsResource.value.orEmpty(),
                 )
             }
+            if (mayAccept && snapshot.rulesLoaded) {
+                removeMissingMappingFavorites(prefs, snapshot.rules.mapTo(hashSetOf()) { it.id })
+            }
             message = if (!mayAccept && snapshot.rules.isEmpty() && rules.isNotEmpty()) {
                 "Hub 本次未返回规则，已保留 APP 中的映射设置"
             } else ""
@@ -694,7 +716,7 @@ fun PortMappingScreen(
             }
             message = if (rules.isNotEmpty()) {
                 if (agentKnownOnline) "Agent 在线，正在重新获取映射运行状态" else "映射状态暂未同步，已保留全部设置"
-            } else (error.message ?: "加载失败")
+            } else uiMessageZh(error.message).ifBlank { "加载失败" }
         } finally {
             refreshInFlight = false
             loading = false
@@ -753,7 +775,7 @@ fun PortMappingScreen(
                 markSyncing(selected, action)
                 scope.launch {
                     runCatching { api.action(selected.id, action) }
-                        .onFailure { message = it.message ?: "操作失败" }
+                        .onFailure { message = uiMessageZh(it.message).ifBlank { "操作失败" } }
                     refresh(true)
                 }
             },
@@ -761,12 +783,12 @@ fun PortMappingScreen(
                 scope.launch {
                     runCatching { api.delete(selected.id) }
                         .onSuccess {
-                            val detached = detachMappingFavorites(prefs, selected.id)
+                            val removedFavorites = removeMappingFavorites(prefs, selected.id)
                             commitRulesLocally(rules.filterNot { it.id == selected.id })
                             selectedId = null
-                            if (detached > 0) message = "已保留 $detached 个关联收藏"
+                            if (removedFavorites > 0) message = "已同时删除 $removedFavorites 个关联收藏"
                         }
-                        .onFailure { message = it.message ?: "删除失败" }
+                        .onFailure { message = uiMessageZh(it.message).ifBlank { "删除失败" } }
                     refresh(true)
                 }
             }
@@ -800,7 +822,7 @@ fun PortMappingScreen(
         }
 
         AnimatedVisibility(message.isNotBlank()) {
-            val informational = message.startsWith("Agent 在线") || message.contains("已保留")
+            val informational = message.startsWith("Agent 在线") || message.contains("已保留") || message.contains("关联收藏")
             val messageColor = if (informational) Color(0xFFF59E0B) else PortRed
             Surface(shape = RoundedCornerShape(18.dp), color = messageColor.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, messageColor.copy(alpha = .15f))) {
                 Text(message, Modifier.padding(12.dp), color = messageColor, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
@@ -835,7 +857,7 @@ fun PortMappingScreen(
                         markSyncing(rule, action)
                         scope.launch {
                             runCatching { api.action(rule.id, action) }
-                                .onFailure { message = it.message ?: "操作失败" }
+                                .onFailure { message = uiMessageZh(it.message).ifBlank { "操作失败" } }
                             refresh(true)
                         }
                     }
@@ -870,7 +892,7 @@ fun PortMappingScreen(
                         )
                         editDraft = null
                         refresh(true)
-                    }.onFailure { message = it.message ?: "保存失败" }
+                    }.onFailure { message = uiMessageZh(it.message).ifBlank { "保存失败" } }
                 }
             }
         )

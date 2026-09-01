@@ -144,6 +144,22 @@ class FavoriteLinkModelTest {
     }
 
     @Test
+    fun stoppedMappingFavoriteIsRetainedButShownAsStopped() {
+        val favorite = sampleFavorite(mappingId = "map-1")
+        val stopped = sampleRule("map-1").copy(enabled = false)
+
+        assertEquals("已停止", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(stopped))))
+    }
+
+    @Test
+    fun deletingMappingRemovesOnlyItsLinkedFavoritesAndReordersTheRest() {
+        val linked = sampleFavorite(mappingId = "map-1")
+        val other = sampleFavorite(mappingId = null).copy(id = "manual-1", order = 8)
+
+        assertEquals(listOf(other.copy(order = 0)), withoutMappingFavorites(listOf(linked, other), "map-1"))
+    }
+
+    @Test
     fun mappingFavoriteResolvesExistingRule() {
         val rule = sampleRule("map-1")
         val result = resolveFavoriteMapping(sampleFavorite(mappingId = "map-1"), listOf(rule))
@@ -258,6 +274,15 @@ class FavoriteLinkModelTest {
         )
         assertEquals("", resolveFavoriteRemoteEndpoint(favorite, LabProbeDdnsSnapshot(), listOf(sampleRule("map-1"))))
         assertEquals("当前不可达", favoriteServiceStatus(favorite, "wan", resolveFavoriteMapping(favorite, listOf(sampleRule("map-1")))))
+    }
+
+    @Test
+    fun deletedMappingNeverResolvesItsStoredPublicEndpoint() {
+        val favorite = sampleFavorite(mappingId = "deleted").copy(
+            remoteEndpoint = "https://old.example.com:20000",
+        )
+
+        assertEquals("", resolveFavoriteRemoteEndpoint(favorite, LabProbeDdnsSnapshot(), emptyList()))
     }
 
     @Test

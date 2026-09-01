@@ -150,9 +150,24 @@ data class StunAddressRecord(val endpoint: String, val updatedAt: Long)
 
 data class StunSnapshot(
     val rules: List<StunRule> = emptyList(),
+    val rulesLoaded: Boolean = false,
     val agentOnline: Boolean = false,
     val agentLastSeenAt: String = "",
 )
+
+internal fun parseStunSnapshot(root: JSONObject): StunSnapshot {
+    val array = root.optJSONArray("rules")
+    val parsedRules = if (array == null) emptyList() else (0 until array.length()).mapNotNull {
+        array.optJSONObject(it)?.let(::parseStunRule)
+    }
+    val rulesLoaded = array != null && parsedRules.size == array.length() && parsedRules.all { it.id.isNotBlank() }
+    return StunSnapshot(
+        rules = parsedRules.filter { it.id.isNotBlank() },
+        rulesLoaded = rulesLoaded,
+        agentOnline = root.optBoolean("agentOnline", false),
+        agentLastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
+    )
+}
 
 private fun parseEpoch(obj: JSONObject, key: String): Long? {
     if (!obj.has(key) || obj.isNull(key)) return null
@@ -236,13 +251,7 @@ private fun parseStunRule(json: JSONObject): StunRule {
 class StunApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
     suspend fun list(): StunSnapshot = withContext(Dispatchers.IO) {
-        val root = JSONObject(hubApi.requestText("/api/stun"))
-        val array = root.optJSONArray("rules") ?: JSONArray()
-        StunSnapshot(
-            rules = (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::parseStunRule) },
-            agentOnline = root.optBoolean("agentOnline", false),
-            agentLastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
-        )
+        parseStunSnapshot(JSONObject(hubApi.requestText("/api/stun")))
     }
     suspend fun create(draft: StunDraft): StunRule = withContext(Dispatchers.IO) {
         parseStunRule(JSONObject(hubApi.requestText("/api/stun", "POST", draft.toJson().toString())).getJSONObject("rule"))
@@ -365,12 +374,17 @@ fun StunPenetrationScreen(
             val effectiveAgent = liveAgent
             val effectiveAgentOnline = effectiveAgent?.online == true || it.agentOnline
             snapshot = it.copy(
+                rules = if (it.rulesLoaded) it.rules else snapshot.rules,
                 agentOnline = effectiveAgentOnline,
                 agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { it.agentLastSeenAt } ?: it.agentLastSeenAt,
             )
-            error = ""
-            it.rules.filter { rule -> effectiveAgentOnline && rule.ready }.forEach { rule ->
-                upsertStunFavorite(prefs, rule, ddnsSnapshot, nativeDdnsRecords)
+            error = if (!it.rulesLoaded) {
+                "Hub 本次未返回 STUN 规则，已保留现有设置"
+            } else {
+                ""
+            }
+            if (it.rulesLoaded) {
+                reconcileStunFavorites(prefs, it.rules, ddnsSnapshot, nativeDdnsRecords)
             }
         }.onFailure {
             error = if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
@@ -407,20 +421,25 @@ fun StunPenetrationScreen(
             onAdd = { editorError = ""; editor = StunDraft() },
         )
         if (error.isNotBlank()) {
+            val informationalError = error.startsWith("Agent 在线") || error.contains("已保留")
             Surface(
                 shape = LabV2.CompactCardShape,
-                color = if (error.startsWith("Agent 在线")) StunAmber.copy(alpha = .08f) else StunRed.copy(alpha = .08f),
-                border = BorderStroke(1.dp, (if (error.startsWith("Agent 在线")) StunAmber else StunRed).copy(alpha = .18f)),
+                color = if (informationalError) StunAmber.copy(alpha = .08f) else StunRed.copy(alpha = .08f),
+                border = BorderStroke(1.dp, (if (informationalError) StunAmber else StunRed).copy(alpha = .18f)),
             ) {
-                Text(error, color = if (error.startsWith("Agent 在线")) StunAmber else StunRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp))
+                Text(error, color = if (informationalError) StunAmber else StunRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp))
             }
         }
         if (loading && snapshot.rules.isEmpty()) {
             LabCoreCard(compact = true) {
                 Text("正在同步 STUN 设置，页面可以继续操作", style = LabTypography.Supporting)
             }
-        } else if (!loading && snapshot.rules.isEmpty()) {
+        } else if (!loading && snapshot.rulesLoaded && snapshot.rules.isEmpty()) {
             StunEmpty { editorError = ""; editor = StunDraft() }
+        } else if (!loading && !snapshot.rulesLoaded && snapshot.rules.isEmpty()) {
+            LabCoreCard(compact = true) {
+                Text("STUN 规则状态暂未同步", style = LabTypography.Supporting, color = LabV2.InkMuted)
+            }
         } else {
             snapshot.rules.forEach { rule ->
                 StunRuleCard(
@@ -441,7 +460,7 @@ fun StunPenetrationScreen(
                         scope.launch {
                             runCatching { api.action(rule.id, if (rule.enabled) "stop" else "start") }
                                 .onSuccess { refresh() }
-                                .onFailure { error = it.message ?: "操作失败" }
+                                .onFailure { error = uiMessageZh(it.message).ifBlank { "操作失败" } }
                         }
                     },
                     onDelete = {
@@ -449,7 +468,7 @@ fun StunPenetrationScreen(
                         scope.launch {
                             runCatching { api.delete(rule.id) }
                                 .onSuccess { removeStunFavorite(prefs, rule.id); refresh() }
-                                .onFailure { error = it.message ?: "删除失败" }
+                                .onFailure { error = uiMessageZh(it.message).ifBlank { "删除失败" } }
                         }
                     },
                 )
@@ -476,7 +495,7 @@ fun StunPenetrationScreen(
                         editor = null
                         refresh()
                     }.onFailure {
-                        editorError = it.message ?: "保存失败"
+                        editorError = uiMessageZh(it.message).ifBlank { "保存失败" }
                     }
                     editorSaving = false
                 }
