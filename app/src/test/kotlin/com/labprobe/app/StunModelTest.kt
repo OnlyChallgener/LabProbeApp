@@ -48,7 +48,7 @@ class StunModelTest {
         assertEquals("", json.getString("name"))
         assertTrue(json.getBoolean("enabled"))
         assertEquals("manual", json.getString("targetType"))
-        assertEquals(7, json.length())
+        assertEquals(8, json.length())
     }
 
     @Test
@@ -57,7 +57,8 @@ class StunModelTest {
             targetIpv4 = "192.168.5.46",
             targetPort = "9443",
         ).toJson()
-        assertFalse(automatic.has("listenPort"))
+        assertTrue(automatic.has("listenPort"))
+        assertEquals(0, automatic.getInt("listenPort"))
 
         val manualDraft = StunDraft(
             targetType = "router_self",

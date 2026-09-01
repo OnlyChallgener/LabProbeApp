@@ -289,7 +289,7 @@ data class StunDraft(
         put("targetType", targetType)
         put("targetIpv4", targetIpv4.trim())
         put("targetPort", targetPort.toIntOrNull() ?: 0)
-        if (listenPort.isNotBlank()) put("listenPort", listenPort.toIntOrNull() ?: 0)
+        put("listenPort", listenPort.toIntOrNull() ?: 0)
         put("name", name.trim())
         put("enabled", enabled)
     }
@@ -669,13 +669,14 @@ fun StunPenetrationScreen(
                             }
                         }
                         val targetText = if (rule.targetType == "router_self") "路由器本机:${rule.targetPort}" else "${rule.targetIpv4}:${rule.targetPort}"
+                        val channelText = "中间端口 ${rule.listenPort}"
                         Text(
-                            if (!agentOnline && endpoint.isNotBlank()) "上次映射至 $targetText · 当前未验证"
-                            else if (rule.usesRouterNativeMapping) "路由器直连至 $targetText · 外网可达性取决于上级 NAT"
-                            else "LabRelay 本地代理至 $targetText",
+                            if (!agentOnline && endpoint.isNotBlank()) "$channelText · 上次映射至 $targetText · 当前未验证"
+                            else if (rule.usesRouterNativeMapping) "$channelText → $targetText · 路由器直连"
+                            else "$channelText → $targetText · LabRelay 本地代理",
                             color = LabV2.InkMuted,
                             fontSize = LabTypography.Caption.fontSize,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
