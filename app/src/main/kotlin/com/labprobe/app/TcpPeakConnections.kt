@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -26,9 +26,14 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonColors
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +49,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -221,7 +229,10 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
     private suspend fun publish(snapshot: TcpPeakSnapshot) {
         withContext(Dispatchers.Default) {
             val current = _state.value
-            val trend = if (snapshot.state == "idle") current.trend else {
+            val freezeTrend = snapshot.state == "stop_requested" ||
+                snapshot.state == "releasing" ||
+                snapshot.terminal
+            val trend = if (snapshot.state == "idle" || freezeTrend) current.trend else {
                 appendTcpPeakTrend(current.trend, snapshot, System.currentTimeMillis())
             }
             _state.value = current.copy(snapshot = snapshot, trend = trend, notice = snapshot.error)
@@ -310,9 +321,12 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         Button(
             onClick = { if (active) controller.stop() else controller.start(currentConfig()) },
-            modifier = Modifier.fillMaxWidth().height(46.dp),
-            shape = LabV2.ButtonShape,
-            colors = ButtonDefaults.buttonColors(containerColor = if (active) LabV2.Red else LabV2.Primary)
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = LabV2.CardShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (active) LabV2.Red else LabV2.Primary,
+                contentColor = Color.White
+            )
         ) {
             Icon(if (active) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
@@ -322,20 +336,11 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Text(ui.notice, style = LabTypography.Supporting.copy(color = LabV2.Red), maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
 
-        TcpPeakStatusCard(ui.snapshot)
+        TcpPeakProgressCard(ui.snapshot, logsExpanded) { logsExpanded = !logsExpanded }
         TcpPeakTrendChart(ui.trend)
-        TcpPeakProtocolCard("IPv4", ui.snapshot.ipv4, LabV2.Primary)
-        TcpPeakProtocolCard("IPv6", ui.snapshot.ipv6, LabV2.Green)
+        TcpPeakProtocolCard("IPv4", ui.snapshot.ipv4, LabV2.Primary, expanded = family != TcpPeakFamily.IPV6)
+        TcpPeakProtocolCard("IPv6", ui.snapshot.ipv6, LabV2.Green, expanded = family != TcpPeakFamily.IPV4)
         TcpPeakResourceCard(ui.snapshot)
-        TcpPeakExpandableSection("最近日志", ui.snapshot.logs.size, logsExpanded, { logsExpanded = !logsExpanded }) {
-            if (ui.snapshot.logs.isEmpty()) {
-                Text("暂无日志", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
-            } else {
-                ui.snapshot.logs.takeLast(20).forEach { line ->
-                    Text(line, style = LabTypography.Supporting.copy(color = LabV2.Ink), lineHeight = 18.sp)
-                }
-            }
-        }
         TcpPeakExpandableSection("测试历史", ui.history.size, historyExpanded, { historyExpanded = !historyExpanded }) {
             TcpPeakHistoryContent(ui.history)
         }
@@ -359,44 +364,66 @@ private fun TcpPeakConfigCard(
     onCps: (String) -> Unit
 ) {
     Surface(
-        shape = LabCoreSurface.CardShape,
+        shape = LabV2.CardShape,
         color = Color.White,
         border = BorderStroke(1.dp, LabCoreSurface.Border)
     ) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val segmentColors = tcpPeakSegmentedColors()
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text("测试设置", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TcpPeakSide.entries.forEach { item ->
-                    FilterChip(
-                        selected = side == item,
-                        onClick = { onSide(item) },
-                        enabled = enabled,
-                        label = { Text(item.label, fontSize = 12.sp) }
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("测试端", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    TcpPeakSide.entries.forEachIndexed { index, item ->
+                        SegmentedButton(
+                            modifier = Modifier.weight(1f),
+                            shape = SegmentedButtonDefaults.itemShape(index, TcpPeakSide.entries.size, LabV2.CompactCardShape),
+                            colors = segmentColors,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+                            icon = {},
+                            selected = side == item,
+                            onClick = { onSide(item) },
+                            enabled = enabled,
+                            label = { Text(item.label, style = LabTypography.CompactButton) }
+                        )
+                    }
                 }
             }
-            OutlinedTextField(
-                value = host,
-                onValueChange = onHost,
-                enabled = enabled,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("域名或 IP") },
-                placeholder = { Text("例如：example.com") }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("目标域名或 IP", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = onHost,
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    singleLine = true,
+                    placeholder = { Text("例如：example.com", style = LabTypography.Placeholder) },
+                    textStyle = LabTypography.FieldValue,
+                    shape = LabV2.CompactCardShape,
+                    colors = labOutlinedColors()
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TcpPeakNumberField("端口", port, onPort, enabled, Modifier.weight(1f))
                 TcpPeakNumberField("连接量程", target, onTarget, enabled, Modifier.weight(1f))
                 TcpPeakNumberField("CPS", cps, onCps, enabled, Modifier.weight(1f))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                TcpPeakFamily.entries.forEach { item ->
-                    FilterChip(
-                        selected = family == item,
-                        onClick = { onFamily(item) },
-                        enabled = enabled,
-                        label = { Text(item.label, fontSize = 11.sp) }
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("地址族", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    TcpPeakFamily.entries.forEachIndexed { index, item ->
+                        SegmentedButton(
+                            modifier = Modifier.weight(1f),
+                            shape = SegmentedButtonDefaults.itemShape(index, TcpPeakFamily.entries.size, LabV2.CompactCardShape),
+                            colors = segmentColors,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp),
+                            icon = {},
+                            selected = family == item,
+                            onClick = { onFamily(item) },
+                            enabled = enabled,
+                            label = { Text(item.label, style = LabTypography.CompactButton) }
+                        )
+                    }
                 }
             }
             Text(
@@ -407,6 +434,21 @@ private fun TcpPeakConfigCard(
     }
 }
 
+private fun tcpPeakSegmentedColors() = SegmentedButtonColors(
+    activeContainerColor = LabV2.Primary.copy(alpha = .12f),
+    activeContentColor = LabV2.PrimaryStrong,
+    activeBorderColor = LabV2.Primary.copy(alpha = .42f),
+    inactiveContainerColor = Color.White,
+    inactiveContentColor = LabV2.InkMuted,
+    inactiveBorderColor = LabCoreSurface.Border,
+    disabledActiveContainerColor = LabV2.Primary.copy(alpha = .07f),
+    disabledActiveContentColor = LabV2.Primary.copy(alpha = .48f),
+    disabledActiveBorderColor = LabV2.Primary.copy(alpha = .16f),
+    disabledInactiveContainerColor = LabV2.FieldSoft,
+    disabledInactiveContentColor = LabV2.InkFaint,
+    disabledInactiveBorderColor = LabCoreSurface.Border.copy(alpha = .60f)
+)
+
 @Composable
 private fun TcpPeakNumberField(
     label: String,
@@ -415,46 +457,88 @@ private fun TcpPeakNumberField(
     enabled: Boolean,
     modifier: Modifier
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { onValue(it.filter(Char::isDigit).take(5)) },
-        enabled = enabled,
-        modifier = modifier,
-        singleLine = true,
-        label = { Text(label, fontSize = 10.sp) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-    )
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), maxLines = 1)
+        OutlinedTextField(
+            value = value,
+            onValueChange = { onValue(it.filter(Char::isDigit).take(5)) },
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            singleLine = true,
+            textStyle = LabTypography.FieldValue,
+            shape = LabV2.CompactCardShape,
+            colors = labOutlinedColors(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+    }
 }
 
 @Composable
-private fun TcpPeakStatusCard(snapshot: TcpPeakSnapshot) {
-    Surface(shape = LabCoreSurface.CompactShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+private fun TcpPeakProgressCard(
+    snapshot: TcpPeakSnapshot,
+    logsExpanded: Boolean,
+    onToggleLogs: () -> Unit
+) {
+    val statusColor = when {
+        snapshot.state == "failed" || snapshot.state == "interrupted" -> LabV2.Red
+        snapshot.active -> LabV2.Amber
+        else -> LabV2.Green
+    }
+    Surface(shape = LabV2.CardShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(10.dp).background(
-                        if (snapshot.active) LabV2.Amber else if (snapshot.state == "completed") LabV2.Green else LabV2.InkMuted,
-                        CircleShape
-                    )
-                )
+                Box(Modifier.size(7.dp).background(statusColor, CircleShape))
                 Spacer(Modifier.width(7.dp))
-                Text(snapshot.status, style = LabTypography.CardTitle.copy(color = LabV2.Ink), modifier = Modifier.weight(1f), minLines = 2, maxLines = 2)
+                Text(snapshot.status, style = LabTypography.CardTitle.copy(color = LabV2.Ink), modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
                 Text(formatTcpPeakDuration(snapshot.elapsedMs), style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
             }
             Text(
                 snapshot.finishReason.ifBlank { "结束原因将在测试停止后显示" },
-                style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
-                minLines = 2,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
             )
+            HorizontalDivider(color = LabCoreSurface.Border.copy(alpha = .72f), thickness = .5.dp)
+            Row(
+                Modifier.fillMaxWidth().clickable(onClick = onToggleLogs).padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "最近日志（${snapshot.logs.size}）",
+                    modifier = Modifier.weight(1f),
+                    style = LabTypography.Supporting.copy(color = LabV2.Ink, fontWeight = FontWeight.SemiBold)
+                )
+                Icon(
+                    if (logsExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = if (logsExpanded) "折叠最近日志" else "展开最近日志",
+                    tint = LabV2.InkMuted,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (logsExpanded) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = LabCoreSurface.InnerShape,
+                    color = LabCoreSurface.Inner,
+                    border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .72f))
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        if (snapshot.logs.isEmpty()) {
+                            Text("暂无日志", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+                        } else {
+                            snapshot.logs.takeLast(20).forEach { line ->
+                                Text(line, style = LabTypography.Supporting.copy(color = LabV2.Ink, lineHeight = 18.sp))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun TcpPeakTrendChart(points: List<TcpPeakTrendPoint>) {
-    Surface(shape = LabCoreSurface.CardShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
+    Surface(shape = LabV2.CardShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("活动连接数趋势", style = LabTypography.CardTitle.copy(color = LabV2.Ink), modifier = Modifier.weight(1f))
@@ -466,19 +550,24 @@ private fun TcpPeakTrendChart(points: List<TcpPeakTrendPoint>) {
                 val grid = Color(0xFFE8EDF3)
                 repeat(4) { index ->
                     val y = size.height * index / 3f
-                    drawLine(grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                    drawLine(grid, Offset(0f, y), Offset(size.width, y), strokeWidth = .5.dp.toPx())
                 }
                 if (points.size < 2) return@Canvas
                 val maximum = points.maxOf { maxOf(it.ipv4Current, it.ipv6Current) }.coerceAtLeast(1)
+                val horizontalInset = 2.dp.toPx()
+                val verticalInset = 4.dp.toPx()
+                val plotWidth = (size.width - horizontalInset * 2).coerceAtLeast(1f)
+                val plotHeight = (size.height - verticalInset * 2).coerceAtLeast(1f)
                 fun path(value: (TcpPeakTrendPoint) -> Int): Path = Path().apply {
                     points.forEachIndexed { index, point ->
-                        val x = size.width * index / (points.size - 1).toFloat()
-                        val y = size.height - size.height * value(point) / maximum.toFloat()
+                        val x = horizontalInset + plotWidth * index / (points.size - 1).toFloat()
+                        val y = verticalInset + plotHeight * (1f - value(point) / maximum.toFloat())
                         if (index == 0) moveTo(x, y) else lineTo(x, y)
                     }
                 }
-                drawPath(path(TcpPeakTrendPoint::ipv4Current), LabV2.Primary, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-                drawPath(path(TcpPeakTrendPoint::ipv6Current), LabV2.Green, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                val lineStyle = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                drawPath(path(TcpPeakTrendPoint::ipv4Current), LabV2.Primary, style = lineStyle)
+                drawPath(path(TcpPeakTrendPoint::ipv6Current), LabV2.Green, style = lineStyle)
             }
             if (points.size < 2) Text("开始测试后约每秒更新一次", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
         }
@@ -495,40 +584,43 @@ private fun TcpPeakLegend(color: Color, label: String) {
 }
 
 @Composable
-private fun TcpPeakProtocolCard(label: String, metric: TcpPeakMetric, accent: Color) {
-    Surface(shape = LabCoreSurface.CompactShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
+private fun TcpPeakProtocolCard(label: String, metric: TcpPeakMetric, accent: Color, expanded: Boolean) {
+    Surface(shape = LabV2.CardShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(label, style = LabTypography.CardTitle.copy(color = accent), modifier = Modifier.weight(1f))
                 Text(metric.status, style = LabTypography.Supporting.copy(color = LabV2.InkMuted), maxLines = 1)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TcpPeakMetricCell("当前连接", metric.current.toString(), Modifier.weight(1f))
-                TcpPeakMetricCell("峰值", metric.peak.toString(), Modifier.weight(1f))
-                TcpPeakMetricCell("CPS", metric.cps.toString(), Modifier.weight(1f))
+            if (expanded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TcpPeakMetricCell("当前连接", metric.current.toString(), Modifier.weight(1f))
+                    TcpPeakMetricCell("峰值", metric.peak.toString(), Modifier.weight(1f))
+                    TcpPeakMetricCell("CPS", metric.cps.toString(), Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TcpPeakMetricCell("成功", metric.success.toString(), Modifier.weight(1f))
+                    TcpPeakMetricCell("失败", metric.failure.toString(), Modifier.weight(1f))
+                    TcpPeakMetricCell("耗时", formatTcpPeakDuration(metric.elapsedMs), Modifier.weight(1f))
+                }
+                Text(metric.finishReason.ifBlank { "结束原因：—" }, style = LabTypography.Supporting.copy(color = LabV2.InkMuted), maxLines = 2)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TcpPeakMetricCell("成功", metric.success.toString(), Modifier.weight(1f))
-                TcpPeakMetricCell("失败", metric.failure.toString(), Modifier.weight(1f))
-                TcpPeakMetricCell("耗时", formatTcpPeakDuration(metric.elapsedMs), Modifier.weight(1f))
-            }
-            Text(metric.finishReason.ifBlank { "结束原因：—" }, style = LabTypography.Supporting.copy(color = LabV2.InkMuted), maxLines = 2)
         }
     }
 }
 
 @Composable
 private fun TcpPeakMetricCell(label: String, value: String, modifier: Modifier) {
-    Column(modifier.padding(vertical = 2.dp)) {
-        Text(label, fontSize = 10.sp, color = LabV2.InkMuted, maxLines = 1)
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(modifier.padding(vertical = 1.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = LabTypography.Caption.copy(color = LabV2.InkMuted), maxLines = 1)
+        Text(value, style = LabTypography.ValueStrong.copy(color = LabV2.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun TcpPeakResourceCard(snapshot: TcpPeakSnapshot) {
     val relay = snapshot.side == TcpPeakSide.RELAY
-    Surface(shape = LabCoreSurface.CompactShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
+    val releasing = snapshot.state == "stop_requested" || snapshot.state == "releasing"
+    Surface(shape = LabV2.CardShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("资源保护", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -536,15 +628,28 @@ private fun TcpPeakResourceCard(snapshot: TcpPeakSnapshot) {
                 TcpPeakMetricCell("CPU 峰值", if (relay && snapshot.cpuPeak > 0) String.format(Locale.getDefault(), "%.1f%%", snapshot.cpuPeak) else "—", Modifier.weight(1f))
                 TcpPeakMetricCell("最低可用内存", if (relay && snapshot.memoryMinAvailableMb > 0) "${snapshot.memoryMinAvailableMb} MB" else "—", Modifier.weight(1f))
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Rounded.CheckCircle,
-                    contentDescription = null,
-                    tint = if (snapshot.resourcesReleased) LabV2.Green else LabV2.Amber,
-                    modifier = Modifier.size(17.dp)
+            if (releasing) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = LabV2.Primary,
+                    trackColor = LabV2.Primary.copy(alpha = .10f)
                 )
-                Spacer(Modifier.width(6.dp))
-                Text(snapshot.releaseStatus, style = LabTypography.Supporting.copy(color = LabV2.Ink), minLines = 2, maxLines = 2)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = if (snapshot.resourcesReleased) "测试资源已释放" else "测试资源正在使用或释放",
+                        tint = if (snapshot.resourcesReleased) LabV2.Green else LabV2.Amber,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    snapshot.releaseStatus,
+                    modifier = Modifier.weight(1f),
+                    style = LabTypography.Supporting.copy(color = LabV2.Ink, lineHeight = 18.sp)
+                )
             }
         }
     }
@@ -558,14 +663,14 @@ private fun TcpPeakExpandableSection(
     onToggle: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    Surface(shape = LabCoreSurface.CompactShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
+    Surface(shape = LabV2.CardShape, color = Color.White, border = BorderStroke(1.dp, LabCoreSurface.Border)) {
         Column {
             Row(
                 Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 12.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("$title（$count）", style = LabTypography.CardTitle.copy(color = LabV2.Ink), modifier = Modifier.weight(1f))
-                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = if (expanded) "折叠$title" else "展开$title", tint = LabV2.InkMuted)
+                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = if (expanded) "折叠$title" else "展开$title", tint = LabV2.InkMuted, modifier = Modifier.size(22.dp))
             }
             if (expanded) Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { content() }
         }
@@ -589,10 +694,16 @@ private fun TcpPeakHistoryContent(history: List<TcpPeakHistory>) {
         ) {
             Text(date, fontWeight = FontWeight.Bold, color = LabV2.Ink, modifier = Modifier.weight(1f))
             Text("${rows.size} 次", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
-            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = if (expanded) "折叠$date" else "展开$date", tint = LabV2.InkMuted)
+            Spacer(Modifier.width(4.dp))
+            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = if (expanded) "折叠$date" else "展开$date", tint = LabV2.InkMuted, modifier = Modifier.size(20.dp))
         }
         if (expanded) rows.forEach { row ->
-            Surface(shape = RoundedCornerShape(12.dp), color = LabCoreSurface.Inner) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = LabCoreSurface.InnerShape,
+                color = LabCoreSurface.Inner,
+                border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .72f))
+            ) {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text("${timeFormatter.format(Date(row.startedEpochMs))} · ${row.side.label} · ${row.host}:${row.port}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                     Text("IPv4 峰值 ${row.snapshot.ipv4.peak} · IPv6 峰值 ${row.snapshot.ipv6.peak} · ${row.snapshot.finishReason}", style = LabTypography.Supporting.copy(color = LabV2.InkMuted), maxLines = 3)
