@@ -1,0 +1,139 @@
+name: One-shot rebuild firewall WireGuard test on latest baseline
+
+on:
+  push:
+    branches:
+      - fix/firewall-order-wireguard-latest
+    paths:
+      - .github/workflows/one-shot-rebuild-latest-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  port-build-prerelease:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/firewall-order-wireguard-latest
+          fetch-depth: 0
+
+      - name: Port reviewed fixes onto v0.10.71 build226 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)" = "226"
+          test "$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)" = "0.10.71"
+
+          git cherry-pick --no-commit 362e0ee9d3f95eb7d41f8c2e607386cb5f09b431
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle.kts')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('versionCode = 226', 'versionCode = 227', 1)
+          s = s.replace('versionName = "0.10.71"', 'versionName = "0.10.72"', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          CHANGED="$(git diff --name-only | sort)"
+          printf '%s\n' "$CHANGED"
+          EXPECTED=$(printf '%s\n' \
+            app/build.gradle.kts \
+            app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt \
+            app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt | sort)
+          test "$CHANGED" = "$EXPECTED"
+          git diff --check
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - name: Prepare signing key
+        env:
+          LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LABPROBE_KEYSTORE_BASE64"
+          printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
+          echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
+
+      - name: Test and build signed v0.10.72 build227 APK
+        env:
+          LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
+          LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
+          LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
+          LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+
+      - name: Verify APK version and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='227' versionName='0.10.72'"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          sha256sum "$APK"
+
+      - name: Commit corrected latest-baseline fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle.kts app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt
+          git commit -m "fix(app): port firewall ordering and WireGuard state to v0.10.72 build227"
+          git push origin HEAD:fix/firewall-order-wireguard-latest
+          echo "TARGET_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-v0.10.72-build227-firewall-wg-test
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+
+      - name: Publish corrected prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="test-v0.10.72-build227-firewall-wg-20260902-2"
+          APK=app/build/outputs/apk/release/app-release.apk
+          ASSET="$RUNNER_TEMP/LabProbe-v0.10.72-build227-firewall-wg-test.apk"
+          cp "$APK" "$ASSET"
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Corrected test build based on the latest v0.10.71 build226 test baseline.
+
+          Changes:
+          - Firewall rule drag ordering with Material 3 drag handle, lift/scale animation and backend-persisted order.
+          - WireGuard gateway disabled state stops the local tunnel and no longer shows stale handshake state.
+
+          Version: v0.10.72 build227.
+          Test prerelease only; main is unchanged.
+          EOF
+          gh release create "$TAG" "$ASSET" \
+            --target "$TARGET_SHA" \
+            --title "极客网探 v0.10.72 build227 测试版 · 防火墙排序 / WireGuard" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --prerelease
