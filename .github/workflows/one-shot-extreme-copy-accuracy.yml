@@ -1,0 +1,65 @@
+name: One-shot clarify TCP extreme mode behavior
+
+on:
+  push:
+    branches:
+      - fix/tcp-extreme-01075
+    paths:
+      - .github/workflows/one-shot-extreme-copy-accuracy.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/tcp-extreme-01075
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Make extreme-mode behavior explicit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/main/kotlin/com/labprobe/app/TcpPeakConnections.kt')
+          text = path.read_text(encoding='utf-8')
+          old = '''                            if (extremeMode) "CPS 上限 10000 · 测试端仍保留资源保护" else "安全模式 · CPS 上限 2000",'''
+          new = '''                            if (extremeMode && side == TcpPeakSide.RELAY)\n                                "CPS 上限 10000 · 临时扩展源端口，结束自动恢复"\n                            else if (extremeMode)\n                                "CPS 上限 10000 · 本机仍保留资源保护"\n                            else\n                                "安全模式 · CPS 上限 2000",'''
+          if old not in text:
+              raise SystemExit('extreme status copy anchor not found')
+          text = text.replace(old, new, 1)
+          old = '''                if (extremeMode)\n                    "极限模式只提高发起速率上限；FD、资源释放与测试端保护仍然生效。"\n                else\n                    "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",'''
+          new = '''                if (extremeMode && side == TcpPeakSide.RELAY)\n                    "Relay 会临时调整源端口范围；停止、完成或异常恢复时会还原，同时保留 FD、Conntrack、内存与 CPU 保护。"\n                else if (extremeMode)\n                    "本机极限模式提高 CPS 上限；FD 与资源释放保护仍然生效。"\n                else\n                    "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",'''
+          if old not in text:
+              raise SystemExit('extreme supporting copy anchor not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          git diff --check
+      - name: Kotlin compile
+        run: gradle :app:compileDebugKotlin --stacktrace --console=plain
+      - name: Commit and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-shot-extreme-copy-accuracy.yml
+          git add app/src/main/kotlin/com/labprobe/app/TcpPeakConnections.kt
+          git diff --cached --check
+          git commit -m "fix(tcp): describe extreme source-port behavior accurately"
+          git push origin HEAD:fix/tcp-extreme-01075
