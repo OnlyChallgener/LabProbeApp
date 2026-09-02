@@ -187,8 +187,19 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
+        var serverPollTick = 0
         while (true) {
             runtime = controller.status()
+            if (serverPollTick % 5 == 0) {
+                val serverState = runCatching { wireGuardHubApi.loadServerState() }.getOrNull()
+                if (serverState != null) {
+                    serverConfig = serverState.config
+                    if (!serverState.config.enabled && runtime.running) {
+                        runtime = controller.stop()
+                    }
+                }
+            }
+            serverPollTick++
             delay(2_000L)
         }
     }
@@ -247,7 +258,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         compactHeader = true,
         unifiedTypography = true,
     ) {
-        val isHandshaked = runtime.running && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
+        val isHandshaked = serverConfig.enabled && runtime.running && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
         LabCoreCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LabV2ToolIcon(Icons.Rounded.Shield, WireGuardBlue, size = 38)
@@ -323,7 +334,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             if (group.isNotEmpty()) {
                 Text(title, style = LabTypography.SectionTitle, color = LabV2.Ink)
                 group.forEach { profile ->
-                    val isActive = runtime.running && runtime.profileId == profile.id
+                    val isActive = serverConfig.enabled && runtime.running && runtime.profileId == profile.id
                     WireGuardProfileCard(
                         profile = profile,
                         active = isActive,
@@ -389,9 +400,15 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         val updated = wireGuardHubApi.updateServerConfig(listenPort, mtu, address, enabled)
                         store.applyServerConfig(listenPort, mtu)
                         serverConfig = updated
+                        val hadRunningClient = runtime.running
+                        if (!updated.enabled && hadRunningClient) runtime = controller.stop()
                         reload()
                         showServerSettings = false
-                        message = "网关参数已更新（${if (enabled) "已启用" else "已停用"} · 端口 $listenPort · MTU $mtu），已同步至 Agent"
+                        message = when {
+                            !updated.enabled && hadRunningClient -> "WireGuard 网关已停用，客户端连接已停止"
+                            !updated.enabled -> "WireGuard 网关已停用"
+                            else -> "网关参数已更新（已启用 · 端口 $listenPort · MTU $mtu），已同步至 Agent"
+                        }
                     }.onFailure {
                         message = "更新网关参数失败：${uiMessageZh(it.message)}"
                     }
