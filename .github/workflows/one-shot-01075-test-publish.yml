@@ -1,0 +1,113 @@
+name: One-shot APP 0.10.75 build230 test publish
+
+on:
+  push:
+    branches:
+      - fix/tcp-extreme-01075
+    paths:
+      - .github/workflows/one-shot-01075-test-publish.yml
+
+permissions:
+  contents: write
+
+jobs:
+  test-build-publish:
+    runs-on: ubuntu-latest
+    env:
+      TEST_TAG: test-bundle/20260902-eweb-keepalive
+      VERSION_NAME: 0.10.75
+      VERSION_CODE: 230
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/tcp-extreme-01075
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - name: Verify test version and extreme-mode contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionCode = 230' app/build.gradle.kts
+          grep -q 'versionName = "0.10.75"' app/build.gradle.kts
+          grep -q 'extremeMode = extremeMode' app/src/main/kotlin/com/labprobe/app/TcpPeakConnections.kt
+          grep -q '临时扩展源端口，结束自动恢复' app/src/main/kotlin/com/labprobe/app/TcpPeakConnections.kt
+          grep -q 'CPS 上限 10000' app/src/main/kotlin/com/labprobe/app/TcpPeakConnections.kt
+          git diff --check
+
+      - name: Prepare signing key
+        env:
+          LABPROBE_KEYSTORE_BASE64: ${{ secrets.LABPROBE_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LABPROBE_KEYSTORE_BASE64"
+          printf '%s' "$LABPROBE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/labprobe-release.jks"
+          echo "LABPROBE_KEYSTORE_PATH=$RUNNER_TEMP/labprobe-release.jks" >> "$GITHUB_ENV"
+
+      - name: Test and build signed Release APK
+        env:
+          LABPROBE_KEYSTORE_PATH: ${{ env.LABPROBE_KEYSTORE_PATH }}
+          LABPROBE_KEYSTORE_PASSWORD: ${{ secrets.LABPROBE_KEYSTORE_PASSWORD }}
+          LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
+          LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+
+      - name: Verify signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='230' versionName='0.10.75'"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
+          sha256sum "$APK"
+          cp "$APK" "$RUNNER_TEMP/LabProbe-v0.10.75-build230-test.apk"
+
+      - name: Commit version and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-shot-01075-test-publish.yml
+          git add app/build.gradle.kts
+          git diff --cached --check
+          git commit -m "chore(app): prepare 0.10.75 build230 test"
+          git push origin HEAD:fix/tcp-extreme-01075
+
+      - name: Publish APP test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_SHA="$(git rev-parse HEAD)"
+          APK="$RUNNER_TEMP/LabProbe-v0.10.75-build230-test.apk"
+          NOTES="APP 0.10.75 build230 test build.\n\nIncludes restored TCP extreme-mode UI/contract and accurate Relay extreme-mode copy. Companion Hub test image contains the BE72 eWeb websocket keepalive fix. Same signing key as the normal release pipeline; test only.\n\nAPP commit: ${TARGET_SHA}"
+          if gh release view "$TEST_TAG" >/dev/null 2>&1; then
+            gh release upload "$TEST_TAG" "$APK#LabProbe-v0.10.75-build230-test.apk" --clobber
+            gh release edit "$TEST_TAG" --title "Test bundle ${TEST_TAG}（极客网探 v0.10.75 build230）" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TEST_TAG" "$APK#LabProbe-v0.10.75-build230-test.apk" --target "$TARGET_SHA" --title "Test bundle ${TEST_TAG}（极客网探 v0.10.75 build230）" --notes "$NOTES" --prerelease
+          fi
