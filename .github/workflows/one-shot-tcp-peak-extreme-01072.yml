@@ -22,16 +22,21 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+      - name: Install Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Apply focused source patch
         run: python3 scripts/one_shot_tcp_peak_extreme_01072.py
 
       - name: Test models and compile Kotlin
         run: |
-          chmod +x gradlew
-          ./gradlew testDebugUnitTest --tests com.labprobe.app.TcpPeakModelsTest
-          ./gradlew compileDebugKotlin
+          gradle :app:testDebugUnitTest --tests com.labprobe.app.TcpPeakModelsTest --stacktrace --console=plain
+          gradle :app:compileDebugKotlin --stacktrace --console=plain
 
       - name: Commit source fixes
         run: |
