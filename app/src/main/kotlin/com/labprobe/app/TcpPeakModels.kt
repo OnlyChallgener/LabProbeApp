@@ -22,6 +22,7 @@ data class TcpPeakConfig(
     val family: TcpPeakFamily = TcpPeakFamily.BOTH,
     val targetConnections: Int = 10_000,
     val cps: Int = 500,
+    val extremeMode: Boolean = false,
     val connectTimeoutMs: Int = 1_500,
     val maxDurationSeconds: Int = 180
 ) {
@@ -29,7 +30,8 @@ data class TcpPeakConfig(
         host = host.trim().removePrefix("[").removeSuffix("]"),
         port = port.coerceIn(1, 65_535),
         targetConnections = targetConnections.coerceIn(1, 65_535),
-        cps = cps.coerceIn(1, 2_000),
+        cps = cps.coerceIn(1, 10_000),
+        extremeMode = extremeMode && side == TcpPeakSide.RELAY,
         connectTimeoutMs = connectTimeoutMs.coerceIn(300, 10_000),
         maxDurationSeconds = maxDurationSeconds.coerceIn(10, 300)
     )
@@ -39,7 +41,8 @@ data class TcpPeakConfig(
         host.contains("://") || host.any(Char::isWhitespace) -> "测试目标主机格式无效"
         port !in 1..65_535 -> "目标端口必须是 1–65535"
         targetConnections !in 1..65_535 -> "连接量程必须是 1–65535"
-        cps !in 1..2_000 -> "CPS 必须是 1–2000"
+        cps !in 1..10_000 -> "CPS 必须是 1–10000"
+        extremeMode && side != TcpPeakSide.RELAY -> "极限模式仅支持 Relay 宿主机"
         else -> null
     }
 }
@@ -58,6 +61,7 @@ data class TcpPeakPendingAiCommand(
         .put("family", config.family.wireValue)
         .put("targetConnections", config.targetConnections)
         .put("cps", config.cps)
+        .put("extremeMode", config.extremeMode)
         .put("connectTimeoutMs", config.connectTimeoutMs)
         .put("maxDurationSeconds", config.maxDurationSeconds)
         .toString()
@@ -77,6 +81,7 @@ data class TcpPeakPendingAiCommand(
                 family = family,
                 targetConnections = row.optInt("targetConnections"),
                 cps = row.optInt("cps"),
+                extremeMode = row.optBoolean("extremeMode", false),
                 connectTimeoutMs = row.optInt("connectTimeoutMs", 1_500),
                 maxDurationSeconds = row.optInt("maxDurationSeconds", 180)
             )

@@ -84,12 +84,14 @@ class TcpPeakModelsTest {
             host = "[240e::1]",
             port = 443,
             targetConnections = 99_999,
-            cps = 9_999
+            cps = 99_999,
+            extremeMode = true
         ).normalized()
 
         assertEquals("240e::1", config.host)
         assertEquals(65_535, config.targetConnections)
-        assertEquals(2_000, config.cps)
+        assertEquals(10_000, config.cps)
+        assertTrue(config.extremeMode)
     }
 
     @Test

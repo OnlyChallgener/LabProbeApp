@@ -268,6 +268,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var port by remember { mutableStateOf(pendingAiCommand?.config?.port?.toString() ?: prefs.tcpPeakPort) }
     var target by remember { mutableStateOf(pendingAiCommand?.config?.targetConnections?.toString() ?: prefs.tcpPeakTarget) }
     var cps by remember { mutableStateOf(pendingAiCommand?.config?.cps?.toString() ?: prefs.tcpPeakCps) }
+    var extremeMode by remember { mutableStateOf(pendingAiCommand?.config?.extremeMode ?: false) }
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
@@ -278,7 +279,8 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         port = port.toIntOrNull() ?: 0,
         family = family,
         targetConnections = target.toIntOrNull() ?: 0,
-        cps = cps.toIntOrNull() ?: 0
+        cps = cps.toIntOrNull() ?: 0,
+        extremeMode = side == TcpPeakSide.RELAY && extremeMode
     )
     fun leavePage() {
         controller.stop()
@@ -310,13 +312,18 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             port = port,
             target = target,
             cps = cps,
+            extremeMode = extremeMode,
             enabled = !active,
-            onSide = { side = it },
+            onSide = {
+                side = it
+                if (it != TcpPeakSide.RELAY) extremeMode = false
+            },
             onFamily = { family = it },
             onHost = { host = it; prefs.tcpPeakHost = it },
             onPort = { port = it; prefs.tcpPeakPort = it },
             onTarget = { target = it; prefs.tcpPeakTarget = it },
-            onCps = { cps = it; prefs.tcpPeakCps = it }
+            onCps = { cps = it; prefs.tcpPeakCps = it },
+            onExtremeMode = { extremeMode = it }
         )
 
         Button(
@@ -355,13 +362,15 @@ private fun TcpPeakConfigCard(
     port: String,
     target: String,
     cps: String,
+    extremeMode: Boolean,
     enabled: Boolean,
     onSide: (TcpPeakSide) -> Unit,
     onFamily: (TcpPeakFamily) -> Unit,
     onHost: (String) -> Unit,
     onPort: (String) -> Unit,
     onTarget: (String) -> Unit,
-    onCps: (String) -> Unit
+    onCps: (String) -> Unit,
+    onExtremeMode: (Boolean) -> Unit
 ) {
     Surface(
         shape = LabV2.CardShape,
@@ -387,6 +396,34 @@ private fun TcpPeakConfigCard(
                             label = { Text(item.label, style = LabTypography.CompactButton) }
                         )
                     }
+                }
+            }
+            if (side == TcpPeakSide.RELAY) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("测试模式", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        listOf(false to "标准", true to "极限").forEachIndexed { index, item ->
+                            SegmentedButton(
+                                modifier = Modifier.weight(1f),
+                                shape = SegmentedButtonDefaults.itemShape(index, 2, LabV2.CompactCardShape),
+                                colors = segmentColors,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+                                icon = {},
+                                selected = extremeMode == item.first,
+                                onClick = { onExtremeMode(item.first) },
+                                enabled = enabled,
+                                label = { Text(item.second, style = LabTypography.CompactButton) }
+                            )
+                        }
+                    }
+                    Text(
+                        if (extremeMode) {
+                            "极限模式会在 Relay 测试期间临时扩展源端口范围，结束、停止或异常后自动恢复；CPU、FD、Conntrack 和内存保护仍生效。"
+                        } else {
+                            "标准模式不修改 Relay 系统源端口范围。"
+                        },
+                        style = LabTypography.Supporting.copy(color = if (extremeMode) LabV2.Amber else LabV2.InkMuted)
+                    )
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -427,7 +464,7 @@ private fun TcpPeakConfigCard(
                 }
             }
             Text(
-                "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
+                "65535 是量程上限，不代表设备必须达到；Relay CPS 最高 10000；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
                 style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
             )
         }
