@@ -2,15 +2,16 @@ name: One-shot firewall dual-scope test release
 
 on:
   push:
-    branches: [fix/firewall-dual-scope-01074]
-    paths: [.github/workflows/one-shot-firewall-dual-scope.yml]
+    branches:
+      - fix/firewall-dual-scope-01074
+    paths:
+      - .github/workflows/one-shot-firewall-dual-scope.yml
 
 permissions:
   contents: write
 
 jobs:
   patch-test-release:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,388 +35,11 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
-      - name: Patch firewall sorting model and bump version
+      - name: Apply focused patch
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt')
-          text = path.read_text(encoding='utf-8')
-          start = text.index('@Composable\nfun RouterFirewallScreen')
-          end = text.index('\n@Composable\nprivate fun FirewallRuleCard', start)
-          replacement = r'''@Composable
-fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
-    val automationRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { FirewallAutomationRepository(prefs) }
-    val resource by repository.firewall.collectAsState()
-    val automationResource by automationRepository.state.collectAsState()
-    val state = resource.value ?: FirewallState()
-    val scope = rememberCoroutineScope()
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
-    val directions = listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站")
-    val currentDirection = directions[pagerState.currentPage].first
-    var actionError by remember { mutableStateOf("") }
-    var editing by remember { mutableStateOf<FirewallRule?>(null) }
-    var adding by remember { mutableStateOf(false) }
-    var deleteTarget by remember { mutableStateOf<FirewallRule?>(null) }
-    var followRule by remember { mutableStateOf<FirewallRule?>(null) }
-    var followTargets by remember { mutableStateOf(FirewallAutomationTargets()) }
-    var followTargetsLoading by remember { mutableStateOf(false) }
-    val bindings = automationResource.bindings.associateBy { it.firewallUuid }
-    val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
-
-    LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
-    LaunchedEffect(followRule?.uuid) {
-        if (followRule != null) {
-            followTargetsLoading = true
-            followTargets = runCatching { automationRepository.loadTargets() }.getOrDefault(FirewallAutomationTargets())
-            followTargetsLoading = false
-        }
-    }
-
-    followRule?.let { selected ->
-        FirewallAutomationPage(
-            rule = selected,
-            binding = bindings[selected.uuid],
-            targets = followTargets,
-            targetsLoading = followTargetsLoading,
-            busy = automationResource.mutating,
-            externalError = automationResource.error,
-            onBack = { followRule = null; actionError = "" },
-            onRefreshTargets = {
-                scope.launch {
-                    followTargetsLoading = true
-                    followTargets = runCatching { automationRepository.loadTargets() }.getOrDefault(FirewallAutomationTargets())
-                    followTargetsLoading = false
-                }
-            },
-            onSave = { binding ->
-                scope.launch {
-                    automationRepository.save(binding)
-                        .onSuccess { actionError = ""; repository.refreshFirewall(true) }
-                        .onFailure { actionError = it.message.orEmpty() }
-                }
-            },
-            onStop = {
-                scope.launch {
-                    automationRepository.remove(selected.uuid)
-                        .onSuccess { followRule = null; actionError = "" }
-                        .onFailure { actionError = it.message.orEmpty() }
-                }
-            },
-            onSync = {
-                scope.launch {
-                    automationRepository.sync(selected.uuid)
-                        .onSuccess { actionError = ""; repository.refreshFirewall(true) }
-                        .onFailure { actionError = it.message.orEmpty() }
-                }
-            },
-        )
-        return
-    }
-
-    if (adding || editing != null) {
-        FirewallEditorPage(
-            initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else "wan", outIface = if (currentDirection == "inbound") "" else "lan"),
-            managedByMapping = editing?.let { bindings.containsKey(it.uuid) } == true,
-            onBack = { adding = false; editing = null },
-            onSave = { rule -> scope.launch {
-                val result = if (editing == null) repository.addFirewallRule(rule) else repository.updateFirewallRule(rule)
-                result.onSuccess { adding = false; editing = null; actionError = "" }
-                    .onFailure { actionError = it.message.orEmpty() }
-            } }
-        )
-        return
-    }
-
-    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("防火墙", onBack, "${state.rules.count { it.enabled }} 条启用 · ${state.rules.size}/${state.maxRules}") }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                directions.forEachIndexed { index, (_, label) ->
-                    CompactSegment(label, pagerState.currentPage == index, Modifier.weight(1f)) {
-                        scope.launch { pagerState.animateScrollToPage(index) }
-                    }
-                }
-            }
-            androidx.compose.foundation.pager.HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                val dir = directions[page].first
-                val directionRules = state.rules.filter { it.direction.equals(dir, ignoreCase = true) }
-                val ruleById = directionRules.filter { it.uuid.isNotBlank() }.associateBy { it.uuid }
-                val scopes = listOf("${dir}_ipv4" to "IPv4", "${dir}_ipv6" to "IPv6")
-                val serverOrders = scopes.associate { (scopeName, _) -> scopeName to firewallScopeOrder(state, scopeName) }
-                var localOrders by remember(dir) { mutableStateOf(serverOrders) }
-                var draggingKey by remember(dir) { mutableStateOf<String?>(null) }
-                var dragOffsetY by remember(dir) { mutableFloatStateOf(0f) }
-                var pendingScope by remember(dir) { mutableStateOf<String?>(null) }
-                var pendingOrder by remember(dir) { mutableStateOf<List<String>>(emptyList()) }
-                val listState = rememberLazyListState()
-                val density = LocalDensity.current
-                val edgeThresholdPx = with(density) { 48.dp.toPx() }
-                val edgeStepPx = with(density) { 14.dp.toPx() }
-                val lastAutoScrollAt = remember(dir) { longArrayOf(0L) }
-                val reorderBusy = resource.mutating || automationResource.mutating || pendingScope != null
-
-                LaunchedEffect(serverOrders, draggingKey, pendingScope) {
-                    if (draggingKey == null && pendingScope == null) localOrders = serverOrders
-                }
-
-                fun cancelDrag() {
-                    draggingKey = null
-                    dragOffsetY = 0f
-                    if (pendingScope == null) localOrders = serverOrders
-                }
-
-                fun finishDrag() {
-                    val active = draggingKey ?: return
-                    val separator = active.indexOf('|')
-                    if (separator <= 0 || separator >= active.lastIndex) {
-                        cancelDrag()
-                        return
-                    }
-                    val scopeName = active.substring(0, separator)
-                    val after = localOrders[scopeName].orEmpty()
-                    val before = firewallScopeOrder(state, scopeName)
-                    draggingKey = null
-                    dragOffsetY = 0f
-                    if (after == before) return
-
-                    pendingScope = scopeName
-                    pendingOrder = after
-                    scope.launch {
-                        repository.reorderFirewall(scopeName, after)
-                            .onSuccess { latest ->
-                                val actual = firewallScopeOrder(latest, scopeName)
-                                localOrders = localOrders + (scopeName to actual)
-                                pendingScope = null
-                                pendingOrder = emptyList()
-                                actionError = if (actual == after) "" else "路由器返回成功，但${if (scopeName.endsWith("ipv4")) "IPv4" else "IPv6"}优先级未改变，请重试"
-                            }
-                            .onFailure {
-                                localOrders = localOrders + (scopeName to before)
-                                pendingScope = null
-                                pendingOrder = emptyList()
-                                actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
-                            }
-                    }
-                }
-
-                fun dragRule(scopeName: String, uuid: String, deltaY: Float) {
-                    val rowKey = "$scopeName|$uuid"
-                    if (draggingKey != rowKey || reorderBusy) return
-                    val order = localOrders[scopeName].orEmpty()
-                    dragOffsetY += deltaY
-                    val layout = listState.layoutInfo
-                    val draggedInfo = layout.visibleItemsInfo.firstOrNull { it.key == rowKey } ?: return
-                    val projectedCenter = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
-                    val prefix = "$scopeName|"
-                    val target = layout.visibleItemsInfo.firstOrNull { info ->
-                        val key = info.key as? String ?: return@firstOrNull false
-                        key != rowKey && key.startsWith(prefix) && projectedCenter >= info.offset && projectedCenter <= info.offset + info.size
-                    }
-                    if (target != null) {
-                        val targetKey = target.key as String
-                        val targetUuid = targetKey.removePrefix(prefix)
-                        val from = order.indexOf(uuid)
-                        val to = order.indexOf(targetUuid)
-                        if (from >= 0 && to >= 0 && from != to) {
-                            val next = order.toMutableList()
-                            next[from] = targetUuid
-                            next[to] = uuid
-                            localOrders = localOrders + (scopeName to next)
-                            dragOffsetY += (draggedInfo.offset - target.offset).toFloat()
-                        }
-                    }
-                    val viewportStart = layout.viewportStartOffset.toFloat()
-                    val viewportEnd = layout.viewportEndOffset.toFloat()
-                    val scrollDelta = when {
-                        projectedCenter < viewportStart + edgeThresholdPx -> -edgeStepPx
-                        projectedCenter > viewportEnd - edgeThresholdPx -> edgeStepPx
-                        else -> 0f
-                    }
-                    if (scrollDelta != 0f) {
-                        val now = System.nanoTime()
-                        if (now - lastAutoScrollAt[0] >= 50_000_000L) {
-                            lastAutoScrollAt[0] = now
-                            scope.launch {
-                                val consumed = listState.scrollBy(scrollDelta)
-                                if (draggingKey == rowKey && consumed != 0f) dragOffsetY += consumed
-                            }
-                        }
-                    }
-                }
-
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item(key = "toolbar-$dir") {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("${directionRules.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                            Spacer(Modifier.weight(1f))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) {
-                                    Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
-                                }
-                                Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) {
-                                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp)) }
-                                }
-                            }
-                        }
-                    }
-                    if (error.isNotBlank()) item(key = "error-$dir") { CompactMessage(error, RouterAmber) }
-                    if (automationResource.mutating) item(key = "automation-$dir") { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对；排序按钮会暂时变灰", RouterBlue) }
-                    if (resource.value == null) item(key = "loading-$dir") { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
-
-                    scopes.forEach { (scopeName, versionLabel) ->
-                        val ids = localOrders[scopeName].orEmpty().filter { it in ruleById }
-                        item(key = "section-$scopeName") {
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(13.dp),
-                                color = RouterField,
-                                border = BorderStroke(1.dp, RouterBorder),
-                            ) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    TinyBadge(versionLabel, if (versionLabel == "IPv4") RouterBlue else RouterGreen)
-                                    Spacer(Modifier.width(7.dp))
-                                    Text("${ids.size} 条 · 双栈规则同时参与本区域优先级", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                                    Spacer(Modifier.weight(1f))
-                                    if (pendingScope == scopeName) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = RouterBlue)
-                                }
-                            }
-                        }
-                        if (ids.isEmpty()) {
-                            item(key = "empty-$scopeName") { CompactMessage("$versionLabel 暂无规则", RouterMuted) }
-                        } else {
-                            items(ids, key = { uuid -> "$scopeName|$uuid" }) { uuid ->
-                                ruleById[uuid]?.let { rule ->
-                                    val rowKey = "$scopeName|$uuid"
-                                    val showDrag = uuid.isNotBlank() && ids.size > 1
-                                    val dragEnabled = showDrag && !reorderBusy
-                                    FirewallRuleCard(
-                                        rule = rule,
-                                        binding = bindings[rule.uuid],
-                                        draggable = showDrag,
-                                        dragEnabled = dragEnabled,
-                                        dragging = draggingKey == rowKey,
-                                        dragOffsetY = if (draggingKey == rowKey) dragOffsetY else 0f,
-                                        onDragStart = {
-                                            if (dragEnabled) {
-                                                draggingKey = rowKey
-                                                dragOffsetY = 0f
-                                            }
-                                        },
-                                        onDrag = { delta -> dragRule(scopeName, uuid, delta) },
-                                        onDragEnd = ::finishDrag,
-                                        onDragCancel = ::cancelDrag,
-                                        onOpen = { editing = rule },
-                                        onFollow = { followRule = rule },
-                                        onToggle = { scope.launch {
-                                            repository.setFirewallEnabled(rule.uuid, !rule.enabled)
-                                                .onSuccess { actionError = "" }
-                                                .onFailure { actionError = it.message.orEmpty() }
-                                        } },
-                                        onDelete = { deleteTarget = rule }
-                                    )
-                                }
-                            }
-                        }
-                        item(key = "space-$scopeName") { Spacer(Modifier.height(4.dp)) }
-                    }
-                    item(key = "bottom-$dir") { Spacer(Modifier.height(12.dp)) }
-                }
-            }
-        }
-    }
-
-    deleteTarget?.let { rule ->
-        ConfirmDialog("删除防火墙规则？", "删除“${rule.ruleName}”可能立即影响远程访问。", "删除", {
-            scope.launch {
-                repository.deleteFirewallRule(rule.uuid)
-                    .onSuccess {
-                        if (bindings.containsKey(rule.uuid)) automationRepository.remove(rule.uuid)
-                        deleteTarget = null
-                        actionError = ""
-                    }
-                    .onFailure { actionError = it.message.orEmpty() }
-            }
-        }) { deleteTarget = null }
-    }
-}
-'''
-          text = text[:start] + replacement + text[end:]
-          text = text.replace(
-              '    draggable: Boolean,\n    dragging: Boolean,',
-              '    draggable: Boolean,\n    dragEnabled: Boolean,\n    dragging: Boolean,',
-              1,
-          )
-          old = '''                    if (draggable) {
-                        val dragInput = Modifier.pointerInput(rule.uuid) {
-                            detectDragGestures(
-                                onDragStart = { onDragStart() },
-                                onDragEnd = onDragEnd,
-                                onDragCancel = onDragCancel,
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onDrag(dragAmount.y)
-                                },
-                            )
-                        }
-                        Box(
-                            Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(if (dragging) accent.copy(alpha = .10f) else Color.Transparent)
-                                .then(dragInput),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Rounded.DragHandle, "拖动排序", Modifier.size(19.dp), tint = if (dragging) accent else RouterMuted.copy(alpha = .82f))
-                        }
-                    }'''
-          new = '''                    if (draggable) {
-                        val dragInput = if (dragEnabled) Modifier.pointerInput(rule.uuid, dragEnabled) {
-                            detectDragGestures(
-                                onDragStart = { onDragStart() },
-                                onDragEnd = onDragEnd,
-                                onDragCancel = onDragCancel,
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onDrag(dragAmount.y)
-                                },
-                            )
-                        } else Modifier
-                        Box(
-                            Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(if (dragging) accent.copy(alpha = .10f) else Color.Transparent)
-                                .then(dragInput),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Rounded.DragHandle,
-                                if (dragEnabled) "拖动排序" else "排序暂不可用",
-                                Modifier.size(19.dp),
-                                tint = when {
-                                    dragging -> accent
-                                    dragEnabled -> RouterMuted.copy(alpha = .82f)
-                                    else -> RouterMuted.copy(alpha = .34f)
-                                },
-                            )
-                        }
-                    }'''
-          if old not in text:
-              raise SystemExit('drag handle block not found')
-          text = text.replace(old, new, 1)
-          path.write_text(text, encoding='utf-8')
-
-          gradle = Path('app/build.gradle.kts')
-          build = gradle.read_text(encoding='utf-8')
-          build = build.replace('versionCode = 228', 'versionCode = 229', 1)
-          build = build.replace('versionName = "0.10.73"', 'versionName = "0.10.74"', 1)
-          gradle.write_text(build, encoding='utf-8')
-          PY
+          set -euo pipefail
+          python3 .github/scripts/firewall_dual_scope_patch.py
           grep -q 'versionCode = 229' app/build.gradle.kts
           grep -q 'versionName = "0.10.74"' app/build.gradle.kts
           grep -q '双栈规则同时参与本区域优先级' app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
@@ -445,7 +69,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
           unzip -t "$APK" >/dev/null
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "versionCode='229' versionName='0.10.74'"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
-          sha256sum "$APK" | tee "$RUNNER_TEMP/apk.sha256"
+          sha256sum "$APK"
 
       - name: Commit clean source tree
         shell: bash
@@ -453,7 +77,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/one-shot-firewall-dual-scope.yml
+          git rm -f .github/workflows/one-shot-firewall-dual-scope.yml .github/scripts/firewall_dual_scope_patch.py
           git add app/build.gradle.kts app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           git commit -m "fix(app): model firewall priority per IPv4 and IPv6 scope"
           git push origin HEAD:fix/firewall-dual-scope-01074
