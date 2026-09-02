@@ -3,16 +3,22 @@ package com.labprobe.app
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BasicTooltipBox
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -32,10 +38,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -43,6 +51,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.labprobe.app.feature.router.firewall.FirewallAutomationBinding
 import com.labprobe.app.feature.router.firewall.FirewallAutomationPage
 import com.labprobe.app.feature.router.firewall.FirewallAutomationRepository
@@ -775,7 +785,6 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val bindings = automationResource.bindings.associateBy { it.firewallUuid }
     val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
 
-
     LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
     LaunchedEffect(followRule?.uuid) {
         if (followRule != null) {
@@ -854,8 +863,99 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 val dir = directions[page].first
-                val visible = state.rules.filter { it.direction == dir }
-                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val serverVisible = state.rules.filter { it.direction == dir }
+                val serverOrder = serverVisible.map { it.uuid }
+                val ruleById = serverVisible.associateBy { it.uuid }
+                var orderedUuids by remember(dir) { mutableStateOf(serverOrder) }
+                var draggingUuid by remember(dir) { mutableStateOf<String?>(null) }
+                var dragOffsetY by remember(dir) { mutableFloatStateOf(0f) }
+                val listState = rememberLazyListState()
+                val density = LocalDensity.current
+                val edgeThresholdPx = with(density) { 52.dp.toPx() }
+                val edgeStepPx = with(density) { 18.dp.toPx() }
+
+                LaunchedEffect(serverOrder, draggingUuid) {
+                    if (draggingUuid == null) orderedUuids = serverOrder
+                }
+
+                val orderedSet = orderedUuids.toSet()
+                val visible = orderedUuids.mapNotNull { ruleById[it] } + serverVisible.filterNot { it.uuid in orderedSet }
+                val reorderScopeCounts = visible.mapNotNull(::firewallReorderScope).groupingBy { it }.eachCount()
+
+                fun cancelDrag() {
+                    draggingUuid = null
+                    dragOffsetY = 0f
+                    orderedUuids = serverOrder
+                }
+
+                fun finishDrag() {
+                    val draggedId = draggingUuid ?: return
+                    val draggedRule = ruleById[draggedId]
+                    val reorderScope = draggedRule?.let(::firewallReorderScope)
+                    val nextOrder = orderedUuids.toList()
+                    draggingUuid = null
+                    dragOffsetY = 0f
+                    if (reorderScope == null) {
+                        orderedUuids = serverOrder
+                        return
+                    }
+                    val before = serverVisible.filter { firewallReorderScope(it) == reorderScope }.map { it.uuid }
+                    val after = nextOrder.mapNotNull { ruleById[it] }.filter { firewallReorderScope(it) == reorderScope }.map { it.uuid }
+                    if (after == before) return
+                    scope.launch {
+                        repository.reorderFirewall(reorderScope, after)
+                            .onSuccess { actionError = "" }
+                            .onFailure {
+                                orderedUuids = serverOrder
+                                actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
+                            }
+                    }
+                }
+
+                fun dragRule(uuid: String, deltaY: Float) {
+                    if (draggingUuid != uuid) return
+                    val draggedRule = ruleById[uuid] ?: return
+                    val reorderScope = firewallReorderScope(draggedRule) ?: return
+                    dragOffsetY += deltaY
+                    val layout = listState.layoutInfo
+                    val draggedInfo = layout.visibleItemsInfo.firstOrNull { it.key == uuid } ?: return
+                    val projectedCenter = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
+                    val target = layout.visibleItemsInfo.firstOrNull { info ->
+                        val targetId = info.key as? String ?: return@firstOrNull false
+                        if (targetId == uuid) return@firstOrNull false
+                        val targetRule = ruleById[targetId] ?: return@firstOrNull false
+                        if (firewallReorderScope(targetRule) != reorderScope) return@firstOrNull false
+                        projectedCenter >= info.offset && projectedCenter <= info.offset + info.size
+                    }
+                    if (target != null) {
+                        val targetId = target.key as String
+                        val from = orderedUuids.indexOf(uuid)
+                        val to = orderedUuids.indexOf(targetId)
+                        if (from >= 0 && to >= 0 && from != to) {
+                            val next = orderedUuids.toMutableList()
+                            next[from] = targetId
+                            next[to] = uuid
+                            orderedUuids = next
+                            dragOffsetY += (draggedInfo.offset - target.offset).toFloat()
+                        }
+                    }
+
+                    val viewportStart = layout.viewportStartOffset.toFloat()
+                    val viewportEnd = layout.viewportEndOffset.toFloat()
+                    val scrollDelta = when {
+                        projectedCenter < viewportStart + edgeThresholdPx -> -edgeStepPx
+                        projectedCenter > viewportEnd - edgeThresholdPx -> edgeStepPx
+                        else -> 0f
+                    }
+                    if (scrollDelta != 0f) {
+                        scope.launch {
+                            val consumed = listState.scrollBy(scrollDelta)
+                            if (draggingUuid == uuid && consumed != 0f) dragOffsetY += consumed
+                        }
+                    }
+                }
+
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
@@ -877,9 +977,23 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
                     if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${directions[page].second}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
                     items(visible, key = { it.uuid }) { rule ->
+                        val reorderScope = firewallReorderScope(rule)
+                        val draggable = rule.uuid.isNotBlank() && reorderScope != null && (reorderScopeCounts[reorderScope] ?: 0) > 1 && !resource.mutating && !automationResource.mutating
                         FirewallRuleCard(
-                            rule,
+                            rule = rule,
                             binding = bindings[rule.uuid],
+                            draggable = draggable,
+                            dragging = draggingUuid == rule.uuid,
+                            dragOffsetY = if (draggingUuid == rule.uuid) dragOffsetY else 0f,
+                            onDragStart = {
+                                if (draggable) {
+                                    draggingUuid = rule.uuid
+                                    dragOffsetY = 0f
+                                }
+                            },
+                            onDrag = { delta -> dragRule(rule.uuid, delta) },
+                            onDragEnd = ::finishDrag,
+                            onDragCancel = ::cancelDrag,
                             onOpen = { editing = rule },
                             onFollow = { followRule = rule },
                             onToggle = { scope.launch {
@@ -912,44 +1026,115 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
 }
 
 @Composable
-private fun FirewallRuleCard(rule: FirewallRule, binding: FirewallAutomationBinding?, onOpen: () -> Unit, onFollow: () -> Unit, onToggle: () -> Unit, onDelete: () -> Unit) {
+private fun FirewallRuleCard(
+    rule: FirewallRule,
+    binding: FirewallAutomationBinding?,
+    draggable: Boolean,
+    dragging: Boolean,
+    dragOffsetY: Float,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onOpen: () -> Unit,
+    onFollow: () -> Unit,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val accent = if (rule.target == "ACCEPT") RouterGreen else RouterRed
-    PremiumCard(accent, Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onOpen)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(6.dp).background(if (rule.enabled) accent else RouterMuted.copy(alpha=.45f), CircleShape))
-            Spacer(Modifier.width(7.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(rule.ruleName, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val port = if (rule.proto in setOf("tcp", "udp")) rule.destPort.ifBlank { "任意端口" } else "不匹配端口"
-                Text("${firewallIpVersionLabel(rule.ipVersion)} · ${firewallProtocolLabel(rule.proto)} · $port", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val targetText = rule.destIP.ifBlank { rule.ipv6SuffixDest.ifBlank { "任意目标" } }
-                Text("${firewallInterfaceLabel(rule.inIface)} → ${firewallInterfaceLabel(rule.outIface)} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
-                val automationEligible = rule.target.equals("ACCEPT", true) && rule.direction == "forward" && rule.ipVersion in setOf("ipv4", "ipv6") && rule.inIface.equals("wan", true) && rule.outIface.equals("lan", true)
-                if (binding != null || automationEligible) {
-                    val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
-                    Text(
-                        if (binding == null) "关联路由器映射" else "映射联动 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待映射" }}",
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFollow).padding(vertical = 1.dp),
-                        fontSize = LabTypography.Caption.fontSize,
-                        fontWeight = FontWeight.SemiBold,
-                        color = followColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+    val scale by animateFloatAsState(if (dragging) 1.015f else 1f, animationSpec = spring(), label = "firewallDragScale")
+    val elevation by animateDpAsState(if (dragging) 9.dp else 2.dp, animationSpec = spring(), label = "firewallDragElevation")
+    val shape = LabCoreSurface.CompactShape
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .zIndex(if (dragging) 1f else 0f)
+            .graphicsLayer {
+                translationY = if (dragging) dragOffsetY else 0f
+                scaleX = scale
+                scaleY = scale
             }
-            Column(
-                modifier = Modifier.width(54.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                TinyBadge(if (rule.target == "ACCEPT") "允许" else "丢弃", accent)
-                Switch(checked = rule.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.76f), colors = SwitchDefaults.colors(checkedTrackColor = accent))
-                IconButton(onClick = onDelete, modifier = Modifier.size(26.dp)) { Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(15.dp), tint = RouterMuted) }
+            .clip(shape)
+            .clickable(enabled = !dragging, onClick = onOpen),
+        shape = shape,
+        color = LabCoreSurface.Card,
+        border = BorderStroke(1.dp, if (dragging) accent.copy(alpha = .28f) else LabCoreSurface.Border),
+        shadowElevation = elevation,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).background(if (rule.enabled) accent else RouterMuted.copy(alpha=.45f), CircleShape))
+                Spacer(Modifier.width(7.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(rule.ruleName, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(6.dp))
+                        TinyBadge(if (rule.target == "ACCEPT") "允许" else "丢弃", accent)
+                    }
+                    val port = if (rule.proto in setOf("tcp", "udp")) rule.destPort.ifBlank { "任意端口" } else "不匹配端口"
+                    Text("${firewallIpVersionLabel(rule.ipVersion)} · ${firewallProtocolLabel(rule.proto)} · $port", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val targetText = rule.destIP.ifBlank { rule.ipv6SuffixDest.ifBlank { "任意目标" } }
+                    Text("${firewallInterfaceLabel(rule.inIface)} → ${firewallInterfaceLabel(rule.outIface)} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
+                    val automationEligible = rule.target.equals("ACCEPT", true) && rule.direction == "forward" && rule.ipVersion in setOf("ipv4", "ipv6") && rule.inIface.equals("wan", true) && rule.outIface.equals("lan", true)
+                    if (binding != null || automationEligible) {
+                        val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
+                        Text(
+                            if (binding == null) "关联路由器映射" else "映射联动 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待映射" }}",
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFollow).padding(vertical = 1.dp),
+                            fontSize = LabTypography.Caption.fontSize,
+                            fontWeight = FontWeight.SemiBold,
+                            color = followColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.width(42.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    if (draggable) {
+                        val dragInput = Modifier.pointerInput(rule.uuid) {
+                            detectDragGestures(
+                                onDragStart = { onDragStart() },
+                                onDragEnd = onDragEnd,
+                                onDragCancel = onDragCancel,
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    onDrag(dragAmount.y)
+                                },
+                            )
+                        }
+                        Box(
+                            Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(if (dragging) accent.copy(alpha = .10f) else Color.Transparent)
+                                .then(dragInput),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Rounded.DragHandle, "拖动排序", Modifier.size(19.dp), tint = if (dragging) accent else RouterMuted.copy(alpha = .82f))
+                        }
+                    }
+                    Switch(checked = rule.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.74f), colors = SwitchDefaults.colors(checkedTrackColor = accent))
+                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.DeleteOutline, "删除", Modifier.size(15.dp), tint = RouterMuted) }
+                }
             }
         }
     }
+}
+
+private fun firewallReorderScope(rule: FirewallRule): String? {
+    val direction = rule.direction.lowercase(Locale.ROOT)
+    if (direction !in setOf("forward", "inbound", "outbound")) return null
+    val version = when (rule.ipVersion.lowercase(Locale.ROOT)) {
+        "ipv4" -> "ipv4"
+        "ipv6" -> "ipv6"
+        else -> return null
+    }
+    return "${direction}_${version}"
 }
 
 private fun firewallDirectionLabel(value: String): String = when (value.lowercase()) { "forward" -> "转发"; "inbound" -> "入站"; "outbound" -> "出站"; else -> value }
