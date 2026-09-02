@@ -879,19 +879,33 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 val dir = directions[page].first
-                val serverVisible = state.rules.filter { it.direction == dir }
+                val serverVisible = firewallDisplayRules(state, dir)
                 val serverOrder = serverVisible.map { it.uuid }
                 val ruleById = serverVisible.associateBy { it.uuid }
                 var orderedUuids by remember(dir) { mutableStateOf(serverOrder) }
                 var draggingUuid by remember(dir) { mutableStateOf<String?>(null) }
                 var dragOffsetY by remember(dir) { mutableFloatStateOf(0f) }
+                var pendingScope by remember(dir) { mutableStateOf<String?>(null) }
+                var pendingOrder by remember(dir) { mutableStateOf<List<String>>(emptyList()) }
                 val listState = rememberLazyListState()
                 val density = LocalDensity.current
-                val edgeThresholdPx = with(density) { 52.dp.toPx() }
-                val edgeStepPx = with(density) { 18.dp.toPx() }
+                val edgeThresholdPx = with(density) { 48.dp.toPx() }
+                val edgeStepPx = with(density) { 14.dp.toPx() }
+                val lastAutoScrollAt = remember(dir) { longArrayOf(0L) }
 
-                LaunchedEffect(serverOrder, draggingUuid) {
-                    if (draggingUuid == null) orderedUuids = serverOrder
+                LaunchedEffect(serverOrder, state.order.toString(), draggingUuid, pendingScope, pendingOrder) {
+                    if (draggingUuid != null) return@LaunchedEffect
+                    val waitingScope = pendingScope
+                    if (waitingScope != null) {
+                        val actual = firewallScopeOrder(state, waitingScope)
+                        if (actual == pendingOrder) {
+                            pendingScope = null
+                            pendingOrder = emptyList()
+                            orderedUuids = serverOrder
+                        }
+                    } else {
+                        orderedUuids = serverOrder
+                    }
                 }
 
                 val orderedSet = orderedUuids.toSet()
@@ -901,7 +915,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 fun cancelDrag() {
                     draggingUuid = null
                     dragOffsetY = 0f
-                    orderedUuids = serverOrder
+                    if (pendingScope == null) orderedUuids = serverOrder
                 }
 
                 fun finishDrag() {
@@ -909,21 +923,54 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     val draggedRule = ruleById[draggedId]
                     val reorderScope = draggedRule?.let(::firewallReorderScope)
                     val nextOrder = orderedUuids.toList()
-                    draggingUuid = null
                     dragOffsetY = 0f
                     if (reorderScope == null) {
-                        orderedUuids = serverOrder
+                        draggingUuid = null
+                        if (pendingScope == null) orderedUuids = serverOrder
                         return
                     }
-                    val before = serverVisible.filter { firewallReorderScope(it) == reorderScope }.map { it.uuid }
-                    val after = nextOrder.mapNotNull { ruleById[it] }.filter { firewallReorderScope(it) == reorderScope }.map { it.uuid }
-                    if (after == before) return
+
+                    val before = firewallScopeOrder(state, reorderScope)
+                    val exactAfter = nextOrder.mapNotNull { ruleById[it] }
+                        .filter { firewallReorderScope(it) == reorderScope }
+                        .map { it.uuid }
+                    var exactIndex = 0
+                    val after = before.map { uuid ->
+                        val member = ruleById[uuid]
+                        if (member != null && firewallReorderScope(member) == reorderScope && exactIndex < exactAfter.size) {
+                            exactAfter[exactIndex++]
+                        } else {
+                          uuid
+                        }
+                    }
+
+                    if (after == before) {
+                        draggingUuid = null
+                        return
+                    }
+
+                    pendingScope = reorderScope
+                    pendingOrder = after
+                    draggingUuid = null
+
                     scope.launch {
                         repository.reorderFirewall(reorderScope, after)
-                            .onSuccess { actionError = "" }
+                            .onSuccess { latest ->
+                                val actual = firewallScopeOrder(latest, reorderScope)
+                                pendingScope = null
+                                pendingOrder = emptyList()
+                                orderedUuids = firewallDisplayRules(latest, dir).map { it.uuid }
+                                if (actual == after) {
+                                    actionError = ""
+                                } else {
+                                    actionError = "路由器返回成功，但规则优先级未改变，请重试"
+                              }
+                            }
                             .onFailure {
+                                pendingScope = null
+                                pendingOrder = emptyList()
                                 orderedUuids = serverOrder
-                                actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
+                              actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
                             }
                     }
                 }
@@ -964,9 +1011,13 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         else -> 0f
                     }
                     if (scrollDelta != 0f) {
-                        scope.launch {
-                            val consumed = listState.scrollBy(scrollDelta)
-                            if (draggingUuid == uuid && consumed != 0f) dragOffsetY += consumed
+                        val now = System.nanoTime()
+                        if (now - lastAutoScrollAt[0] >= 50_000_000L) {
+                            lastAutoScrollAt[0] = now
+                            scope.launch {
+                                val consumed = listState.scrollBy(scrollDelta)
+                                if (draggingUuid == uuid && consumed != 0f) dragOffsetY += consumed
+                            }
                         }
                     }
                 }
@@ -1151,6 +1202,46 @@ private fun firewallReorderScope(rule: FirewallRule): String? {
         else -> return null
     }
     return "${direction}_${version}"
+}
+
+private fun firewallRuleBelongsToScope(rule: FirewallRule, scope: String): Boolean {
+    val separator = scope.lastIndexOf('_')
+    if (separator <= 0 || separator >= scope.lastIndex) return false
+    val direction = scope.substring(0, separator)
+    val version = scope.substring(separator + 1)
+    if (!rule.direction.equals(direction, ignoreCase = true)) return false
+    return when (rule.ipVersion.lowercase(Locale.ROOT)) {
+        "dual" -> version == "ipv4" || version == "ipv6"
+        else -> rule.ipVersion.equals(version, ignoreCase = true)
+    }
+}
+
+private fun firewallScopeOrder(state: FirewallState, scope: String): List<String> {
+    val members = state.rules.filter { it.uuid.isNotBlank() && firewallRuleBelongsToScope(it, scope) }.map { it.uuid }
+    if (members.isEmpty()) return emptyList()
+    val memberSet = members.toSet()
+    val persisted = state.order.optJSONArray(scope)?.let { array ->
+        (0 until array.length()).map { array.optString(it) }
+            .filter { it.isNotBlank() && it in memberSet }
+            .distinct()
+    }.orEmpty()
+    return persisted + members.filterNot { it in persisted }
+}
+
+private fun firewallDisplayRules(state: FirewallState, direction: String): List<FirewallRule> {
+    val base = state.rules.filter { it.direction.equals(direction, ignoreCase = true) }.toMutableList()
+    if (base.size < 2) return base
+    val byId = base.associateBy { it.uuid }
+    listOf("${direction}_ipv4", "${direction}_ipv6").forEach { scope ->
+        val positions = base.indices.filter { firewallReorderScope(base[it]) == scope }
+        if (positions.size < 2) return@forEach
+        val orderedIds = firewallScopeOrder(state, scope)
+            .filter { uuid -> byId[uuid]?.let(::firewallReorderScope) == scope }
+        positions.zip(orderedIds).forEach { (position, uuid) ->
+            byId[uuid]?.let { base[position] = it }
+        }
+    }
+    return base
 }
 
 private fun firewallDirectionLabel(value: String): String = when (value.lowercase()) { "forward" -> "转发"; "inbound" -> "入站"; "outbound" -> "出站"; else -> value }
