@@ -439,7 +439,12 @@ private fun TcpPeakConfigCard(
                             style = LabTypography.SectionTitle.copy(color = LabV2.Ink)
                         )
                         Text(
-                            if (extremeMode) "CPS 上限 10000 · 测试端仍保留资源保护" else "安全模式 · CPS 上限 2000",
+                            if (extremeMode && side == TcpPeakSide.RELAY)
+                                "CPS 上限 10000 · 临时扩展源端口，结束自动恢复"
+                            else if (extremeMode)
+                                "CPS 上限 10000 · 本机仍保留资源保护"
+                            else
+                                "安全模式 · CPS 上限 2000",
                             style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
                         )
                     }
@@ -470,8 +475,10 @@ private fun TcpPeakConfigCard(
                 }
             }
             Text(
-                if (extremeMode)
-                    "极限模式只提高发起速率上限；FD、资源释放与测试端保护仍然生效。"
+                if (extremeMode && side == TcpPeakSide.RELAY)
+                    "Relay 会临时调整源端口范围；停止、完成或异常恢复时会还原，同时保留 FD、Conntrack、内存与 CPU 保护。"
+                else if (extremeMode)
+                    "本机极限模式提高 CPS 上限；FD 与资源释放保护仍然生效。"
                 else
                     "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
                 style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
