@@ -1,0 +1,72 @@
+name: One-shot firewall drag and WireGuard state fix retry
+
+on:
+  push:
+    branches:
+      - fix/firewall-order-wireguard-disabled-state
+    paths:
+      - .github/workflows/one-shot-firewall-wireguard-ui-fix-retry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-compile-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/firewall-order-wireguard-disabled-state
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.5.1
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - name: Apply focused patch from reviewed one-shot script
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/one-shot-firewall-wireguard-ui-fix.yml')
+          lines = workflow.read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(lines) if "python3 - <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
+          script_lines = []
+          for line in lines[start:end]:
+              script_lines.append(line[10:] if line.startswith('          ') else line)
+          script = '\n'.join(script_lines) + '\n'
+          exec(compile(script, '<focused-patch>', 'exec'), {})
+          PY
+
+      - name: Compile Kotlin
+        run: gradle :app:compileDebugKotlin --stacktrace --console=plain
+
+      - name: Commit focused changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          git commit -m "fix(app): add firewall drag ordering and stop stale WireGuard state"
+          git push origin HEAD:fix/firewall-order-wireguard-disabled-state
