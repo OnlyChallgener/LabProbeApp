@@ -879,135 +879,89 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 val dir = directions[page].first
-                val serverVisible = firewallDisplayRules(state, dir)
-                val serverOrder = serverVisible.map { it.uuid }
-                val ruleById = serverVisible.associateBy { it.uuid }
-                var orderedUuids by remember(dir) { mutableStateOf(serverOrder) }
-                var draggingUuid by remember(dir) { mutableStateOf<String?>(null) }
+                val directionRules = state.rules.filter { it.direction.equals(dir, ignoreCase = true) }
+                val ruleById = directionRules.filter { it.uuid.isNotBlank() }.associateBy { it.uuid }
+                val scopes = listOf("${dir}_ipv4" to "IPv4", "${dir}_ipv6" to "IPv6")
+                val serverOrders = scopes.associate { (scopeName, _) -> scopeName to firewallScopeOrder(state, scopeName) }
+                var localOrders by remember(dir) { mutableStateOf(serverOrders) }
+                var draggingKey by remember(dir) { mutableStateOf<String?>(null) }
                 var dragOffsetY by remember(dir) { mutableFloatStateOf(0f) }
                 var pendingScope by remember(dir) { mutableStateOf<String?>(null) }
-                var pendingOrder by remember(dir) { mutableStateOf<List<String>>(emptyList()) }
                 val listState = rememberLazyListState()
                 val density = LocalDensity.current
                 val edgeThresholdPx = with(density) { 48.dp.toPx() }
                 val edgeStepPx = with(density) { 14.dp.toPx() }
                 val lastAutoScrollAt = remember(dir) { longArrayOf(0L) }
+                val reorderBusy = resource.mutating || automationResource.mutating || pendingScope != null
 
-                LaunchedEffect(serverOrder, state.order.toString(), draggingUuid, pendingScope, pendingOrder) {
-                    if (draggingUuid != null) return@LaunchedEffect
-                    val waitingScope = pendingScope
-                    if (waitingScope != null) {
-                        val actual = firewallScopeOrder(state, waitingScope)
-                        if (actual == pendingOrder) {
-                            pendingScope = null
-                            pendingOrder = emptyList()
-                            orderedUuids = serverOrder
-                        }
-                    } else {
-                        orderedUuids = serverOrder
-                    }
+                LaunchedEffect(serverOrders, draggingKey, pendingScope) {
+                    if (draggingKey == null && pendingScope == null) localOrders = serverOrders
                 }
 
-                val orderedSet = orderedUuids.toSet()
-                val visible = orderedUuids.mapNotNull { ruleById[it] } + serverVisible.filterNot { it.uuid in orderedSet }
-                val reorderScopeCounts = visible.mapNotNull(::firewallReorderScope).groupingBy { it }.eachCount()
-
                 fun cancelDrag() {
-                    draggingUuid = null
+                    draggingKey = null
                     dragOffsetY = 0f
-                    if (pendingScope == null) orderedUuids = serverOrder
+                    if (pendingScope == null) localOrders = serverOrders
                 }
 
                 fun finishDrag() {
-                    val draggedId = draggingUuid ?: return
-                    val draggedRule = ruleById[draggedId]
-                    val reorderScope = draggedRule?.let(::firewallReorderScope)
-                    val nextOrder = orderedUuids.toList()
+                    val active = draggingKey ?: return
+                    val separator = active.indexOf('|')
+                    if (separator <= 0 || separator >= active.lastIndex) {
+                        cancelDrag()
+                        return
+                    }
+                    val scopeName = active.substring(0, separator)
+                    val after = localOrders[scopeName].orEmpty()
+                    val before = firewallScopeOrder(state, scopeName)
+                    draggingKey = null
                     dragOffsetY = 0f
-                    if (reorderScope == null) {
-                        draggingUuid = null
-                        if (pendingScope == null) orderedUuids = serverOrder
-                        return
-                    }
-
-                    val before = firewallScopeOrder(state, reorderScope)
-                    val exactAfter = nextOrder.mapNotNull { ruleById[it] }
-                        .filter { firewallReorderScope(it) == reorderScope }
-                        .map { it.uuid }
-                    var exactIndex = 0
-                    val after = before.map { uuid ->
-                        val member = ruleById[uuid]
-                        if (member != null && firewallReorderScope(member) == reorderScope && exactIndex < exactAfter.size) {
-                            exactAfter[exactIndex++]
-                        } else {
-                          uuid
-                        }
-                    }
-
-                    if (after == before) {
-                        draggingUuid = null
-                        return
-                    }
-
-                    pendingScope = reorderScope
-                    pendingOrder = after
-                    draggingUuid = null
-
+                    if (after == before) return
+                    pendingScope = scopeName
                     scope.launch {
-                        repository.reorderFirewall(reorderScope, after)
+                        repository.reorderFirewall(scopeName, after)
                             .onSuccess { latest ->
-                                val actual = firewallScopeOrder(latest, reorderScope)
+                                val actual = firewallScopeOrder(latest, scopeName)
+                                localOrders = localOrders + (scopeName to actual)
                                 pendingScope = null
-                                pendingOrder = emptyList()
-                                orderedUuids = firewallDisplayRules(latest, dir).map { it.uuid }
-                                if (actual == after) {
-                                    actionError = ""
-                                } else {
-                                    actionError = "路由器返回成功，但规则优先级未改变，请重试"
-                              }
+                                actionError = if (actual == after) "" else "路由器返回成功，但${if (scopeName.endsWith("ipv4")) "IPv4" else "IPv6"}优先级未改变，请重试"
                             }
                             .onFailure {
+                                localOrders = localOrders + (scopeName to before)
                                 pendingScope = null
-                                pendingOrder = emptyList()
-                                orderedUuids = serverOrder
-                              actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
+                                actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
                             }
                     }
                 }
 
-                fun dragRule(uuid: String, deltaY: Float) {
-                    if (draggingUuid != uuid) return
-                    val draggedRule = ruleById[uuid] ?: return
-                    val reorderScope = firewallReorderScope(draggedRule) ?: return
+                fun dragRule(scopeName: String, uuid: String, deltaY: Float) {
+                    val rowKey = "$scopeName|$uuid"
+                    if (draggingKey != rowKey || reorderBusy) return
+                    val order = localOrders[scopeName].orEmpty()
                     dragOffsetY += deltaY
                     val layout = listState.layoutInfo
-                    val draggedInfo = layout.visibleItemsInfo.firstOrNull { it.key == uuid } ?: return
+                    val draggedInfo = layout.visibleItemsInfo.firstOrNull { it.key == rowKey } ?: return
                     val projectedCenter = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
+                    val prefix = "$scopeName|"
                     val target = layout.visibleItemsInfo.firstOrNull { info ->
-                        val targetId = info.key as? String ?: return@firstOrNull false
-                        if (targetId == uuid) return@firstOrNull false
-                        val targetRule = ruleById[targetId] ?: return@firstOrNull false
-                        if (firewallReorderScope(targetRule) != reorderScope) return@firstOrNull false
-                        projectedCenter >= info.offset && projectedCenter <= info.offset + info.size
+                        val key = info.key as? String ?: return@firstOrNull false
+                        key != rowKey && key.startsWith(prefix) && projectedCenter >= info.offset && projectedCenter <= info.offset + info.size
                     }
                     if (target != null) {
-                        val targetId = target.key as String
-                        val from = orderedUuids.indexOf(uuid)
-                        val to = orderedUuids.indexOf(targetId)
+                        val targetUuid = (target.key as String).removePrefix(prefix)
+                        val from = order.indexOf(uuid)
+                        val to = order.indexOf(targetUuid)
                         if (from >= 0 && to >= 0 && from != to) {
-                            val next = orderedUuids.toMutableList()
-                            next[from] = targetId
+                            val next = order.toMutableList()
+                            next[from] = targetUuid
                             next[to] = uuid
-                            orderedUuids = next
+                            localOrders = localOrders + (scopeName to next)
                             dragOffsetY += (draggedInfo.offset - target.offset).toFloat()
                         }
                     }
-
-                    val viewportStart = layout.viewportStartOffset.toFloat()
-                    val viewportEnd = layout.viewportEndOffset.toFloat()
                     val scrollDelta = when {
-                        projectedCenter < viewportStart + edgeThresholdPx -> -edgeStepPx
-                        projectedCenter > viewportEnd - edgeThresholdPx -> edgeStepPx
+                        projectedCenter < layout.viewportStartOffset + edgeThresholdPx -> -edgeStepPx
+                        projectedCenter > layout.viewportEndOffset - edgeThresholdPx -> edgeStepPx
                         else -> 0f
                     }
                     if (scrollDelta != 0f) {
@@ -1016,62 +970,69 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             lastAutoScrollAt[0] = now
                             scope.launch {
                                 val consumed = listState.scrollBy(scrollDelta)
-                                if (draggingUuid == uuid && consumed != 0f) dragOffsetY += consumed
+                                if (draggingKey == rowKey && consumed != 0f) dragOffsetY += consumed
                             }
                         }
                     }
                 }
 
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
+                    item(key = "toolbar-$dir") {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                            Text("${directionRules.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                             Spacer(Modifier.weight(1f))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) {
-                                    Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
-                                }
-                                Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp))
-                                    }
-                                }
+                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue) }
+                                Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp)) } }
                             }
                         }
                     }
-                    if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
-                    if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
-                    if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
-                    if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${directions[page].second}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
-                    items(visible, key = { it.uuid }) { rule ->
-                        val reorderScope = firewallReorderScope(rule)
-                        val draggable = rule.uuid.isNotBlank() && reorderScope != null && (reorderScopeCounts[reorderScope] ?: 0) > 1 && !resource.mutating && !automationResource.mutating
-                        FirewallRuleCard(
-                            rule = rule,
-                            binding = bindings[rule.uuid],
-                            draggable = draggable,
-                            dragging = draggingUuid == rule.uuid,
-                            dragOffsetY = if (draggingUuid == rule.uuid) dragOffsetY else 0f,
-                            onDragStart = {
-                                if (draggable) {
-                                    draggingUuid = rule.uuid
-                                    dragOffsetY = 0f
+                    if (error.isNotBlank()) item(key = "error-$dir") { CompactMessage(error, RouterAmber) }
+                    if (automationResource.mutating) item(key = "automation-$dir") { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对；排序按钮会暂时变灰", RouterBlue) }
+                    if (resource.value == null) item(key = "loading-$dir") { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
+                    scopes.forEach { (scopeName, versionLabel) ->
+                        val ids = localOrders[scopeName].orEmpty().filter { it in ruleById }
+                        item(key = "section-$scopeName") {
+                            Surface(Modifier.fillMaxWidth(), RoundedCornerShape(13.dp), RouterField, border = BorderStroke(1.dp, RouterBorder)) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    TinyBadge(versionLabel, if (versionLabel == "IPv4") RouterBlue else RouterGreen)
+                                    Spacer(Modifier.width(7.dp))
+                                    Text("${ids.size} 条 · 双栈规则同时参与本区域优先级", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                                    Spacer(Modifier.weight(1f))
+                                    if (pendingScope == scopeName) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = RouterBlue)
                                 }
-                            },
-                            onDrag = { delta -> dragRule(rule.uuid, delta) },
-                            onDragEnd = ::finishDrag,
-                            onDragCancel = ::cancelDrag,
-                            onOpen = { editing = rule },
-                            onFollow = { followRule = rule },
-                            onToggle = { scope.launch {
-                                repository.setFirewallEnabled(rule.uuid, !rule.enabled)
-                                    .onSuccess { actionError = "" }
-                                    .onFailure { actionError = it.message.orEmpty() }
-                            } },
-                            onDelete = { deleteTarget = rule }
-                        )
+                            }
+                        }
+                        if (ids.isEmpty()) {
+                            item(key = "empty-$scopeName") { CompactMessage("$versionLabel 暂无规则", RouterMuted) }
+                        } else {
+                            items(ids, key = { uuid -> "$scopeName|$uuid" }) { uuid ->
+                                ruleById[uuid]?.let { rule ->
+                                    val rowKey = "$scopeName|$uuid"
+                                    val showDrag = uuid.isNotBlank() && ids.size > 1
+                                    val dragEnabled = showDrag && !reorderBusy
+                                    FirewallRuleCard(
+                                        rule = rule,
+                                        binding = bindings[rule.uuid],
+                                        draggable = showDrag,
+                                        dragEnabled = dragEnabled,
+                                        dragging = draggingKey == rowKey,
+                                        dragOffsetY = if (draggingKey == rowKey) dragOffsetY else 0f,
+                                        onDragStart = { if (dragEnabled) { draggingKey = rowKey; dragOffsetY = 0f } },
+                                        onDrag = { delta -> dragRule(scopeName, uuid, delta) },
+                                        onDragEnd = ::finishDrag,
+                                        onDragCancel = ::cancelDrag,
+                                        onOpen = { editing = rule },
+                                        onFollow = { followRule = rule },
+                                        onToggle = { scope.launch { repository.setFirewallEnabled(rule.uuid, !rule.enabled).onSuccess { actionError = "" }.onFailure { actionError = it.message.orEmpty() } } },
+                                        onDelete = { deleteTarget = rule }
+                                    )
+                                }
+                            }
+                        }
+                        item(key = "space-$scopeName") { Spacer(Modifier.height(4.dp)) }
                     }
-                    item { Spacer(Modifier.height(12.dp)) }
+                    item(key = "bottom-$dir") { Spacer(Modifier.height(12.dp)) }
                 }
             }
         }
@@ -1097,6 +1058,7 @@ private fun FirewallRuleCard(
     rule: FirewallRule,
     binding: FirewallAutomationBinding?,
     draggable: Boolean,
+    dragEnabled: Boolean,
     dragging: Boolean,
     dragOffsetY: Float,
     onDragStart: () -> Unit,
@@ -1163,26 +1125,26 @@ private fun FirewallRuleCard(
                     verticalArrangement = Arrangement.spacedBy(1.dp)
                 ) {
                     if (draggable) {
-                        val dragInput = Modifier.pointerInput(rule.uuid) {
+                        val dragInput = if (dragEnabled) Modifier.pointerInput(rule.uuid, dragEnabled) {
                             detectDragGestures(
                                 onDragStart = { onDragStart() },
                                 onDragEnd = onDragEnd,
                                 onDragCancel = onDragCancel,
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onDrag(dragAmount.y)
-                                },
+                                onDrag = { change, dragAmount -> change.consume(); onDrag(dragAmount.y) },
                             )
-                        }
+                        } else Modifier
                         Box(
-                            Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
+                            Modifier.size(30.dp).clip(CircleShape)
                                 .background(if (dragging) accent.copy(alpha = .10f) else Color.Transparent)
                                 .then(dragInput),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Rounded.DragHandle, "拖动排序", Modifier.size(19.dp), tint = if (dragging) accent else RouterMuted.copy(alpha = .82f))
+                            Icon(
+                                Icons.Rounded.DragHandle,
+                                if (dragEnabled) "拖动排序" else "排序暂不可用",
+                                Modifier.size(19.dp),
+                                tint = when { dragging -> accent; dragEnabled -> RouterMuted.copy(alpha = .82f); else -> RouterMuted.copy(alpha = .34f) },
+                            )
                         }
                     }
                     Switch(checked = rule.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.74f), colors = SwitchDefaults.colors(checkedTrackColor = accent))
