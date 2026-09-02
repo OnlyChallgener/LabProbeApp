@@ -35,6 +35,7 @@ import androidx.compose.material3.SegmentedButtonColors
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -268,6 +269,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var port by remember { mutableStateOf(pendingAiCommand?.config?.port?.toString() ?: prefs.tcpPeakPort) }
     var target by remember { mutableStateOf(pendingAiCommand?.config?.targetConnections?.toString() ?: prefs.tcpPeakTarget) }
     var cps by remember { mutableStateOf(pendingAiCommand?.config?.cps?.toString() ?: prefs.tcpPeakCps) }
+    var extremeMode by remember { mutableStateOf(pendingAiCommand?.config?.extremeMode ?: false) }
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
@@ -278,7 +280,8 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         port = port.toIntOrNull() ?: 0,
         family = family,
         targetConnections = target.toIntOrNull() ?: 0,
-        cps = cps.toIntOrNull() ?: 0
+        cps = cps.toIntOrNull() ?: 0,
+        extremeMode = extremeMode
     )
     fun leavePage() {
         controller.stop()
@@ -310,13 +313,21 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             port = port,
             target = target,
             cps = cps,
+            extremeMode = extremeMode,
             enabled = !active,
             onSide = { side = it },
             onFamily = { family = it },
             onHost = { host = it; prefs.tcpPeakHost = it },
             onPort = { port = it; prefs.tcpPeakPort = it },
             onTarget = { target = it; prefs.tcpPeakTarget = it },
-            onCps = { cps = it; prefs.tcpPeakCps = it }
+            onCps = { cps = it; prefs.tcpPeakCps = it },
+            onExtremeMode = { next ->
+                extremeMode = next
+                if (!next && (cps.toIntOrNull() ?: 0) > 2_000) {
+                    cps = "2000"
+                    prefs.tcpPeakCps = cps
+                }
+            }
         )
 
         Button(
@@ -355,13 +366,15 @@ private fun TcpPeakConfigCard(
     port: String,
     target: String,
     cps: String,
+    extremeMode: Boolean,
     enabled: Boolean,
     onSide: (TcpPeakSide) -> Unit,
     onFamily: (TcpPeakFamily) -> Unit,
     onHost: (String) -> Unit,
     onPort: (String) -> Unit,
     onTarget: (String) -> Unit,
-    onCps: (String) -> Unit
+    onCps: (String) -> Unit,
+    onExtremeMode: (Boolean) -> Unit
 ) {
     Surface(
         shape = LabV2.CardShape,
@@ -408,6 +421,36 @@ private fun TcpPeakConfigCard(
                 TcpPeakNumberField("连接量程", target, onTarget, enabled, Modifier.weight(1f))
                 TcpPeakNumberField("CPS", cps, onCps, enabled, Modifier.weight(1f))
             }
+            Surface(
+                shape = LabV2.CompactCardShape,
+                color = if (extremeMode) LabV2.Amber.copy(alpha = .08f) else LabV2.FieldSoft,
+                border = BorderStroke(
+                    1.dp,
+                    if (extremeMode) LabV2.Amber.copy(alpha = .34f) else LabCoreSurface.Border.copy(alpha = .82f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "极限模式",
+                            style = LabTypography.SectionTitle.copy(color = LabV2.Ink)
+                        )
+                        Text(
+                            if (extremeMode) "CPS 上限 10000 · 测试端仍保留资源保护" else "安全模式 · CPS 上限 2000",
+                            style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Switch(
+                        checked = extremeMode,
+                        onCheckedChange = onExtremeMode,
+                        enabled = enabled
+                    )
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("地址族", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -427,7 +470,10 @@ private fun TcpPeakConfigCard(
                 }
             }
             Text(
-                "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
+                if (extremeMode)
+                    "极限模式只提高发起速率上限；FD、资源释放与测试端保护仍然生效。"
+                else
+                    "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
                 style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
             )
         }

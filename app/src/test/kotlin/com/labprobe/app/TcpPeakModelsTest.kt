@@ -93,6 +93,18 @@ class TcpPeakModelsTest {
     }
 
     @Test
+    fun extremeModeRaisesCpsCeilingWhileSafeModeStaysBounded() {
+        val safe = TcpPeakConfig(host = "example.com", cps = 9_999)
+        val extreme = safe.copy(extremeMode = true)
+
+        assertEquals("CPS 必须是 1–2000", safe.validationError())
+        assertEquals(2_000, safe.normalized().cps)
+        assertEquals(null, extreme.validationError())
+        assertEquals(9_999, extreme.normalized().cps)
+        assertEquals(10_000, extreme.copy(cps = 99_999).normalized().cps)
+    }
+
+    @Test
     fun aiCommandIsOneShotBoundedAndExpires() {
         val now = 1_000_000L
         val command = TcpPeakPendingAiCommand(
@@ -104,6 +116,7 @@ class TcpPeakModelsTest {
                 family = TcpPeakFamily.IPV4,
                 targetConnections = 2_000,
                 cps = 200,
+                extremeMode = true,
             ),
             expiresAtEpochMs = now + 60_000L,
         )

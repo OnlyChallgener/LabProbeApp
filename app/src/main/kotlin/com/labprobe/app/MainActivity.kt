@@ -10915,6 +10915,7 @@ class HubApi(private val prefs: AppPrefs) {
             .put("family", value.family.wireValue)
             .put("targetConnections", value.targetConnections)
             .put("cps", value.cps)
+            .put("extremeMode", value.extremeMode)
             .put("connectTimeoutMs", value.connectTimeoutMs)
             .put("maxDurationSeconds", value.maxDurationSeconds)
         TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test/start", "POST", body))
