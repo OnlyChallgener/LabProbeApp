@@ -38,14 +38,14 @@ jobs:
           p.write_text(s, encoding='utf-8')
           PY
 
-          CHANGED="$(git diff --name-only | sort)"
+          CHANGED="$(git diff HEAD --name-only | sort)"
           printf '%s\n' "$CHANGED"
           EXPECTED=$(printf '%s\n' \
             app/build.gradle.kts \
             app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt \
             app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt | sort)
           test "$CHANGED" = "$EXPECTED"
-          git diff --check
+          git diff HEAD --check
 
       - uses: actions/setup-java@v4
         with:
