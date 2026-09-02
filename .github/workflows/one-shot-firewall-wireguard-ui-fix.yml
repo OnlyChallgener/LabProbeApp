@@ -1,0 +1,545 @@
+name: One-shot firewall drag and WireGuard state fix
+
+on:
+  push:
+    branches:
+      - fix/firewall-order-wireguard-disabled-state
+    paths:
+      - .github/workflows/one-shot-firewall-wireguard-ui-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-compile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/firewall-order-wireguard-disabled-state
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Apply focused UI/state patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ui_path = Path('app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt')
+          text = ui_path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  'import androidx.compose.animation.AnimatedVisibility\n',
+                  'import androidx.compose.animation.AnimatedVisibility\n'
+                  'import androidx.compose.animation.core.animateDpAsState\n'
+                  'import androidx.compose.animation.core.animateFloatAsState\n'
+                  'import androidx.compose.animation.core.spring\n'
+              ),
+              (
+                  'import androidx.compose.foundation.clickable\nimport androidx.compose.foundation.horizontalScroll\n',
+                  'import androidx.compose.foundation.clickable\n'
+                  'import androidx.compose.foundation.gestures.detectDragGestures\n'
+                  'import androidx.compose.foundation.gestures.scrollBy\n'
+                  'import androidx.compose.foundation.horizontalScroll\n'
+              ),
+              (
+                  'import androidx.compose.foundation.lazy.LazyColumn\nimport androidx.compose.foundation.lazy.items\n',
+                  'import androidx.compose.foundation.lazy.LazyColumn\n'
+                  'import androidx.compose.foundation.lazy.items\n'
+                  'import androidx.compose.foundation.lazy.rememberLazyListState\n'
+              ),
+              (
+                  'import androidx.compose.ui.draw.clipToBounds\nimport androidx.compose.ui.draw.scale\n',
+                  'import androidx.compose.ui.draw.clipToBounds\n'
+                  'import androidx.compose.ui.draw.scale\n'
+                  'import androidx.compose.ui.graphics.graphicsLayer\n'
+              ),
+              (
+                  'import androidx.compose.ui.platform.LocalContext\n',
+                  'import androidx.compose.ui.platform.LocalContext\n'
+                  'import androidx.compose.ui.platform.LocalDensity\n'
+              ),
+              (
+                  'import androidx.compose.ui.graphics.drawscope.Stroke\n',
+                  'import androidx.compose.ui.graphics.drawscope.Stroke\n'
+                  'import androidx.compose.ui.input.pointer.pointerInput\n'
+              ),
+              (
+                  'import androidx.compose.ui.unit.sp\n',
+                  'import androidx.compose.ui.unit.sp\n'
+                  'import androidx.compose.ui.zIndex\n'
+              ),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'expected import anchor not found: {old!r}')
+              text = text.replace(old, new, 1)
+
+          start = text.index('@Composable\nfun RouterFirewallScreen')
+          end = text.index('private fun firewallDirectionLabel', start)
+          new_block = r'''@Composable
+          fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
+              val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+              val automationRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { FirewallAutomationRepository(prefs) }
+              val resource by repository.firewall.collectAsState()
+              val automationResource by automationRepository.state.collectAsState()
+              val state = resource.value ?: FirewallState()
+              val scope = rememberCoroutineScope()
+              val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
+              val directions = listOf("forward" to "转发", "inbound" to "入站", "outbound" to "出站")
+              val currentDirection = directions[pagerState.currentPage].first
+              var actionError by remember { mutableStateOf("") }
+              var editing by remember { mutableStateOf<FirewallRule?>(null) }
+              var adding by remember { mutableStateOf(false) }
+              var deleteTarget by remember { mutableStateOf<FirewallRule?>(null) }
+              var followRule by remember { mutableStateOf<FirewallRule?>(null) }
+              var followTargets by remember { mutableStateOf(FirewallAutomationTargets()) }
+              var followTargetsLoading by remember { mutableStateOf(false) }
+              val bindings = automationResource.bindings.associateBy { it.firewallUuid }
+              val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
+
+              LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
+              LaunchedEffect(followRule?.uuid) {
+                  if (followRule != null) {
+                      followTargetsLoading = true
+                      followTargets = runCatching { automationRepository.loadTargets() }.getOrDefault(FirewallAutomationTargets())
+                      followTargetsLoading = false
+                  }
+              }
+
+              followRule?.let { selected ->
+                  FirewallAutomationPage(
+                      rule = selected,
+                      binding = bindings[selected.uuid],
+                      targets = followTargets,
+                      targetsLoading = followTargetsLoading,
+                      busy = automationResource.mutating,
+                      externalError = automationResource.error,
+                      onBack = { followRule = null; actionError = "" },
+                      onRefreshTargets = {
+                          scope.launch {
+                              followTargetsLoading = true
+                              followTargets = runCatching { automationRepository.loadTargets() }.getOrDefault(FirewallAutomationTargets())
+                              followTargetsLoading = false
+                          }
+                      },
+                      onSave = { binding ->
+                          scope.launch {
+                              automationRepository.save(binding)
+                                  .onSuccess { actionError = ""; repository.refreshFirewall(true) }
+                                  .onFailure { actionError = it.message.orEmpty() }
+                          }
+                      },
+                      onStop = {
+                          scope.launch {
+                              automationRepository.remove(selected.uuid)
+                                  .onSuccess { followRule = null; actionError = "" }
+                                  .onFailure { actionError = it.message.orEmpty() }
+                          }
+                      },
+                      onSync = {
+                          scope.launch {
+                              automationRepository.sync(selected.uuid)
+                                  .onSuccess { actionError = ""; repository.refreshFirewall(true) }
+                                  .onFailure { actionError = it.message.orEmpty() }
+                          }
+                      },
+                  )
+                  return
+              }
+
+              if (adding || editing != null) {
+                  FirewallEditorPage(
+                      initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else "wan", outIface = if (currentDirection == "inbound") "" else "lan"),
+                      managedByMapping = editing?.let { bindings.containsKey(it.uuid) } == true,
+                      onBack = { adding = false; editing = null },
+                      onSave = { rule -> scope.launch {
+                          val result = if (editing == null) repository.addFirewallRule(rule) else repository.updateFirewallRule(rule)
+                          result.onSuccess { adding = false; editing = null; actionError = "" }
+                              .onFailure { actionError = it.message.orEmpty() }
+                      } }
+                  )
+                  return
+              }
+
+              Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("防火墙", onBack, "${state.rules.count { it.enabled }} 条启用 · ${state.rules.size}/${state.maxRules}") }) { padding ->
+                  Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                          directions.forEachIndexed { index, (_, label) ->
+                              CompactSegment(label, pagerState.currentPage == index, Modifier.weight(1f)) {
+                                  scope.launch { pagerState.animateScrollToPage(index) }
+                              }
+                          }
+                      }
+                      androidx.compose.foundation.pager.HorizontalPager(
+                          state = pagerState,
+                          modifier = Modifier.fillMaxSize()
+                      ) { page ->
+                          val dir = directions[page].first
+                          val serverVisible = state.rules.filter { it.direction == dir }
+                          val serverOrder = serverVisible.map { it.uuid }
+                          val ruleById = serverVisible.associateBy { it.uuid }
+                          var orderedUuids by remember(dir) { mutableStateOf(serverOrder) }
+                          var draggingUuid by remember(dir) { mutableStateOf<String?>(null) }
+                          var dragOffsetY by remember(dir) { mutableFloatStateOf(0f) }
+                          val listState = rememberLazyListState()
+                          val density = LocalDensity.current
+                          val edgeThresholdPx = with(density) { 52.dp.toPx() }
+                          val edgeStepPx = with(density) { 18.dp.toPx() }
+
+                          LaunchedEffect(serverOrder, draggingUuid) {
+                              if (draggingUuid == null) orderedUuids = serverOrder
+                          }
+
+                          val orderedSet = orderedUuids.toSet()
+                          val visible = orderedUuids.mapNotNull { ruleById[it] } + serverVisible.filterNot { it.uuid in orderedSet }
+                          val reorderScopeCounts = visible.mapNotNull(::firewallReorderScope).groupingBy { it }.eachCount()
+
+                          fun cancelDrag() {
+                              draggingUuid = null
+                              dragOffsetY = 0f
+                              orderedUuids = serverOrder
+                          }
+
+                          fun finishDrag() {
+                              val draggedId = draggingUuid ?: return
+                              val draggedRule = ruleById[draggedId]
+                              val reorderScope = draggedRule?.let(::firewallReorderScope)
+                              val nextOrder = orderedUuids.toList()
+                              draggingUuid = null
+                              dragOffsetY = 0f
+                              if (reorderScope == null) {
+                                  orderedUuids = serverOrder
+                                  return
+                              }
+                              val before = serverVisible.filter { firewallReorderScope(it) == reorderScope }.map { it.uuid }
+                              val after = nextOrder.mapNotNull { ruleById[it] }.filter { firewallReorderScope(it) == reorderScope }.map { it.uuid }
+                              if (after == before) return
+                              scope.launch {
+                                  repository.reorderFirewall(reorderScope, after)
+                                      .onSuccess { actionError = "" }
+                                      .onFailure {
+                                          orderedUuids = serverOrder
+                                          actionError = it.message.orEmpty().ifBlank { "防火墙排序未生效，请重试" }
+                                      }
+                              }
+                          }
+
+                          fun dragRule(uuid: String, deltaY: Float) {
+                              if (draggingUuid != uuid) return
+                              val draggedRule = ruleById[uuid] ?: return
+                              val reorderScope = firewallReorderScope(draggedRule) ?: return
+                              dragOffsetY += deltaY
+                              val layout = listState.layoutInfo
+                              val draggedInfo = layout.visibleItemsInfo.firstOrNull { it.key == uuid } ?: return
+                              val projectedCenter = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
+                              val target = layout.visibleItemsInfo.firstOrNull { info ->
+                                  val targetId = info.key as? String ?: return@firstOrNull false
+                                  if (targetId == uuid) return@firstOrNull false
+                                  val targetRule = ruleById[targetId] ?: return@firstOrNull false
+                                  if (firewallReorderScope(targetRule) != reorderScope) return@firstOrNull false
+                                  projectedCenter >= info.offset && projectedCenter <= info.offset + info.size
+                              }
+                              if (target != null) {
+                                  val targetId = target.key as String
+                                  val from = orderedUuids.indexOf(uuid)
+                                  val to = orderedUuids.indexOf(targetId)
+                                  if (from >= 0 && to >= 0 && from != to) {
+                                      val next = orderedUuids.toMutableList()
+                                      next[from] = targetId
+                                      next[to] = uuid
+                                      orderedUuids = next
+                                      dragOffsetY += (draggedInfo.offset - target.offset).toFloat()
+                                  }
+                              }
+
+                              val viewportStart = layout.viewportStartOffset.toFloat()
+                              val viewportEnd = layout.viewportEndOffset.toFloat()
+                              val scrollDelta = when {
+                                  projectedCenter < viewportStart + edgeThresholdPx -> -edgeStepPx
+                                  projectedCenter > viewportEnd - edgeThresholdPx -> edgeStepPx
+                                  else -> 0f
+                              }
+                              if (scrollDelta != 0f) {
+                                  scope.launch {
+                                      val consumed = listState.scrollBy(scrollDelta)
+                                      if (draggingUuid == uuid && consumed != 0f) dragOffsetY += consumed
+                                  }
+                              }
+                          }
+
+                          LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                              item {
+                                  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                      Text("${visible.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+                                      Spacer(Modifier.weight(1f))
+                                      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                          IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) {
+                                              Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
+                                          }
+                                          Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) {
+                                              Box(contentAlignment = Alignment.Center) {
+                                                  Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp))
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+                              if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+                              if (automationResource.mutating) item { CompactMessage("自动跟随正在通过路由器 Web 防火墙安全核对", RouterBlue) }
+                              if (resource.value == null) item { CompactMessage("防火墙规则正在后台预加载", RouterBlue) }
+                              if (resource.value != null && visible.isEmpty()) item { CompactEmpty("暂无${directions[page].second}规则", "点右上角添加", RouterGlyph.Firewall) { adding = true } }
+                              items(visible, key = { it.uuid }) { rule ->
+                                  val reorderScope = firewallReorderScope(rule)
+                                  val draggable = rule.uuid.isNotBlank() && reorderScope != null && (reorderScopeCounts[reorderScope] ?: 0) > 1 && !resource.mutating && !automationResource.mutating
+                                  FirewallRuleCard(
+                                      rule = rule,
+                                      binding = bindings[rule.uuid],
+                                      draggable = draggable,
+                                      dragging = draggingUuid == rule.uuid,
+                                      dragOffsetY = if (draggingUuid == rule.uuid) dragOffsetY else 0f,
+                                      onDragStart = {
+                                          if (draggable) {
+                                              draggingUuid = rule.uuid
+                                              dragOffsetY = 0f
+                                          }
+                                      },
+                                      onDrag = { delta -> dragRule(rule.uuid, delta) },
+                                      onDragEnd = ::finishDrag,
+                                      onDragCancel = ::cancelDrag,
+                                      onOpen = { editing = rule },
+                                      onFollow = { followRule = rule },
+                                      onToggle = { scope.launch {
+                                          repository.setFirewallEnabled(rule.uuid, !rule.enabled)
+                                              .onSuccess { actionError = "" }
+                                              .onFailure { actionError = it.message.orEmpty() }
+                                      } },
+                                      onDelete = { deleteTarget = rule }
+                                  )
+                              }
+                              item { Spacer(Modifier.height(12.dp)) }
+                          }
+                      }
+                  }
+              }
+
+              deleteTarget?.let { rule ->
+                  ConfirmDialog("删除防火墙规则？", "删除“${rule.ruleName}”可能立即影响远程访问。", "删除", {
+                      scope.launch {
+                          repository.deleteFirewallRule(rule.uuid)
+                              .onSuccess {
+                                  if (bindings.containsKey(rule.uuid)) automationRepository.remove(rule.uuid)
+                                  deleteTarget = null
+                                  actionError = ""
+                              }
+                              .onFailure { actionError = it.message.orEmpty() }
+                      }
+                  }) { deleteTarget = null }
+              }
+          }
+
+          @Composable
+          private fun FirewallRuleCard(
+              rule: FirewallRule,
+              binding: FirewallAutomationBinding?,
+              draggable: Boolean,
+              dragging: Boolean,
+              dragOffsetY: Float,
+              onDragStart: () -> Unit,
+              onDrag: (Float) -> Unit,
+              onDragEnd: () -> Unit,
+              onDragCancel: () -> Unit,
+              onOpen: () -> Unit,
+              onFollow: () -> Unit,
+              onToggle: () -> Unit,
+              onDelete: () -> Unit,
+          ) {
+              val accent = if (rule.target == "ACCEPT") RouterGreen else RouterRed
+              val scale by animateFloatAsState(if (dragging) 1.015f else 1f, animationSpec = spring(), label = "firewallDragScale")
+              val elevation by animateDpAsState(if (dragging) 9.dp else 2.dp, animationSpec = spring(), label = "firewallDragElevation")
+              val shape = LabCoreSurface.CompactShape
+              Surface(
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .zIndex(if (dragging) 1f else 0f)
+                      .graphicsLayer {
+                          translationY = if (dragging) dragOffsetY else 0f
+                          scaleX = scale
+                          scaleY = scale
+                      }
+                      .clip(shape)
+                      .clickable(enabled = !dragging, onClick = onOpen),
+                  shape = shape,
+                  color = LabCoreSurface.Card,
+                  border = BorderStroke(1.dp, if (dragging) accent.copy(alpha = .28f) else LabCoreSurface.Border),
+                  shadowElevation = elevation,
+              ) {
+                  Column(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Box(Modifier.size(6.dp).background(if (rule.enabled) accent else RouterMuted.copy(alpha=.45f), CircleShape))
+                          Spacer(Modifier.width(7.dp))
+                          Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                              Row(verticalAlignment = Alignment.CenterVertically) {
+                                  Text(rule.ruleName, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                  Spacer(Modifier.width(6.dp))
+                                  TinyBadge(if (rule.target == "ACCEPT") "允许" else "丢弃", accent)
+                              }
+                              val port = if (rule.proto in setOf("tcp", "udp")) rule.destPort.ifBlank { "任意端口" } else "不匹配端口"
+                              Text("${firewallIpVersionLabel(rule.ipVersion)} · ${firewallProtocolLabel(rule.proto)} · $port", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              val targetText = rule.destIP.ifBlank { rule.ipv6SuffixDest.ifBlank { "任意目标" } }
+                              Text("${firewallInterfaceLabel(rule.inIface)} → ${firewallInterfaceLabel(rule.outIface)} · $targetText", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                              Text("命中 ${rule.stats.packets} 次 · ${formatBytesCompact(rule.stats.bytes)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted)
+                              val automationEligible = rule.target.equals("ACCEPT", true) && rule.direction == "forward" && rule.ipVersion in setOf("ipv4", "ipv6") && rule.inIface.equals("wan", true) && rule.outIface.equals("lan", true)
+                              if (binding != null || automationEligible) {
+                                  val followColor = binding?.let { firewallAutomationStatusColor(it.status) } ?: RouterBlue
+                                  Text(
+                                      if (binding == null) "关联路由器映射" else "映射联动 · ${firewallAutomationStatusLabel(binding.status)} · ${binding.targetName.ifBlank { "等待映射" }}",
+                                      modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onFollow).padding(vertical = 1.dp),
+                                      fontSize = LabTypography.Caption.fontSize,
+                                      fontWeight = FontWeight.SemiBold,
+                                      color = followColor,
+                                      maxLines = 1,
+                                      overflow = TextOverflow.Ellipsis,
+                                  )
+                              }
+                          }
+                          Column(
+                              modifier = Modifier.width(42.dp),
+                              horizontalAlignment = Alignment.CenterHorizontally,
+                              verticalArrangement = Arrangement.spacedBy(1.dp)
+                          ) {
+                              if (draggable) {
+                                  val dragInput = Modifier.pointerInput(rule.uuid) {
+                                      detectDragGestures(
+                                          onDragStart = { onDragStart() },
+                                          onDragEnd = onDragEnd,
+                                          onDragCancel = onDragCancel,
+                                          onDrag = { change, dragAmount ->
+                                              change.consume()
+                                              onDrag(dragAmount.y)
+                                          },
+                                      )
+                                  }
+                                  Box(
+                                      Modifier
+                                          .size(30.dp)
+                                          .clip(CircleShape)
+                                          .background(if (dragging) accent.copy(alpha = .10f) else Color.Transparent)
+                                          .then(dragInput),
+                                      contentAlignment = Alignment.Center,
+                                  ) {
+                                      Icon(Icons.Rounded.DragHandle, "拖动排序", Modifier.size(19.dp), tint = if (dragging) accent else RouterMuted.copy(alpha = .82f))
+                                  }
+                              }
+                              Switch(checked = rule.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.74f), colors = SwitchDefaults.colors(checkedTrackColor = accent))
+                              IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.DeleteOutline, "删除", Modifier.size(15.dp), tint = RouterMuted) }
+                          }
+                      }
+                  }
+              }
+          }
+
+          private fun firewallReorderScope(rule: FirewallRule): String? {
+              val direction = rule.direction.lowercase(Locale.ROOT)
+              if (direction !in setOf("forward", "inbound", "outbound")) return null
+              val version = when (rule.ipVersion.lowercase(Locale.ROOT)) {
+                  "ipv4" -> "ipv4"
+                  "ipv6" -> "ipv6"
+                  else -> return null
+              }
+              return "${direction}_${version}"
+          }
+
+          '''
+          text = text[:start] + new_block + text[end:]
+          ui_path.write_text(text, encoding='utf-8')
+
+          wg_path = Path('app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt')
+          wg = wg_path.read_text(encoding='utf-8')
+
+          old_loop = '''    LaunchedEffect(Unit) {
+                  while (true) {
+                      runtime = controller.status()
+                      delay(2_000L)
+                  }
+              }
+          '''
+          new_loop = '''    LaunchedEffect(Unit) {
+                  var serverPollTick = 0
+                  while (true) {
+                      runtime = controller.status()
+                      if (serverPollTick % 5 == 0) {
+                          val serverState = runCatching { wireGuardHubApi.loadServerState() }.getOrNull()
+                          if (serverState != null) {
+                              serverConfig = serverState.config
+                              if (!serverState.config.enabled && runtime.running) {
+                                  runtime = controller.stop()
+                              }
+                          }
+                      }
+                      serverPollTick++
+                      delay(2_000L)
+                  }
+              }
+          '''
+          if old_loop not in wg:
+              raise SystemExit('WireGuard runtime polling anchor not found')
+          wg = wg.replace(old_loop, new_loop, 1)
+
+          old_handshake = '        val isHandshaked = runtime.running && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L\n'
+          new_handshake = '        val isHandshaked = serverConfig.enabled && runtime.running && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L\n'
+          if old_handshake not in wg:
+              raise SystemExit('WireGuard top handshake anchor not found')
+          wg = wg.replace(old_handshake, new_handshake, 1)
+
+          old_active = '                    val isActive = runtime.running && runtime.profileId == profile.id\n'
+          new_active = '                    val isActive = serverConfig.enabled && runtime.running && runtime.profileId == profile.id\n'
+          if old_active not in wg:
+              raise SystemExit('WireGuard active profile anchor not found')
+          wg = wg.replace(old_active, new_active, 1)
+
+          old_save = '''                        serverConfig = updated
+                                  reload()
+                                  showServerSettings = false
+                                  message = "网关参数已更新（${if (enabled) "已启用" else "已停用"} · 端口 $listenPort · MTU $mtu），已同步至 Agent"
+          '''
+          new_save = '''                        serverConfig = updated
+                                  val hadRunningClient = runtime.running
+                                  if (!updated.enabled && hadRunningClient) runtime = controller.stop()
+                                  reload()
+                                  showServerSettings = false
+                                  message = when {
+                                      !updated.enabled && hadRunningClient -> "WireGuard 网关已停用，客户端连接已停止"
+                                      !updated.enabled -> "WireGuard 网关已停用"
+                                      else -> "网关参数已更新（已启用 · 端口 $listenPort · MTU $mtu），已同步至 Agent"
+                                  }
+          '''
+          if old_save not in wg:
+              raise SystemExit('WireGuard server save anchor not found')
+          wg = wg.replace(old_save, new_save, 1)
+          wg_path.write_text(wg, encoding='utf-8')
+          PY
+
+      - name: Compile Kotlin
+        run: ./gradlew :app:compileDebugKotlin --stacktrace
+
+      - name: Commit focused changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No patch changes"
+            exit 1
+          fi
+          git commit -m "fix(app): add firewall drag ordering and stop stale WireGuard state"
+          git push origin HEAD:fix/firewall-order-wireguard-disabled-state
