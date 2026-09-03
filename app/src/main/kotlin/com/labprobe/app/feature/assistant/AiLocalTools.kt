@@ -41,13 +41,17 @@ class AiLocalToolExecutor(private val prefs: AppPrefs) {
         }
         val family = TcpPeakFamily.entries.firstOrNull { it.wireValue == arguments["family"] }
             ?: error("测试协议只能选择 IPv4、IPv6 或分别测试")
+        val targetConnections = requiredInt("targetConnections")
+        val cps = requiredInt("cps")
+        val extremeMode = arguments["extremeMode"]?.toBoolean() ?: (targetConnections > 32_000 || cps > 2_000)
         val config = TcpPeakConfig(
             side = TcpPeakSide.APP,
             host = arguments["host"].orEmpty(),
             port = requiredInt("port"),
             family = family,
-            targetConnections = requiredInt("targetConnections"),
-            cps = requiredInt("cps"),
+            targetConnections = targetConnections,
+            cps = cps,
+            extremeMode = extremeMode,
             connectTimeoutMs = arguments["connectTimeoutMs"]?.toIntOrNull() ?: 1_500,
             maxDurationSeconds = arguments["maxDurationSeconds"]?.toIntOrNull() ?: 180,
         )
@@ -57,6 +61,7 @@ class AiLocalToolExecutor(private val prefs: AppPrefs) {
         prefs.tcpPeakPort = canonical.port.toString()
         prefs.tcpPeakTarget = canonical.targetConnections.toString()
         prefs.tcpPeakCps = canonical.cps.toString()
+        prefs.tcpPeakExtremeMode = canonical.extremeMode
         prefs.tcpPeakPendingAiCommandJson = TcpPeakPendingAiCommand(
             id = confirmation.confirmationId,
             config = canonical,

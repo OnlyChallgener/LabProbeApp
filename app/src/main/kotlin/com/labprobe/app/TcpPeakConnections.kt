@@ -272,7 +272,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var port by remember { mutableStateOf(pendingAiCommand?.config?.port?.toString() ?: prefs.tcpPeakPort) }
     var target by remember { mutableStateOf(pendingAiCommand?.config?.targetConnections?.toString() ?: prefs.tcpPeakTarget) }
     var cps by remember { mutableStateOf(pendingAiCommand?.config?.cps?.toString() ?: prefs.tcpPeakCps) }
-    var extremeMode by remember { mutableStateOf(pendingAiCommand?.config?.extremeMode ?: false) }
+    var extremeMode by remember { mutableStateOf(pendingAiCommand?.config?.extremeMode ?: prefs.tcpPeakExtremeMode) }
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
@@ -326,6 +326,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             onCps = { cps = it; prefs.tcpPeakCps = it },
             onExtremeMode = { next ->
                 extremeMode = next
+                prefs.tcpPeakExtremeMode = next
                 if (!next && (cps.toIntOrNull() ?: 0) > 2_000) {
                     cps = "2000"
                     prefs.tcpPeakCps = cps

@@ -560,6 +560,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("tcp_peak_history_v1", v).apply()
     var tcpPeakPendingAiCommandJson: String get() = sp.getString("tcp_peak_ai_command_v1", "") ?: ""
         set(v) = sp.edit().putString("tcp_peak_ai_command_v1", v).apply()
+    var tcpPeakExtremeMode: Boolean get() = sp.getBoolean("tcp_peak_extreme_v1", false)
+        set(v) = sp.edit().putBoolean("tcp_peak_extreme_v1", v).apply()
     var portProtocol: String get() = sp.getString("port_protocol", "TCP") ?: "TCP"
         set(v) = sp.edit().putString("port_protocol", v).apply()
 
