@@ -3076,7 +3076,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     messages += AiMessage("assistant", quickCard)
                     while (messages.size >= 120) messages.removeAt(0)
                     localCache.writeConversation(conversationId, messages)
-                    usage = AiTokenUsage(0, 0, 0)
+                    usage = AiTokenSummary()
                     usageKnown = false
                     onNavigate("tcp_peak")
                 } else {
