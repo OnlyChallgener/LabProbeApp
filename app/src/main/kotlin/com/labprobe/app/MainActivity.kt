@@ -9908,7 +9908,7 @@ private data class EventDayGroup(
 private fun eventStorageBytes(events: List<EventItem>): Long {
     var bytes = 2L
     for (e in events) {
-        bytes += e.time.length + e.type.length + e.message.length + 80L
+        bytes += e.time.length + e.type.length + e.title.length + e.name.length + 80L
     }
     return bytes
 }
