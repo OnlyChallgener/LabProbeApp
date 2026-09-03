@@ -2195,22 +2195,23 @@ fun LabProbeApp(prefs: AppPrefs) {
                             val targetIndex = mainRoutes.indexOf(targetState)
                             if (initialIndex >= 0 && targetIndex >= 0 && initialIndex != targetIndex) {
                                 val forward = targetIndex > initialIndex
+                                val nudge = 28
                                 val slideIn = slideInHorizontally(
-                                    animationSpec = tween(230, easing = FastOutSlowInEasing)
-                                ) { fullWidth -> if (forward) fullWidth else -fullWidth } + fadeIn(tween(180))
+                                    animationSpec = tween(180, easing = FastOutSlowInEasing)
+                                ) { if (forward) nudge else -nudge } + fadeIn(tween(180))
                                 val slideOut = slideOutHorizontally(
-                                    animationSpec = tween(230, easing = FastOutSlowInEasing)
-                                ) { fullWidth -> if (forward) -fullWidth / 3 else fullWidth / 3 } + fadeOut(tween(130))
+                                    animationSpec = tween(140, easing = FastOutSlowInEasing)
+                                ) { if (forward) -nudge / 2 else nudge / 2 } + fadeOut(tween(140))
                                 slideIn togetherWith slideOut
                             } else if (targetState !in mainRoutes && initialState in mainRoutes) {
-                                (slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(180))) togetherWith
-                                    fadeOut(tween(100))
+                                (slideInHorizontally(tween(180, easing = FastOutSlowInEasing)) { 36 } + fadeIn(tween(180))) togetherWith
+                                    fadeOut(tween(120))
                             } else if (initialState !in mainRoutes && targetState in mainRoutes) {
-                                fadeIn(tween(160)) togetherWith
-                                    (slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(140)))
+                                fadeIn(tween(180)) togetherWith
+                                    (slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { 36 } + fadeOut(tween(140)))
                             } else {
-                                fadeIn(animationSpec = tween(140)) togetherWith
-                                    fadeOut(animationSpec = tween(100))
+                                fadeIn(animationSpec = tween(160)) togetherWith
+                                    fadeOut(animationSpec = tween(120))
                             }
                         }
                     ) { r ->
