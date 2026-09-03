@@ -144,7 +144,7 @@ internal class TcpPeakLocalRunner {
         ).withMetric(family, TcpPeakMetric(status = "正在建立连接"))
         onSnapshot(snapshot)
 
-        val pendingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val pendingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(384))
         val pending = ArrayDeque<Deferred<LocalOpenResult>>()
         val started = SystemClock.elapsedRealtime()
         var lastTick = started
@@ -158,7 +158,7 @@ internal class TcpPeakLocalRunner {
         var peak = 0
         var consecutiveFailures = 0
         var finishReason = "达到设定连接数"
-        val maximumPending = (config.cps * 4).coerceIn(500, 4_000)
+        val maximumPending = if (config.extremeMode) (config.cps * 6).coerceIn(1_000, 10_000) else (config.cps * 4).coerceIn(500, 4_000)
         val recentOutcomes = ArrayDeque<Boolean>()
 
         try {
@@ -220,6 +220,9 @@ internal class TcpPeakLocalRunner {
                 lastTick = now
                 val load = (current + pending.size).toDouble() / safeTarget.coerceAtLeast(1).toDouble()
                 val scale = when {
+                    config.extremeMode && load >= .98 -> .30
+                    config.extremeMode && load >= .95 -> .60
+                    config.extremeMode -> 1.0
                     load >= .95 -> .20
                     load >= .80 -> .50
                     else -> 1.0
@@ -254,7 +257,7 @@ internal class TcpPeakLocalRunner {
                     snapshot = snapshot.withMetric(family, metric).copy(status = "${family.label} 正在建立连接")
                     onSnapshot(snapshot)
                 }
-                delay(40L)
+                delay(8L)
             }
         } finally {
             releaseEpoch.compareAndSet(expectedEpoch, expectedEpoch + 1)
@@ -293,10 +296,14 @@ internal class TcpPeakLocalRunner {
     }
 
     private fun resolve(host: String, family: TcpPeakFamily): List<InetAddress> = runCatching {
-        InetAddress.getAllByName(host).filter {
-            (family == TcpPeakFamily.IPV4 && it is Inet4Address) ||
-                (family == TcpPeakFamily.IPV6 && it is Inet6Address)
-        }.distinctBy(InetAddress::getHostAddress)
+        host.split(',').flatMap { item ->
+            val trimmed = item.trim().removePrefix("[").removeSuffix("]")
+            if (trimmed.isEmpty()) emptyList()
+            else InetAddress.getAllByName(trimmed).filter {
+                (family == TcpPeakFamily.IPV4 && it is Inet4Address) ||
+                    (family == TcpPeakFamily.IPV6 && it is Inet6Address)
+            }.distinctBy(InetAddress::getHostAddress).take(1)
+        }
     }.getOrDefault(emptyList())
 
     private fun openOne(
@@ -311,6 +318,11 @@ internal class TcpPeakLocalRunner {
         opening += socket
         return try {
             socket.tcpNoDelay = true
+            runCatching {
+                socket.receiveBufferSize = 2048
+                socket.sendBufferSize = 2048
+                socket.setSoLinger(true, 0)
+            }
             socket.connect(InetSocketAddress(address, port), timeoutMs)
             opening -= socket
             synchronized(lock) {
