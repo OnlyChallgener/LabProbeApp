@@ -3065,8 +3065,23 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 input = ""
                 val userMessage = AiMessage("user", text)
                 messages += userMessage
-                sending = true
-                scope.launch {
+
+                val normalized = text.lowercase(Locale.ROOT).replace(Regex("\\s+"), "")
+                val isTcpPeakTest = (normalized.contains("tcp") || normalized.contains("峰值")) &&
+                    listOf("测试", "测", "压测", "跑一下", "开始", "启动", "发起", "页面", "界面", "打开", "进入").any { normalized.contains(it) } &&
+                    !listOf("状态", "进度", "结果", "跑完", "跑得怎么样").any { normalized.contains(it) }
+
+                if (isTcpPeakTest) {
+                    val quickCard = "已打开「TCP 峰值连接数」测试页。\n你可以在测试页面选择【本机 APP】或【Relay 宿主机】，配置目标域名/IP与量程，实时观察活动连接数走势图与系统资源占用。"
+                    messages += AiMessage("assistant", quickCard)
+                    while (messages.size >= 120) messages.removeAt(0)
+                    localCache.writeConversation(conversationId, messages)
+                    usage = AiTokenUsage(0, 0, 0)
+                    usageKnown = false
+                    onNavigate("tcp_peak")
+                } else {
+                    sending = true
+                    scope.launch {
                     var streamed = false
                     var liveIndex: Int? = null
                     val streamedText = StringBuilder()
@@ -3184,6 +3199,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 }
             }
         }
+    }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             AiChatInput(
                 value = input,
