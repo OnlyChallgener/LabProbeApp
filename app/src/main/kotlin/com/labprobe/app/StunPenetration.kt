@@ -394,7 +394,9 @@ fun StunPenetrationScreen(
                 ""
             }
             if (latest.rulesLoaded) {
-                reconcileStunFavorites(prefs, latest.rules, ddnsSnapshot, nativeDdnsRecords)
+                withContext(Dispatchers.IO) {
+                    reconcileStunFavorites(prefs, latest.rules, ddnsSnapshot, nativeDdnsRecords)
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -418,16 +420,31 @@ fun StunPenetrationScreen(
             onBack()
         }
     }
-    BackHandler(enabled = editor == null && historyTarget == null, onBack = leavePage)
+    BackHandler(enabled = true) {
+        when {
+            editor != null -> {
+                editor = null
+                editorError = ""
+            }
+            historyTarget != null -> {
+                historyTarget = null
+                history = emptyList()
+            }
+            menuFor != null -> {
+                menuFor = null
+            }
+            else -> leavePage()
+        }
+    }
     LaunchedEffect(Unit) {
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
         refresh()
     }
     LaunchedEffect(liveAgent?.lastSeenAt, snapshot.agentOnline) {
-        while (true) {
-            delay(if (liveAgent?.online == true || snapshot.agentOnline) 3_000L else 8_000L)
-            refresh(true)
+        while (!leaving) {
+            delay(if (liveAgent?.online == true || snapshot.agentOnline) 4_000L else 8_000L)
+            if (!leaving) refresh(true)
         }
     }
     DetailShell(

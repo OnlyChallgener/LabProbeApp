@@ -51,6 +51,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.widget.Toast
+import org.json.JSONArray
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -562,6 +563,32 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("tcp_peak_ai_command_v1", v).apply()
     var tcpPeakExtremeMode: Boolean get() = sp.getBoolean("tcp_peak_extreme_v1", false)
         set(v) = sp.edit().putBoolean("tcp_peak_extreme_v1", v).apply()
+    var tcpPeakHostHistoryJson: String get() = sp.getString("tcp_peak_host_history_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("tcp_peak_host_history_v1", v).apply()
+
+    fun tcpPeakHostHistory(): List<String> = runCatching {
+        val arr = JSONArray(tcpPeakHostHistoryJson)
+        (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf(String::isNotEmpty) }
+    }.getOrDefault(emptyList())
+
+    fun addTcpPeakHostHistory(host: String) {
+        val trimmed = host.trim()
+        if (trimmed.isEmpty()) return
+        val current = tcpPeakHostHistory().toMutableList()
+        current.removeAll { it.equals(trimmed, ignoreCase = true) }
+        current.add(0, trimmed)
+        val limited = current.take(5)
+        val arr = JSONArray().apply { limited.forEach { put(it) } }
+        tcpPeakHostHistoryJson = arr.toString()
+    }
+
+    fun removeTcpPeakHostHistory(host: String) {
+        val trimmed = host.trim()
+        val current = tcpPeakHostHistory().toMutableList()
+        current.removeAll { it.equals(trimmed, ignoreCase = true) }
+        val arr = JSONArray().apply { current.forEach { put(it) } }
+        tcpPeakHostHistoryJson = arr.toString()
+    }
     var portProtocol: String get() = sp.getString("port_protocol", "TCP") ?: "TCP"
         set(v) = sp.edit().putString("port_protocol", v).apply()
 

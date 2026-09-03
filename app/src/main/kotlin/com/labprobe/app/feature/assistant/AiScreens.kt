@@ -1683,6 +1683,79 @@ private fun AiQuickHintsRow(hints: List<AiToolHint>, onSelect: (String) -> Unit)
     }
 }
 
+@Composable
+private fun AiWelcomeGuideCard(onTryPrompt: (String) -> Unit) {
+    val prompts = listOf(
+        "测试一下路由器的 TCP 峰值连接数",
+        "查看内网在线设备及信号强度",
+        "检测路由器当前的 NAT 类型",
+        "进行一次路由器网络与系统自检"
+    )
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = AiTone.Surface,
+        border = BorderStroke(1.dp, AiTone.Border),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🛠️", fontSize = 18.sp)
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text("我是你的 AI 助理", style = LabTypography.CardTitle, color = AiTone.Ink)
+                    Text("打开功能，查设备，测连接，我来做！", color = AiTone.Muted, fontSize = 11.5.sp)
+                }
+            }
+            HorizontalDivider(color = AiTone.Border.copy(alpha = 0.6f))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                prompts.forEach { prompt ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).aiTap { onTryPrompt(prompt) },
+                        shape = RoundedCornerShape(10.dp),
+                        color = AiTone.Field,
+                        border = BorderStroke(1.dp, AiTone.Border.copy(alpha = 0.5f)),
+                        tonalElevation = 0.dp,
+                        shadowElevation = 0.dp,
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "“$prompt”",
+                                color = AiTone.Ink,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = AiTone.MintSoft,
+                                border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = 0.4f)),
+                                tonalElevation = 0.dp,
+                                shadowElevation = 0.dp,
+                            ) {
+                                Text(
+                                    "试试",
+                                    color = AiTone.MintDark,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Minimal markdown: headings, bullets, ordered lists, **bold**, `code`. */
 private sealed interface AiMdBlock {
     data class Paragraph(val text: String) : AiMdBlock
@@ -1706,6 +1779,24 @@ private fun aiMarkdownBlocks(content: String): List<AiMdBlock> {
                 flush()
                 val level = trimmed.takeWhile { it == '#' }.length.coerceIn(1, 3)
                 blocks += AiMdBlock.Heading(trimmed.dropWhile { it == '#' }.trim(), level)
+            }
+            trimmed.startsWith("|") && trimmed.contains("---") -> {
+                flush()
+            }
+            trimmed.startsWith("|") && trimmed.endsWith("|") -> {
+                flush()
+                val cells = trimmed.trim('|').split('|').map { it.trim() }.filter { it.isNotEmpty() }
+                if (cells.isNotEmpty()) {
+                    if (cells.size == 2) {
+                        blocks += AiMdBlock.Bullet("${cells[0]}：**${cells[1]}**", "•")
+                    } else if (cells.size > 2) {
+                        val head = "**${cells[0]}**"
+                        val tail = cells.drop(1).joinToString(" · ")
+                        blocks += AiMdBlock.Bullet("$head · $tail", "•")
+                    } else {
+                        blocks += AiMdBlock.Bullet(cells[0], "•")
+                    }
+                }
             }
             trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ") -> {
                 flush()
@@ -2698,6 +2789,15 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                         messageSelectionError = null
                     },
                 )
+            }
+            if (messages.size <= 1 && !loadingHistory) {
+                item(key = "welcome-guide-card") {
+                    AiWelcomeGuideCard(
+                        onTryPrompt = { prompt ->
+                            input = prompt
+                        }
+                    )
+                }
             }
             retryText?.let { retry ->
                 item(key = "switch-model-card") {

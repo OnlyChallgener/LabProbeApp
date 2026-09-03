@@ -21,7 +21,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -29,6 +32,11 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -273,6 +281,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var target by remember { mutableStateOf(pendingAiCommand?.config?.targetConnections?.toString() ?: prefs.tcpPeakTarget) }
     var cps by remember { mutableStateOf(pendingAiCommand?.config?.cps?.toString() ?: prefs.tcpPeakCps) }
     var extremeMode by remember { mutableStateOf(pendingAiCommand?.config?.extremeMode ?: prefs.tcpPeakExtremeMode) }
+    var hostHistory by remember { mutableStateOf(prefs.tcpPeakHostHistory()) }
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
@@ -299,7 +308,13 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             // or process restore from launching a duplicate task.
             prefs.tcpPeakPendingAiCommandJson = ""
         }
-        pendingAiCommand?.let { controller.start(it.config) }
+        pendingAiCommand?.let {
+            if (it.config.validationError() == null && it.config.host.isNotBlank()) {
+                prefs.addTcpPeakHostHistory(it.config.host)
+                hostHistory = prefs.tcpPeakHostHistory()
+            }
+            controller.start(it.config)
+        }
     }
 
     DetailShell(
@@ -317,10 +332,15 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             target = target,
             cps = cps,
             extremeMode = extremeMode,
+            hostHistory = hostHistory,
             enabled = !active,
             onSide = { side = it },
             onFamily = { family = it },
             onHost = { host = it; prefs.tcpPeakHost = it },
+            onDeleteHistory = { item ->
+                prefs.removeTcpPeakHostHistory(item)
+                hostHistory = prefs.tcpPeakHostHistory()
+            },
             onPort = { port = it; prefs.tcpPeakPort = it },
             onTarget = { target = it; prefs.tcpPeakTarget = it },
             onCps = { cps = it; prefs.tcpPeakCps = it },
@@ -335,7 +355,18 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         )
 
         Button(
-            onClick = { if (active) controller.stop() else controller.start(currentConfig()) },
+            onClick = {
+                if (active) {
+                    controller.stop()
+                } else {
+                    val cfg = currentConfig()
+                    if (cfg.validationError() == null && cfg.host.isNotBlank()) {
+                        prefs.addTcpPeakHostHistory(cfg.host)
+                        hostHistory = prefs.tcpPeakHostHistory()
+                    }
+                    controller.start(cfg)
+                }
+            },
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = LabV2.CardShape,
             colors = ButtonDefaults.buttonColors(
@@ -371,10 +402,12 @@ private fun TcpPeakConfigCard(
     target: String,
     cps: String,
     extremeMode: Boolean,
+    hostHistory: List<String> = emptyList(),
     enabled: Boolean,
     onSide: (TcpPeakSide) -> Unit,
     onFamily: (TcpPeakFamily) -> Unit,
     onHost: (String) -> Unit,
+    onDeleteHistory: (String) -> Unit = {},
     onPort: (String) -> Unit,
     onTarget: (String) -> Unit,
     onCps: (String) -> Unit,
@@ -386,6 +419,7 @@ private fun TcpPeakConfigCard(
         border = BorderStroke(1.dp, LabCoreSurface.Border)
     ) {
         val segmentColors = tcpPeakSegmentedColors()
+        var historyMenuOpen by remember { mutableStateOf(false) }
         Column(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text("测试设置", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -418,7 +452,7 @@ private fun TcpPeakConfigCard(
                     )
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         BasicTextField(
@@ -431,7 +465,7 @@ private fun TcpPeakConfigCard(
                                 color = if (enabled) LabV2.Ink else LabV2.InkMuted
                             ),
                             cursorBrush = SolidColor(LabV2.Primary),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.weight(1f),
                             decorationBox = { inner ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (host.isEmpty()) {
@@ -441,6 +475,57 @@ private fun TcpPeakConfigCard(
                                 }
                             }
                         )
+                        if (enabled && hostHistory.isNotEmpty()) {
+                            Box {
+                                IconButton(
+                                    onClick = { historyMenuOpen = true },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.ArrowDropDown,
+                                        contentDescription = "历史记录",
+                                        tint = LabV2.InkMuted,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = historyMenuOpen,
+                                    onDismissRequest = { historyMenuOpen = false },
+                                    modifier = Modifier.widthIn(min = 220.dp, max = 340.dp).background(Color.White)
+                                ) {
+                                    hostHistory.forEach { item ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    item,
+                                                    style = LabTypography.FieldValue,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            },
+                                            trailingIcon = {
+                                                IconButton(
+                                                    onClick = { onDeleteHistory(item) },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Rounded.Close,
+                                                        contentDescription = "删除记录",
+                                                        tint = LabV2.InkMuted.copy(alpha = 0.6f),
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            },
+                                            onClick = {
+                                                onHost(item)
+                                                historyMenuOpen = false
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
