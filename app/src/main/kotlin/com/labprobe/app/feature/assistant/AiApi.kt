@@ -364,13 +364,18 @@ class AiApiClient(
     }
 
     /** Used after an ambiguous execute response; do not claim success without Hub state. */
-    suspend fun toolConfirmationStatus(confirmationId: String): String = withContext(Dispatchers.IO) {
+    suspend fun toolConfirmationStatus(confirmationId: String): Pair<String, String?> = withContext(Dispatchers.IO) {
         val encoded = java.net.URLEncoder.encode(confirmationId, "UTF-8")
         request("${hubUrl.trimEnd('/')}/api/ai/tools/confirmations/$encoded", "GET", null).use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, body))
             val root = JSONObject(body)
-            root.optString("status").ifBlank { root.optJSONObject("confirmation")?.optString("status").orEmpty() }
+            val status = root.optString("status").ifBlank { root.optJSONObject("confirmation")?.optString("status").orEmpty() }
+            val res = root.optJSONObject("result") ?: root.optJSONObject("confirmation")?.optJSONObject("result")
+            val err = res?.optString("error")?.takeIf { it.isNotBlank() }
+                ?: res?.optString("message")?.takeIf { it.isNotBlank() }
+                ?: root.optString("error").takeIf { it.isNotBlank() }
+            status to err
         }
     }
 

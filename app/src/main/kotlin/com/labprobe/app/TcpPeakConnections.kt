@@ -17,7 +17,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
@@ -28,6 +35,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
@@ -442,7 +450,9 @@ private fun TcpPeakConfigCard(
                 Text("目标域名或 IP（支持逗号分隔多IP）", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
                 Surface(
                     modifier = Modifier.fillMaxWidth().height(42.dp),
-                    shape = LabV2.CompactCardShape,
+                    shape = if (historyMenuOpen && hostHistory.isNotEmpty()) {
+                        RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp, bottomStart = 4.dp, bottomEnd = 4.dp)
+                    } else LabV2.CompactCardShape,
                     color = if (enabled) Color.White else LabV2.FieldSoft,
                     border = BorderStroke(
                         1.dp,
@@ -474,53 +484,107 @@ private fun TcpPeakConfigCard(
                             }
                         )
                         if (enabled && hostHistory.isNotEmpty()) {
-                            Box {
-                                IconButton(
-                                    onClick = { historyMenuOpen = true },
-                                    modifier = Modifier.size(32.dp)
+                            IconButton(
+                                onClick = { historyMenuOpen = !historyMenuOpen },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    if (historyMenuOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ArrowDropDown,
+                                    contentDescription = if (historyMenuOpen) "收起历史" else "展开历史",
+                                    tint = if (historyMenuOpen) LabV2.Primary else LabV2.InkMuted,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                AnimatedVisibility(
+                    visible = historyMenuOpen && enabled && hostHistory.isNotEmpty(),
+                    enter = expandVertically(animationSpec = tween(180)) + fadeIn(tween(140)),
+                    exit = shrinkVertically(animationSpec = tween(140)) + fadeOut(tween(100))
+                ) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp, topStart = 4.dp, topEnd = 4.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, LabCoreSurface.Border),
+                        shadowElevation = 2.dp
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "历史记录 (${hostHistory.size}/5)",
+                                    style = LabTypography.FieldLabel.copy(
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LabV2.InkMuted
+                                    )
+                                )
+                                Text(
+                                    "收起",
+                                    style = LabTypography.FieldLabel.copy(
+                                        fontSize = 11.sp,
+                                        color = LabV2.Primary,
+                                        fontWeight = FontWeight.SemiBold
+                                    ),
+                                    modifier = Modifier.clickable { historyMenuOpen = false }
+                                )
+                            }
+                            HorizontalDivider(color = LabCoreSurface.Border.copy(alpha = 0.5f), thickness = 0.8.dp)
+                            hostHistory.forEachIndexed { index, item ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onHost(item)
+                                            historyMenuOpen = false
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
-                                        Icons.Rounded.ArrowDropDown,
-                                        contentDescription = "历史记录",
-                                        tint = LabV2.InkMuted,
-                                        modifier = Modifier.size(20.dp)
+                                        Icons.Rounded.History,
+                                        contentDescription = null,
+                                        tint = LabV2.InkMuted.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                }
-                                DropdownMenu(
-                                    expanded = historyMenuOpen,
-                                    onDismissRequest = { historyMenuOpen = false },
-                                    modifier = Modifier.widthIn(min = 220.dp, max = 340.dp).background(Color.White)
-                                ) {
-                                    hostHistory.forEach { item ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    item,
-                                                    style = LabTypography.FieldValue,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            },
-                                            trailingIcon = {
-                                                IconButton(
-                                                    onClick = { onDeleteHistory(item) },
-                                                    modifier = Modifier.size(24.dp)
-                                                ) {
-                                                    Icon(
-                                                        Icons.Rounded.Close,
-                                                        contentDescription = "删除记录",
-                                                        tint = LabV2.InkMuted.copy(alpha = 0.6f),
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                }
-                                            },
-                                            onClick = {
-                                                onHost(item)
-                                                historyMenuOpen = false
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        item,
+                                        style = LabTypography.FieldValue.copy(
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = LabV2.Ink
+                                        ),
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { onDeleteHistory(item) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Close,
+                                            contentDescription = "删除记录",
+                                            tint = LabV2.InkMuted.copy(alpha = 0.5f),
+                                            modifier = Modifier.size(13.dp)
                                         )
                                     }
+                                }
+                                if (index < hostHistory.lastIndex) {
+                                    HorizontalDivider(
+                                        color = LabCoreSurface.Border.copy(alpha = 0.35f),
+                                        thickness = 0.5.dp,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
                                 }
                             }
                         }

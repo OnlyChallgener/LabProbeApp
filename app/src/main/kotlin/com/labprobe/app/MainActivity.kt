@@ -62,8 +62,11 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -1894,10 +1897,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     suspend fun deleteEvent(event: EventItem) {
         if (event.id <= 0) { events = events.filterNot { it == event }; return }
-        runCatching { HubApi(prefs).deleteEvent(event.id) }
         events = events.filterNot { it.id == event.id }
-        prefs.cacheEvents = JSONArray(events.map { it.toJson() }).toString()
         message = "已删除事件，可通过刷新同步最新记录"
+        withContext(Dispatchers.IO) {
+            runCatching { HubApi(prefs).deleteEvent(event.id) }
+            val currentEvents = events
+            prefs.cacheEvents = JSONArray(currentEvents.map { it.toJson() }).toString()
+        }
     }
 
     fun hideEventDay(date: String) {
@@ -2153,13 +2159,13 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
 
         var pageSwipeOffset by remember { mutableStateOf(0f) }
-        val primaryPageSwipeModifier = if (route in mainRoutes) {
+        val primaryPageSwipeModifier = if (route in mainRoutes && route != "events") {
             Modifier.pointerInput(route, selected) {
                 detectHorizontalDragGestures(
                     onDragStart = { pageSwipeOffset = 0f },
                     onDragCancel = { pageSwipeOffset = 0f },
                     onDragEnd = {
-                        val threshold = 96.dp.toPx()
+                        val threshold = 72.dp.toPx()
                         val nextIndex = when {
                             pageSwipeOffset <= -threshold && selected < mainRoutes.lastIndex -> selected + 1
                             pageSwipeOffset >= threshold && selected > 0 -> selected - 1
@@ -2185,8 +2191,27 @@ fun LabProbeApp(prefs: AppPrefs) {
                         modifier = Modifier.fillMaxSize().then(primaryPageSwipeModifier),
                         label = "route",
                         transitionSpec = {
-                            fadeIn(animationSpec = tween(120)) togetherWith
-                                fadeOut(animationSpec = tween(90))
+                            val initialIndex = mainRoutes.indexOf(initialState)
+                            val targetIndex = mainRoutes.indexOf(targetState)
+                            if (initialIndex >= 0 && targetIndex >= 0 && initialIndex != targetIndex) {
+                                val forward = targetIndex > initialIndex
+                                val slideIn = slideInHorizontally(
+                                    animationSpec = tween(230, easing = FastOutSlowInEasing)
+                                ) { fullWidth -> if (forward) fullWidth else -fullWidth } + fadeIn(tween(180))
+                                val slideOut = slideOutHorizontally(
+                                    animationSpec = tween(230, easing = FastOutSlowInEasing)
+                                ) { fullWidth -> if (forward) -fullWidth / 3 else fullWidth / 3 } + fadeOut(tween(130))
+                                slideIn togetherWith slideOut
+                            } else if (targetState !in mainRoutes && initialState in mainRoutes) {
+                                (slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(180))) togetherWith
+                                    fadeOut(tween(100))
+                            } else if (initialState !in mainRoutes && targetState in mainRoutes) {
+                                fadeIn(tween(160)) togetherWith
+                                    (slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(140)))
+                            } else {
+                                fadeIn(animationSpec = tween(140)) togetherWith
+                                    fadeOut(animationSpec = tween(100))
+                            }
                         }
                     ) { r ->
                         saveableStateHolder.SaveableStateProvider(r) { when (r) {
@@ -9880,11 +9905,13 @@ private data class EventDayGroup(
     val storageLabel: String
 )
 
-private fun eventStorageBytes(events: List<EventItem>): Long = JSONArray(events.map { it.toJson() })
-    .toString()
-    .toByteArray(Charsets.UTF_8)
-    .size
-    .toLong()
+private fun eventStorageBytes(events: List<EventItem>): Long {
+    var bytes = 2L
+    for (e in events) {
+        bytes += e.time.length + e.type.length + e.message.length + 80L
+    }
+    return bytes
+}
 
 private fun formatEventStorageBytes(bytes: Long): String = when {
     bytes >= 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
@@ -10065,7 +10092,8 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                                 }
                             },
                             onDragCancel = { dragging = false; targetOffsetPx = 0f; onSwipeClose() },
-                            onHorizontalDrag = { _, dragAmount ->
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
                                 if (dragAmount < 0) onSwipeOpen(e.id)
                                 targetOffsetPx = (targetOffsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
                             }
@@ -10074,7 +10102,12 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                     .shadow(0.dp, RoundedCornerShape(14.dp), clip = false)
                     .clip(RoundedCornerShape(14.dp))
                     .combinedClickable(
-                        onClick = { targetOffsetPx = 0f; onSwipeClose() },
+                        onClick = {
+                            if (targetOffsetPx < -1f) {
+                                targetOffsetPx = 0f
+                                onSwipeClose()
+                            }
+                        },
                         onLongClick = { targetOffsetPx = 0f; onSwipeClose(); showSelection = true }
                     ),
                 shape = RoundedCornerShape(14.dp),
@@ -10097,9 +10130,7 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                                 Text(eventTitle(e), Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(shortTime(e.time), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.46f), fontWeight = FontWeight.Medium, maxLines = 1)
                             }
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                                Text(eventLine(e), fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), maxLines = 1)
-                            }
+                            Text(eventLine(e), fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                     HorizontalDivider(color = LabV2.Border.copy(alpha = .72f), thickness = 1.dp)

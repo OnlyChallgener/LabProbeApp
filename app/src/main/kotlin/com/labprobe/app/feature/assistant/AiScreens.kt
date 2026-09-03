@@ -2903,7 +2903,9 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                         } catch (cancel: CancellationException) {
                                             throw cancel
                                         } catch (error: Throwable) {
-                                            val status = runCatching { client.toolConfirmationStatus(confirmation.confirmationId) }.getOrNull()
+                                            val statusPair = runCatching { client.toolConfirmationStatus(confirmation.confirmationId) }.getOrNull()
+                                            val status = statusPair?.first
+                                            val errorMsg = statusPair?.second ?: error.message
                                             val detail = when (status) {
                                                 "completed" -> {
                                                     pendingConfirmation = null
@@ -2911,7 +2913,8 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                                                 }
                                                 "failed" -> {
                                                     pendingConfirmation = null
-                                                    "Hub 已确认操作执行失败；不会自动重试。"
+                                                    val reason = errorMsg?.takeIf { it.isNotBlank() }?.let { "：$it" } ?: ""
+                                                    "Hub 已确认操作执行失败${reason}；不会自动重试。"
                                                 }
                                                 "cancelled", "expired" -> {
                                                     pendingConfirmation = null
