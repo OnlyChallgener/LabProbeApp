@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -402,19 +405,43 @@ private fun TcpPeakConfigCard(
                     }
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("目标域名或 IP", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
-                OutlinedTextField(
-                    value = host,
-                    onValueChange = onHost,
-                    enabled = enabled,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    singleLine = true,
-                    placeholder = { Text("例如：example.com", style = LabTypography.Placeholder) },
-                    textStyle = LabTypography.FieldValue,
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("目标域名或 IP（支持逗号分隔多IP）", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
                     shape = LabV2.CompactCardShape,
-                    colors = labOutlinedColors()
-                )
+                    color = if (enabled) Color.White else LabV2.FieldSoft,
+                    border = BorderStroke(
+                        1.dp,
+                        if (enabled) LabCoreSurface.Border else LabCoreSurface.Border.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = host,
+                            onValueChange = onHost,
+                            enabled = enabled,
+                            singleLine = true,
+                            textStyle = LabTypography.FieldValue.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (enabled) LabV2.Ink else LabV2.InkMuted
+                            ),
+                            cursorBrush = SolidColor(LabV2.Primary),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (host.isEmpty()) {
+                                        Text("例如：example.com 或 ip1,ip2", style = LabTypography.Placeholder)
+                                    }
+                                    inner()
+                                }
+                            }
+                        )
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TcpPeakNumberField("端口", port, onPort, enabled, Modifier.weight(1f))
@@ -476,11 +503,11 @@ private fun TcpPeakConfigCard(
             }
             Text(
                 if (extremeMode && side == TcpPeakSide.RELAY)
-                    "Relay 会临时调整源端口范围；停止、完成或异常恢复时会还原，同时保留 FD、Conntrack、内存与 CPU 保护。"
+                    "Relay 极限模式支持单目标 6.4W 冲顶；若填写逗号分隔的双目标（例如 ip1,ip2），总并发最高可测 12.8W。测试结束自动还原系统环境。"
                 else if (extremeMode)
                     "本机极限模式提高 CPS 上限；FD 与资源释放保护仍然生效。"
                 else
-                    "65535 是量程上限，不代表设备必须达到；IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
+                    "单目标量程上限 65535；支持填写逗号分隔的多目标（例如 ip1,ip2），最高可测 131072 连接。IPv4 使用 A 记录，IPv6 使用 AAAA 记录。",
                 style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
             )
         }
@@ -510,19 +537,36 @@ private fun TcpPeakNumberField(
     enabled: Boolean,
     modifier: Modifier
 ) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), maxLines = 1)
-        OutlinedTextField(
-            value = value,
-            onValueChange = { onValue(it.filter(Char::isDigit).take(5)) },
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            singleLine = true,
-            textStyle = LabTypography.FieldValue,
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(42.dp),
             shape = LabV2.CompactCardShape,
-            colors = labOutlinedColors(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
+            color = if (enabled) Color.White else LabV2.FieldSoft,
+            border = BorderStroke(
+                1.dp,
+                if (enabled) LabCoreSurface.Border else LabCoreSurface.Border.copy(alpha = 0.5f)
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = { onValue(it.filter(Char::isDigit).take(6)) },
+                    enabled = enabled,
+                    singleLine = true,
+                    textStyle = LabTypography.FieldValue.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (enabled) LabV2.Ink else LabV2.InkMuted
+                    ),
+                    cursorBrush = SolidColor(LabV2.Primary),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
     }
 }
 

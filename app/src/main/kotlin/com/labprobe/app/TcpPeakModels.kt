@@ -27,9 +27,9 @@ data class TcpPeakConfig(
     val maxDurationSeconds: Int = 180
 ) {
     fun normalized(): TcpPeakConfig = copy(
-        host = host.trim().removePrefix("[").removeSuffix("]"),
+        host = host.trim().replace(" ", "").removePrefix("[").removeSuffix("]"),
         port = port.coerceIn(1, 65_535),
-        targetConnections = targetConnections.coerceIn(1, 65_535),
+        targetConnections = targetConnections.coerceIn(1, 131_072),
         cps = cps.coerceIn(1, if (extremeMode) 10_000 else 2_000),
         connectTimeoutMs = connectTimeoutMs.coerceIn(300, 10_000),
         maxDurationSeconds = maxDurationSeconds.coerceIn(10, 300)
@@ -37,11 +37,12 @@ data class TcpPeakConfig(
 
     fun validationError(): String? {
         val maximumCps = if (extremeMode) 10_000 else 2_000
+        val targets = host.split(',').map { it.trim().removePrefix("[").removeSuffix("]") }.filter { it.isNotEmpty() }
         return when {
-            host.trim().isBlank() -> "请输入测试目标主机"
-            host.contains("://") || host.any(Char::isWhitespace) -> "测试目标主机格式无效"
+            targets.isEmpty() -> "请输入测试目标主机"
+            targets.any { it.contains("://") || it.any(Char::isWhitespace) } -> "测试目标主机格式无效"
             port !in 1..65_535 -> "目标端口必须是 1–65535"
-            targetConnections !in 1..65_535 -> "连接量程必须是 1–65535"
+            targetConnections !in 1..131_072 -> "连接量程必须是 1–131072"
             cps !in 1..maximumCps -> "CPS 必须是 1–$maximumCps"
             else -> null
         }

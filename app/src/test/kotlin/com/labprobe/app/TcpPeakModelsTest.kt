@@ -83,12 +83,12 @@ class TcpPeakModelsTest {
             side = TcpPeakSide.RELAY,
             host = "[240e::1]",
             port = 443,
-            targetConnections = 99_999,
+            targetConnections = 150_000,
             cps = 9_999
         ).normalized()
 
         assertEquals("240e::1", config.host)
-        assertEquals(65_535, config.targetConnections)
+        assertEquals(131_072, config.targetConnections)
         assertEquals(2_000, config.cps)
     }
 
