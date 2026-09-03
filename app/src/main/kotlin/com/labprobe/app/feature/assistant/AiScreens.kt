@@ -1844,7 +1844,7 @@ private fun AiMarkdownText(content: String, modifier: Modifier = Modifier) {
                 is AiMdBlock.Heading -> Text(
                     aiInlineMarkdown(block.text),
                     color = AiTone.Ink,
-                    fontSize = if (block.level >= 3) 13.sp else 14.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                 )
                 is AiMdBlock.Bullet -> Row {
