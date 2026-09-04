@@ -2156,7 +2156,7 @@ fun LabProbeApp(prefs: AppPrefs) {
         val backFromTool: () -> Unit = {
             val destination = toolReturnRoute ?: "tools"
             route = destination
-            toolReturnRoute = if (destination == "tool_portmap" || destination == "tool_stun") nestedToolReturnRoute else null
+            toolReturnRoute = if (destination == "tool_portmap" || destination == "tool_stun" || destination == "tool_router_webhook") nestedToolReturnRoute else null
             nestedToolReturnRoute = null
         }
 
@@ -2335,7 +2335,19 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
                         "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
                         "tool_router_ipv6" -> Ipv6Screen(prefs, backFromTool)
-                        "tool_router_webhook" -> RouterWebhookScreen(prefs, state.status, state.events, backFromTool)
+                        "tool_router_webhook" -> RouterWebhookScreen(
+                            prefs = prefs,
+                            status = state.status,
+                            events = state.events,
+                            onBack = backFromTool,
+                            onTestPort = { host, port ->
+                                prefs.tcpHost = host
+                                prefs.tcpPort = port
+                                nestedToolReturnRoute = toolReturnRoute
+                                toolReturnRoute = "tool_router_webhook"
+                                route = "tool_port"
+                            }
+                        )
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
@@ -3537,12 +3549,12 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val liveStunRows = remember(data, stunRules) {
         buildStunRowsForHome(data, stunRules)
     }
-    var cachedStunRows by remember { mutableStateOf(decodeHomeVpnRows(prefs.cacheStunRowsJson)) }
+    var cachedStunRows by remember { mutableStateOf(decodeHomeStunRows(prefs.cacheStunRowsJson)) }
     LaunchedEffect(liveStunRows) {
         if (liveStunRows.isNotEmpty()) {
             cachedStunRows = liveStunRows
             withContext(Dispatchers.IO) {
-                prefs.cacheStunRowsJson = encodeHomeVpnRows(liveStunRows)
+                prefs.cacheStunRowsJson = encodeHomeStunRows(liveStunRows)
             }
         }
     }
@@ -3654,7 +3666,9 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                                     privacyMode = !privacyMode
                                     prefs.privacyMode = privacyMode
                                 },
-                                onClick = { onNavigate("tool_stun") }
+                                onClick = { onNavigate("tool_stun") },
+                                onNavigate = onNavigate,
+                                prefs = prefs
                             )
                         }
                     }
@@ -3768,25 +3782,41 @@ fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem
     return rows
 }
 
-fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<Pair<String, String>> {
-    val rows = mutableListOf<Pair<String, String>>()
-    fun addStunRow(labelRaw: String?, addrRaw: String?) {
+data class HomeStunRow(
+    val label: String,
+    val endpoint: String,
+    val serviceType: String = ""
+)
+
+fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<HomeStunRow> {
+    val rows = mutableListOf<HomeStunRow>()
+    fun addStunRow(labelRaw: String?, addrRaw: String?, typeRaw: String? = "") {
         val addr = cleanApiText(addrRaw)
         if (addr.isBlank() || addr.startsWith("0.0.0.0") || addr.startsWith("127.0.0.1")) return
         val label = cleanApiText(labelRaw).ifBlank { "STUN 穿透" }
-        val sameLabelIndex = rows.indexOfFirst { it.first.equals(label, ignoreCase = true) }
+        val inferredType = cleanApiText(typeRaw).ifBlank {
+            when {
+                label.contains("HTTPS", ignoreCase = true) -> "HTTPS"
+                label.contains("HTTP", ignoreCase = true) -> "HTTP"
+                label.contains("WireGuard", ignoreCase = true) -> "WIREGUARD"
+                label.contains("SSH", ignoreCase = true) -> "SSH"
+                label.contains("RDP", ignoreCase = true) -> "RDP"
+                else -> "CUSTOM"
+            }
+        }
+        val sameLabelIndex = rows.indexOfFirst { it.label.equals(label, ignoreCase = true) }
         if (sameLabelIndex >= 0) {
-            rows[sameLabelIndex] = label to addr
+            rows[sameLabelIndex] = HomeStunRow(label, addr, inferredType)
             return
         }
-        if (rows.none { it.second == addr }) rows += label to addr
+        if (rows.none { it.endpoint == addr }) rows += HomeStunRow(label, addr, inferredType)
     }
 
     // 1. 优先采用 StunApi 加载的真实 STUN 穿透规则列表
     stunRules?.filter { it.enabled }?.forEach { rule ->
         val endpoint = rule.runtime.publicEndpoint.ifBlank { rule.addresses.public.endpoint }
         if (endpoint.isNotBlank()) {
-            addStunRow(stunRuleTitle(rule), endpoint)
+            addStunRow(stunRuleTitle(rule), endpoint, rule.serviceType)
         }
     }
 
@@ -3805,10 +3835,11 @@ fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<Pa
                     ?: publicObj?.optString("endpoint")
                     ?: obj.optString("publicEndpoint")
             )
+            val serviceType = cleanApiText(obj.optString("serviceType"))
             val name = cleanApiText(obj.optString("name")).ifBlank {
-                cleanApiText(obj.optString("serviceType")).let { if (it.isNotBlank()) "$it 穿透" else "STUN 穿透" }
+                if (serviceType.isNotBlank()) "$serviceType 穿透" else "STUN 穿透"
             }
-            addStunRow(name, endpoint)
+            addStunRow(name, endpoint, serviceType)
         }
     }
 
@@ -3818,11 +3849,36 @@ fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<Pa
     if (!singleSource.contains("webhook", ignoreCase = true) && singleStun != null) {
         val addr = cleanApiText(singleStun.optString("publicAddress", singleStun.optString("address")))
         val name = cleanApiText(singleStun.optString("name")).ifBlank { "STUN 穿透" }
-        addStunRow(name, addr)
+        val serviceType = cleanApiText(singleStun.optString("serviceType"))
+        addStunRow(name, addr, serviceType)
     }
 
     return rows
 }
+
+fun encodeHomeStunRows(rows: List<HomeStunRow>): String = JSONArray().apply {
+    rows.forEach { row ->
+        if (row.label.isNotBlank() && row.endpoint.isNotBlank()) {
+            put(
+                JSONObject()
+                    .put("label", row.label)
+                    .put("endpoint", row.endpoint)
+                    .put("serviceType", row.serviceType)
+            )
+        }
+    }
+}.toString()
+
+fun decodeHomeStunRows(raw: String): List<HomeStunRow> = runCatching {
+    val array = JSONArray(raw.ifBlank { "[]" })
+    (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val label = cleanApiText(item.optString("label"))
+        val endpoint = cleanApiText(item.optString("endpoint", item.optString("address")))
+        val serviceType = cleanApiText(item.optString("serviceType"))
+        if (label.isBlank() || endpoint.isBlank()) null else HomeStunRow(label, endpoint, serviceType)
+    }
+}.getOrDefault(emptyList())
 
 
 fun encodeHomeVpnRows(rows: List<Pair<String, String>>): String = JSONArray().apply {
@@ -4671,8 +4727,17 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun HealthStunCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
+fun HealthStunCard(
+    rows: List<HomeStunRow>,
+    privacyMode: Boolean,
+    onTogglePrivacy: () -> Unit,
+    onClick: () -> Unit = {},
+    onNavigate: (String) -> Unit = {},
+    prefs: AppPrefs? = null
+) {
+    val context = LocalContext.current
     HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -4695,10 +4760,89 @@ fun HealthStunCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTog
         Spacer(Modifier.height(13.dp))
         val displayRows = rows.take(4)
         displayRows.forEachIndexed { idx, row ->
-            HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
+            val serviceType = row.serviceType.ifBlank {
+                when {
+                    row.label.contains("HTTPS", ignoreCase = true) -> "HTTPS"
+                    row.label.contains("HTTP", ignoreCase = true) -> "HTTP"
+                    row.label.contains("WireGuard", ignoreCase = true) -> "WIREGUARD"
+                    row.label.contains("SSH", ignoreCase = true) -> "SSH"
+                    row.label.contains("RDP", ignoreCase = true) -> "RDP"
+                    else -> "CUSTOM"
+                }
+            }
+            val copyText = serviceAddressForCopy(serviceType, row.endpoint)
+            val displayEndpoint = maskAddressForUi(row.endpoint, privacyMode)
+            val shape = RoundedCornerShape(10.dp)
+            val mayWrap = displayEndpoint.length > 22 || displayEndpoint.contains('\n')
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .combinedClickable(
+                        onClick = {
+                            val target = serviceQuickAccessTarget(serviceType, row.endpoint)
+                            copy(context, copyText)
+                            if (target != null) {
+                                launchServiceQuickAccess(
+                                    context = context,
+                                    target = target,
+                                    onOpenSsh = { host, port ->
+                                        prefs?.sshHost = host
+                                        prefs?.sshPort = port.toString()
+                                        onNavigate("tool_ssh")
+                                    },
+                                    onOpenWireGuard = { onNavigate("tool_wireguard") }
+                                )
+                            } else {
+                                toast(context, "已复制 $copyText")
+                            }
+                        },
+                        onLongClick = {
+                            copy(context, copyText)
+                            toast(context, "已复制 $copyText")
+                        }
+                    )
+                    .padding(vertical = 3.dp),
+                verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically
+            ) {
+                Text(
+                    row.label,
+                    Modifier.width(94.dp).then(if (mayWrap) Modifier.padding(top = 2.dp) else Modifier),
+                    style = LabTypography.Value.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    displayEndpoint,
+                    modifier = Modifier.weight(1f),
+                    style = LabTypography.ValueStrong.copy(
+                        color = Color(0xFF0F172A),
+                        fontFamily = FontFamily.Default
+                    ),
+                    maxLines = 2,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip
+                )
+            }
             if (idx != displayRows.lastIndex) Spacer(Modifier.height(6.dp))
         }
     }
+}
+
+@Composable
+fun HealthStunCard(
+    rows: List<Pair<String, String>>,
+    privacyMode: Boolean,
+    onTogglePrivacy: () -> Unit,
+    onClick: () -> Unit = {}
+) {
+    HealthStunCard(
+        rows = rows.map { HomeStunRow(it.first, it.second) },
+        privacyMode = privacyMode,
+        onTogglePrivacy = onTogglePrivacy,
+        onClick = onClick
+    )
 }
 
 @Composable

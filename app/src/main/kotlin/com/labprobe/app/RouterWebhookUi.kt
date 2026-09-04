@@ -35,11 +35,22 @@ data class WebhookEndpointRecord(
 
 fun parseWebhookEndpoints(status: JSONObject?, events: List<EventItem>): List<WebhookEndpointRecord> {
     val results = mutableListOf<WebhookEndpointRecord>()
+    val data = status?.optJSONObject("data") ?: status
+    val nasObj = data?.optJSONObject("nas")
+    val routerObj = data?.optJSONObject("router")
+    val nasIpv6 = cleanApiText(nasObj?.optString("exitIpv6"))
+        .ifBlank { cleanApiText(nasObj?.optString("ipv6")) }
+        .ifBlank { cleanApiText(routerObj?.optString("wan6")) }
     val seenNames = mutableSetOf<String>()
 
     fun addRecord(nameRaw: String, addressRaw: String, sourceRaw: String, timeRaw: String = "") {
-        val address = cleanApiText(addressRaw)
+        var address = cleanApiText(addressRaw)
         if (address.isBlank()) return
+        val lower = address.lowercase(Locale.getDefault())
+        if ((lower.startsWith("ipv6:") || lower.startsWith("[ipv6]:")) && nasIpv6.isNotBlank()) {
+            val port = address.substringAfterLast(":")
+            address = if (nasIpv6.contains(":")) "[$nasIpv6]:$port" else "$nasIpv6:$port"
+        }
         val name = cleanApiText(nameRaw).ifBlank { "Webhook 服务" }
         val key = name.lowercase(Locale.getDefault())
         if (seenNames.contains(key)) return
@@ -53,8 +64,6 @@ fun parseWebhookEndpoints(status: JSONObject?, events: List<EventItem>): List<We
             )
         )
     }
-
-    val data = status?.optJSONObject("data") ?: status
 
     // 1. 从 vpnStunAddresses 或 vpnAddresses 提取非纯 STUN 来源的 Webhook 记录
     val list = data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses")
@@ -347,11 +356,13 @@ fun RouterWebhookScreen(
                                         }
                                     }
                                     Spacer(Modifier.width(8.dp))
-                                    val parts = item.address.split(":")
-                                    if (parts.size == 2 && parts[1].toIntOrNull() != null) {
+                                    val endpoint = parseQuickAccessEndpoint(item.address)
+                                    val testHost = endpoint?.host?.removePrefix("[")?.removeSuffix("]").orEmpty()
+                                    val testPort = endpoint?.port
+                                    if (testHost.isNotBlank() && testPort != null && testPort in 1..65535) {
                                         OutlinedButton(
                                             onClick = {
-                                                onTestPort(parts[0], parts[1])
+                                                onTestPort(testHost, testPort.toString())
                                             },
                                             shape = RoundedCornerShape(8.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
