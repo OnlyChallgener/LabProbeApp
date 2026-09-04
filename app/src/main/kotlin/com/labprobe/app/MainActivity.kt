@@ -9099,6 +9099,199 @@ fun DnsResultRow(r: DnsRecord, onCopy: () -> Unit) {
     }
 }
 
+private data class ProbeStatusVisual(
+    val label: String,
+    val color: Color,
+    val bg: Color,
+    val border: Color,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+@Composable
+fun ProbeResultCard(
+    resultText: String,
+    probing: Boolean,
+    isUdp: Boolean = false,
+    onRetry: (() -> Unit)? = null
+) {
+    val ctx = LocalContext.current
+    if (probing) {
+        Surface(
+            shape = LabCoreSurface.CardShape,
+            color = LabCoreSurface.Card,
+            border = BorderStroke(1.dp, LabCoreSurface.Border),
+            shadowElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.2.dp,
+                    color = if (isUdp) Color(0xFF06B6D4) else Color(0xFF0EA5E9)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    if (isUdp) "正在发送 UDP 探测并等待回包..." else "正在进行 TCP 三次握手测试...",
+                    style = LabTypography.Body,
+                    color = LabV2.Ink
+                )
+            }
+        }
+        return
+    }
+
+    if (resultText == "等待检测" || resultText == "等待探测") {
+        Surface(
+            shape = LabCoreSurface.CardShape,
+            color = LabCoreSurface.Card,
+            border = BorderStroke(1.dp, LabCoreSurface.Border),
+            shadowElevation = 1.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    if (isUdp) Icons.Rounded.TravelExplore else Icons.Rounded.Route,
+                    null,
+                    tint = LabV2.InkMuted.copy(alpha = 0.5f),
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    if (isUdp) "点击上方「开始 UDP 探测」测试协议通路" else "点击上方「开始 TCP 测试」检测端口连通性",
+                    style = LabTypography.Supporting,
+                    color = LabV2.InkMuted
+                )
+            }
+        }
+        return
+    }
+
+    val lines = resultText.lines().map { it.trim() }.filter { it.isNotBlank() }
+    val firstLine = lines.firstOrNull().orEmpty()
+    val isOpen = firstLine == "OPEN" || firstLine.startsWith("UDP RESPONSE")
+    val isClosed = firstLine.startsWith("UDP CLOSED") || (firstLine == "FAILED" && resultText.contains("连接拒绝"))
+    val isTimeout = firstLine.startsWith("UDP NO RESPONSE") || (firstLine == "FAILED" && resultText.contains("超时"))
+
+    val visual = when {
+        isOpen -> ProbeStatusVisual("端口开放 · 通信正常", Color(0xFF15803D), Color(0xFFDCFCE7), Color(0xFF86EFAC), Icons.Rounded.CheckCircle)
+        isClosed -> ProbeStatusVisual("连接拒绝 · 端口关闭", Color(0xFFB91C1C), Color(0xFFFEE2E2), Color(0xFFFCA5A5), Icons.Rounded.Close)
+        isTimeout -> ProbeStatusVisual(if (isUdp) "无响应 · 可能被过滤" else "连接超时 · 握手失败", Color(0xFFB45309), Color(0xFFFEF3C7), Color(0xFFFCD34D), Icons.Rounded.HourglassEmpty)
+        else -> ProbeStatusVisual("检测未完成 / 解析失败", Color(0xFF475569), Color(0xFFF1F5F9), Color(0xFFCBD5E1), Icons.Rounded.Info)
+    }
+
+    val latencyMatch = Regex("耗时\\s*(\\d+ms)").find(resultText)
+    val latency = latencyMatch?.groupValues?.getOrNull(1)
+    val targetLine = lines.getOrNull(1)
+
+    Surface(
+        shape = LabCoreSurface.CardShape,
+        color = LabCoreSurface.Card,
+        border = BorderStroke(1.dp, visual.border),
+        shadowElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Header status banner
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(99.dp),
+                    color = visual.bg,
+                    border = BorderStroke(1.dp, visual.border)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(visual.icon, null, tint = visual.color, modifier = Modifier.size(15.dp))
+                        Text(visual.label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = visual.color)
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                if (latency != null) {
+                    Surface(
+                        shape = RoundedCornerShape(99.dp),
+                        color = LabCoreSurface.Inner,
+                        border = BorderStroke(1.dp, LabCoreSurface.Border)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("⚡ $latency", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = if (isOpen) Color(0xFF0D9488) else LabV2.InkMuted)
+                        }
+                    }
+                }
+            }
+
+            // Target Info Box
+            if (!targetLine.isNullOrBlank()) {
+                Surface(
+                    shape = LabCoreSurface.InnerShape,
+                    color = LabCoreSurface.Inner,
+                    border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = 0.7f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("目标与路由路径", style = LabTypography.Caption, color = LabV2.InkMuted)
+                        Text(targetLine, style = LabTypography.Body, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+                    }
+                }
+            }
+
+            // Diagnostic notes & logs
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                lines.drop(2).forEach { line ->
+                    if (line.startsWith("说明：") || line.startsWith("STUN 识别") || line.startsWith("DNS 响应") || line.startsWith("NTP 层级")) {
+                        Text(line, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, lineHeight = 16.sp)
+                    } else {
+                        Text(line, fontSize = 11.5.sp, color = LabV2.InkMuted, lineHeight = 15.sp)
+                    }
+                }
+            }
+
+            // Action Row: Copy Result & Retry
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = { copy(ctx, resultText); toast(ctx, "已复制测试结果") },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, LabCoreSurface.Border),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                    modifier = Modifier.weight(1f).height(36.dp)
+                ) {
+                    Icon(Icons.Rounded.ContentCopy, null, tint = LabV2.Ink, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("复制结果", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+                }
+                if (onRetry != null) {
+                    OutlinedButton(
+                        onClick = onRetry,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, LabCoreSurface.Border),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
+                    ) {
+                        Icon(Icons.Rounded.Refresh, null, tint = LabV2.Ink, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("再次测试", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun TcpTool(prefs: AppPrefs) {
     var host by remember { mutableStateOf(prefs.tcpHost) }
@@ -9106,32 +9299,101 @@ fun TcpTool(prefs: AppPrefs) {
     var timeout by remember { mutableStateOf(prefs.tcpTimeout) }
     var ipMode by remember { mutableStateOf("自动") }
     var result by remember { mutableStateOf("等待检测") }
+    var probing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    ExpressiveCard("TCP 配置", "TCP Connect，等同 telnet / nc 端口可达性。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
-        CompactIconHistoryInput("主机", "net86.dynv6.net / 240e::1", host, { host = it; prefs.tcpHost = it }, "port_host", prefs, Icons.Rounded.Dns)
+
+    fun triggerProbe() {
+        if (probing) return
+        val (cleanHost, extPort) = cleanProbeHost(host)
+        if (extPort != null) {
+            port = extPort.toString()
+            prefs.tcpPort = port
+        }
+        if (cleanHost.isNotBlank() && cleanHost != host) {
+            host = cleanHost
+            prefs.tcpHost = host
+        }
+        probing = true
+        scope.launch {
+            prefs.addHistory("port_host", host)
+            prefs.addHistory("port_port", port)
+            result = tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, ipMode)
+            probing = false
+        }
+    }
+
+    ExpressiveCard("TCP 配置", "TCP Connect，等同 telnet / nc 端口连通性。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
+        CompactIconHistoryInput("主机", "net86.dynv6.net / 240e::1", host, {
+            val (cHost, cPort) = cleanProbeHost(it)
+            host = it
+            prefs.tcpHost = it
+            if (cPort != null) {
+                port = cPort.toString()
+                prefs.tcpPort = port
+            }
+        }, "port_host", prefs, Icons.Rounded.Dns)
+
+        // Quick Port Selection Chips
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("常用端口预设", style = LabTypography.Caption, color = LabV2.InkMuted)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "80 Web", "443 HTTPS", "22 SSH", "8080 备用",
+                    "3389 RDP", "445 SMB", "5000 群晖", "5244 AList", "8096 Emby"
+                ).forEach { item ->
+                    val pNum = item.substringBefore(' ')
+                    val isSelected = port == pNum
+                    Surface(
+                        onClick = { port = pNum; prefs.tcpPort = port },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) Color(0xFF0EA5E9).copy(alpha = 0.14f) else LabCoreSurface.Inner,
+                        border = BorderStroke(1.dp, if (isSelected) Color(0xFF0EA5E9) else LabCoreSurface.Border)
+                    ) {
+                        Text(
+                            item,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) Color(0xFF0284C7) else LabV2.Ink
+                        )
+                    }
+                }
+            }
+        }
+
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.tcpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.tcpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时(ms)", timeout, { timeout = it; prefs.tcpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
-            TinyInfoParam("结果", "成功/拒绝/超时", Icons.Rounded.Info, Color(0xFF0EA5E9), Modifier.weight(1f))
+            TinyInfoParam("协议", "TCP握手 (SYN+ACK)", Icons.Rounded.Info, Color(0xFF0EA5E9), Modifier.weight(1f))
         }
-        PillButton("开始 TCP 测试", Icons.Rounded.Power, accent = Color(0xFF0EA5E9)) {
-            scope.launch {
-                prefs.addHistory("port_host", host); prefs.addHistory("port_port", port)
-                result = tcpProbeSmart(host, port.toIntOrNull() ?: 80, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, ipMode)
-            }
+        PillButton(
+            text = if (probing) "正在测试 TCP 连通性..." else "开始 TCP 测试",
+            icon = if (probing) null else Icons.Rounded.Power,
+            enabled = !probing && host.isNotBlank(),
+            accent = Color(0xFF0EA5E9)
+        ) {
+            triggerProbe()
         }
     }
-    ExpressiveCard("TCP 结果", "连接成功 / 拒绝 / 超时", Icons.Rounded.Route, Color(0xFF2563EB)) { ResultText(result) }
+
+    ExpressiveCard("TCP 结果", "连接成功 / 拒绝 / 超时", Icons.Rounded.Route, Color(0xFF2563EB)) {
+        ProbeResultCard(resultText = result, probing = probing, isUdp = false, onRetry = { triggerProbe() })
+    }
 }
 
 data class UdpTemplateSpec(val name: String, val host: String, val port: String, val note: String)
 
 fun udpTemplateSpec(name: String): UdpTemplateSpec = when (name) {
     "DNS 查询" -> UdpTemplateSpec("DNS 查询", "223.5.5.5", "53", "发送标准 DNS Query，适合测试 UDP 53。")
-    "NTP 请求" -> UdpTemplateSpec("NTP 请求", "ntp.aliyun.com", "123", "发送 NTP 请求，适合测试时间服务器 UDP。")
+    "NTP 请求" -> UdpTemplateSpec("NTP 请求", "ntp.aliyun.com", "123", "发送 NTP 请求，适合测试时间服务器 UDP 123。")
+    "WireGuard 握手" -> UdpTemplateSpec("WireGuard 握手", "1.1.1.1", "51820", "发送 WireGuard 握手探测包，适合测试 VPN UDP。")
+    "HTTP/3 QUIC" -> UdpTemplateSpec("HTTP/3 QUIC", "cloudflare.com", "443", "发送 QUIC Initial 探测，测试 HTTP/3 UDP 443。")
     "UDP 空包" -> UdpTemplateSpec("UDP 空包", "1.1.1.1", "443", "只发送空 UDP 包；无响应不代表关闭。")
     else -> UdpTemplateSpec("STUN Binding", "stun.voip.aebc.com", "3478", "发送 STUN Binding Request，适合测试 STUN/UDP 映射。")
 }
@@ -9144,7 +9406,9 @@ fun UdpTool(prefs: AppPrefs) {
     var template by remember { mutableStateOf(prefs.udpTemplate) }
     var ipMode by remember { mutableStateOf(prefs.udpIpMode) }
     var result by remember { mutableStateOf("等待探测") }
+    var probing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
     fun applyUdpTemplate(name: String) {
         val spec = udpTemplateSpec(name)
         template = spec.name
@@ -9154,6 +9418,27 @@ fun UdpTool(prefs: AppPrefs) {
         prefs.udpHost = spec.host
         prefs.udpPort = spec.port
     }
+
+    fun triggerProbe() {
+        if (probing) return
+        val (cleanHost, extPort) = cleanProbeHost(host)
+        if (extPort != null) {
+            port = extPort.toString()
+            prefs.udpPort = port
+        }
+        if (cleanHost.isNotBlank() && cleanHost != host) {
+            host = cleanHost
+            prefs.udpHost = host
+        }
+        probing = true
+        scope.launch {
+            prefs.addHistory("udp_host", host)
+            prefs.addHistory("udp_port", port)
+            result = udpProbeSmart(host, port.toIntOrNull() ?: 3478, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, ipMode, template)
+            probing = false
+        }
+    }
+
     ExpressiveCard(
         "UDP 配置",
         "切换模板会自动填入默认目标与端口。",
@@ -9165,25 +9450,64 @@ fun UdpTool(prefs: AppPrefs) {
             }
         }
     ) {
-        CompactIconHistoryInput("目标", udpTemplateSpec(template).host, host, { host = it; prefs.udpHost = it }, "udp_host", prefs, Icons.Rounded.Dns)
+        CompactIconHistoryInput("目标", udpTemplateSpec(template).host, host, {
+            val (cHost, cPort) = cleanProbeHost(it)
+            host = it
+            prefs.udpHost = it
+            if (cPort != null) {
+                port = cPort.toString()
+                prefs.udpPort = port
+            }
+        }, "udp_host", prefs, Icons.Rounded.Dns)
+
+        // Quick template selection chips
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("UDP 协议模板预设", style = LabTypography.Caption, color = LabV2.InkMuted)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("STUN Binding", "DNS 查询", "NTP 请求", "WireGuard 握手", "HTTP/3 QUIC", "UDP 空包").forEach { item ->
+                    val isSelected = template == item
+                    Surface(
+                        onClick = { applyUdpTemplate(item) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) Color(0xFF06B6D4).copy(alpha = 0.14f) else LabCoreSurface.Inner,
+                        border = BorderStroke(1.dp, if (isSelected) Color(0xFF06B6D4) else LabCoreSurface.Border)
+                    ) {
+                        Text(
+                            item,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) Color(0xFF0891B2) else LabV2.Ink
+                        )
+                    }
+                }
+            }
+        }
+
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamSelectIcon("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "UDP 空包"), { applyUdpTemplate(it) }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
+            TinyParamSelectIcon("模板", template, listOf("STUN Binding", "DNS 查询", "NTP 请求", "WireGuard 握手", "HTTP/3 QUIC", "UDP 空包"), { applyUdpTemplate(it) }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.udpIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
         }
         Text(udpTemplateSpec(template).note, fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .56f), lineHeight = 15.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.udpPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
-            TinyParamInputIcon("超时", timeout, { timeout = it; prefs.udpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
+            TinyParamInputIcon("超时(ms)", timeout, { timeout = it; prefs.udpTimeout = it }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
         }
-        PillButton("开始 UDP 探测", Icons.Rounded.Waves, accent = Color(0xFF06B6D4)) {
-            scope.launch {
-                prefs.addHistory("udp_host", host); prefs.addHistory("udp_port", port)
-                result = udpProbeSmart(host, port.toIntOrNull() ?: 3478, timeout.toIntOrNull() ?: 1000, prefs.dns1, prefs.dns2, ipMode, template)
-            }
+        PillButton(
+            text = if (probing) "正在进行 UDP 探测..." else "开始 UDP 探测",
+            icon = if (probing) null else Icons.Rounded.Waves,
+            enabled = !probing && host.isNotBlank(),
+            accent = Color(0xFF06B6D4)
+        ) {
+            triggerProbe()
         }
     }
+
     ExpressiveCard("UDP 结果", template, Icons.Rounded.TravelExplore, Color(0xFF06B6D4)) {
-        ResultText(result)
+        ProbeResultCard(resultText = result, probing = probing, isUdp = true, onRetry = { triggerProbe() })
         Spacer(Modifier.height(6.dp))
         Text("提示：UDP 只有收到协议响应或 ICMP Port Unreachable 才较明确；无响应通常应显示为未知/可能过滤。", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f), lineHeight = 16.sp)
     }
@@ -11862,14 +12186,58 @@ suspend fun pingOnce(host: String, timeoutMs: Int): Int? = withContext(Dispatche
     runCatching { pingOnceAddress(InetAddress.getByName(host), timeoutMs) }.getOrNull()
 }
 
+fun cleanProbeHost(input: String): Pair<String, Int?> {
+    val trimmed = input.trim()
+    val noScheme = when {
+        trimmed.startsWith("http://", ignoreCase = true) -> trimmed.substring(7)
+        trimmed.startsWith("https://", ignoreCase = true) -> trimmed.substring(8)
+        trimmed.startsWith("tcp://", ignoreCase = true) -> trimmed.substring(6)
+        trimmed.startsWith("udp://", ignoreCase = true) -> trimmed.substring(6)
+        else -> trimmed
+    }.substringBefore('/').trim()
+
+    if (noScheme.startsWith("[") && noScheme.contains("]")) {
+        val v6 = noScheme.substringAfter("[").substringBefore("]")
+        val portPart = noScheme.substringAfter("]", "").removePrefix(":")
+        val port = portPart.toIntOrNull()
+        return v6 to port
+    }
+    if (noScheme.count { it == ':' } == 1) {
+        val hostPart = noScheme.substringBefore(':')
+        val portPart = noScheme.substringAfter(':')
+        val port = portPart.toIntOrNull()
+        if (port != null && port in 1..65535) {
+            return hostPart to port
+        }
+    }
+    return noScheme to null
+}
+
 private fun resolveProbeTargets(host: String, dns1: String, dns2: String, ipMode: String): List<String> {
-    val raw = if (isIpLiteral(host)) listOf(host) else (
-        DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 28) +
-        DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 28) +
-        DnsWire.query(host, dns1.ifBlank { DEFAULT_DNS1 }, 1) +
-        DnsWire.query(host, dns2.ifBlank { DEFAULT_DNS2 }, 1) +
-        runCatching { InetAddress.getAllByName(host).mapNotNull { it.hostAddress } }.getOrDefault(emptyList())
-    ).distinct().filter { it != "127.0.0.1" }
+    val cleanHost = cleanProbeHost(host).first
+    if (cleanHost.isBlank()) return emptyList()
+    if (isIpLiteral(cleanHost)) return listOf(cleanHost)
+
+    // 1. Fast system DNS lookup (uses OS DNS cache, private DNS / DoT, active network Wi-Fi/Cellular DNS)
+    val sysDns = runCatching {
+        InetAddress.getAllByName(cleanHost).mapNotNull { it.hostAddress }
+    }.getOrDefault(emptyList())
+
+    // 2. Custom DNSWire lookup only if needed, with non-blocking resilience
+    val customDns = if (dns1.isNotBlank() || dns2.isNotBlank() || sysDns.isEmpty()) {
+        runCatching {
+            val s1 = dns1.ifBlank { DEFAULT_DNS1 }
+            val s2 = dns2.ifBlank { DEFAULT_DNS2 }
+            listOf(
+                runCatching { DnsWire.query(cleanHost, s1, 28) }.getOrDefault(emptyList()),
+                runCatching { DnsWire.query(cleanHost, s1, 1) }.getOrDefault(emptyList()),
+                runCatching { DnsWire.query(cleanHost, s2, 28) }.getOrDefault(emptyList()),
+                runCatching { DnsWire.query(cleanHost, s2, 1) }.getOrDefault(emptyList())
+            ).flatten()
+        }.getOrDefault(emptyList())
+    } else emptyList()
+
+    val raw = (sysDns + customDns).distinct().filter { it != "127.0.0.1" || cleanHost == "localhost" }
     return raw.filter { ip ->
         val is6 = ip.contains(":")
         when (ipMode) {
@@ -11887,28 +12255,39 @@ private fun resolveProbeTargets(host: String, dns1: String, dns2: String, ipMode
 }
 
 suspend fun tcpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String, ipMode: String = "自动"): String = withContext(Dispatchers.IO) {
-    val targets = resolveProbeTargets(host, dns1, dns2, ipMode)
-    if (targets.isEmpty()) return@withContext "FAILED\n无法解析或当前 IP 策略无可用地址：$host"
+    val (cleanHost, extPort) = cleanProbeHost(host)
+    val actualPort = extPort ?: port
+    val targets = resolveProbeTargets(cleanHost, dns1, dns2, ipMode)
+    if (targets.isEmpty()) return@withContext "FAILED\n无法解析或当前 IP 策略无可用地址：$cleanHost"
     val logs = mutableListOf<String>()
+    val actualTimeout = timeout.coerceIn(300, 8000)
     for (ip in targets) {
         val start = System.currentTimeMillis()
         try {
-            Socket().use { it.connect(InetSocketAddress(InetAddress.getByName(ip), port), timeout.coerceIn(300, 8000)) }
-            return@withContext "OPEN\n$host → $ip:$port\n耗时 ${System.currentTimeMillis()-start}ms\n说明：TCP 三次握手成功，端口可达。"
+            Socket().use { socket ->
+                socket.tcpNoDelay = true
+                socket.connect(InetSocketAddress(InetAddress.getByName(ip), actualPort), actualTimeout)
+            }
+            val elapsed = System.currentTimeMillis() - start
+            return@withContext "OPEN\n$cleanHost → $ip:$actualPort\n耗时 ${elapsed}ms\n说明：TCP 三次握手成功，端口可达。"
         } catch (e: java.net.ConnectException) {
-            logs += "$ip 连接拒绝：主机可达但端口未开放/拒绝连接"
+            val elapsed = System.currentTimeMillis() - start
+            logs += "$ip:$actualPort 连接拒绝 (${elapsed}ms)：主机在线但端口未开放/拒绝连接"
         } catch (e: java.net.SocketTimeoutException) {
-            logs += "$ip 超时：可能被防火墙过滤或路由不可达"
+            logs += "$ip:$actualPort 超时 (${actualTimeout}ms)：可能被防火墙过滤或路由不可达"
         } catch (e: Exception) {
-            logs += "$ip 失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+            logs += "$ip:$actualPort 失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
         }
     }
-    "FAILED\n$host:$port\n" + logs.joinToString("\n")
+    "FAILED\n$cleanHost:$actualPort\n" + logs.joinToString("\n")
 }
 
-private fun udpPayload(template: String, host: String): ByteArray {
+private fun udpPayload(template: String, host: String): Pair<ByteArray, ByteArray?> {
     return when (template) {
-        "STUN Binding" -> buildStunRequest(false, false).first
+        "STUN Binding" -> {
+            val (req, tx) = buildStunRequest(false, false)
+            req to tx
+        }
         "DNS 查询" -> {
             val domain = host.takeIf { !isIpLiteral(it) } ?: "example.com"
             val out = ByteArrayOutputStream()
@@ -11916,41 +12295,74 @@ private fun udpPayload(template: String, host: String): ByteArray {
             out.write(byteArrayOf((id ushr 8).toByte(), id.toByte(), 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
             domain.split('.').filter { it.isNotBlank() }.forEach { label -> val b = label.toByteArray(); out.write(b.size); out.write(b) }
             out.write(0); out.write(byteArrayOf(0x00, 0x01, 0x00, 0x01))
-            out.toByteArray()
+            out.toByteArray() to null
         }
-        "NTP 请求" -> ByteArray(48).also { it[0] = 0x1B }
-        else -> byteArrayOf(0x4c, 0x61, 0x62, 0x50, 0x72, 0x6f, 0x62, 0x65)
+        "NTP 请求" -> (ByteArray(48).also { it[0] = 0x1B }) to null
+        "WireGuard 握手" -> {
+            val p = ByteArray(148)
+            p[0] = 0x01
+            SecureRandom().nextBytes(p)
+            p[0] = 0x01
+            p to null
+        }
+        "HTTP/3 QUIC" -> byteArrayOf(0xc0.toByte(), 0x00, 0x00, 0x00, 0x01, 0x00, 0x00) to null
+        else -> byteArrayOf(0x4c, 0x61, 0x62, 0x50, 0x72, 0x6f, 0x62, 0x65) to null
     }
 }
 
 suspend fun udpProbeSmart(host: String, port: Int, timeout: Int, dns1: String, dns2: String, ipMode: String = "自动", template: String = "UDP 空包"): String = withContext(Dispatchers.IO) {
-    val targets = resolveProbeTargets(host, dns1, dns2, ipMode)
-    if (targets.isEmpty()) return@withContext "FAILED\n无法解析或当前 IP 策略无可用地址：$host"
+    val (cleanHost, extPort) = cleanProbeHost(host)
+    val actualPort = extPort ?: port
+    val targets = resolveProbeTargets(cleanHost, dns1, dns2, ipMode)
+    if (targets.isEmpty()) return@withContext "FAILED\n无法解析或当前 IP 策略无可用地址：$cleanHost"
     val logs = mutableListOf<String>()
-    val payload = udpPayload(template, host)
+    val (payload, tx) = udpPayload(template, cleanHost)
+    val actualTimeout = timeout.coerceIn(300, 8000)
     for (ip in targets) {
         val start = System.currentTimeMillis()
         try {
             DatagramSocket().use { socket ->
-                socket.soTimeout = timeout.coerceIn(300, 8000)
+                socket.soTimeout = actualTimeout
                 val addr = InetAddress.getByName(ip)
-                socket.connect(addr, port)
-                socket.send(DatagramPacket(payload, payload.size, addr, port))
+                socket.connect(addr, actualPort)
+                socket.send(DatagramPacket(payload, payload.size, addr, actualPort))
                 val buf = ByteArray(1500)
                 val resp = DatagramPacket(buf, buf.size)
                 socket.receive(resp)
-                val elapsed = System.currentTimeMillis()-start
-                return@withContext "UDP RESPONSE\n$template · $host → $ip:$port\n耗时 ${elapsed}ms\n收到 ${resp.length} bytes，来源 ${resp.address.hostAddress}:${resp.port}\n说明：收到 UDP 响应，目标协议可达。"
+                val elapsed = System.currentTimeMillis() - start
+                val extra = when (template) {
+                    "STUN Binding" -> {
+                        if (tx != null) {
+                            val stun = parseStunResponse(buf.copyOf(resp.length), tx, StunEndpoint(ip, actualPort), elapsed)
+                            if (stun?.mapped != null) "\nSTUN 识别映射端点: ${stun.mapped.address}:${stun.mapped.port}" else ""
+                        } else ""
+                    }
+                    "DNS 查询" -> {
+                        if (resp.length >= 12) {
+                            val rcode = buf[3].toInt() and 0x0F
+                            val an = ((buf[6].toInt() and 0xff) shl 8) or (buf[7].toInt() and 0xff)
+                            "\nDNS 响应: ${if (rcode == 0) "解析成功" else "RCode=$rcode"} · 应答数: $an"
+                        } else ""
+                    }
+                    "NTP 请求" -> {
+                        if (resp.length >= 48) {
+                            val stratum = buf[1].toInt() and 0xff
+                            "\nNTP 层级: Stratum $stratum"
+                        } else ""
+                    }
+                    else -> ""
+                }
+                return@withContext "UDP RESPONSE\n$template · $cleanHost → $ip:$actualPort\n耗时 ${elapsed}ms\n收到 ${resp.length} bytes，来源 ${resp.address.hostAddress}:${resp.port}$extra\n说明：收到 UDP 响应，目标协议可达。"
             }
         } catch (e: java.net.PortUnreachableException) {
-            return@withContext "UDP CLOSED\n$host → $ip:$port\n收到 ICMP Port Unreachable，端口大概率关闭。"
+            return@withContext "UDP CLOSED\n$cleanHost → $ip:$actualPort\n收到 ICMP Port Unreachable，端口大概率关闭。"
         } catch (e: java.net.SocketTimeoutException) {
-            logs += "$ip 无响应：未知 / 可能过滤 / 服务不回复"
+            logs += "$ip:$actualPort 无响应 (${actualTimeout}ms)：未知 / 可能过滤 / 服务不回复"
         } catch (e: Exception) {
-            logs += "$ip 失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+            logs += "$ip:$actualPort 失败：${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
         }
     }
-    "UDP NO RESPONSE\n$template · $host:$port\n" + logs.joinToString("\n") + "\n说明：UDP 无响应不代表端口关闭。"
+    "UDP NO RESPONSE\n$template · $cleanHost:$actualPort\n" + logs.joinToString("\n") + "\n说明：UDP 无响应不代表端口关闭。"
 }
 
 fun isIpLiteral(s: String): Boolean = s.contains(":") || Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$").matches(s)
