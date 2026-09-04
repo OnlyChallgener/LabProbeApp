@@ -165,6 +165,13 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 color = SettingsCyan,
                 enabled = capabilities.ddns || capabilities.configured
             ) { onOpen("tool_router_ddns") }
+            RouterSettingsTile(
+                title = "Webhook",
+                subtitle = "Lucky / 自定义服务推送与实时公网地址",
+                icon = Icons.Rounded.CloudUpload,
+                color = SettingsCyan,
+                enabled = true
+            ) { onOpen("tool_router_webhook") }
         }
 
         RouterSettingsSection("诊断与升级") {

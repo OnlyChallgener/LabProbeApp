@@ -434,6 +434,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("cache_router_dashboard_v1", v).apply()
     var cacheVpnRowsJson: String get() = sp.getString("cache_home_vpn_rows_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("cache_home_vpn_rows_v1", v).apply()
+    var cacheStunRowsJson: String get() = sp.getString("cache_home_stun_rows_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("cache_home_stun_rows_v1", v).apply()
     var cacheDevices: String get() = sp.getString("cache_devices", "") ?: ""
         set(v) = sp.edit().putString("cache_devices", v).apply()
     var cacheOnlineDevices: String get() = sp.getString("cache_online_devices", "") ?: ""
@@ -2333,6 +2335,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
                         "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
                         "tool_router_ipv6" -> Ipv6Screen(prefs, backFromTool)
+                        "tool_router_webhook" -> RouterWebhookScreen(prefs, state.status, state.events, backFromTool)
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         } }
@@ -3520,10 +3523,35 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         }
     }
     val vpnRows = if (liveVpnRows.isNotEmpty()) liveVpnRows else cachedVpnRows
+
+    var stunRules by remember(prefs.hub, prefs.token, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                StunApi(prefs).list()
+            }
+        }.getOrNull()?.takeIf { it.rulesLoaded }?.let {
+            stunRules = it.rules
+        }
+    }
+    val liveStunRows = remember(data, stunRules) {
+        buildStunRowsForHome(data, stunRules)
+    }
+    var cachedStunRows by remember { mutableStateOf(decodeHomeVpnRows(prefs.cacheStunRowsJson)) }
+    LaunchedEffect(liveStunRows) {
+        if (liveStunRows.isNotEmpty()) {
+            cachedStunRows = liveStunRows
+            withContext(Dispatchers.IO) {
+                prefs.cacheStunRowsJson = encodeHomeVpnRows(liveStunRows)
+            }
+        }
+    }
+    val stunRows = if (liveStunRows.isNotEmpty()) liveStunRows else cachedStunRows
+
     val onlineCount = state.onlineDevices.size
     val watchedCount = remember(state.devices) { followedDeviceList(state.devices).size }
     val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
-    val vpnOk = vpnRows.isNotEmpty()
+    val vpnOk = stunRows.isNotEmpty() || vpnRows.isNotEmpty()
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
     val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
     val homeGradient = remember {
@@ -3617,15 +3645,19 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         onIconClick = { onNavigate("tool_portmap") }
                     )
                     "router" -> RouterSettingsHomeCard { onNavigate("router_settings") }
-                    "vpn" -> HealthVpnCard(
-                        rows = vpnRows,
-                        privacyMode = privacyMode,
-                        onTogglePrivacy = {
-                            privacyMode = !privacyMode
-                            prefs.privacyMode = privacyMode
-                        },
-                        onClick = { onNavigate("tool_wireguard") }
-                    )
+                    "vpn", "stun" -> {
+                        if (stunRows.isNotEmpty()) {
+                            HealthStunCard(
+                                rows = stunRows,
+                                privacyMode = privacyMode,
+                                onTogglePrivacy = {
+                                    privacyMode = !privacyMode
+                                    prefs.privacyMode = privacyMode
+                                },
+                                onClick = { onNavigate("tool_stun") }
+                            )
+                        }
+                    }
                     "devices" -> HealthDevicesCard(state) { onNavigate("devices") }
                     "today" -> HealthTodayCard(prefs, state, prefs.lastRefresh) { onNavigate("daily") }
                     }
@@ -3733,6 +3765,62 @@ fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem
                 addVpnRow(rawName.ifBlank { "STUN" }, addr)
             }
     }
+    return rows
+}
+
+fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<Pair<String, String>> {
+    val rows = mutableListOf<Pair<String, String>>()
+    fun addStunRow(labelRaw: String?, addrRaw: String?) {
+        val addr = cleanApiText(addrRaw)
+        if (addr.isBlank() || addr.startsWith("0.0.0.0") || addr.startsWith("127.0.0.1")) return
+        val label = cleanApiText(labelRaw).ifBlank { "STUN 穿透" }
+        val sameLabelIndex = rows.indexOfFirst { it.first.equals(label, ignoreCase = true) }
+        if (sameLabelIndex >= 0) {
+            rows[sameLabelIndex] = label to addr
+            return
+        }
+        if (rows.none { it.second == addr }) rows += label to addr
+    }
+
+    // 1. 优先采用 StunApi 加载的真实 STUN 穿透规则列表
+    stunRules?.filter { it.enabled }?.forEach { rule ->
+        val endpoint = rule.runtime.publicEndpoint.ifBlank { rule.addresses.public.endpoint }
+        if (endpoint.isNotBlank()) {
+            addStunRow(stunRuleTitle(rule), endpoint)
+        }
+    }
+
+    // 2. 解析 Hub /api/status 中携带的 stunRules
+    val array = data?.optJSONArray("stunRules")
+    if (array != null) {
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i) ?: continue
+            val enabled = obj.optBoolean("enabled", true)
+            if (!enabled) continue
+            val runtime = obj.optJSONObject("runtime")
+            val addresses = obj.optJSONObject("addresses")
+            val publicObj = addresses?.optJSONObject("public")
+            val endpoint = cleanApiText(
+                runtime?.optString("publicEndpoint")
+                    ?: publicObj?.optString("endpoint")
+                    ?: obj.optString("publicEndpoint")
+            )
+            val name = cleanApiText(obj.optString("name")).ifBlank {
+                cleanApiText(obj.optString("serviceType")).let { if (it.isNotBlank()) "$it 穿透" else "STUN 穿透" }
+            }
+            addStunRow(name, endpoint)
+        }
+    }
+
+    // 3. 兼容单项原生 stun 记录（排除 Webhook 推送源）
+    val singleStun = data?.optJSONObject("stun")
+    val singleSource = singleStun?.optString("source").orEmpty()
+    if (!singleSource.contains("webhook", ignoreCase = true) && singleStun != null) {
+        val addr = cleanApiText(singleStun.optString("publicAddress", singleStun.optString("address")))
+        val name = cleanApiText(singleStun.optString("name")).ifBlank { "STUN 穿透" }
+        addStunRow(name, addr)
+    }
+
     return rows
 }
 
@@ -4584,7 +4672,7 @@ fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, 
 }
 
 @Composable
-fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
+fun HealthStunCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
     HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -4595,29 +4683,27 @@ fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogg
                     .clickable { onTogglePrivacy() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(if (privacyMode) Icons.Rounded.VisibilityOff else Icons.Rounded.VpnKey, null, tint = LabV2.Cyan, modifier = Modifier.size(19.dp))
+                Icon(if (privacyMode) Icons.Rounded.VisibilityOff else Icons.Rounded.AltRoute, null, tint = LabV2.Cyan, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("WireGuard", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "手动、DDNS 与 STUN 配置彼此独立，点击进入。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("STUN 穿透", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "NAT 穿透端点，点击卡片进入管理。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(13.dp))
-        if (rows.isEmpty()) {
-            Text(
-                "还没有公网入口记录，点击卡片创建 WireGuard 配置。",
-                fontSize = LabTypography.Value.fontSize,
-                fontWeight = FontWeight.SemiBold,
-                color = LabV2.InkMuted
-            )
-        } else {
-            rows.forEachIndexed { idx, row ->
-                HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
-                if (idx != rows.lastIndex) Spacer(Modifier.height(6.dp))
-            }
+        val displayRows = rows.take(4)
+        displayRows.forEachIndexed { idx, row ->
+            HealthDataRowDisplay(row.first, row.second, maskAddressForUi(row.second, privacyMode), Color(0xFF0F172A))
+            if (idx != displayRows.lastIndex) Spacer(Modifier.height(6.dp))
         }
     }
+}
+
+@Composable
+fun HealthVpnCard(rows: List<Pair<String, String>>, privacyMode: Boolean, onTogglePrivacy: () -> Unit, onClick: () -> Unit = {}) {
+    HealthStunCard(rows = rows, privacyMode = privacyMode, onTogglePrivacy = onTogglePrivacy, onClick = onClick)
 }
 
 @Composable
@@ -5305,9 +5391,27 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
     ) {
         DeviceSmartInfo(d, profile)
         if (!d.online && wolManaged) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)) {
-                    Text("已加入 WOL 管理 · 点击唤醒后会发送 3 轮魔术包", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(
+                Modifier.fillMaxWidth().height(34.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, DEVICE_INFO_CARD_BORDER)
+                ) {
+                    Box(Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                        Text(
+                            "已加入 WOL 管理 · 点击唤醒发送魔术包",
+                            color = LabV2.InkMuted,
+                            fontSize = LabTypography.Supporting.fontSize,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 Button(
                     onClick = {
@@ -5320,12 +5424,16 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF14B8A6)),
-                    contentPadding = PaddingValues(horizontal = 11.dp, vertical = 7.dp)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2563EB),
+                        disabledContainerColor = Color(0xFF94A3B8)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.fillMaxHeight()
                 ) {
-                    Icon(Icons.Rounded.Power, null, Modifier.size(16.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (busy) "发送中" else "唤醒", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.Value.fontSize)
+                    Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (busy) "发送中" else "唤醒", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }

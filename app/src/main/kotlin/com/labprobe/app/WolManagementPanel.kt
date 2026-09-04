@@ -2,6 +2,7 @@ package com.labprobe.app
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +65,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+
+@Composable
+fun WolBannerIcon(size: Int = 38) {
+    Box(
+        Modifier
+            .size(size.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF0284C7),
+                        Color(0xFF2563EB)
+                    )
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Rounded.Bolt,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size((size * 0.58f).dp)
+        )
+    }
+}
 
 @Composable
 fun WolManagementPanel(state: AppState) {
@@ -80,10 +107,10 @@ fun WolManagementPanel(state: AppState) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         LabCoreCard(compact = true) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                LabV2ToolIcon(Icons.Rounded.Power, LabV2.Primary, size = 38)
+                WolBannerIcon(38)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("WOL 设备管理", style = LabTypography.CardTitle)
+                    Text("WOL 设备管理", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                     Text("共 ${state.wolDevices.size} 台 · 在线 $onlineCount · 离线 $offlineCount · 启用 $enabledCount", style = LabTypography.Supporting)
                 }
                 Surface(
@@ -195,48 +222,33 @@ private fun WolDeviceCard(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Header Row: Icon, Title, Badge, MAC, and Switch
+            // Header Row: Avatar with status dot, Title + Badge, and Switch
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SmallTypeIcon(p, 44)
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    SmallTypeIcon(p, 42)
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .background(if (item.online) Color(0xFF16A34A) else Color(0xFF94A3B8), CircleShape)
+                            .border(1.5.dp, Color.White, CircleShape)
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
                             item.config.remark.ifBlank { item.config.mac },
-                            style = LabTypography.CardTitle,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LabV2.Ink,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         TypeBadge(p.label, p.accent)
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.clickable { copy(ctx, item.config.mac); toast(ctx, "已复制 MAC") }
-                    ) {
-                        Text(
-                            "MAC:",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = LabV2.InkMuted
-                        )
-                        Text(
-                            item.config.mac.uppercase(),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                            color = LabV2.Ink
-                        )
-                        Icon(
-                            Icons.Rounded.ContentCopy,
-                            "复制 MAC",
-                            tint = LabV2.InkMuted.copy(alpha = 0.6f),
-                            modifier = Modifier.size(11.dp)
-                        )
                     }
                 }
                 Spacer(Modifier.width(8.dp))
@@ -257,27 +269,28 @@ private fun WolDeviceCard(
                     Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    // Status row + IPv4
+                    // Row 1: MAC address at previous online/offline position + IPv4 address on the right
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        // Online / Offline Status Badge
-                        Surface(
-                            shape = RoundedCornerShape(99.dp),
-                            color = if (item.online) Color(0xFFDCFCE7) else Color(0xFFF1F5F9),
-                            border = BorderStroke(1.dp, if (item.online) Color(0xFF86EFAC) else Color(0xFFCBD5E1))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { copy(ctx, item.config.mac); toast(ctx, "已复制 MAC") }
+                                .padding(vertical = 2.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                OnlineDot(item.online)
-                                Text(
-                                    if (item.online) "在线" else if (item.lastSeen.isNotBlank()) "离线 (${item.lastSeen})" else "离线",
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (item.online) Color(0xFF15803D) else Color(0xFF64748B)
-                                )
-                            }
+                            Text(
+                                "MAC: ",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = LabV2.InkMuted
+                            )
+                            Text(
+                                item.config.mac.uppercase(),
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LabV2.Ink
+                            )
                         }
 
                         Spacer(Modifier.weight(1f))
@@ -285,23 +298,28 @@ private fun WolDeviceCard(
                         if (item.ip.isNotBlank()) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                modifier = Modifier.clickable { copy(ctx, item.ip); toast(ctx, "已复制 IPv4") }
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { copy(ctx, item.ip); toast(ctx, "已复制 IPv4") }
+                                    .padding(vertical = 2.dp)
                             ) {
-                                Text("IPv4:", fontSize = 11.sp, color = LabV2.InkMuted)
-                                Text(item.ip, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-                                Icon(Icons.Rounded.ContentCopy, null, tint = LabV2.InkMuted.copy(alpha = 0.5f), modifier = Modifier.size(11.dp))
+                                Text("IPv4: ", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
+                                Text(item.ip, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
                             }
                         }
                     }
 
-                    // IPv6 row (if available, full-width, clean truncation and copy)
+                    // Row 2: IPv6 (if available, full-width, clean click to copy, no copy icons)
                     if (item.ipv6.isNotBlank()) {
                         Row(
-                            Modifier.fillMaxWidth().clickable { copy(ctx, item.ipv6); toast(ctx, "已复制 IPv6") },
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { copy(ctx, item.ipv6); toast(ctx, "已复制 IPv6") }
+                                .padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("IPv6: ", fontSize = 10.5.sp, color = LabV2.InkMuted)
+                            Text("IPv6: ", fontSize = 10.5.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
                             Text(
                                 item.ipv6,
                                 modifier = Modifier.weight(1f),
@@ -311,8 +329,6 @@ private fun WolDeviceCard(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Rounded.ContentCopy, null, tint = LabV2.InkMuted.copy(alpha = 0.5f), modifier = Modifier.size(11.dp))
                         }
                     }
                 }
