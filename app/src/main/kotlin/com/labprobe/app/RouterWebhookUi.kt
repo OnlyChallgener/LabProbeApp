@@ -1,6 +1,7 @@
 package com.labprobe.app
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -20,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,14 +128,167 @@ fun RouterWebhookScreen(
     status: JSONObject?,
     events: List<EventItem>,
     onBack: () -> Unit,
-    onTestPort: (host: String, port: String) -> Unit = { _, _ -> }
+    onTestPort: (host: String, port: String) -> Unit = { _, _ -> },
+    onTestUdp: (host: String, port: String, template: String) -> Unit = { _, _, _ -> }
 ) {
+    BackHandler(enabled = true) { onBack() }
     val context = LocalContext.current
+    var portOverridesRevision by remember { mutableIntStateOf(0) }
+    var remarkOverridesRevision by remember { mutableIntStateOf(0) }
+
+    var showPortDialog by remember { mutableStateOf(false) }
+    var targetPortItem by remember { mutableStateOf<WebhookEndpointRecord?>(null) }
+    var portInputValue by remember { mutableStateOf("") }
+    var portError by remember { mutableStateOf("") }
+
+    var showRemarkDialog by remember { mutableStateOf(false) }
+    var targetRemarkItem by remember { mutableStateOf<WebhookEndpointRecord?>(null) }
+    var remarkInputValue by remember { mutableStateOf("") }
+
     val webhookList = remember(status, events) { parseWebhookEndpoints(status, events) }
     val webhookUrl = remember(prefs.hub, prefs.token) {
         val base = cleanApiText(prefs.hub).trimEnd('/')
         val tokenParam = if (prefs.token.isNotBlank()) "?token=${prefs.token}" else ""
         if (base.isNotBlank()) "$base/hook/lucky$tokenParam" else "未配置 Hub 地址"
+    }
+
+    if (showPortDialog && targetPortItem != null) {
+        AlertDialog(
+            onDismissRequest = { showPortDialog = false },
+            title = { Text("编辑端口", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "为 ${targetPortItem?.name ?: "服务"} 自由配置公网端口（1-65535）：",
+                        fontSize = 12.5.sp,
+                        color = LabV2.InkMuted
+                    )
+                    OutlinedTextField(
+                        value = portInputValue,
+                        onValueChange = { input ->
+                            val filtered = input.filter { it.isDigit() }.take(5)
+                            portInputValue = filtered
+                            portError = if (filtered.isNotBlank()) {
+                                val p = filtered.toIntOrNull()
+                                if (p == null || p !in 1..65535) "端口范围须为 1 ~ 65535" else ""
+                            } else ""
+                        },
+                        isError = portError.isNotBlank(),
+                        supportingText = if (portError.isNotBlank()) { { Text(portError, color = Color(0xFFEF4444), fontSize = 11.sp) } } else null,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        placeholder = { Text("例如 20009", fontSize = 13.sp) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val p = portInputValue.toIntOrNull()
+                        if (p == null || p !in 1..65535) {
+                            portError = "请输入有效的端口号 (1-65535)"
+                            return@Button
+                        }
+                        targetPortItem?.let { itm ->
+                            prefs.setWebhookPortOverride(itm.name, p.toString())
+                            prefs.setWebhookPortOverride("__first__", p.toString())
+                        }
+                        portOverridesRevision++
+                        showPortDialog = false
+                        toast(context, "端口已修改为 $p")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                ) {
+                    Text("保存", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val hasOverride = prefs.getWebhookPortOverride(targetPortItem?.name.orEmpty()).isNotBlank() ||
+                            prefs.getWebhookPortOverride("__first__").isNotBlank()
+                    if (hasOverride) {
+                        TextButton(
+                            onClick = {
+                                targetPortItem?.let { itm ->
+                                    prefs.setWebhookPortOverride(itm.name, "")
+                                }
+                                prefs.setWebhookPortOverride("__first__", "")
+                                portOverridesRevision++
+                                showPortDialog = false
+                                toast(context, "已恢复默认端口")
+                            }
+                        ) {
+                            Text("恢复默认", color = LabV2.InkMuted)
+                        }
+                    }
+                    TextButton(onClick = { showPortDialog = false }) {
+                        Text("取消", color = LabV2.InkMuted)
+                    }
+                }
+            }
+        )
+    }
+
+    if (showRemarkDialog && targetRemarkItem != null) {
+        AlertDialog(
+            onDismissRequest = { showRemarkDialog = false },
+            title = { Text("修改备注", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "为 ${targetRemarkItem?.name ?: "服务"} 自定义备注或服务标识：",
+                        fontSize = 12.5.sp,
+                        color = LabV2.InkMuted
+                    )
+                    OutlinedTextField(
+                        value = remarkInputValue,
+                        onValueChange = { remarkInputValue = it.take(24) },
+                        singleLine = true,
+                        placeholder = { Text("例如 Lucky Webhook / 自建节点", fontSize = 13.sp) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clean = remarkInputValue.trim()
+                        targetRemarkItem?.let { itm ->
+                            prefs.setWebhookRemarkOverride(itm.name, clean)
+                        }
+                        remarkOverridesRevision++
+                        showRemarkDialog = false
+                        toast(context, if (clean.isNotBlank()) "备注已更新为: $clean" else "备注已恢复默认")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                ) {
+                    Text("保存", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val hasOverride = prefs.getWebhookRemarkOverride(targetRemarkItem?.name.orEmpty()).isNotBlank()
+                    if (hasOverride) {
+                        TextButton(
+                            onClick = {
+                                targetRemarkItem?.let { itm ->
+                                    prefs.setWebhookRemarkOverride(itm.name, "")
+                                }
+                                remarkOverridesRevision++
+                                showRemarkDialog = false
+                                toast(context, "已恢复默认备注")
+                            }
+                        ) {
+                            Text("恢复默认", color = LabV2.InkMuted)
+                        }
+                    }
+                    TextButton(onClick = { showRemarkDialog = false }) {
+                        Text("取消", color = LabV2.InkMuted)
+                    }
+                }
+            }
+        )
     }
 
     DetailShell(
@@ -311,6 +467,32 @@ fun RouterWebhookScreen(
                         }
                     } else {
                         webhookList.forEachIndexed { index, item ->
+                            val isFirstItem = (index == 0)
+                            val overridePort = remember(item.name, index, portOverridesRevision) {
+                                prefs.getWebhookPortOverride(item.name).ifBlank {
+                                    if (isFirstItem) prefs.getWebhookPortOverride("__first__") else ""
+                                }
+                            }
+                            val displayAddress = remember(item.address, overridePort) {
+                                if (overridePort.isNotBlank()) {
+                                    val endpoint = parseQuickAccessEndpoint(item.address)
+                                    if (endpoint != null) {
+                                        formatServiceHostPort(endpoint.host, overridePort.toIntOrNull())
+                                    } else {
+                                        val clean = overridePort.trim()
+                                        if (item.address.startsWith("[") && item.address.contains("]:")) {
+                                            item.address.substringBeforeLast("]:") + "]:$clean"
+                                        } else if (item.address.contains(":")) {
+                                            item.address.substringBeforeLast(":") + ":$clean"
+                                        } else {
+                                            "${item.address}:$clean"
+                                        }
+                                    }
+                                } else item.address
+                            }
+                            val displayRemark = remember(item.name, item.source, remarkOverridesRevision) {
+                                prefs.getWebhookRemarkOverride(item.name).ifBlank { item.source }
+                            }
                             Surface(
                                 shape = LabCoreSurface.InnerShape,
                                 color = LabCoreSurface.Inner,
@@ -318,7 +500,7 @@ fun RouterWebhookScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        copy(context, item.address)
+                                        copy(context, displayAddress)
                                         toast(context, "已复制 ${item.name} 地址")
                                     }
                             ) {
@@ -333,10 +515,15 @@ fun RouterWebhookScreen(
                                             Text(item.name, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                                             Surface(
                                                 shape = RoundedCornerShape(4.dp),
-                                                color = Color(0xFF0284C7).copy(alpha = 0.12f)
+                                                color = Color(0xFF0284C7).copy(alpha = 0.12f),
+                                                modifier = Modifier.clickable {
+                                                    targetRemarkItem = item
+                                                    remarkInputValue = displayRemark
+                                                    showRemarkDialog = true
+                                                }
                                             ) {
                                                 Text(
-                                                    item.source,
+                                                    displayRemark,
                                                     fontSize = 9.5.sp,
                                                     fontWeight = FontWeight.SemiBold,
                                                     color = Color(0xFF0284C7),
@@ -345,7 +532,7 @@ fun RouterWebhookScreen(
                                             }
                                         }
                                         Text(
-                                            item.address,
+                                            displayAddress,
                                             fontSize = 12.sp,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.SemiBold,
@@ -356,20 +543,46 @@ fun RouterWebhookScreen(
                                         }
                                     }
                                     Spacer(Modifier.width(8.dp))
-                                    val endpoint = parseQuickAccessEndpoint(item.address)
-                                    val testHost = endpoint?.host?.removePrefix("[")?.removeSuffix("]").orEmpty()
-                                    val testPort = endpoint?.port
-                                    if (testHost.isNotBlank() && testPort != null && testPort in 1..65535) {
+                                    if (isFirstItem) {
                                         OutlinedButton(
                                             onClick = {
-                                                onTestPort(testHost, testPort.toString())
+                                                targetPortItem = item
+                                                val endpoint = parseQuickAccessEndpoint(displayAddress)
+                                                portInputValue = endpoint?.port?.toString()
+                                                    ?: displayAddress.substringAfterLast(":", "").filter { it.isDigit() }
+                                                portError = ""
+                                                showPortDialog = true
                                             },
                                             shape = RoundedCornerShape(8.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
                                             border = BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = 0.4f)),
                                             modifier = Modifier.height(28.dp)
                                         ) {
-                                            Text("测端口", fontSize = 10.5.sp, color = Color(0xFF0284C7), fontWeight = FontWeight.SemiBold)
+                                            Text("编辑", fontSize = 10.5.sp, color = Color(0xFF0284C7), fontWeight = FontWeight.SemiBold)
+                                        }
+                                    } else {
+                                        val endpoint = parseQuickAccessEndpoint(displayAddress)
+                                        val testHost = endpoint?.host?.removePrefix("[")?.removeSuffix("]").orEmpty()
+                                        val testPort = endpoint?.port
+                                        if (testHost.isNotBlank() && testPort != null && testPort in 1..65535) {
+                                            val lower = (item.name + " " + item.source).lowercase(Locale.getDefault())
+                                            val isUdpVpn = lower.contains("wg") || lower.contains("wireguard") || lower.contains("openvpn")
+                                            OutlinedButton(
+                                                onClick = {
+                                                    if (isUdpVpn) {
+                                                        val tpl = if (lower.contains("openvpn")) "UDP 空包" else "WireGuard 握手"
+                                                        onTestUdp(testHost, testPort.toString(), tpl)
+                                                    } else {
+                                                        onTestPort(testHost, testPort.toString())
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
+                                                border = BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = 0.4f)),
+                                                modifier = Modifier.height(28.dp)
+                                            ) {
+                                                Text("测端口", fontSize = 10.5.sp, color = Color(0xFF0284C7), fontWeight = FontWeight.SemiBold)
+                                            }
                                         }
                                     }
                                 }

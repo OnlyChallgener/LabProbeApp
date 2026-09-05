@@ -358,6 +358,63 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("certificate_expiry_v1", v).apply()
     var certificateReminderKeysJson: String get() = sp.getString("certificate_reminder_keys_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("certificate_reminder_keys_v1", v).apply()
+    var webhookPortOverridesJson: String get() = sp.getString("webhook_port_overrides_v1", "{}") ?: "{}"
+        set(v) = sp.edit().putString("webhook_port_overrides_v1", v).apply()
+    var webhookRemarkOverridesJson: String get() = sp.getString("webhook_remark_overrides_v1", "{}") ?: "{}"
+        set(v) = sp.edit().putString("webhook_remark_overrides_v1", v).apply()
+
+    fun getWebhookPortOverride(key: String): String {
+        return try {
+            val obj = JSONObject(webhookPortOverridesJson)
+            obj.optString(key.lowercase(Locale.getDefault()).trim(), "")
+        } catch (_: Exception) { "" }
+    }
+
+    fun setWebhookPortOverride(key: String, port: String) {
+        val cleanKey = key.lowercase(Locale.getDefault()).trim()
+        if (cleanKey.isBlank()) return
+        try {
+            val obj = JSONObject(webhookPortOverridesJson)
+            if (port.isBlank()) {
+                obj.remove(cleanKey)
+            } else {
+                obj.put(cleanKey, port.trim())
+            }
+            webhookPortOverridesJson = obj.toString()
+        } catch (_: Exception) {
+            val obj = JSONObject()
+            if (port.isNotBlank()) obj.put(cleanKey, port.trim())
+            webhookPortOverridesJson = obj.toString()
+        }
+    }
+
+    fun getWebhookRemarkOverride(key: String): String {
+        return try {
+            val obj = JSONObject(webhookRemarkOverridesJson)
+            obj.optString(key.lowercase(Locale.getDefault()).trim(), "")
+        } catch (_: Exception) { "" }
+    }
+
+    fun setWebhookRemarkOverride(key: String, remark: String) {
+        val cleanKey = key.lowercase(Locale.getDefault()).trim()
+        if (cleanKey.isBlank()) return
+        try {
+            val obj = JSONObject(webhookRemarkOverridesJson)
+            if (remark.isBlank()) {
+                obj.remove(cleanKey)
+            } else {
+                obj.put(cleanKey, remark.trim())
+            }
+            webhookRemarkOverridesJson = obj.toString()
+        } catch (_: Exception) {
+            val obj = JSONObject()
+            if (remark.isNotBlank()) obj.put(cleanKey, remark.trim())
+            webhookRemarkOverridesJson = obj.toString()
+        }
+    }
+
+    var routerExitIpv4: String get() = sp.getString("router_exit_ipv4_v1", "") ?: ""
+        set(v) = sp.edit().putString("router_exit_ipv4_v1", v.trim()).apply()
 
     private fun historyLimit(key: String): Int = if (key.contains("ssh_cmd", true)) 6 else 3
     private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(historyLimit(key))
@@ -2128,36 +2185,49 @@ fun LabProbeApp(prefs: AppPrefs) {
             if (target == "ai_chat") aiChatReturnRoute = route
             route = target
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
-            route = when (route) {
-                "daily" -> dailyReturnRoute
-                "health_score" -> "home"
-                "router_status" -> "home"
-                "router_settings" -> "home"
-                "wol" -> "home"
-                "devices" -> "home"
-                "device_traffic" -> "devices"
-                "device_detail" -> "devices"
-                "settings" -> settingsReturnRoute
-                "ai_settings" -> aiSettingsReturnRoute
-                "ai_chat" -> aiChatReturnRoute
-                "ai_usage" -> "ai_settings"
+        val saveableStateHolder = rememberSaveableStateHolder()
+        val backFromTool: () -> Unit = {
+            val current = route
+            var destination = when (current) {
                 "tool_nat_history" -> "tool_nat"
                 "tool_ssh_history" -> "tool_ssh"
-                else -> toolReturnRoute ?: "tools"
+                else -> toolReturnRoute ?: if (current == "tool_router_webhook") "router_settings" else "tools"
             }
-            if (!route.startsWith("tool_")) toolReturnRoute = null
+            if (destination == current) {
+                destination = nestedToolReturnRoute ?: if (current == "tool_router_webhook") "router_settings" else "tools"
+            }
+            route = destination
+            toolReturnRoute = if (destination == "tool_portmap" || destination == "tool_stun" || destination == "tool_router_webhook") {
+                nestedToolReturnRoute
+            } else {
+                null
+            }
+            nestedToolReturnRoute = null
+        }
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
+            if (route.startsWith("tool_")) {
+                backFromTool()
+            } else {
+                route = when (route) {
+                    "daily" -> dailyReturnRoute
+                    "health_score" -> "home"
+                    "router_status" -> "home"
+                    "router_settings" -> "home"
+                    "wol" -> "home"
+                    "devices" -> "home"
+                    "device_traffic" -> "devices"
+                    "device_detail" -> "devices"
+                    "settings" -> settingsReturnRoute
+                    "ai_settings" -> aiSettingsReturnRoute
+                    "ai_chat" -> aiChatReturnRoute
+                    "ai_usage" -> "ai_settings"
+                    else -> "home"
+                }
+            }
         }
 
         val topNav: @Composable () -> Unit = {
             OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
-        }
-        val saveableStateHolder = rememberSaveableStateHolder()
-        val backFromTool: () -> Unit = {
-            val destination = toolReturnRoute ?: "tools"
-            route = destination
-            toolReturnRoute = if (destination == "tool_portmap" || destination == "tool_stun" || destination == "tool_router_webhook") nestedToolReturnRoute else null
-            nestedToolReturnRoute = null
         }
 
         var pageSwipeOffset by remember { mutableStateOf(0f) }
@@ -2285,7 +2355,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_ping" -> PingScreen(prefs, backFromTool)
                         "tool_dns" -> DnsScreen(prefs, backFromTool)
                         "tool_port" -> PortProbeScreen(prefs, backFromTool)
-                        "tool_udp" -> UdpProbeScreen(prefs, backFromTool)
+                        "tool_udp" -> UdpProbeScreen(prefs, backFromTool, resolveRouterExitIpv4(state.status).ifBlank { prefs.routerExitIpv4 })
                         "tool_trace" -> TraceScreen(prefs, backFromTool)
                         "tool_nat" -> NatScreen(prefs, backFromTool) { route = "tool_nat_history" }
                         "tool_nat_history" -> NatHistoryScreen(prefs) { route = "tool_nat" }
@@ -2346,6 +2416,14 @@ fun LabProbeApp(prefs: AppPrefs) {
                                 nestedToolReturnRoute = toolReturnRoute
                                 toolReturnRoute = "tool_router_webhook"
                                 route = "tool_port"
+                            },
+                            onTestUdp = { host, port, template ->
+                                prefs.udpHost = host
+                                prefs.udpPort = port
+                                prefs.udpTemplate = template
+                                nestedToolReturnRoute = toolReturnRoute
+                                toolReturnRoute = "tool_router_webhook"
+                                route = "tool_udp"
                             }
                         )
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
@@ -3559,6 +3637,12 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         }
     }
     val stunRows = if (liveStunRows.isNotEmpty()) liveStunRows else cachedStunRows
+    LaunchedEffect(state.status) {
+        val resolved = resolveRouterExitIpv4(state.status)
+        if (resolved.isNotBlank() && resolved != prefs.routerExitIpv4) {
+            prefs.routerExitIpv4 = resolved
+        }
+    }
 
     val onlineCount = state.onlineDevices.size
     val watchedCount = remember(state.devices) { followedDeviceList(state.devices).size }
@@ -3712,6 +3796,17 @@ fun safeNasIpv6ForUi(nas: JSONObject?, router: JSONObject?): String {
     // 即使它和路由 WAN6 相同，也不能隐藏；WireGuard 也依赖这个字段生成 [NAS IPv6]:51820。
     // 路由 WAN6 和 NAS IPv6 是两个独立展示字段，防止 buildfix30 误删 NAS 出口。
     return cleanApiText(nas?.optString("exitIpv6"))
+}
+
+fun resolveRouterExitIpv4(status: JSONObject?): String {
+    val data = status?.optJSONObject("data") ?: status
+    val router = data?.optJSONObject("router")
+    val nas = data?.optJSONObject("nas")
+    return cleanApiText(router?.optString("exitIpv4"))
+        .ifBlank { cleanApiText(router?.optString("wanIpv4")) }
+        .ifBlank { cleanApiText(router?.optString("wan4")) }
+        .ifBlank { cleanApiText(nas?.optString("exitIpv4")) }
+        .ifBlank { cleanApiText(data?.optString("exitIpv4")) }
 }
 
 fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem>): List<Pair<String, String>> {
@@ -6188,7 +6283,7 @@ fun DnsScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("DNS 解析", "
 fun PortProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("端口测试", "TCP Connect · Telnet 同类 · IPv4 / IPv6", onBack) { TcpTool(prefs) }
 
 @Composable
-fun UdpProbeScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("UDP 探测", "STUN / DNS / NTP · 无响应不等于关闭", onBack) { UdpTool(prefs) }
+fun UdpProbeScreen(prefs: AppPrefs, onBack: () -> Unit, routerExitIpv4: String = prefs.routerExitIpv4) = DetailShell("UDP 探测", "STUN / DNS / NTP · 无响应不等于关闭", onBack) { UdpTool(prefs, routerExitIpv4) }
 @Composable
 fun TraceScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("路由追踪", "Traceroute · 追踪域名经过的 IP", onBack) { TraceTool(prefs) }
 @Composable
@@ -9641,18 +9736,29 @@ fun TcpTool(prefs: AppPrefs) {
 
 data class UdpTemplateSpec(val name: String, val host: String, val port: String, val note: String)
 
-fun udpTemplateSpec(name: String): UdpTemplateSpec = when (name) {
-    "DNS 查询" -> UdpTemplateSpec("DNS 查询", "223.5.5.5", "53", "发送标准 DNS Query，适合测试 UDP 53。")
-    "NTP 请求" -> UdpTemplateSpec("NTP 请求", "ntp.aliyun.com", "123", "发送 NTP 请求，适合测试时间服务器 UDP 123。")
-    "WireGuard 握手" -> UdpTemplateSpec("WireGuard 握手", "1.1.1.1", "51820", "发送 WireGuard 握手探测包，适合测试 VPN UDP。")
-    "HTTP/3 QUIC" -> UdpTemplateSpec("HTTP/3 QUIC", "cloudflare.com", "443", "发送 QUIC Initial 探测，测试 HTTP/3 UDP 443。")
-    "UDP 空包" -> UdpTemplateSpec("UDP 空包", "1.1.1.1", "443", "只发送空 UDP 包；无响应不代表关闭。")
-    else -> UdpTemplateSpec("STUN Binding", "stun.voip.aebc.com", "3478", "发送 STUN Binding Request，适合测试 STUN/UDP 映射。")
+fun udpTemplateSpec(name: String, routerExitIpv4: String = ""): UdpTemplateSpec {
+    val exitIp = routerExitIpv4.trim().ifBlank { "1.1.1.1" }
+    return when (name) {
+        "DNS 查询" -> UdpTemplateSpec("DNS 查询", "223.5.5.5", "53", "发送标准 DNS Query，适合测试 UDP 53。")
+        "NTP 请求" -> UdpTemplateSpec("NTP 请求", "ntp.aliyun.com", "123", "发送 NTP 请求，适合测试时间服务器 UDP 123。")
+        "WireGuard 握手" -> UdpTemplateSpec("WireGuard 握手", exitIp, "51820", "发送 WireGuard 握手探测包，适合测试 VPN UDP。")
+        "HTTP/3 QUIC" -> UdpTemplateSpec("HTTP/3 QUIC", "www.qq.com", "443", "发送 QUIC Initial 探测，测试 HTTP/3 UDP 443。")
+        "UDP 空包" -> UdpTemplateSpec("UDP 空包", exitIp, "443", "只发送空 UDP 包；无响应不代表关闭。")
+        else -> UdpTemplateSpec("STUN Binding", "stun.voip.aebc.com", "3478", "发送 STUN Binding Request，适合测试 STUN/UDP 映射。")
+    }
 }
 
 @Composable
-fun UdpTool(prefs: AppPrefs) {
-    var host by remember { mutableStateOf(prefs.udpHost) }
+fun UdpTool(prefs: AppPrefs, routerExitIpv4: String = "") {
+    val effectiveExitIp = routerExitIpv4.ifBlank { prefs.routerExitIpv4 }
+    var host by remember {
+        val initial = prefs.udpHost
+        mutableStateOf(
+            if (initial == "cloudflare.com") "www.qq.com"
+            else if (initial == "1.1.1.1" && effectiveExitIp.isNotBlank()) effectiveExitIp
+            else initial
+        )
+    }
     var port by remember { mutableStateOf(prefs.udpPort) }
     var timeout by remember { mutableStateOf(prefs.udpTimeout) }
     var template by remember { mutableStateOf(prefs.udpTemplate) }
@@ -9662,7 +9768,7 @@ fun UdpTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
 
     fun applyUdpTemplate(name: String) {
-        val spec = udpTemplateSpec(name)
+        val spec = udpTemplateSpec(name, effectiveExitIp)
         template = spec.name
         host = spec.host
         port = spec.port
