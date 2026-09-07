@@ -265,7 +265,10 @@ object AppNavigator {
 }
 
 /** Maps assistant clientAction route names to app route strings. */
-private fun mapAssistantRoute(route: String): String = when (route) {    "home", "network_health", "devices", "tools", "favorites", "settings", "ai_chat" -> route
+private fun mapAssistantRoute(route: String): String = when (route) {
+    "home", "network_health", "devices", "tools", "favorites", "settings", "ai_chat" -> route
+    "health_score" -> "network_health"
+    "router_status", "trend", "network_trend", "router_trend" -> "router_status"
     "router" -> "router_settings"
     "wireguard" -> "tool_wireguard"
     "stun" -> "tool_stun"
@@ -1110,7 +1113,7 @@ private fun storedAgentUpdateInfo(raw: String): AgentUpdateInfo? {
     }.getOrNull()
 }
 
-private fun agentCleanupSummary(root: JSONObject): String {
+internal fun agentCleanupSummary(root: JSONObject): String {
     val bytes = root.optLong("reclaimedBytes", 0L).coerceAtLeast(0L)
     val rows = root.optJSONArray("cleanedItems") ?: JSONArray()
     val labels = buildList {
@@ -2031,7 +2034,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) CertificateReminderCenter.notifyDue(context, prefs)
     }
-    val darkHealth = route == "network_health" && isSystemInDarkTheme()
+    val darkHealth = false
     LaunchedEffect(darkHealth) {
         context.findActivity()?.let { activity ->
             activity.applyLabProbeSystemBars()
@@ -2212,13 +2215,13 @@ fun LabProbeApp(prefs: AppPrefs) {
     )
 
     MaterialTheme(colorScheme = light, typography = LabMaterialTypography) {
-        val mainRoutes = listOf("home", "network_health", "devices", "tools", "events", "favorites")
-        val navTitles = listOf("首页", "网络健康", "设备", "工具", "记录", "收藏")
-        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.MonitorHeart, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
+        val mainRoutes = listOf("home", "devices", "tools", "events", "favorites")
+        val navTitles = listOf("首页", "设备", "工具", "记录", "收藏")
+        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
         val normalized = when {
             route.startsWith("tool_") -> toolReturnRoute?.takeIf { it in mainRoutes } ?: "tools"
             route == "daily" -> dailyReturnRoute.takeIf { it in mainRoutes } ?: "events"
-            route == "health_score" -> "home"
+            route == "health_score" || route == "network_health" -> "home"
             route == "router_status" -> "home"
             route == "router_settings" -> "home"
             route == "wol" -> "devices"
@@ -2265,7 +2268,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             } else {
                 route = when (route) {
                     "daily" -> dailyReturnRoute
-                    "health_score" -> "home"
+                    "health_score", "network_health" -> "home"
                     "router_status" -> "home"
                     "router_settings" -> "home"
                     "wol" -> "home"
@@ -2282,7 +2285,7 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
 
         val topNav: @Composable () -> Unit = {
-            OneUiTopNav(navTitles, navIcons, selected, themeAware = route == "network_health") { route = mainRoutes[it] }
+            OneUiTopNav(navTitles, navIcons, selected, themeAware = false) { route = mainRoutes[it] }
         }
 
         var pageSwipeOffset by remember { mutableStateOf(0f) }
@@ -2344,8 +2347,14 @@ fun LabProbeApp(prefs: AppPrefs) {
                     ) { r ->
                         saveableStateHolder.SaveableStateProvider(r) { when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
-                        "health_score" -> HealthScoreDetailScreen(prefs, state) { route = "home" }
-                        "network_health" -> NetworkHealthScreen(diagnosisProgress, ::startDiagnosis, { diagnosisJob?.cancel() }, topNav)
+                        "health_score", "network_health" -> NetworkHealthScreen(
+                            prefs = prefs,
+                            state = state,
+                            progress = diagnosisProgress,
+                            onStart = ::startDiagnosis,
+                            onCancel = { diagnosisJob?.cancel() },
+                            onBack = { route = "home" }
+                        )
                         "router_status" -> RouterStatusScreen(prefs, state, onBack = { route = "home" }, onOpenDevices = { route = "devices" })
                         "router_settings" -> RouterSettingsScreen(prefs, onBack = { route = "home" }) { target -> navigate(target) }
                         "wol" -> WolDetailScreen(state) { route = "home" }
@@ -3165,7 +3174,7 @@ private fun parseReleaseBuildCode(tag: String, name: String): Int {
     return 0
 }
 
-private fun formatBytesShort(bytes: Long): String = when {
+internal fun formatBytesShort(bytes: Long): String = when {
     bytes <= 0L -> "未知"
     bytes >= 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
     bytes >= 1024L -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
@@ -4147,7 +4156,7 @@ private fun HealthScoreHeroGlow(color: Color) {
 }
 
 @Composable
-private fun RouterHeroGlow() {
+internal fun RouterHeroGlow() {
     val pulse = rememberInfiniteTransition(label = "routerGlow")
     val glowAlpha = pulse.animateFloat(
         initialValue = .28f,
@@ -4267,397 +4276,7 @@ private fun agentUpdateUiError(raw: String?): String {
     }
 }
 
-@Composable
-fun HealthScoreDetailScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit) = DetailShell("评分细则", "网络健康构成 · Rust Agent 更新", onBack, compactHeader = true, unifiedTypography = true) {
-    val data = state.status?.optJSONObject("data") ?: state.status
-    val nas = data?.optJSONObject("nas")
-    val router = data?.optJSONObject("router")
-    val nasV6 = safeNasIpv6ForUi(nas, router)
-    val vpnOk = buildVpnRowsForHome(data, nasV6, state.events).isNotEmpty()
-    val exitOk = cleanApiText(nas?.optString("exitIpv4")).isNotBlank() || cleanApiText(nas?.optString("exitIpv6")).isNotBlank()
-    val hubOk = prefs.hub.isNotBlank() && state.hubConnected
-    val onlineCount = state.onlineDevices.size
-    val badCount = state.events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }.coerceAtMost(4)
-    val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
-    val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
-    LaunchedEffect(prefs.hub, prefs.token) {
-        AgentUpdateCoordinator.bind(prefs)
-    }
-    val agentUpdateUi by AgentUpdateCoordinator.state.collectAsState()
-    val agentInfo = agentUpdateUi.info
-    val agentMessage = agentUpdateUi.message
-    var cleanupMessage by remember { mutableStateOf("可清理所有 Agent 备份和非必要临时日志") }
-    var showCleanupConfirm by remember { mutableStateOf(false) }
-    var cleanupBusy by remember { mutableStateOf(false) }
-    val agentBusy = agentUpdateUi.busy || cleanupBusy
-    val scope = rememberCoroutineScope()
 
-    val context = LocalContext.current
-    var showRouterUrlEditor by remember { mutableStateOf(false) }
-    var routerLanUrl by remember { mutableStateOf(prefs.routerLanUrl) }
-    var routerWanUrl by remember { mutableStateOf(prefs.routerWanUrl) }
-    fun normalizedRouterUrl(raw: String): String {
-        val value = raw.trim()
-        return if (value.isBlank() || value.contains("://")) value else "https://$value"
-    }
-    fun openRouterUrl() {
-        val lan = normalizedRouterUrl(routerLanUrl)
-        val wan = normalizedRouterUrl(routerWanUrl)
-        val target = if (prefs.favoriteNetworkMode == "wan") wan.ifBlank { lan } else lan.ifBlank { wan }
-        if (target.isBlank()) return
-        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-    }
-
-    if (showRouterUrlEditor) {
-        RouterUrlDialog(
-            lanUrl = routerLanUrl,
-            wanUrl = routerWanUrl,
-            onLanChange = { routerLanUrl = it },
-            onWanChange = { routerWanUrl = it },
-            onDismiss = { showRouterUrlEditor = false },
-            onSave = {
-                val lan = normalizedRouterUrl(routerLanUrl)
-                val wan = normalizedRouterUrl(routerWanUrl)
-                routerLanUrl = lan
-                routerWanUrl = wan
-                prefs.routerLanUrl = lan
-                prefs.routerWanUrl = wan
-                showRouterUrlEditor = false
-            }
-        )
-    }
-    if (showCleanupConfirm) {
-        AlertDialog(
-            onDismissRequest = { if (!agentBusy) showCleanupConfirm = false },
-            title = { Text("清理 Agent 文件", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.CardTitle.fontSize, color = LabV2.Ink) },
-            text = {
-                Text(
-                    "将删除路由器上的所有 Agent 备份、更新/安装日志和已失效的临时安装文件。不会删除 Agent 配置、运行程序或当前状态数据。",
-                    style = LabTypography.Body.copy(color = LabV2.InkMuted)
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showCleanupConfirm = false
-                        scope.launch {
-                            cleanupBusy = true
-                            cleanupMessage = "正在等待路由器执行清理…"
-                            runCatching {
-                                val requested = HubApi(prefs).requestAgentCleanup()
-                                val commandId = requested.optString("commandId")
-                                if (commandId.isBlank()) error("Hub 未返回清理任务编号")
-                                var finished: JSONObject? = null
-                                var transientPollFailure: Throwable? = null
-                                for (attempt in 0 until 45) {
-                                    delay(1_000)
-                                    val status = try {
-                                        HubApi(prefs).getAgentCleanupStatus(commandId)
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (failure: Throwable) {
-                                        if (!isTransientAgentTransportError(failure.message)) throw failure
-                                        transientPollFailure = failure
-                                        continue
-                                    }
-                                    when (status.optString("state")) {
-                                        "completed" -> {
-                                            finished = status
-                                            break
-                                        }
-                                        "failed" -> error(status.optString("message").ifBlank { "路由器清理失败" })
-                                    }
-                                }
-                                finished ?: error(
-                                    if (transientPollFailure != null) {
-                                        "清理状态连接暂时中断，请稍后重新查看"
-                                    } else {
-                                        "清理任务等待超时，请稍后重新查看"
-                                    }
-                                )
-                            }.onSuccess {
-                                cleanupMessage = agentCleanupSummary(it)
-                            }.onFailure {
-                                cleanupMessage = "清理失败：${uiMessageZh(it.message).ifBlank { "连接异常，请稍后重试" }}"
-                            }
-                            cleanupBusy = false
-                        }
-                    },
-                    enabled = !agentBusy,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
-                    shape = RoundedCornerShape(15.dp)
-                ) { Text("确认清理", style = LabTypography.Button) }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showCleanupConfirm = false }, enabled = !agentBusy, shape = RoundedCornerShape(15.dp)) {
-                    Text("取消", style = LabTypography.Button)
-                }
-            },
-            shape = RoundedCornerShape(25.dp),
-            containerColor = LAB_POPUP_SURFACE,
-            tonalElevation = 0.dp
-        )
-    }
-    Box(Modifier.fillMaxWidth().height(196.dp), contentAlignment = Alignment.Center) {
-        RouterHeroGlow()
-        Canvas(Modifier.size(240.dp)) {
-            val c = center
-            drawCircle(color = Color(0x1273A7FF), radius = size.minDimension * 0.40f, center = c)
-            drawCircle(color = Color(0x0D73A7FF), radius = size.minDimension * 0.29f, center = c)
-            drawArc(
-                color = Color(0x1873A7FF),
-                startAngle = 18f,
-                sweepAngle = 122f,
-                useCenter = false,
-                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-            )
-            drawArc(
-                color = Color(0x1473A7FF),
-                startAngle = 200f,
-                sweepAngle = 112f,
-                useCenter = false,
-                style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-            )
-            drawLine(Color(0x0F73A7FF), Offset(size.width * 0.16f, size.height * 0.34f), Offset(size.width * 0.30f, size.height * 0.34f), 1.6.dp.toPx())
-            drawLine(Color(0x0F73A7FF), Offset(size.width * 0.70f, size.height * 0.66f), Offset(size.width * 0.85f, size.height * 0.66f), 1.6.dp.toPx())
-        }
-        Image(
-            painter = painterResource(R.drawable.router_skeuomorphic_v3),
-            contentDescription = "路由器",
-            modifier = Modifier
-                .size(146.dp)
-                .pointerInput(routerLanUrl, routerWanUrl, prefs.favoriteNetworkMode) {
-                    detectTapGestures(
-                        onTap = { openRouterUrl() },
-                        onDoubleTap = { showRouterUrlEditor = true }
-                    )
-                },
-            contentScale = ContentScale.Fit
-        )
-    }
-
-    HealthDetailCard(
-        title = "当前得分 $score",
-        subtitle = "分数只由下列项目计算，满分按 99 分封顶",
-        accent = scoreColor,
-        headerIcon = Icons.Rounded.WorkspacePremium
-    ) {
-        ScoreRuleRow("基础运行分", "APP 可正常展示本地缓存", 64, true)
-        ScoreRuleRow("Hub 连接", if (hubOk) "已连接" else "未连接", 12, hubOk)
-        ScoreRuleRow("公网出口", if (exitOk) "已取得 IPv4/IPv6" else "暂无出口地址", 10, exitOk)
-        ScoreRuleRow("VPN / STUN", if (vpnOk) "已记录地址" else "暂无记录", 7, vpnOk)
-        ScoreRuleRow("在线设备", if (onlineCount > 0) "$onlineCount 台在线" else "暂无在线设备", 5, onlineCount > 0)
-        ScoreRuleRow(
-            "近期异常扣分",
-            if (badCount > 0) "最近 8 条中 $badCount 条异常" else "未发现异常",
-            -(badCount * 2),
-            badCount == 0,
-            isLast = true
-        )
-    }
-
-    HealthDetailCard(
-        title = "Rust Agent 更新",
-        subtitle = agentInfo?.let { "当前 ${it.currentVersion} · 最新 ${it.latestVersion}" } ?: "由 Hub 查询路由器版本并下发更新指令",
-        accent = LabV2.Green,
-        headerIcon = Icons.Rounded.Handyman
-    ) {
-        Text(agentMessage, modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
-        agentInfo?.lastSeenAt?.takeIf { it.isNotBlank() }?.let {
-            Text("Agent 最后上报：$it", modifier = Modifier.horizontalScroll(rememberScrollState()), fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, maxLines = 1, softWrap = false)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { AgentUpdateCoordinator.check(prefs) },
-                enabled = !agentBusy,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Green),
-                border = BorderStroke(1.dp, LabV2.Green.copy(alpha = .34f))
-            ) {
-                Icon(Icons.Rounded.TravelExplore, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("检查更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
-            }
-            Button(
-                onClick = { AgentUpdateCoordinator.update(prefs) },
-                enabled = !agentBusy && agentInfo?.updateAvailable == true,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = LabV2.Green)
-            ) {
-                Icon(Icons.Rounded.CloudDownload, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("立即更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
-            }
-        }
-        OutlinedButton(
-            onClick = { showCleanupConfirm = true },
-            enabled = !agentBusy,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD97706)),
-            border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = .45f)),
-            shape = RoundedCornerShape(15.dp)
-        ) {
-            Icon(Icons.Rounded.CleaningServices, null, Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("一键清理", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
-        }
-        Text(
-            cleanupMessage,
-            fontSize = LabTypography.Caption.fontSize,
-            lineHeight = LabTypography.Caption.lineHeight,
-            color = if (cleanupMessage.startsWith("清理失败")) LabV2.Red else LabV2.InkMuted,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 3,
-            overflow = TextOverflow.Clip
-        )
-    }
-}
-
-@Composable
-private fun RouterUrlDialog(
-    lanUrl: String,
-    wanUrl: String,
-    onLanChange: (String) -> Unit,
-    onWanChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onSave: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("路由器地址", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.PageTitle.fontSize, color = LabV2.Ink) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("内网", Modifier.width(42.dp), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-                    CompactTextField(
-                        value = lanUrl,
-                        onValueChange = onLanChange,
-                        placeholder = "192.168.5.1",
-                        leadingIcon = { Icon(Icons.Rounded.Router, null, Modifier.size(16.dp), tint = LabV2.Primary) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.weight(1f),
-                        textStyle = LabTypography.FieldValue,
-                        placeholderStyle = LabTypography.Placeholder
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("外网", Modifier.width(42.dp), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-                    CompactTextField(
-                        value = wanUrl,
-                        onValueChange = onWanChange,
-                        placeholder = "example.com",
-                        leadingIcon = { Icon(Icons.Rounded.Public, null, Modifier.size(16.dp), tint = LabV2.Cyan) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.weight(1f),
-                        textStyle = LabTypography.FieldValue,
-                        placeholderStyle = LabTypography.Placeholder
-                    )
-                }
-            }
-        },
-        confirmButton = { Button(onClick = onSave, shape = RoundedCornerShape(16.dp)) { Text("保存", style = LabTypography.Button) } },
-        dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(16.dp)) { Text("取消", style = LabTypography.Button) } },
-        shape = RoundedCornerShape(28.dp),
-        containerColor = LAB_POPUP_SURFACE,
-        tonalElevation = 0.dp
-    )
-}
-@Composable
-private fun HealthDetailCard(
-    title: String,
-    subtitle: String,
-    accent: Color,
-    headerIcon: ImageVector,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    LabV2Card {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(Brush.linearGradient(listOf(accent.copy(alpha = .18f), accent.copy(alpha = .07f))))
-                    .border(1.dp, accent.copy(alpha = .18f), RoundedCornerShape(11.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    Modifier
-                        .size(24.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.White.copy(alpha = .86f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(headerIcon, null, Modifier.size(16.dp), tint = accent)
-                }
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(4.dp)
-                        .clip(CircleShape)
-                        .background(accent)
-                )
-            }
-            Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = LabTypography.SectionTitle, maxLines = 2, overflow = TextOverflow.Clip)
-                Text(
-                    subtitle,
-                    fontSize = LabTypography.Caption.fontSize,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LabV2.InkMuted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Clip,
-                    lineHeight = LabTypography.Caption.lineHeight
-                )
-            }
-        }
-        content()
-    }
-}
-
-@Composable
-private fun ScoreRuleRow(title: String, detail: String, points: Int, achieved: Boolean, isLast: Boolean = false) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 43.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(27.dp).height(43.dp), contentAlignment = Alignment.Center) {
-            if (!isLast) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .width(1.dp)
-                        .height(22.dp)
-                        .background((if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .18f))
-                )
-            }
-            Surface(
-                modifier = Modifier.size(24.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = (if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .09f),
-                border = BorderStroke(1.dp, (if (achieved) LabV2.Green else LabV2.InkMuted).copy(alpha = .18f))
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        if (achieved) Icons.Rounded.DoneAll else Icons.Rounded.HorizontalRule,
-                        null,
-                        tint = if (achieved) LabV2.Green else LabV2.InkMuted,
-                        modifier = Modifier.size(12.dp)
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.width(7.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(title, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            Text(detail, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Text(
-            if (points > 0) "+$points" else "$points",
-            fontSize = LabTypography.Supporting.fontSize,
-            fontWeight = FontWeight.SemiBold,
-            color = if (points < 0) LabV2.Red else if (achieved) LabV2.Green else LabV2.InkMuted
-        )
-    }
-}
 
 @Composable
 fun WolDetailScreen(state: AppState, onBack: () -> Unit) = DetailShell("WOL", "远程唤醒设备", onBack, unifiedTypography = true) {

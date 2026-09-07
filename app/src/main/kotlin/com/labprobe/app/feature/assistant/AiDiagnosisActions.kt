@@ -11,8 +11,8 @@ enum class AiDiagnosisAction { OPEN, START, SUMMARY }
 
 private fun asksForDiagnosisExplanation(text: String): Boolean {
     val normalized = text.lowercase(Locale.ROOT).replace(Regex("\\s+"), "")
-    return ("诊断" in normalized || "网络健康" in normalized) &&
-        listOf("解释", "分析", "解读", "原因", "怎么办").any { it in normalized }
+    return ("诊断" in normalized || "网络健康" in normalized || "健康分" in normalized || "评分" in normalized || "扣分" in normalized) &&
+        listOf("解释", "分析", "解读", "原因", "怎么办", "为什么").any { it in normalized }
 }
 
 /** Narrow local shortcuts: informational questions and negative commands never start probes. */
@@ -20,8 +20,10 @@ fun parseAiDiagnosisAction(text: String): AiDiagnosisAction? {
     val normalized = text.lowercase(Locale.ROOT).replace(Regex("\\s+"), "")
     if (asksForDiagnosisExplanation(text)) return null
     if (listOf("不要", "不用", "别", "取消", "停止", "暂不", "不想", "无需").any { it in normalized }) return null
-    val topic = listOf("网络健康", "网络诊断", "诊断网络", "诊断一下网络", "诊断结果", "诊断结论", "诊断进度", "诊断状态", "开始诊断", "重新诊断", "再诊断")
-        .any { it in normalized }
+    val topic = listOf(
+        "网络健康", "网络诊断", "诊断网络", "诊断一下网络", "诊断结果", "诊断结论", "诊断进度", "诊断状态",
+        "开始诊断", "重新诊断", "再诊断", "评分细则", "健康分", "健康得分", "健康评分"
+    ).any { it in normalized }
     if (!topic) return null
     val asksAboutResult = listOf("结果", "结论", "进度", "状态", "完成了吗", "查完了吗").any { it in normalized }
     if (asksAboutResult && listOf("查看", "看看", "查询", "读取", "最近", "上次", "进度", "完成了吗", "查完了吗").any { it in normalized }) {
@@ -29,7 +31,7 @@ fun parseAiDiagnosisAction(text: String): AiDiagnosisAction? {
     }
     if (listOf("是什么", "什么意思", "怎么", "如何", "为什么", "介绍", "说明", "解释", "教程", "能否", "是否", "能不能").any { it in normalized }) return null
     if (listOf("开始", "启动", "发起", "重新诊断", "再诊断", "诊断一下", "帮我诊断网络").any { it in normalized }) return AiDiagnosisAction.START
-    if (listOf("打开", "进入", "前往").any { it in normalized }) return AiDiagnosisAction.OPEN
+    if (listOf("打开", "进入", "前往", "查看", "看看").any { it in normalized }) return AiDiagnosisAction.OPEN
     return null
 }
 

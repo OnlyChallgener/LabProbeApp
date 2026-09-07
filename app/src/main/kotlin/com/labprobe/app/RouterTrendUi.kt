@@ -219,7 +219,7 @@ private fun rememberTrendScale(raw: Double, minimum: Double): Double {
     var ceiling by remember { mutableDoubleStateOf(desired) }
     LaunchedEffect(desired) {
         if (desired >= ceiling) ceiling = desired
-        else if (desired <= ceiling / 2) { delay(5_000); ceiling = desired }
+        else if (desired < ceiling) { delay(4_000); ceiling = desired }
     }
     val animated by animateFloatAsState(ceiling.toFloat(), tween(600), label = "trendScale")
     return maxOf(raw, animated.toDouble(), minimum)

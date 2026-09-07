@@ -29,12 +29,29 @@ class AiDiagnosisActionsTest {
     }
 
     @Test
+    fun scoreAndDetailQueriesOpenFusedNetworkHealth() {
+        assertEquals(
+            AiDiagnosisAction.OPEN,
+            parseAiDiagnosisAction("打开评分细则"),
+        )
+        assertEquals(
+            AiDiagnosisAction.OPEN,
+            parseAiDiagnosisAction("查看健康分"),
+        )
+        assertEquals(
+            AiDiagnosisAction.OPEN,
+            parseAiDiagnosisAction("查看网络健康"),
+        )
+    }
+
+    @Test
     fun onlyExplanationQuestionsReceiveExistingDiagnosisContext() {
         val progress = DiagnosisProgress()
 
         assertEquals("查看上次网络诊断结果", aiDiagnosisQuestion("查看上次网络诊断结果", progress))
         assertEquals("开始网络诊断", aiDiagnosisQuestion("开始网络诊断", progress))
         assertTrue(aiDiagnosisQuestion("请解释网络诊断结果", progress).contains("APP 已有网络诊断摘要"))
+        assertTrue(aiDiagnosisQuestion("为什么健康分被扣了？", progress).contains("APP 已有网络诊断摘要"))
     }
 
     @Test

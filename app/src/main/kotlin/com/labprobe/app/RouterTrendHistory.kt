@@ -19,7 +19,7 @@ internal data class RouterTrendSample(
 internal class RouterTrendHistory {
     companion object {
         const val RETENTION_MS = 15 * 60_000L
-        const val GAP_MS = 10_000L
+        const val GAP_MS = 15_000L
         const val MAX_SAMPLES = 1_800
     }
 

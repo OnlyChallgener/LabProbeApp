@@ -29,7 +29,7 @@ class RouterTrendHistoryTest {
         history.record(sample(1_000, 100), 2_000)
         history.record(sample(500), 2_000)
         history.record(sample(2_000).apply { remove("ipv6Connections") }, 2_000)
-        history.record(sample(3_000).put("sampleAgeMs", 11_000), 3_000)
+        history.record(sample(3_000).put("sampleAgeMs", 16_000), 3_000)
         history.record(sample(4_000).put("stale", true), 4_000)
         history.record(sample(5_000).put("uploadBps", -1), 5_000)
         history.record(sample(6_000).put("ipv4Connections", 6e18).put("ipv6Connections", 6e18), 6_000)

@@ -3072,10 +3072,15 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     listOf("测试", "测", "压测", "跑一下", "开始", "启动", "发起", "页面", "界面", "打开", "进入").any { normalized.contains(it) } &&
                     !listOf("状态", "进度", "结果", "跑完", "跑得怎么样").any { normalized.contains(it) }
 
+                val isRouterTrend = !isTcpPeakTest &&
+                    ((normalized.contains("趋势") || (normalized.contains("网速") && (normalized.contains("走势") || normalized.contains("图")))) &&
+                        listOf("打开", "查看", "进入", "看看", "页面", "界面", "显示").any { normalized.contains(it) } ||
+                    (normalized.contains("路由器状态") && listOf("打开", "查看", "进入", "看看", "界面", "页面").any { normalized.contains(it) }))
+
                 val diagnosisAction = parseAiDiagnosisAction(text)
                 if (diagnosisAction != null) {
                     val response = when (diagnosisAction) {
-                        AiDiagnosisAction.OPEN -> "已打开网络健康，可查看当前概览或开始完整诊断。"
+                        AiDiagnosisAction.OPEN -> "已打开网络健康与诊断中心，可查看健康得分细则、各连通项概览或开始完整诊断。"
                         AiDiagnosisAction.START -> if (diagnosisProgress.running) "网络诊断已在进行，正在打开检查进度。"
                             else "正在打开网络健康并开始诊断，完成后会显示检测结论。"
                         AiDiagnosisAction.SUMMARY -> aiDiagnosisSummary(diagnosisProgress)
@@ -3099,6 +3104,14 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     usage = AiTokenSummary()
                     usageKnown = false
                     onNavigate("tcp_peak")
+                } else if (isRouterTrend) {
+                    val quickCard = "已打开「路由器状态与网络趋势」页。\n你可以在该页面查看实时上行/下行速率、连接会话数走势，以及 5/15 分钟历史趋势图表。"
+                    messages += AiMessage("assistant", quickCard)
+                    while (messages.size >= 120) messages.removeAt(0)
+                    localCache.writeConversation(conversationId, messages)
+                    usage = AiTokenSummary()
+                    usageKnown = false
+                    onNavigate("router_status")
                 } else {
                     sending = true
                     scope.launch {
