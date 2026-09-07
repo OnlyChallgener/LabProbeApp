@@ -42,6 +42,7 @@ class HubRealtimeWebSocketClient(
     private val onTaskUpdate: (String) -> Unit = {},
     private val onConfigUpdate: (String) -> Unit = {},
     private val onAgentUpdate: (String) -> Unit = {},
+    private val onRouterTrend: (String) -> Unit = {},
     private val onRealtimeReady: (Boolean) -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -179,6 +180,7 @@ class HubRealtimeWebSocketClient(
                         "task" -> if (data != null) onTaskUpdate(data.toString())
                         "config" -> if (data != null) onConfigUpdate(data.toString())
                         "agent" -> if (data != null) onAgentUpdate(data.toString())
+                        "router_trend" -> if (data != null) onRouterTrend(data.toString())
                         "ready" -> if (!readyReceived) {
                             readyReceived = true
                             onState(HubRealtimeState.Connected)

@@ -48,4 +48,41 @@ class RouterTrendHistoryTest {
         repeat(2_000) { history.record(sample(1_031_000L + it), 1_031_000L + it) }
         assertEquals(RouterTrendHistory.MAX_SAMPLES, history.samples.value.size)
     }
+
+    @Test fun backfillMergesHistoricalSamplesWithoutGaps() {
+        val history = RouterTrendHistory()
+        // Record 1 live sample before background
+        history.record(sample(1_000_000L, 500L), 100_000L)
+
+        // User goes into background for 180 seconds (3 minutes)
+        // Hub backend collects samples 1_000_001L to 1_000_180L
+        val backfillJson = JSONObject().apply {
+            put("ok", true)
+            put("serverEpochMs", 1_000_180_000L)
+            val samplesArray = org.json.JSONArray()
+            for (sec in 1..180) {
+                samplesArray.put(JSONObject().apply {
+                    put("epochMs", 1_000_000_000L + sec * 1000L)
+                    put("uploadBps", 1000L + sec)
+                    put("downloadBps", 5000L + sec)
+                    put("ipv4Connections", 70)
+                    put("ipv6Connections", 35)
+                })
+            }
+            put("samples", samplesArray)
+        }
+
+        // App returns to foreground at elapsed = 280_000L
+        history.backfill(backfillJson, receivedElapsedMs = 280_000L)
+        val samples = history.samples.value
+        assertEquals(180, samples.size)
+
+        // Every adjacent pair must be 1,000ms apart (no gaps > 15s)
+        for (i in 1 until samples.size) {
+            val delta = samples[i].elapsedMs - samples[i - 1].elapsedMs
+            assertEquals("Points should be 1000ms apart without gaps", 1000L, delta)
+        }
+        assertEquals(280_000L, samples.last().elapsedMs)
+    }
 }
+

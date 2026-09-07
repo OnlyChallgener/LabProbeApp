@@ -1234,6 +1234,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         onTaskUpdate = { raw -> RouterTaskRepositoryRegistry.get(prefs).acceptRealtime(raw) },
         onConfigUpdate = { raw -> RouterRepositoryRegistry.get(prefs).acceptConfigRealtime(raw) },
         onAgentUpdate = { raw -> AgentPresenceStoreRegistry.get(prefs).acceptRealtime(raw) },
+        onRouterTrend = { raw ->
+            stateScope.launch {
+                runCatching { JSONObject(raw) }.getOrNull()?.let {
+                    realtimeSmoother.trendHistory.backfill(it)
+                }
+            }
+        },
         onRealtimeReady = { reconnect ->
             // WSS wins startup. Router settings preload starts only after Hub ready;
             // reconnect refresh is silent and limited to lightweight essentials.
@@ -1412,11 +1419,13 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         supervisorScope {
             val router = async { runCatching { liteRealtimeApi.router() }.getOrNull() }
             val devicesRuntime = async { runCatching { liteRealtimeApi.devices() }.getOrNull() }
+            val trendRuntime = async { runCatching { liteRealtimeApi.routerTrend() }.getOrNull() }
             router.await()?.let {
                 realtimeSmoother.acceptRouter(it)
                 routerDashboardError = ""
             }
             devicesRuntime.await()?.let { realtimeSmoother.acceptDevices(it) }
+            trendRuntime.await()?.let { realtimeSmoother.trendHistory.backfill(it) }
             val now = SystemClock.elapsedRealtime()
             realtimeSmoother.renderRouter(routerDashboard, now)?.let { routerDashboard = it }
             val nextOnline = realtimeSmoother.renderDevices(onlineDevices, now)
@@ -1476,6 +1485,14 @@ class AppState(private val prefs: AppPrefs, context: Context) {
                     routerDashboardError = appErrorZh(failure.message, "Hub 暂时无法获取路由器状态")
                     if (!silent) message = routerDashboardError
                 }
+            }
+    }
+
+    suspend fun fetchRouterTrend() {
+        if (prefs.hub.isBlank() || prefs.token.isBlank()) return
+        runCatching { liteRealtimeApi.routerTrend() }
+            .onSuccess {
+                realtimeSmoother.trendHistory.backfill(it)
             }
     }
 

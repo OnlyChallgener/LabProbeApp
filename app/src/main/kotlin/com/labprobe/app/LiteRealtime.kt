@@ -24,6 +24,8 @@ class LiteRealtimeApi(private val prefs: AppPrefs) {
 
     suspend fun router(): JSONObject = get("/api/router/realtime")
 
+    suspend fun routerTrend(): JSONObject = get("/api/router/trend")
+
     suspend fun devices(): JSONObject = get("/api/devices/realtime")
 
     private suspend fun get(path: String): JSONObject = withContext(Dispatchers.IO) {

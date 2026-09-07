@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
@@ -45,6 +46,47 @@ internal class RouterTrendHistory {
         if (elapsed <= (previous.lastOrNull()?.elapsedMs ?: Long.MIN_VALUE)) return
         val point = RouterTrendSample(epoch, elapsed, values[0], values[1], values[2], values[3])
         mutableSamples.value = (previous.dropWhile { it.elapsedMs < elapsed - RETENTION_MS } + point)
+            .takeLast(MAX_SAMPLES)
+    }
+
+    @Synchronized
+    fun backfill(payload: JSONObject, receivedElapsedMs: Long = SystemClock.elapsedRealtime()) {
+        val array = payload.optJSONArray("samples") ?: return
+        if (array.length() == 0) return
+        val serverEpoch = payload.optLong("serverEpochMs", 0L)
+        val incoming = mutableListOf<RouterTrendSample>()
+
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val epoch = item.optLong("epochMs", item.optLong("sampleEpochMs", 0L))
+            if (epoch <= 0L) continue
+            val upload = item.optLong("uploadBps", -1L)
+            val download = item.optLong("downloadBps", -1L)
+            if (upload < 0L || download < 0L) continue
+            val v4 = item.optLong("ipv4", item.optLong("ipv4Connections", 0L)).coerceAtLeast(0L)
+            val v6 = item.optLong("ipv6", item.optLong("ipv6Connections", 0L)).coerceAtLeast(0L)
+            if (v4 > Long.MAX_VALUE - v6) continue
+            incoming.add(RouterTrendSample(epochMs = epoch, elapsedMs = 0L, uploadBps = upload, downloadBps = download, ipv4 = v4, ipv6 = v6))
+        }
+        if (incoming.isEmpty()) return
+
+        val refEpoch = if (serverEpoch > 0L) serverEpoch else maxOf(incoming.last().epochMs, System.currentTimeMillis())
+
+        val existing = mutableSamples.value
+        val mergedMap = LinkedHashMap<Long, RouterTrendSample>()
+        existing.forEach { mergedMap[it.epochMs] = it }
+        incoming.forEach { mergedMap[it.epochMs] = it }
+
+        val sortedList = mergedMap.values.sortedBy { it.epochMs }
+        val alignedList = sortedList.map { sample ->
+            val ageMs = (refEpoch - sample.epochMs).coerceAtLeast(0L)
+            val elapsed = receivedElapsedMs - ageMs
+            sample.copy(elapsedMs = elapsed)
+        }
+
+        val cutoffElapsed = receivedElapsedMs - RETENTION_MS
+        mutableSamples.value = alignedList
+            .filter { it.elapsedMs >= cutoffElapsed }
             .takeLast(MAX_SAMPLES)
     }
 }
