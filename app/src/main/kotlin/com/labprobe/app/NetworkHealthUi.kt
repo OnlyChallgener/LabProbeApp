@@ -354,7 +354,7 @@ fun NetworkHealthScreen(
         }
 
         if (progress.running) {
-            HorizontalDivider(color = LabV2.BorderSoft)
+            HorizontalDivider(color = LabV2.Border)
             Text("检查进度", style = LabTypography.CardTitle, color = LabV2.Ink)
             DiagnosisCheck.entries.forEach { check ->
                 val completed = visibleItems.find { it.check == check }
@@ -503,7 +503,7 @@ fun NetworkHealthScreen(
             fontSize = 11.sp,
             color = LabV2.InkMuted
         )
-        HorizontalDivider(color = LabV2.BorderSoft)
+        HorizontalDivider(color = LabV2.Border)
         Text("Rust Agent 状态", style = LabTypography.SectionTitle, color = LabV2.Ink)
         agentInfo?.let {
             Text(
@@ -608,7 +608,7 @@ fun NetworkHealthScreen(
                         }
                         Text(item.explanation, style = LabTypography.Body, color = LabV2.Ink)
                         if (item.details.isNotEmpty()) {
-                            HorizontalDivider(color = LabV2.BorderSoft)
+                            HorizontalDivider(color = LabV2.Border)
                             Text("检测明细", style = LabTypography.SectionTitle, color = LabV2.Ink)
                             item.details.forEach { detail ->
                                 Text("• $detail", style = LabTypography.Caption, color = LabV2.InkMuted, lineHeight = 18.sp)
@@ -730,7 +730,7 @@ private fun HealthItemCard(item: DiagnosisItem, modifier: Modifier = Modifier, o
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         color = LabV2.FieldSoft,
-        border = BorderStroke(1.dp, LabV2.BorderSoft),
+        border = BorderStroke(1.dp, LabV2.Border),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
