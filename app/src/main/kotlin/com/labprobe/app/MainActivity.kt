@@ -82,6 +82,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -264,7 +265,7 @@ object AppNavigator {
 }
 
 /** Maps assistant clientAction route names to app route strings. */
-private fun mapAssistantRoute(route: String): String = when (route) {    "home", "devices", "tools", "favorites", "settings", "ai_chat" -> route
+private fun mapAssistantRoute(route: String): String = when (route) {    "home", "network_health", "devices", "tools", "favorites", "settings", "ai_chat" -> route
     "router" -> "router_settings"
     "wireguard" -> "tool_wireguard"
     "stun" -> "tool_stun"
@@ -1160,6 +1161,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private var cachePersistJob: Job? = null
     private val liteRealtimeApi = LiteRealtimeApi(prefs)
     private val realtimeSmoother = RealtimeDisplaySmoother()
+    internal val routerTrendSamples get() = realtimeSmoother.trendHistory.samples
     private var liteRenderJob: Job? = null
     private var realtimeFreshnessJob: Job? = null
     @Volatile private var foregroundActive = true
@@ -1996,10 +1998,51 @@ fun LabProbeApp(prefs: AppPrefs) {
     val state = remember { AppState(prefs, context) }
     val scope = rememberCoroutineScope()
     var appForeground by remember { mutableStateOf(true) }
+    val diagnosisProbes = remember(state, prefs) { DiagnosisProbes(context.applicationContext, prefs, state) }
+    var diagnosisProgress by remember { mutableStateOf(DiagnosisProgress()) }
+    var diagnosisJob by remember { mutableStateOf<Job?>(null) }
+    fun startDiagnosis() {
+        if (diagnosisJob?.isCompleted == false) return
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val initialNetwork = manager?.activeNetwork
+        val initialHub = prefs.hub
+        val initialToken = prefs.token
+        diagnosisProgress = DiagnosisProgress(running = true)
+        diagnosisJob = scope.launch {
+            try {
+                DiagnosisRunner().run(probe = { check ->
+                    fun requireSameNetwork() {
+                        if (manager?.activeNetwork != initialNetwork || prefs.hub != initialHub || prefs.token != initialToken) {
+                            throw CancellationException("诊断期间网络或 Hub 配置已切换")
+                        }
+                    }
+                    requireSameNetwork()
+                    diagnosisProbes.check(check).also { requireSameNetwork() }
+                }) { diagnosisProgress = it }
+            } catch (cancelled: CancellationException) {
+                diagnosisProgress = diagnosisProgress.copy(running = false, current = null, cancelled = true)
+                throw cancelled
+            }
+        }
+    }
+    LaunchedEffect(appForeground) {
+        if (!appForeground) diagnosisJob?.cancel()
+    }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) CertificateReminderCenter.notifyDue(context, prefs)
     }
-    LaunchedEffect(Unit) { context.findActivity()?.applyLabProbeSystemBars() }
+    val darkHealth = route == "network_health" && isSystemInDarkTheme()
+    LaunchedEffect(darkHealth) {
+        context.findActivity()?.let { activity ->
+            activity.applyLabProbeSystemBars()
+            if (darkHealth) {
+                val bars = androidx.core.view.WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+                bars.isAppearanceLightStatusBars = false
+                bars.isAppearanceLightNavigationBars = false
+                activity.window.navigationBarColor = android.graphics.Color.rgb(16, 23, 31)
+            }
+        }
+    }
     // Keep AI notices alive for the main UI lifetime. They are system notifications,
     // never synthetic chat messages or model context.
     LaunchedEffect(prefs.hub, prefs.token) {
@@ -2047,8 +2090,20 @@ fun LabProbeApp(prefs: AppPrefs) {
         var seenNetwork = false
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                if (seenNetwork && appForeground) state.requestForegroundRecovery(forceFull = true)
+                if (seenNetwork && appForeground) {
+                    state.requestForegroundRecovery(forceFull = true)
+                    scope.launch {
+                        diagnosisJob?.cancel()
+                        if (diagnosisProgress.result != null) diagnosisProgress = DiagnosisProgress()
+                    }
+                }
                 seenNetwork = true
+            }
+            override fun onLost(network: Network) {
+                if (manager?.activeNetwork == null || manager?.activeNetwork == network) scope.launch {
+                    diagnosisJob?.cancel()
+                    if (diagnosisProgress.result != null) diagnosisProgress = DiagnosisProgress()
+                }
             }
         }
         runCatching { manager?.registerDefaultNetworkCallback(callback) }
@@ -2157,9 +2212,9 @@ fun LabProbeApp(prefs: AppPrefs) {
     )
 
     MaterialTheme(colorScheme = light, typography = LabMaterialTypography) {
-        val mainRoutes = listOf("home", "devices", "tools", "events", "favorites")
-        val navTitles = listOf("首页", "设备", "工具", "记录", "收藏")
-        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
+        val mainRoutes = listOf("home", "network_health", "devices", "tools", "events", "favorites")
+        val navTitles = listOf("首页", "网络健康", "设备", "工具", "记录", "收藏")
+        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.MonitorHeart, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
         val normalized = when {
             route.startsWith("tool_") -> toolReturnRoute?.takeIf { it in mainRoutes } ?: "tools"
             route == "daily" -> dailyReturnRoute.takeIf { it in mainRoutes } ?: "events"
@@ -2204,7 +2259,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
             nestedToolReturnRoute = null
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
             if (route.startsWith("tool_")) {
                 backFromTool()
             } else {
@@ -2227,7 +2282,7 @@ fun LabProbeApp(prefs: AppPrefs) {
         }
 
         val topNav: @Composable () -> Unit = {
-            OneUiTopNav(navTitles, navIcons, selected) { route = mainRoutes[it] }
+            OneUiTopNav(navTitles, navIcons, selected, themeAware = route == "network_health") { route = mainRoutes[it] }
         }
 
         var pageSwipeOffset by remember { mutableStateOf(0f) }
@@ -2256,7 +2311,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { pad ->
-            Box(Modifier.fillMaxSize().appBackground()) {
+            Box(Modifier.fillMaxSize().then(if (darkHealth) Modifier.background(Color(0xFF10171F)) else Modifier.appBackground())) {
                 Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing)) {
                     AnimatedContent(
                         targetState = route,
@@ -2290,6 +2345,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         saveableStateHolder.SaveableStateProvider(r) { when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "health_score" -> HealthScoreDetailScreen(prefs, state) { route = "home" }
+                        "network_health" -> NetworkHealthScreen(diagnosisProgress, ::startDiagnosis, { diagnosisJob?.cancel() }, topNav)
                         "router_status" -> RouterStatusScreen(prefs, state, onBack = { route = "home" }, onOpenDevices = { route = "devices" })
                         "router_settings" -> RouterSettingsScreen(prefs, onBack = { route = "home" }) { target -> navigate(target) }
                         "wol" -> WolDetailScreen(state) { route = "home" }
@@ -2350,6 +2406,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onNavigate = { route = mapAssistantRoute(it) },
                             onRefreshData = { scope.launch { state.refreshAll(forceFull = true) } },
                             onOpenSettings = { aiSettingsReturnRoute = "ai_chat"; route = "ai_settings" },
+                            diagnosisProgress = diagnosisProgress,
+                            onStartDiagnosis = { route = "network_health"; startDiagnosis() },
                         )
                         "ai_usage" -> AiUsageScreen(context, onBack = { route = "ai_settings" })
                         "tool_ping" -> PingScreen(prefs, backFromTool)
@@ -2557,14 +2615,14 @@ fun DetailShell(
 }
 
 @Composable
-fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, onSelect: (Int) -> Unit) {
+fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, themeAware: Boolean = false, onSelect: (Int) -> Unit) {
     val techBlue = Color(0xFF0284C7)
     Surface(
-        color = Color.White,
+        color = if (themeAware) MaterialTheme.colorScheme.surface else Color.White,
         shape = HomeCardShape,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
+        border = if (themeAware) null else androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -2590,7 +2648,7 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
                 Surface(
                     onClick = { onSelect(i) },
                     shape = itemShape,
-                    color = if (active) Color(0xFFF8FBFF) else Color.Transparent,
+                    color = if (active) { if (themeAware) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFF8FBFF) } else Color.Transparent,
                     shadowElevation = 0.dp,
                     border = if (active) androidx.compose.foundation.BorderStroke(1.dp, techBlue.copy(alpha = .14f)) else null,
                     modifier = itemModifier
@@ -2599,7 +2657,7 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, o
                         Icon(
                             icons[i],
                             contentDescription = t,
-                            tint = if (active) techBlue else Color(0xFF64748B),
+                            tint = if (active) techBlue else if (themeAware) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF64748B),
                             modifier = Modifier.size(18.dp)
                         )
                     }

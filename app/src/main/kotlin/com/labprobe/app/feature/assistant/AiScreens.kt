@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.labprobe.app.AppPrefs
+import com.labprobe.app.DiagnosisProgress
 import com.labprobe.app.LabTypography
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -2118,7 +2119,7 @@ private fun AiTypingBubble() {
 }
 
 @Composable
-fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}, onOpenSettings: () -> Unit = {}) {
+fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}, onOpenSettings: () -> Unit = {}, diagnosisProgress: DiagnosisProgress = DiagnosisProgress(), onStartDiagnosis: () -> Unit = {}) {
     val store = remember { AiSettingsStore(context) }
     val prefs = remember { AppPrefs(context) }
     val client = remember(prefs.hub, prefs.token) { AiApiClient(store, prefs.hub, prefs.token, appPrefs = prefs) }
@@ -3071,7 +3072,26 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     listOf("测试", "测", "压测", "跑一下", "开始", "启动", "发起", "页面", "界面", "打开", "进入").any { normalized.contains(it) } &&
                     !listOf("状态", "进度", "结果", "跑完", "跑得怎么样").any { normalized.contains(it) }
 
-                if (isTcpPeakTest) {
+                val diagnosisAction = parseAiDiagnosisAction(text)
+                if (diagnosisAction != null) {
+                    val response = when (diagnosisAction) {
+                        AiDiagnosisAction.OPEN -> "已打开网络健康，可查看当前概览或开始完整诊断。"
+                        AiDiagnosisAction.START -> if (diagnosisProgress.running) "网络诊断已在进行，正在打开检查进度。"
+                            else "正在打开网络健康并开始诊断，完成后会显示检测结论。"
+                        AiDiagnosisAction.SUMMARY -> aiDiagnosisSummary(diagnosisProgress)
+                    }
+                    messages += AiMessage("assistant", response)
+                    while (messages.size >= 120) messages.removeAt(0)
+                    localCache.writeConversation(conversationId, messages)
+                    usage = AiTokenSummary()
+                    usageKnown = true
+                    // Cache first: navigation removes this composition and its coroutine scope.
+                    when (diagnosisAction) {
+                        AiDiagnosisAction.OPEN -> onNavigate("network_health")
+                        AiDiagnosisAction.START -> onStartDiagnosis()
+                        AiDiagnosisAction.SUMMARY -> Unit
+                    }
+                } else if (isTcpPeakTest) {
                     val quickCard = "已打开「TCP 峰值连接数」测试页。\n你可以在测试页面选择【本机 APP】或【Relay 宿主机】，配置目标域名/IP与量程，实时观察活动连接数走势图与系统资源占用。"
                     messages += AiMessage("assistant", quickCard)
                     while (messages.size >= 120) messages.removeAt(0)
@@ -3096,7 +3116,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     }
                     try {
                         val reply = client.chatStream(
-                            text, requestConversationId,
+                            aiDiagnosisQuestion(text, diagnosisProgress), requestConversationId,
                             onDelta = delta@{ piece ->
                                 if (conversationId != requestConversationId) return@delta
                                 streamed = true

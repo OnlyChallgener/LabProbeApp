@@ -521,7 +521,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
             onEdit = { showRouterEditor = true },
             onOpenRouter = ::openRouterUrl
         )
-        RouterRealtimeCard(ui)
+        RouterRealtimeCard(ui, state)
         RouterNetworkCard(ui)
         RouterPortsCard(ui, onShowLegend = { showPortLegend = true })
         Spacer(Modifier.height(4.dp))
@@ -799,7 +799,7 @@ private fun HeroMetric(icon: ImageVector, label: String, value: String, color: C
 private fun HeroDivider() = Box(Modifier.width(1.dp).height(38.dp).background(Color(0xFFDCE6F3)))
 
 @Composable
-private fun RouterRealtimeCard(ui: RouterDashboardUi) {
+private fun RouterRealtimeCard(ui: RouterDashboardUi, state: AppState) {
     val hasRadioTemp = ui.temperature2g > 0.0 || ui.temperature5g > 0.0
     RouterGlassCard {
         SectionHeader(Icons.Rounded.MonitorHeart, "实时状态", LabV2.Primary, ui.updatedAt)
@@ -815,6 +815,8 @@ private fun RouterRealtimeCard(ui: RouterDashboardUi) {
             RealtimeMetric(Icons.Rounded.DeveloperBoard, "内存", percentText(ui.memory), Color(0xFFFF8A00), ui.memory / 100.0, Modifier.width(82.dp))
             RealtimeMetric(Icons.Rounded.Storage, "存储", percentText(ui.storage), Color(0xFF0EA5E9), ui.storage.coerceAtLeast(0.0) / 100.0, Modifier.width(82.dp))
         }
+        HorizontalDivider(color = LabCoreSurface.Border)
+        RouterTrendPanel(state.routerTrendSamples)
     }
 }
 

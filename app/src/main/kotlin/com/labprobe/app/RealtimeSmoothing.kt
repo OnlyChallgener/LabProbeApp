@@ -18,6 +18,7 @@ import kotlin.math.roundToLong
  * online/offline events always use the latest real integers.
  */
 class RealtimeDisplaySmoother {
+    internal val trendHistory = RouterTrendHistory()
     companion object {
         const val FRAME_INTERVAL_MS = 1_000L
         const val STALE_WARNING_AGE_MS = 10_000L
@@ -101,6 +102,8 @@ class RealtimeDisplaySmoother {
             return
         }
         if (epochMs < routerSampleEpochMs) return
+
+        trendHistory.record(payload, now)
 
         val target = RouterVector(
             uploadBps = payload.optDouble("uploadBps", 0.0).coerceAtLeast(0.0),
