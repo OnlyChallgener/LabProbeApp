@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PauseCircleOutline
@@ -507,7 +508,7 @@ fun StunPenetrationScreen(
                     onDelete = {
                         menuFor = null
                         val deletedId = rule.id
-                        rules = rules.filterNot { it.id == deletedId }
+                        snapshot = snapshot.copy(rules = snapshot.rules.filterNot { it.id == deletedId })
                         removeStunFavorite(prefs, deletedId)
                         scope.launch {
                             runCatching { api.delete(deletedId) }

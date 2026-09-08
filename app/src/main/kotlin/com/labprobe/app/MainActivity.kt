@@ -2007,6 +2007,14 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 @Composable
 fun LabProbeApp(prefs: AppPrefs) {
     var route by remember { mutableStateOf("home") }
+    var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
+    var toolReturnRoute by remember { mutableStateOf<String?>(null) }
+    var nestedToolReturnRoute by remember { mutableStateOf<String?>(null) }
+    var settingsReturnRoute by remember { mutableStateOf("favorites") }
+    var dailyReturnRoute by remember { mutableStateOf("events") }
+    var aiChatReturnRoute by remember { mutableStateOf("home") }
+    var aiSettingsReturnRoute by remember { mutableStateOf("home") }
+    var favoritesReturnRoute by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(AppNavigator.pendingRoute) {
         AppNavigator.pendingRoute?.let { requested ->
             AppNavigator.pendingRoute = null
@@ -2016,14 +2024,6 @@ fun LabProbeApp(prefs: AppPrefs) {
             route = requested
         }
     }
-    var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
-    var toolReturnRoute by remember { mutableStateOf<String?>(null) }
-    var nestedToolReturnRoute by remember { mutableStateOf<String?>(null) }
-    var settingsReturnRoute by remember { mutableStateOf("favorites") }
-    var dailyReturnRoute by remember { mutableStateOf("events") }
-    var aiChatReturnRoute by remember { mutableStateOf("home") }
-    var aiSettingsReturnRoute by remember { mutableStateOf("home") }
-    var favoritesReturnRoute by remember { mutableStateOf<String?>(null) }
     var autoRefresh by remember { mutableStateOf("实时") }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
