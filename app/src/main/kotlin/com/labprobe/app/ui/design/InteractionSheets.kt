@@ -201,7 +201,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
         LabSection("设备") {
             LabInfoRow("备注", device.remark.ifBlank { "--" }, copyable = false, accent = profile.accent)
             LabInfoRow("类型", profile.label, copyable = false, accent = profile.accent)
-            LabInfoRow("厂商", cleanApiText(device.manufacture).ifBlank { "--" }, copyable = false, accent = profile.accent)
+            LabInfoRow("厂商", resolveDeviceManufacturer(device).ifBlank { "--" }, copyable = false, accent = profile.accent)
             LabInfoRow("主机名", cleanApiText(device.hostName).ifBlank { "--" }, accent = profile.accent)
         }
         val totalUpload = cleanApiText(device.totalUpload)

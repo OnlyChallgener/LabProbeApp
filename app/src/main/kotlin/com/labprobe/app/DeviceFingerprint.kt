@@ -171,3 +171,101 @@ fun hasWifiInfo(d: DeviceItem): Boolean {
 fun connectionLabel(d: DeviceItem): String = if (hasWifiInfo(d)) "无线连接" else "有线设备"
 
 fun bestIpv6ForDisplay(v6: List<String>): String = pickBestIpv6(v6).best.orEmpty()
+
+fun formatManufacturer(raw: String): String {
+    val trimmed = cleanApiText(raw).trim()
+    if (trimmed.isBlank() || trimmed == "--") return ""
+    val lower = trimmed.lowercase(Locale.ROOT)
+    return when (lower) {
+        "huawei", "华为" -> "Huawei"
+        "xiaomi", "小米" -> "Xiaomi"
+        "apple", "苹果" -> "Apple"
+        "samsung", "三星" -> "Samsung"
+        "haier", "海尔" -> "Haier"
+        "midea", "美的" -> "Midea"
+        "honor", "荣耀" -> "Honor"
+        "oppo" -> "OPPO"
+        "vivo" -> "vivo"
+        "oneplus", "一加" -> "OnePlus"
+        "meizu", "魅族" -> "Meizu"
+        "tp-link", "tplink", "tp link" -> "TP-Link"
+        "ruijie", "锐捷" -> "Ruijie"
+        "h3c", "华三" -> "H3C"
+        "zte", "中兴" -> "ZTE"
+        "sony", "索尼" -> "Sony"
+        "lenovo", "联想" -> "Lenovo"
+        "dell", "戴尔" -> "Dell"
+        "hp", "惠普" -> "HP"
+        "asus", "华硕" -> "ASUS"
+        "intel", "英特尔" -> "Intel"
+        "realtek", "瑞昱" -> "Realtek"
+        "espressif", "乐鑫" -> "Espressif"
+        "google", "谷歌" -> "Google"
+        "amazon", "亚马逊" -> "Amazon"
+        "microsoft", "微软" -> "Microsoft"
+        "nintendo", "任天堂" -> "Nintendo"
+        "hisense", "海信" -> "Hisense"
+        "tcl" -> "TCL"
+        "dji", "大疆" -> "DJI"
+        "synology", "群晖" -> "Synology"
+        "qnap", "威联通" -> "QNAP"
+        "ugreen", "绿联" -> "UGREEN"
+        "fnos", "飞牛" -> "FnOS"
+        "360" -> "360"
+        "xtc", "小天才" -> "小天才"
+        else -> {
+            trimmed.split(" ").joinToString(" ") { word ->
+                if (word.contains("-")) {
+                    word.split("-").joinToString("-") { sub ->
+                        sub.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                    }
+                } else {
+                    word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                }
+            }
+        }
+    }
+}
+
+fun resolveDeviceManufacturer(d: DeviceItem): String {
+    val formatted = formatManufacturer(d.manufacture)
+    if (formatted.isNotBlank()) return formatted
+
+    val nameText = listOf(d.remark, d.name, d.hostName)
+        .joinToString(" ")
+        .lowercase(Locale.ROOT)
+    if (nameText.isBlank()) return ""
+
+    return when {
+        Regex("""\bsm-[a-z0-9]{3,6}\b""").containsMatchIn(nameText) ||
+            listOf("samsung", "galaxy", "三星").any { nameText.contains(it) } -> "Samsung"
+        listOf("iphone", "ipad", "macbook", "imac", "mac mini", "apple watch", "airpods", "homepod", "apple").any { nameText.contains(it) } -> "Apple"
+        listOf("huawei", "mate60", "mate70", "mate50", "mate40", "mate30", "mate20", "matepad", "matebook", "pura", "nova", "华为").any { nameText.contains(it) } ||
+            Regex("""\bhuawei[-_]""").containsMatchIn(nameText) -> "Huawei"
+        listOf("redmi", "红米").any { nameText.contains(it) } -> "Redmi"
+        listOf("xiaomi", "小米", "mi pad", "poco", "miaisoundbox").any { nameText.contains(it) } -> "Xiaomi"
+        listOf("honor", "magicbook", "magicpad", "荣耀").any { nameText.contains(it) } -> "Honor"
+        listOf("360-kidswatch", "360-", "360儿童卫士").any { nameText.contains(it) } -> "360"
+        listOf("小天才", "xtc").any { nameText.contains(it) } -> "小天才"
+        listOf("pixel", "google").any { nameText.contains(it) } -> "Google"
+        listOf("playstation", "ps5", "ps4", "sony", "索尼").any { nameText.contains(it) } -> "Sony"
+        listOf("nintendo", "switch", "任天堂").any { nameText.contains(it) } -> "Nintendo"
+        listOf("haier", "海尔").any { nameText.contains(it) } -> "Haier"
+        listOf("midea", "美的").any { nameText.contains(it) } -> "Midea"
+        listOf("hisense", "海信").any { nameText.contains(it) } -> "Hisense"
+        listOf("tcl").any { nameText.contains(it) } -> "TCL"
+        listOf("oppo").any { nameText.contains(it) } -> "OPPO"
+        listOf("vivo", "iqoo").any { nameText.contains(it) } -> "vivo"
+        listOf("oneplus", "一加").any { nameText.contains(it) } -> "OnePlus"
+        listOf("meizu", "魅族").any { nameText.contains(it) } -> "Meizu"
+        listOf("dell", "戴尔").any { nameText.contains(it) } -> "Dell"
+        listOf("lenovo", "thinkpad", "xiaoxin", "联想").any { nameText.contains(it) } -> "Lenovo"
+        listOf("asus", "rog", "华硕").any { nameText.contains(it) } -> "ASUS"
+        listOf("synology", "群晖").any { nameText.contains(it) } -> "Synology"
+        listOf("qnap", "威联通").any { nameText.contains(it) } -> "QNAP"
+        listOf("ugreen", "绿联").any { nameText.contains(it) } -> "UGREEN"
+        listOf("tp-link", "tplink").any { nameText.contains(it) } -> "TP-Link"
+        listOf("ruijie", "reyee", "锐捷").any { nameText.contains(it) } -> "Ruijie"
+        else -> ""
+    }
+}

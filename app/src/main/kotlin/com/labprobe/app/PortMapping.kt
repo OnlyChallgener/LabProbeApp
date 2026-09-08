@@ -235,8 +235,9 @@ internal fun shouldAcceptPortMapSnapshot(
 class PortMapApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
 
-    suspend fun list(): PortMapListSnapshot = withContext(Dispatchers.IO) {
-        val root = JSONObject(get("/api/portmaps"))
+    suspend fun list(router: String = ""): PortMapListSnapshot = withContext(Dispatchers.IO) {
+        val query = if (router.isNotBlank()) "?router=" + java.net.URLEncoder.encode(router, "UTF-8") else ""
+        val root = JSONObject(get("/api/portmaps$query"))
         val range = root.optJSONObject("portRange") ?: JSONObject()
         val array = root.optJSONArray("rules") ?: JSONArray()
         val rows = (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::parsePortMapRule) }
@@ -670,7 +671,10 @@ fun PortMappingScreen(
         refreshInFlight = true
         if (!silent) loading = true
         try {
-            val snapshot = kotlinx.coroutines.withTimeout(4_000L) { api.list() }
+            val routerArg = liveAgent?.router?.takeIf { it.isNotBlank() && it.lowercase() != "router" }
+                ?: agent.router.takeIf { it.isNotBlank() && it.lowercase() != "router" }
+                ?: ""
+            val snapshot = kotlinx.coroutines.withTimeout(4_000L) { api.list(routerArg) }
             val newAgent = snapshot.agent
             val mayAccept = shouldAcceptPortMapSnapshot(
                 snapshot = snapshot,
@@ -682,9 +686,22 @@ fun PortMappingScreen(
             if (mayAccept) {
                 commitRulesLocally(snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt, snapshot.revision)
             }
-            agent = newAgent
-            PortMappingMemoryCache.agent = newAgent
             presenceStore.acceptHttp(newAgent)
+            val currentBestAgent = liveAgent ?: agent
+            val isSnapshotNewer = if (newAgent.revision > 0L || currentBestAgent.revision > 0L) {
+                newAgent.revision >= currentBestAgent.revision
+            } else {
+                newAgent.lastSeenEpoch >= currentBestAgent.lastSeenEpoch
+            }
+            val resolvedAgent = if (isSnapshotNewer || (!currentBestAgent.online && newAgent.online)) {
+                newAgent
+            } else if (currentBestAgent.online && !newAgent.online) {
+                currentBestAgent
+            } else {
+                currentBestAgent
+            }
+            agent = resolvedAgent
+            PortMappingMemoryCache.agent = resolvedAgent
             if (!canonicalDevicesLoaded) {
                 runCatching { loadCanonicalPortMappingDevices(deviceApi) }.onSuccess {
                     devices = it

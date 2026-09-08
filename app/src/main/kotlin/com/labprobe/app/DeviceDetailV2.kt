@@ -63,16 +63,27 @@ fun DeviceDetailScreen(
     var editing by remember { mutableStateOf(false) }
     var waking by remember { mutableStateOf(false) }
 
+    val manufacturer = resolveDeviceManufacturer(device)
+
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 104, modifier = Modifier.clickable { editing = true })
+                Box(
+                    Modifier
+                        .size(112.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(profile.accent.copy(alpha = .065f))
+                        .clickable { editing = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
                     LabStatusBadge(device.online)
                 }
                 Text(
-                    listOf(cleanApiText(device.manufacture), profile.label, cleanApiText(device.hostName)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
+                    listOf(manufacturer, profile.label, cleanApiText(device.hostName)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
                     fontSize = LabTypography.Supporting.fontSize,
                     fontWeight = FontWeight.SemiBold,
                     color = LabV2.InkMuted,
@@ -118,7 +129,7 @@ fun DeviceDetailScreen(
         CompactListCard(coreSurface = true) {
             Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             DeviceDetailPair("类型", profile.label)
-            DeviceDetailPair("厂商", cleanApiText(device.manufacture).ifBlank { "--" })
+            DeviceDetailPair("厂商", manufacturer.ifBlank { "--" })
             DeviceDetailPair("主机名", cleanApiText(device.hostName).ifBlank { "--" })
             DeviceDetailPair("备注", cleanApiText(device.remark).ifBlank { "--" })
         }
