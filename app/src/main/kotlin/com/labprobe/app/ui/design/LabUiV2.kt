@@ -80,16 +80,16 @@ object LabV2 {
     val ShadowAmbient = Color(0x083B82C4)
     val ShadowSpot = Color(0x0C3B82C4)
 
-    val BackgroundTop = Color(0xFFE8F4FF)
+    val BackgroundTop = Color(0xFFEBF4FD)
     val BackgroundMid = Color(0xFFF5FAFF)
-    val BackgroundBottom = Color(0xFFFBFDFF)
+    val BackgroundBottom = Color(0xFFF7FAFD)
 
     val CardTop = Color(0xFFFFFFFF)
-    val CardBottom = Color(0xFFFBFDFF)
-    val Field = Color(0xFFFFFFFF)
+    val CardBottom = Color(0xFFFAFDFF)
+    val Field = Color(0xFFF1F7FD)
     val FieldSoft = Color(0xFFF6FAFF)
-    val Border = Color(0xFFD8E8F7)
-    val BorderStrong = Color(0xFFC4DCF2)
+    val Border = Color(0xFFE2EEF8)
+    val BorderStrong = Color(0xFFCEE0F0)
 
     val PageHorizontal = 14.dp
     val PageTop = 8.dp
@@ -115,8 +115,8 @@ object LabV2 {
  */
 object LabCoreSurface {
     val Card = Color.White
-    val Inner = Color(0xFFF3F9FF)
-    val Border = Color(0xFFDDEAF6)
+    val Inner = Color(0xFFF1F7FD)
+    val Border = Color(0xFFE2EEF8)
     val CardShape = RoundedCornerShape(20.dp)
     val CompactShape = RoundedCornerShape(18.dp)
     val InnerShape = RoundedCornerShape(14.dp)
@@ -274,7 +274,7 @@ fun LabCoreCard(
         modifier = modifier.fillMaxWidth(),
         shape = shape,
         color = if (polished) polishColors.surface else LabCoreSurface.Card,
-        border = if (polished) BorderStroke(1.dp, Color(0xFFD6E1EA)) else BorderStroke(1.dp, LabCoreSurface.Border),
+        border = if (polished) BorderStroke(1.dp, Color(0xFFE2EEF8)) else BorderStroke(1.dp, LabCoreSurface.Border),
         tonalElevation = 0.dp,
         shadowElevation = 2.dp
     ) {
@@ -436,7 +436,7 @@ fun CompactDropdown(
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(18.dp),
             containerColor = if (polished) polishColors.surfaceRaised else LabV2.Field,
-            border = if (polished) BorderStroke(1.dp, Color(0xFFD6E1EA)) else null,
+            border = if (polished) BorderStroke(1.dp, Color(0xFFE2EEF8)) else null,
             shadowElevation = if (polished) 8.dp else 4.dp
         ) {
             options.forEach { option ->

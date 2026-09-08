@@ -46,18 +46,18 @@ data class LabMaterialColors(
 )
 
 private val LabMaterialLight = LabMaterialColors(
-    backgroundTop = Color(0xFFDFE5EA),
-    backgroundBottom = Color(0xFFE9EFF3),
+    backgroundTop = Color(0xFFEBF4FD),
+    backgroundBottom = Color(0xFFF7FAFD),
     surface = Color(0xFFFFFFFF),
     surfaceRaised = Color(0xFFFFFFFF),
-    surfaceInset = Color(0xFFF1F5F8),
+    surfaceInset = Color(0xFFF1F7FD),
     glassTint = Color(0xCCFFFFFF),
-    glassFallback = Color(0xFFF8FAFC),
+    glassFallback = Color(0xFFF8FAFE),
     glassBorder = Color(0xB3FFFFFF),
-    outline = Color(0x6679848E),
+    outline = Color(0x330284C7),
     ink = Color(0xFF18212A),
     inkMuted = Color(0xFF5F6B75),
-    accent = Color(0xFF1978AE),
+    accent = Color(0xFF0284C7),
 )
 
 @Immutable
