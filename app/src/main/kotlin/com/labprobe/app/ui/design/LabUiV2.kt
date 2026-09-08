@@ -237,12 +237,20 @@ fun LabV2Card(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = if (compact) LabV2.CompactCardShape else LabV2.CardShape
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Box(
         modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(Brush.linearGradient(listOf(LabV2.CardTop, LabV2.CardBottom)))
-            .border(1.dp, Color.White.copy(alpha = .92f), shape)
+            .background(
+                if (polished) Brush.linearGradient(listOf(polishColors.surfaceRaised, polishColors.surface))
+                else Brush.linearGradient(listOf(LabV2.CardTop, LabV2.CardBottom))
+            )
+            .then(
+                if (polished) Modifier.border(0.5.dp, polishColors.outline.copy(alpha = .32f), shape)
+                else Modifier.border(1.dp, Color.White.copy(alpha = .92f), shape)
+            )
     ) {
         Column(
             Modifier.fillMaxWidth().padding(contentPadding),
@@ -260,13 +268,15 @@ fun LabCoreCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = if (compact) LabCoreSurface.CompactShape else LabCoreSurface.CardShape
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = shape,
-        color = LabCoreSurface.Card,
-        border = BorderStroke(1.dp, LabCoreSurface.Border),
+        color = if (polished) polishColors.surface else LabCoreSurface.Card,
+        border = if (polished) null else BorderStroke(1.dp, LabCoreSurface.Border),
         tonalElevation = 0.dp,
-        shadowElevation = 2.dp
+        shadowElevation = if (polished) 1.dp else 2.dp
     ) {
         Column(
             Modifier.fillMaxWidth().padding(contentPadding),
@@ -287,17 +297,19 @@ fun CompactPageHeader(
     titleStyle: TextStyle? = null,
     subtitleStyle: TextStyle? = null
 ) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         if (onBack != null) {
             Surface(
                 onClick = onBack,
                 modifier = Modifier.size(38.dp),
                 shape = CircleShape,
-                color = LabV2.Field,
-                border = BorderStroke(1.dp, LabV2.Border)
+                color = if (polished) polishColors.surfaceRaised else LabV2.Field,
+                border = if (polished) null else BorderStroke(1.dp, LabV2.Border)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.ArrowBack, null, Modifier.size(19.dp), tint = LabV2.Ink)
+                    Icon(Icons.Rounded.ArrowBack, null, Modifier.size(19.dp), tint = if (polished) polishColors.ink else LabV2.Ink)
                 }
             }
             Spacer(Modifier.width(10.dp))
@@ -309,7 +321,7 @@ fun CompactPageHeader(
                     fontSize = if (compactTitle) 19.sp else 21.sp,
                     lineHeight = if (compactTitle) 22.sp else 24.sp,
                     fontWeight = FontWeight.Bold,
-                    color = LabV2.Ink
+                    color = if (polished) polishColors.ink else LabV2.Ink
                 ),
                 maxLines = if (titleStyle == null) 1 else 2,
                 overflow = if (titleStyle == null) TextOverflow.Ellipsis else TextOverflow.Clip
@@ -321,7 +333,7 @@ fun CompactPageHeader(
                         fontSize = 10.5.sp,
                         lineHeight = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = LabV2.InkMuted
+                        color = if (polished) polishColors.inkMuted else LabV2.InkMuted
                     ),
                     maxLines = 2,
                     overflow = if (subtitleStyle == null) TextOverflow.Ellipsis else TextOverflow.Clip
@@ -461,12 +473,15 @@ fun CompactChartCard(modifier: Modifier = Modifier, content: @Composable ColumnS
 @Composable
 fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            shape = RoundedCornerShape(22.dp),
-            color = LabV2.CardTop,
-            border = BorderStroke(1.dp, LabV2.Border),
-            shadowElevation = 14.dp
+        val shape = RoundedCornerShape(22.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .then(
+                    if (LabMaterialPolish.enabled) Modifier.labStaticFrostedSurface(shape)
+                    else Modifier.clip(shape).background(LabV2.CardTop).border(1.dp, LabV2.Border, shape)
+                )
         ) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
         }

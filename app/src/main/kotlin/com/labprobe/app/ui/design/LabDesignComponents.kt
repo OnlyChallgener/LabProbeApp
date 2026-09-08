@@ -75,6 +75,8 @@ fun LabSection(
     action: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(title, Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
@@ -82,8 +84,8 @@ fun LabSection(
         }
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = LabV2.FieldSoft,
-            border = BorderStroke(1.dp, LabV2.Border)
+            color = if (polished) polishColors.surfaceInset else LabV2.FieldSoft,
+            border = if (polished) null else BorderStroke(1.dp, LabV2.Border)
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
         }
@@ -97,6 +99,7 @@ fun LabInfoRow(
     copyable: Boolean = true,
     accent: Color = MaterialTheme.colorScheme.primary
 ) {
+    val polished = LabMaterialPolish.enabled
     val ctx = LocalContext.current
     val cleaned = value?.takeIf { it.isNotBlank() } ?: "--"
     val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -133,7 +136,7 @@ fun LabInfoRow(
             maxLines = 1,
             overflow = TextOverflow.Clip
         )
-        if (copyable && cleaned != "--") {
+        if (!polished && copyable && cleaned != "--") {
             Spacer(Modifier.width(6.dp))
             Icon(
                 if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
@@ -163,6 +166,8 @@ fun LabActionChip(text: String, color: Color, modifier: Modifier = Modifier, onC
 fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scrollState = rememberScrollState()
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     val contentModifier = if (scrollable) {
         Modifier
             .fillMaxWidth()
@@ -180,8 +185,8 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
         sheetState = sheetState,
         sheetGesturesEnabled = !scrollable,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        containerColor = LAB_POPUP_SURFACE,
-        scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
+        containerColor = if (polished) polishColors.glassFallback.copy(alpha = .96f) else LAB_POPUP_SURFACE,
+        scrimColor = LAB_POPUP_SCRIM.copy(alpha = if (polished) .46f else .38f),
         dragHandle = {
             Box(
                 Modifier
@@ -189,7 +194,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
                     .width(38.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(99.dp))
-                    .background(LAB_POPUP_HANDLE.copy(alpha = .82f))
+                    .background(if (polished) polishColors.inkMuted.copy(alpha = .58f) else LAB_POPUP_HANDLE.copy(alpha = .82f))
             )
         }
     ) {

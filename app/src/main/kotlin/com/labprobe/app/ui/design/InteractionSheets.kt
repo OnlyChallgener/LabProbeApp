@@ -50,10 +50,12 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
     val rule = deviceTypeRuleForInput(typeInput)
     val normalizedType = normalizeDeviceTypeToken(typeInput).ifBlank { typeInput.trim() }
     val recommendation = if (normalizedType.isBlank() || normalizedType == "unknown" || normalizedType == "router") wolRecommendationForDevice(device, typeInput) else wolRecommendationForDeviceType(typeInput)
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     LabBottomSheet(onDismiss = onDismiss) {
         Text("编辑设备", fontWeight = FontWeight.Black, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Surface(shape = RoundedCornerShape(26.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+            Surface(shape = RoundedCornerShape(26.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(Modifier.weight(1f)) {
@@ -85,7 +87,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     )
                 }
             }
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     DeviceTypeIconPreview(rule, 42)
                     Spacer(Modifier.width(10.dp))
@@ -95,7 +97,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     }
                 }
             }
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = LAB_POPUP_SUBTLE, border = BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Text("设备管理", fontWeight = FontWeight.Black, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
                     Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {

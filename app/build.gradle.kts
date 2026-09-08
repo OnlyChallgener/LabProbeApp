@@ -72,6 +72,16 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.systemProperty(
+                "roborazzi.test.record",
+                providers.gradleProperty("materialScreenshots").orElse("false").get()
+            )
+        }
+    }
+
     sourceSets {
         getByName("main") {
             java.setSrcDirs(listOf("src/main/kotlin"))
@@ -93,6 +103,9 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    // Stable backdrop blur only. Experimental optical-effect modules
+    // are intentionally not used: LabProbe's Android material is static frost.
+    implementation("dev.chrisbanes.haze:haze:1.7.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
@@ -103,5 +116,9 @@ dependencies {
     implementation("com.wireguard.android:tunnel:1.0.20260102")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.50.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.50.0")
     testImplementation("org.json:json:20240303")
 }

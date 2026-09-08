@@ -2362,7 +2362,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                             }
                         }
                     ) { r ->
-                        saveableStateHolder.SaveableStateProvider(r) { when (r) {
+                        saveableStateHolder.SaveableStateProvider(r) {
+                            LabMaterialReferenceTheme(r) { when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "health_score", "network_health" -> NetworkHealthScreen(
                             prefs = prefs,
@@ -2512,7 +2513,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                         )
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
-                        } }
+                            } }
+                        }
                     }
                     val assistantRoutes = setOf("ai_settings", "ai_chat", "ai_usage")
                     AiFloatingPet(
@@ -2643,14 +2645,9 @@ fun DetailShell(
 @Composable
 fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, themeAware: Boolean = false, onSelect: (Int) -> Unit) {
     val techBlue = Color(0xFF0284C7)
-    Surface(
-        color = if (themeAware) MaterialTheme.colorScheme.surface else Color.White,
-        shape = HomeCardShape,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = if (themeAware) null else androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    val navContent: @Composable () -> Unit = {
         Row(
             Modifier.fillMaxWidth().padding(4.dp),
             horizontalArrangement = Arrangement.SpaceAround,
@@ -2663,7 +2660,7 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, t
                     .height(36.dp)
                     .weight(1f)
                     .then(
-                        if (active) Modifier.shadow(
+                        if (active && !polished) Modifier.shadow(
                             elevation = 2.dp,
                             shape = itemShape,
                             clip = false,
@@ -2674,21 +2671,45 @@ fun OneUiTopNav(titles: List<String>, icons: List<ImageVector>, selected: Int, t
                 Surface(
                     onClick = { onSelect(i) },
                     shape = itemShape,
-                    color = if (active) { if (themeAware) MaterialTheme.colorScheme.surfaceContainerHigh else Color(0xFFF8FBFF) } else Color.Transparent,
+                    color = if (active) {
+                        if (polished) polishColors.surfaceInset
+                        else if (themeAware) MaterialTheme.colorScheme.surfaceContainerHigh
+                        else Color(0xFFF8FBFF)
+                    } else Color.Transparent,
                     shadowElevation = 0.dp,
-                    border = if (active) androidx.compose.foundation.BorderStroke(1.dp, techBlue.copy(alpha = .14f)) else null,
+                    border = if (active && !polished) androidx.compose.foundation.BorderStroke(1.dp, techBlue.copy(alpha = .14f)) else null,
                     modifier = itemModifier
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             icons[i],
                             contentDescription = t,
-                            tint = if (active) techBlue else if (themeAware) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF64748B),
+                            tint = if (active) {
+                                if (polished) polishColors.accent else techBlue
+                            } else if (polished) {
+                                polishColors.inkMuted
+                            } else if (themeAware) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF64748B),
                             modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
+        }
+    }
+    if (polished) {
+        Box(Modifier.fillMaxWidth().labFrostedSurface(HomeCardShape), contentAlignment = Alignment.Center) {
+            navContent()
+        }
+    } else {
+        Surface(
+            color = if (themeAware) MaterialTheme.colorScheme.surface else Color.White,
+            shape = HomeCardShape,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            border = if (themeAware) null else androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            navContent()
         }
     }
 }
@@ -3620,13 +3641,15 @@ fun UpdateFloatingBar(state: UpdateDownloadUi, onShow: () -> Unit, onHide: () ->
 
 @Composable
 fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -> Unit, onAuto: (String) -> Unit) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Box {
         Surface(
             shape = HomeCardShape,
-            color = Color.White,
-            shadowElevation = 2.dp,
+            color = if (polished) polishColors.surfaceRaised else Color.White,
+            shadowElevation = if (polished) 1.dp else 2.dp,
             tonalElevation = 0.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
+            border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(
@@ -3750,7 +3773,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .background(homeGradient)
+            .then(if (LabMaterialPolish.enabled) Modifier else Modifier.background(homeGradient))
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -4125,13 +4148,15 @@ fun HealthCard(
     shape: androidx.compose.ui.graphics.Shape = HomeCardShape,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = shape,
-        color = Color.White,
+        color = if (polished) polishColors.surface else Color.White,
         tonalElevation = 0.dp,
-        shadowElevation = 2.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
+        shadowElevation = if (polished) 1.dp else 2.dp,
+        border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding), content = content)
     }
@@ -4211,18 +4236,13 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val shape = HomeCardShape
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = shape,
-        color = Color.White,
-        tonalElevation = 0.dp,
-        shadowElevation = 2.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
-    ) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    val cardContent: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(124.dp).clip(CircleShape).clickable { onNavigate("health_score") }, contentAlignment = Alignment.Center) {
-                    HealthScoreHeroGlow(scoreColor)
+                    if (!polished) HealthScoreHeroGlow(scoreColor)
                     HealthScoreGauge(score, 112.dp)
                 }
                 Spacer(Modifier.width(12.dp))
@@ -4233,7 +4253,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                             Modifier.weight(1f),
                             style = LabTypography.CardTitle,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF0B1320),
+                            color = if (polished) polishColors.ink else Color(0xFF0B1320),
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Clip
@@ -4249,7 +4269,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                     Text(
                         uiMessageZh(message).replace("刷新成功：", "最后刷新 ").ifBlank { lastRefresh.ifBlank { "等待同步" } },
                         style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold),
-                        color = LabV2.InkMuted,
+                        color = if (polished) polishColors.inkMuted else LabV2.InkMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -4279,6 +4299,22 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
             }
         }
     }
+    if (polished) {
+        Box(Modifier.fillMaxWidth().labFrostedSurface(shape, elevation = 3.dp)) {
+            cardContent()
+        }
+    } else {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = shape,
+            color = Color.White,
+            tonalElevation = 0.dp,
+            shadowElevation = 2.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)
+        ) {
+            cardContent()
+        }
+    }
 }
 
 private fun agentUpdateUiError(raw: String?): String {
@@ -4304,7 +4340,9 @@ fun WolDetailScreen(state: AppState, onBack: () -> Unit) = DetailShell("WOL", "�
 private fun HealthStatePill(icon: ImageVector, label: String, value: String, color: Color, trailing: ImageVector, onClick: (() -> Unit)? = null) {
     val pillShape = HomeInnerShape
     val modifier = if (onClick == null) Modifier else Modifier.clip(pillShape).clickable { onClick() }
-    Surface(modifier = modifier, shape = pillShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    Surface(modifier = modifier, shape = pillShape, color = if (polished) polishColors.surfaceInset else Color.White, border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, HomeCardBorder)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(28.dp).clip(CircleShape).background(color.copy(alpha = .11f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, Modifier.size(16.dp), tint = color)
@@ -4319,9 +4357,11 @@ private fun HealthStatePill(icon: ImageVector, label: String, value: String, col
 
 @Composable
 private fun HealthShortcutTile(icon: ImageVector, label: String, value: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = modifier, shape = HomeInnerShape, color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f))) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    Surface(onClick = onClick, modifier = modifier, shape = HomeInnerShape, color = if (polished) polishColors.surfaceInset else Color.White, border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f))) {
         Row(Modifier.padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(34.dp).clip(CircleShape).background(Color.White.copy(alpha = .88f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(34.dp).clip(CircleShape).background(if (polished) color.copy(alpha = .10f) else Color.White.copy(alpha = .88f)), contentAlignment = Alignment.Center) {
                 Icon(icon, null, Modifier.size(19.dp), tint = color)
             }
             Spacer(Modifier.width(7.dp))
@@ -4390,7 +4430,9 @@ fun WeeklyMiniBars(score: Int) {
 
 @Composable
 fun HealthStatusBadge(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.heightIn(min = 54.dp), shape = RoundedCornerShape(15.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    Surface(modifier = modifier.heightIn(min = 54.dp), shape = RoundedCornerShape(15.dp), color = if (polished) polishColors.surfaceInset else Color.White, border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = .18f)), tonalElevation = 0.dp, shadowElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label, style = LabTypography.Micro.copy(color = LabV2.InkMuted), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(value, fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -4466,7 +4508,8 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
     val display = cleanApiText(displayValue)
     if (real.isBlank() && display.isBlank()) return
     val shown = display.ifBlank { real }
-    val mayWrap = shown.length > 22 || shown.contains('\n')
+    val polished = LabMaterialPolish.enabled
+    val mayWrap = !polished && (shown.length > 22 || shown.contains('\n'))
     val shape = RoundedCornerShape(10.dp)
     Row(
         Modifier
@@ -4485,13 +4528,13 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
         )
         Text(
             shown,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).then(if (polished) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
             style = LabTypography.ValueStrong.copy(
                 color = accent,
                 fontFamily = FontFamily.Default
             ),
-            maxLines = 2,
-            softWrap = true,
+            maxLines = if (polished) 1 else 2,
+            softWrap = !polished,
             overflow = TextOverflow.Clip
         )
     }
@@ -4983,7 +5026,7 @@ fun DevicesScreen(state: AppState, topNav: @Composable () -> Unit, onOpenTraffic
                 syncSummary,
                 Icons.Rounded.Devices,
                 Color(0xFFF59E0B),
-                modifier = Modifier.shadow(
+                modifier = if (LabMaterialPolish.enabled) Modifier else Modifier.shadow(
                     4.dp,
                     LabCoreSurface.CardShape,
                     clip = false,
@@ -5312,12 +5355,14 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
             }
         },
         modifier = Modifier
-            .shadow(
-                4.dp,
-                LabCoreSurface.CardShape,
-                clip = false,
-                ambientColor = LabV2.ShadowAmbient,
-                spotColor = LabV2.ShadowSpot
+            .then(
+                if (LabMaterialPolish.enabled) Modifier else Modifier.shadow(
+                    4.dp,
+                    LabCoreSurface.CardShape,
+                    clip = false,
+                    ambientColor = LabV2.ShadowAmbient,
+                    spotColor = LabV2.ShadowSpot
+                )
             )
             .clip(LabCoreSurface.CardShape)
             .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
@@ -7530,13 +7575,15 @@ fun PingTool(prefs: AppPrefs) {
 @Composable
 fun PingLatencyCard(points: List<PingPoint>, accent: Color, onHistory: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Surface(
-        modifier = Modifier.fillMaxWidth().shadow(1.dp, shape, clip = false),
+        modifier = Modifier.fillMaxWidth().then(if (polished) Modifier else Modifier.shadow(1.dp, shape, clip = false)),
         shape = shape,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        color = if (polished) polishColors.surface else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.82f))
+        shadowElevation = if (polished) 1.dp else 0.dp,
+        border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.82f))
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -7600,12 +7647,14 @@ fun PingRatePill(points: List<PingPoint>) {
 
 @Composable
 fun PingHistoryDialog(history: List<PingHistoryEntry>, bytes: Int, onClear: () -> Unit, onDismiss: () -> Unit) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.Black) } },
         dismissButton = { TextButton(onClick = onClear, enabled = history.isNotEmpty()) { Text("清空", fontWeight = FontWeight.Bold) } },
         shape = RoundedCornerShape(30.dp),
-        containerColor = LAB_POPUP_SURFACE,
+        containerColor = if (polished) polishColors.glassFallback.copy(alpha = .97f) else LAB_POPUP_SURFACE,
         title = { Text("延迟测试历史", fontWeight = FontWeight.Black, fontSize = 19.sp) },
         text = {
             Column(Modifier.heightIn(max = 470.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {

@@ -2,7 +2,9 @@ package com.labprobe.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,7 +70,10 @@ fun DeviceDetailScreen(
                     Modifier
                         .size(112.dp)
                         .clip(RoundedCornerShape(28.dp))
-                        .background(profile.accent.copy(alpha = .065f))
+                        .then(
+                            if (LabMaterialPolish.enabled) Modifier
+                            else Modifier.background(profile.accent.copy(alpha = .065f))
+                        )
                         .clickable { editing = true },
                     contentAlignment = Alignment.Center
                 ) {
@@ -158,7 +163,14 @@ fun DeviceDetailScreen(
 
 @Composable
 private fun DeviceDetailMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, shape = LabCoreSurface.InnerShape, color = LabCoreSurface.Inner, border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    Surface(
+        modifier = modifier,
+        shape = LabCoreSurface.InnerShape,
+        color = if (polished) polishColors.surfaceInset else LabCoreSurface.Inner,
+        border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
+    ) {
         Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             Text(value, modifier = Modifier.fillMaxWidth(), style = LabTypography.Value.copy(color = color, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Clip)
@@ -169,10 +181,21 @@ private fun DeviceDetailMetric(label: String, value: String, color: Color, modif
 @Composable
 private fun DeviceDetailAddress(label: String, value: String, color: Color, allowTwoLines: Boolean = false) {
     val context = LocalContext.current
+    val polished = LabMaterialPolish.enabled
     Row(Modifier.fillMaxWidth().clickable(enabled = value != "--", interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(context, value) }, verticalAlignment = Alignment.Top) {
         Text(label, Modifier.width(54.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-        Text(value, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold, color = if (value == "--") LabV2.InkFaint else color, maxLines = if (allowTwoLines) 2 else 1, overflow = TextOverflow.Clip)
-        if (value != "--") Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp), tint = color.copy(alpha = .55f))
+        Text(
+            value,
+            Modifier.weight(1f).then(if (allowTwoLines && polished) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+            fontSize = LabTypography.Value.fontSize,
+            lineHeight = LabTypography.Value.lineHeight,
+            fontWeight = FontWeight.SemiBold,
+            color = if (value == "--") LabV2.InkFaint else color,
+            maxLines = if (allowTwoLines && !polished) 2 else 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip
+        )
+        if (!polished && value != "--") Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp), tint = color.copy(alpha = .55f))
     }
 }
 

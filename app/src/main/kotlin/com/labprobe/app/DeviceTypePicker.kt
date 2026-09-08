@@ -79,16 +79,18 @@ fun EditableDeviceTypeField(
         )
     }
     if (expanded) {
+        val polished = LabMaterialPolish.enabled
+        val polishColors = LabMaterialPolish.colors
         Dialog(
             onDismissRequest = { expanded = false },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = LAB_POPUP_SURFACE,
+                color = if (polished) polishColors.glassFallback.copy(alpha = .97f) else LAB_POPUP_SURFACE,
                 tonalElevation = 0.dp,
-                shadowElevation = 16.dp,
-                border = BorderStroke(1.dp, LAB_POPUP_BORDER),
+                shadowElevation = if (polished) 8.dp else 16.dp,
+                border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER),
                 modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.78f)
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
@@ -112,8 +114,8 @@ fun EditableDeviceTypeField(
                                 val selected = normalizeDeviceTypeToken(value) == rule.id
                                 Surface(
                                     shape = RoundedCornerShape(17.dp),
-                                    color = if (selected) Color(0xFFEAF7FA) else LAB_POPUP_SUBTLE,
-                                    border = BorderStroke(1.dp, if (selected) DEVICE_ICON_ACCENT.copy(alpha = .32f) else LAB_POPUP_BORDER),
+                                    color = if (selected) Color(0xFFE3ECEF) else if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE,
+                                    border = if (polished) null else BorderStroke(1.dp, if (selected) DEVICE_ICON_ACCENT.copy(alpha = .32f) else LAB_POPUP_BORDER),
                                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable {
                                         text = rule.label
                                         onChange(rule.id)
@@ -144,7 +146,10 @@ fun DeviceTypeIconPreview(rule: DeviceTypeRule, size: Int = 38) {
         Modifier
             .size(size.dp)
             .clip(RoundedCornerShape((size / 3).dp))
-            .background(DEVICE_INFO_CARD_BACKGROUND),
+            .then(
+                if (LabMaterialPolish.enabled) Modifier
+                else Modifier.background(DEVICE_INFO_CARD_BACKGROUND)
+            ),
         contentAlignment = Alignment.Center
     ) {
         LabMiniDeviceIcon(rule.iconKey, DEVICE_ICON_ACCENT, sizeDp = size)
