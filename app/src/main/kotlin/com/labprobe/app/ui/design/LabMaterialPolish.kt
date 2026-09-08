@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -114,17 +115,21 @@ fun LabMaterialReferenceTheme(
         androidx.compose.runtime.CompositionLocalProvider(
             LocalLabMaterialState provides LabMaterialState(true, colors, hazeState),
         ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(colors.backgroundTop, colors.backgroundBottom),
-                        ),
-                    )
-                    .hazeSource(state = hazeState),
-                content = content,
-            )
+            Box(Modifier.fillMaxSize()) {
+                // Source and effects are siblings. Glass never captures itself or
+                // another glass surface, which also bounds the captured workload.
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(colors.backgroundTop, colors.backgroundBottom),
+                            ),
+                        )
+                        .hazeSource(state = hazeState),
+                )
+                Box(Modifier.matchParentSize(), content = content)
+            }
         }
     }
 }
@@ -154,11 +159,10 @@ fun Modifier.labFrostedSurface(
         .shadow(
             elevation = elevation,
             shape = shape,
-            clip = false,
+            clip = true,
             ambientColor = Color.Black.copy(alpha = .08f),
             spotColor = Color.Black.copy(alpha = .10f),
         )
-        .clip(shape)
         .hazeEffect(state = state.hazeState, style = style) {
             blurEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         }

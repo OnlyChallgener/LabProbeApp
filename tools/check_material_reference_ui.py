@@ -91,6 +91,10 @@ if 'dev.chrisbanes.haze:haze:1.7.2' not in text(BUILD):
     fail("stable Haze 1.7.2 backdrop dependency is required")
 if "blurEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S" not in material_source:
     fail("Android 11-and-below static fallback guard is missing")
+if material_source.count(".hazeSource(") != 1 or "Source and effects are siblings" not in material_source:
+    fail("backdrop source must remain an isolated sibling of glass effects")
+if "clip = true" not in material_source:
+    fail("rounded glass shadow must clip its content to the same shape")
 
 detail_source = text(DETAIL)
 if "Modifier.horizontalScroll(rememberScrollState())" not in detail_source:
