@@ -329,21 +329,6 @@ fun MappingAndUpnpScreen(
     }
 }
 
-@Composable
-private fun LegacyIpv6MappingPage(
-    prefs: AppPrefs,
-    onBack: () -> Unit,
-    onOpenSsh: (String, Int) -> Unit,
-    onOpenWireGuard: () -> Unit,
-) {
-    PortMappingScreen(
-        prefs = prefs,
-        onBack = onBack,
-        embedded = true,
-        onOpenSsh = onOpenSsh,
-        onOpenWireGuard = onOpenWireGuard,
-    )
-}
 
 @Composable
 private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {

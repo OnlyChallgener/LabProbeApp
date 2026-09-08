@@ -35,14 +35,6 @@ val LAB_POPUP_BORDER = Color(0xFFDDE7F2)
 val LAB_POPUP_SCRIM = Color(0xFF0F172A)
 val LAB_POPUP_HANDLE = Color(0xFF1E293B)
 
-@Composable
-fun LabCard(
-    modifier: Modifier = Modifier,
-    accent: Color = MaterialTheme.colorScheme.primary,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    LabV2Card(modifier = modifier, content = content)
-}
 
 @Composable
 fun LabStatusBadge(online: Boolean, modifier: Modifier = Modifier) {
@@ -185,7 +177,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
         sheetState = sheetState,
         sheetGesturesEnabled = !scrollable,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        containerColor = if (polished) polishColors.glassFallback.copy(alpha = .96f) else LAB_POPUP_SURFACE,
+        containerColor = if (polished) polishColors.surface else LAB_POPUP_SURFACE,
         scrimColor = LAB_POPUP_SCRIM.copy(alpha = if (polished) .46f else .38f),
         dragHandle = {
             Box(

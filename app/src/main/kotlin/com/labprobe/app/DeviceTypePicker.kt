@@ -87,10 +87,10 @@ fun EditableDeviceTypeField(
         ) {
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = if (polished) polishColors.glassFallback.copy(alpha = .97f) else LAB_POPUP_SURFACE,
+                color = if (polished) polishColors.surface else LAB_POPUP_SURFACE,
                 tonalElevation = 0.dp,
                 shadowElevation = if (polished) 8.dp else 16.dp,
-                border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER),
+                border = if (polished) BorderStroke(1.dp, Color(0xFFD6E1EA)) else BorderStroke(1.dp, LAB_POPUP_BORDER),
                 modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.78f)
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {

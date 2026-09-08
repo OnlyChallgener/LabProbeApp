@@ -36,6 +36,8 @@ ALLOWED_FILES = {
     "app/src/main/kotlin/com/labprobe/app/DeviceDetailV2.kt",
     "app/src/main/kotlin/com/labprobe/app/DeviceTypePicker.kt",
     "app/src/main/kotlin/com/labprobe/app/MainActivity.kt",
+    "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt",
+    "app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt",
     "app/src/main/kotlin/com/labprobe/app/ui/design/InteractionSheets.kt",
     "app/src/main/kotlin/com/labprobe/app/ui/design/LabDesignComponents.kt",
     "app/src/main/kotlin/com/labprobe/app/ui/design/LabMaterialPolish.kt",

@@ -248,7 +248,7 @@ fun LabV2Card(
                 else Brush.linearGradient(listOf(LabV2.CardTop, LabV2.CardBottom))
             )
             .then(
-                if (polished) Modifier.border(0.5.dp, polishColors.outline.copy(alpha = .32f), shape)
+                if (polished) Modifier.border(1.dp, polishColors.outline.copy(alpha = .38f), shape)
                 else Modifier.border(1.dp, Color.White.copy(alpha = .92f), shape)
             )
     ) {
@@ -274,9 +274,9 @@ fun LabCoreCard(
         modifier = modifier.fillMaxWidth(),
         shape = shape,
         color = if (polished) polishColors.surface else LabCoreSurface.Card,
-        border = if (polished) null else BorderStroke(1.dp, LabCoreSurface.Border),
+        border = if (polished) BorderStroke(1.dp, Color(0xFFD6E1EA)) else BorderStroke(1.dp, LabCoreSurface.Border),
         tonalElevation = 0.dp,
-        shadowElevation = if (polished) 1.dp else 2.dp
+        shadowElevation = 2.dp
     ) {
         Column(
             Modifier.fillMaxWidth().padding(contentPadding),
@@ -373,7 +373,7 @@ fun CompactTextField(
         modifier = modifier.height(LabV2.FieldHeight),
         shape = LabV2.FieldShape,
         color = if (polished) polishColors.surfaceInset else if (enabled) LabV2.Field else LabV2.FieldSoft,
-        border = if (polished) null else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f)),
+        border = if (polished) BorderStroke(1.dp, polishColors.outline.copy(alpha = .38f)) else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f)),
         tonalElevation = 0.dp
     ) {
         Row(
@@ -423,7 +423,7 @@ fun CompactDropdown(
             modifier = Modifier.fillMaxWidth().height(LabV2.FieldHeight),
             shape = LabV2.FieldShape,
             color = if (polished) polishColors.surfaceInset else LabV2.Field,
-            border = if (polished) null else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f))
+            border = if (polished) BorderStroke(1.dp, polishColors.outline.copy(alpha = .38f)) else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f))
         ) {
             Row(Modifier.fillMaxSize().padding(horizontal = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 leadingIcon?.invoke()
@@ -436,7 +436,8 @@ fun CompactDropdown(
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(18.dp),
             containerColor = if (polished) polishColors.surfaceRaised else LabV2.Field,
-            shadowElevation = if (polished) 6.dp else 4.dp
+            border = if (polished) BorderStroke(1.dp, Color(0xFFD6E1EA)) else null,
+            shadowElevation = if (polished) 8.dp else 4.dp
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
@@ -469,10 +470,6 @@ fun CompactListCard(
     }
 }
 
-@Composable
-fun CompactChartCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    LabV2Card(modifier = modifier, compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), content = content)
-}
 
 @Composable
 fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
@@ -511,54 +508,6 @@ fun CompactBottomSheet(
     }
 }
 
-@Composable
-fun LabV2SectionHeader(
-    title: String,
-    subtitle: String? = null,
-    icon: ImageVector? = null,
-    accent: Color = LabV2.Primary,
-    action: (@Composable RowScope.() -> Unit)? = null
-) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        if (icon != null) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accent.copy(alpha = .10f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(10.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                fontSize = 15.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = LabV2.Ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    subtitle,
-                    fontSize = 10.7.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LabV2.InkMuted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 14.sp
-                )
-            }
-        }
-        action?.let {
-            Spacer(Modifier.width(8.dp))
-            it.invoke(this)
-        }
-    }
-}
 
 @Composable
 fun LabV2ToolIcon(

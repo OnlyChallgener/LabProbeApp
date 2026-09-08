@@ -78,13 +78,15 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                             showLeadingIcon = true
                         )
                     }
-                    Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-                    CompactTextField(
-                        value = cleanMac(device.mac),
-                        onValueChange = {},
-                        readOnly = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Column(Modifier.fillMaxWidth()) {
+                        Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
+                        CompactTextField(
+                            value = cleanMac(device.mac),
+                            onValueChange = {},
+                            readOnly = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {

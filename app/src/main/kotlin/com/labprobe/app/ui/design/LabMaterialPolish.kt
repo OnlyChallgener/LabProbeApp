@@ -46,14 +46,14 @@ data class LabMaterialColors(
 )
 
 private val LabMaterialLight = LabMaterialColors(
-    backgroundTop = Color(0xFFE3E8EC),
-    backgroundBottom = Color(0xFFF0F3F5),
-    surface = Color(0xFFF3F5F6),
-    surfaceRaised = Color(0xFFF7F8F8),
-    surfaceInset = Color(0xFFE8ECEF),
-    glassTint = Color(0xC9E7ECEF),
-    glassFallback = Color(0xFFE4E9EC),
-    glassBorder = Color(0x8FFFFFFF),
+    backgroundTop = Color(0xFFDFE5EA),
+    backgroundBottom = Color(0xFFE9EFF3),
+    surface = Color(0xFFFFFFFF),
+    surfaceRaised = Color(0xFFFFFFFF),
+    surfaceInset = Color(0xFFF1F5F8),
+    glassTint = Color(0xCCFFFFFF),
+    glassFallback = Color(0xFFF8FAFC),
+    glassBorder = Color(0xB3FFFFFF),
     outline = Color(0x6679848E),
     ink = Color(0xFF18212A),
     inkMuted = Color(0xFF5F6B75),
@@ -151,7 +151,7 @@ fun LabMaterialReferenceTheme(
 fun Modifier.labFrostedSurface(
     shape: Shape,
     elevation: Dp = 2.dp,
-    blurRadius: Dp = 22.dp,
+    blurRadius: Dp = 16.dp,
 ): Modifier = composed {
     val state = LocalLabMaterialState.current
     if (!state.enabled || state.hazeState == null) return@composed this
@@ -161,7 +161,7 @@ fun Modifier.labFrostedSurface(
             backgroundColor = colors.glassFallback,
             tints = listOf(HazeTint(colors.glassTint)),
             blurRadius = blurRadius,
-            noiseFactor = 0.035f,
+            noiseFactor = 0f,
             fallbackTint = HazeTint(colors.glassFallback),
         )
     }
@@ -170,13 +170,13 @@ fun Modifier.labFrostedSurface(
             elevation = elevation,
             shape = shape,
             clip = true,
-            ambientColor = Color.Black.copy(alpha = .08f),
-            spotColor = Color.Black.copy(alpha = .10f),
+            ambientColor = Color.Black.copy(alpha = .04f),
+            spotColor = Color(0x100284C7),
         )
         .hazeEffect(state = state.hazeState, style = style) {
             blurEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         }
-        .border(0.5.dp, colors.glassBorder, shape)
+        .border(1.dp, colors.glassBorder, shape)
 }
 
 fun Modifier.labStaticFrostedSurface(shape: Shape): Modifier = composed {

@@ -953,8 +953,14 @@ private fun NativeTitle(
     titleSize: androidx.compose.ui.unit.TextUnit = LabTypography.CardTitle.fontSize,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(34.dp).shadow(5.dp, RoundedCornerShape(12.dp), clip = false, ambientColor = color.copy(alpha = .14f), spotColor = color.copy(alpha = .20f)).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color.White.copy(alpha = .96f), color.copy(alpha = .22f), color.copy(alpha = .07f))), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, Modifier.size(19.dp), tint = color)
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(color.copy(alpha = .09f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, Modifier.size(18.dp), tint = color)
         }
         Spacer(Modifier.width(9.dp))
         Text(title, style = LabTypography.CardTitle.copy(color = NativeInk, fontWeight = titleWeight, fontSize = titleSize))
