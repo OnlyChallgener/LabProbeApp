@@ -17,3 +17,7 @@ keystore/
 *.iml
 *.tar.gz
 
+# Local Python UI guardrails
+__pycache__/
+*.py[cod]
+
