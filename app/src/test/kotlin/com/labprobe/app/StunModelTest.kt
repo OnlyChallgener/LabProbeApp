@@ -173,8 +173,8 @@ class StunModelTest {
         )
 
         val updated = reconcileStunFavoriteItems(listOf(existing), listOf(stopped)).single()
-        assertEquals("http://192.168.5.46:8080", updated.localEndpoint)
-        assertEquals("http://203.0.113.9:20001", updated.remoteEndpoint)
+        assertEquals("192.168.5.46:8080", updated.localEndpoint)
+        assertEquals("203.0.113.9:20001", updated.remoteEndpoint)
         assertEquals(
             "已停止",
             favoriteServiceStatus(updated, "wan", stun = resolveFavoriteStun(updated, listOf(stopped))),
