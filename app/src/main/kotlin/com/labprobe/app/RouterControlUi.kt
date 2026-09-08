@@ -321,7 +321,7 @@ fun MappingAndUpnpScreen(
     ) { padding ->
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().padding(padding), key = { it }) { page ->
             when (page) {
-                0 -> LegacyIpv6MappingPage(prefs, onBack, onOpenSsh, onOpenWireGuard)
+                0 -> PortMappingScreen(prefs = prefs, onBack = onBack, embedded = true, onOpenSsh = onOpenSsh, onOpenWireGuard = onOpenWireGuard)
                 1 -> NativePortMappingPage(prefs)
                 else -> UpnpPage(prefs)
             }
