@@ -48,18 +48,40 @@ class DeviceDisplayNameTest {
         assertEquals("OnePlus", formatManufacturer("oneplus"))
     }
 
+    private fun testDevice(
+        name: String = "",
+        mac: String = "24:1a:e6:bb:16:d9",
+        hostName: String = "",
+        manufacture: String = ""
+    ) = DeviceItem(
+        name = name,
+        mac = mac,
+        online = true,
+        ip = "192.168.1.100",
+        ssid = "",
+        band = "",
+        rssi = "",
+        rxrate = "",
+        onlineSince = "",
+        offlineAt = "",
+        onlineDurationText = "",
+        lastSeenAt = "",
+        hostName = hostName,
+        manufacture = manufacture
+    )
+
     @Test
     fun resolvesManufacturerForSmartwatchAndModels() {
-        val watch = DeviceItem(name = "SM-R940", mac = "f6:8b:2b:df:06:b0")
+        val watch = testDevice(name = "SM-R940", mac = "f6:8b:2b:df:06:b0")
         assertEquals("Samsung", resolveDeviceManufacturer(watch))
 
-        val kidWatch = DeviceItem(name = "360-KIDSWATCH-W370")
+        val kidWatch = testDevice(name = "360-KIDSWATCH-W370")
         assertEquals("360", resolveDeviceManufacturer(kidWatch))
 
-        val mate20 = DeviceItem(hostName = "HUAWEI_Mate_20_Pro-37491c")
+        val mate20 = testDevice(hostName = "HUAWEI_Mate_20_Pro-37491c")
         assertEquals("Huawei", resolveDeviceManufacturer(mate20))
 
-        val explicitWithFormat = DeviceItem(name = "My Phone", manufacture = "huawei")
+        val explicitWithFormat = testDevice(name = "My Phone", manufacture = "huawei")
         assertEquals("Huawei", resolveDeviceManufacturer(explicitWithFormat))
     }
 }
