@@ -89,12 +89,16 @@ if "LabMaterialDark" in material_source or "darkColorScheme" in material_source:
     fail("dark mode is outside phase-one scope")
 if 'dev.chrisbanes.haze:haze:1.7.2' not in text(BUILD):
     fail("stable Haze 1.7.2 backdrop dependency is required")
+if 'debugImplementation("androidx.compose.ui:ui-test-manifest")' not in text(BUILD):
+    fail("hosted Compose screenshot activity manifest is missing")
 if "blurEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S" not in material_source:
     fail("Android 11-and-below static fallback guard is missing")
 if material_source.count(".hazeSource(") != 1 or "Source and effects are siblings" not in material_source:
     fail("backdrop source must remain an isolated sibling of glass effects")
 if "clip = true" not in material_source:
     fail("rounded glass shadow must clip its content to the same shape")
+if token_source.count("if (polished) polishColors.surfaceInset") < 2:
+    fail("reference text field and dropdown material states are missing")
 
 detail_source = text(DETAIL)
 if "Modifier.horizontalScroll(rememberScrollState())" not in detail_source:

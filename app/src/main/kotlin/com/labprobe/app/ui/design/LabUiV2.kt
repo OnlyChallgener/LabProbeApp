@@ -363,15 +363,17 @@ fun CompactTextField(
     textStyle: TextStyle? = null,
     placeholderStyle: TextStyle? = null
 ) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     val resolvedTextStyle = textStyle
-        ?: LocalTextStyle.current.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+        ?: LocalTextStyle.current.copy(fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, color = if (polished) polishColors.ink else LabV2.Ink)
     val resolvedPlaceholderStyle = placeholderStyle
-        ?: TextStyle(fontSize = 12.sp, color = LabV2.InkFaint)
+        ?: TextStyle(fontSize = 12.sp, color = if (polished) polishColors.inkMuted.copy(alpha = .72f) else LabV2.InkFaint)
     Surface(
         modifier = modifier.height(LabV2.FieldHeight),
         shape = LabV2.FieldShape,
-        color = if (enabled) LabV2.Field else LabV2.FieldSoft,
-        border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f)),
+        color = if (polished) polishColors.surfaceInset else if (enabled) LabV2.Field else LabV2.FieldSoft,
+        border = if (polished) null else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f)),
         tonalElevation = 0.dp
     ) {
         Row(
@@ -413,26 +415,28 @@ fun CompactDropdown(
     leadingIcon: (@Composable () -> Unit)? = null
 ) {
     var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
     Box(modifier) {
         Surface(
             onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth().height(LabV2.FieldHeight),
             shape = LabV2.FieldShape,
-            color = LabV2.Field,
-            border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f))
+            color = if (polished) polishColors.surfaceInset else LabV2.Field,
+            border = if (polished) null else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f))
         ) {
             Row(Modifier.fillMaxSize().padding(horizontal = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 leadingIcon?.invoke()
-                Text(value, Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = LabV2.InkMuted)
+                Text(value, Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (polished) polishColors.ink else LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = if (polished) polishColors.inkMuted else LabV2.InkMuted)
             }
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(18.dp),
-            containerColor = LabV2.Field,
-            shadowElevation = 4.dp
+            containerColor = if (polished) polishColors.surfaceRaised else LabV2.Field,
+            shadowElevation = if (polished) 6.dp else 4.dp
         ) {
             options.forEach { option ->
                 DropdownMenuItem(

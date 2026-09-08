@@ -107,6 +107,7 @@ dependencies {
     // are intentionally not used: LabProbe's Android material is static frost.
     implementation("dev.chrisbanes.haze:haze:1.7.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
