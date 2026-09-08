@@ -28,6 +28,7 @@ EXPECTED_LAYOUT = {
     "FieldHeight": "48",
 }
 ALLOWED_FILES = {
+    ".gitignore",
     ".github/workflows/ui-material-reference.yml",
     "app/build.gradle.kts",
     "app/src/debug/kotlin/com/labprobe/app/MaterialReferencePreviews.kt",
