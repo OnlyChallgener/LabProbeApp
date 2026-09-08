@@ -107,7 +107,11 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                         }
                         Switch(checked = followed, onCheckedChange = { followed = it })
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .07f))
+                    if (polished) {
+                        Spacer(Modifier.height(2.dp))
+                    } else {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .07f))
+                    }
                     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("加入 WOL 管理", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -148,7 +152,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                 },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
+                colors = ButtonDefaults.buttonColors(containerColor = if (polished) polishColors.accent else DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.Black) }
         }
         Spacer(Modifier.height(8.dp))

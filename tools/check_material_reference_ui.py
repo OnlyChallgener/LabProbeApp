@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOKENS = ROOT / "app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt"
 MATERIAL = ROOT / "app/src/main/kotlin/com/labprobe/app/ui/design/LabMaterialPolish.kt"
 DETAIL = ROOT / "app/src/main/kotlin/com/labprobe/app/DeviceDetailV2.kt"
+SHEETS = ROOT / "app/src/main/kotlin/com/labprobe/app/ui/design/InteractionSheets.kt"
 BUILD = ROOT / "app/build.gradle.kts"
 
 EXPECTED_TYPOGRAPHY_SHA256 = "463ed38a10762afa6c63042209edc36f8d6fd0ae3ca40d412f13490f359d637f"
@@ -97,8 +98,17 @@ if material_source.count(".hazeSource(") != 1 or "Source and effects are sibling
     fail("backdrop source must remain an isolated sibling of glass effects")
 if "clip = true" not in material_source:
     fail("rounded glass shadow must clip its content to the same shape")
+for required_role in ("secondaryContainer", "tertiaryContainer", "surfaceTint = Color.Transparent"):
+    if required_role not in material_source:
+        fail(f"reference theme leaves an implicit Material purple role: {required_role}")
 if token_source.count("if (polished) polishColors.surfaceInset") < 2:
     fail("reference text field and dropdown material states are missing")
+
+sheet_source = text(SHEETS)
+if "if (polished) {\n                        Spacer(Modifier.height(2.dp))" not in sheet_source:
+    fail("representative settings sheet still uses a decorative divider")
+if "if (polished) polishColors.accent else DEVICE_ICON_ACCENT" not in sheet_source:
+    fail("representative sheet action does not use the restrained material accent")
 
 detail_source = text(DETAIL)
 if "Modifier.horizontalScroll(rememberScrollState())" not in detail_source:
