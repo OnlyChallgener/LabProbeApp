@@ -22,6 +22,7 @@ internal class RouterTrendHistory {
         const val RETENTION_MS = 15 * 60_000L
         const val GAP_MS = 15_000L
         const val MAX_SAMPLES = 1_800
+        const val MAX_VALID_SPEED_BPS = 10_000_000_000L // 10 Gbps physical link ceiling
     }
 
     private val mutableSamples = MutableStateFlow<List<RouterTrendSample>>(emptyList())
@@ -44,7 +45,9 @@ internal class RouterTrendHistory {
         if (values[2] > Long.MAX_VALUE - values[3]) return
         val elapsed = receivedElapsedMs - age
         if (elapsed <= (previous.lastOrNull()?.elapsedMs ?: Long.MIN_VALUE)) return
-        val point = RouterTrendSample(epoch, elapsed, values[0], values[1], values[2], values[3])
+        val upload = if (values[0] > MAX_VALID_SPEED_BPS) previous.lastOrNull()?.uploadBps ?: 0L else values[0]
+        val download = if (values[1] > MAX_VALID_SPEED_BPS) previous.lastOrNull()?.downloadBps ?: 0L else values[1]
+        val point = RouterTrendSample(epoch, elapsed, upload, download, values[2], values[3])
         mutableSamples.value = (previous.dropWhile { it.elapsedMs < elapsed - RETENTION_MS } + point)
             .takeLast(MAX_SAMPLES)
     }
@@ -65,8 +68,9 @@ internal class RouterTrendHistory {
             if (upload < 0L || download < 0L) continue
             val v4 = item.optLong("ipv4", item.optLong("ipv4Connections", 0L)).coerceAtLeast(0L)
             val v6 = item.optLong("ipv6", item.optLong("ipv6Connections", 0L)).coerceAtLeast(0L)
-            if (v4 > Long.MAX_VALUE - v6) continue
-            incoming.add(RouterTrendSample(epochMs = epoch, elapsedMs = 0L, uploadBps = upload, downloadBps = download, ipv4 = v4, ipv6 = v6))
+            val safeUpload = minOf(upload, MAX_VALID_SPEED_BPS)
+            val safeDownload = minOf(download, MAX_VALID_SPEED_BPS)
+            incoming.add(RouterTrendSample(epochMs = epoch, elapsedMs = 0L, uploadBps = safeUpload, downloadBps = safeDownload, ipv4 = v4, ipv6 = v6))
         }
         if (incoming.isEmpty()) return
 

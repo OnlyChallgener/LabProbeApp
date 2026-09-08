@@ -850,8 +850,13 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
             }
             val endpoints = JSONArray()
             val oldEndpoints = server.optJSONArray("endpointProfiles") ?: JSONArray()
+            val bindingId = profile.endpointBindingId.trim()
             for (index in 0 until oldEndpoints.length()) oldEndpoints.optJSONObject(index)?.let { row ->
-                if (row.optString("id") != endpointId) endpoints.put(JSONObject(row.toString()))
+                val rowId = row.optString("id")
+                val rowStunId = row.optString("stunRuleId").trim()
+                val matchesThis = rowId == endpointId || rowId == profile.id ||
+                    (profile.endpointSource == WireGuardEndpointSource.STUN && bindingId.isNotBlank() && rowStunId == bindingId)
+                if (!matchesThis) endpoints.put(JSONObject(row.toString()))
             }
             val payload = JSONObject(server.toString())
                 .put("expectedRevision", root.optLong("revision", 0L))

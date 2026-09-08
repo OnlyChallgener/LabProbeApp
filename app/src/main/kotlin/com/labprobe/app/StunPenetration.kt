@@ -506,10 +506,16 @@ fun StunPenetrationScreen(
                     },
                     onDelete = {
                         menuFor = null
+                        val deletedId = rule.id
+                        rules = rules.filterNot { it.id == deletedId }
+                        removeStunFavorite(prefs, deletedId)
                         scope.launch {
-                            runCatching { api.delete(rule.id) }
-                                .onSuccess { removeStunFavorite(prefs, rule.id); refresh() }
-                                .onFailure { error = uiMessageZh(it.message).ifBlank { "删除失败" } }
+                            runCatching { api.delete(deletedId) }
+                                .onSuccess { refresh() }
+                                .onFailure {
+                                    error = uiMessageZh(it.message).ifBlank { "删除失败" }
+                                    refresh()
+                                }
                         }
                     },
                 )
@@ -652,17 +658,21 @@ fun StunPenetrationScreen(
                     ) {
                         DropdownMenuItem(
                             text = { Text("编辑", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
+                            leadingIcon = { Icon(Icons.Rounded.Edit, null, tint = LabV2.InkMuted) },
                             onClick = onEdit,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
                         DropdownMenuItem(
                             text = { Text(if (rule.enabled) "停止穿透" else "开始穿透", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
                             leadingIcon = { Icon(if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline, null, tint = LabV2.InkMuted) },
                             onClick = onToggle,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
                         DropdownMenuItem(
                             text = { Text("删除", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, color = StunRed) },
                             leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, tint = StunRed) },
                             onClick = onDelete,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
                     }
                 }
@@ -804,8 +814,8 @@ fun StunPenetrationScreen(
             shadowElevation = 6.dp,
         ) {
             Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 22.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透", style = LabTypography.PageTitle)
                 Text("自动建立路由器映射；Agent 用同端口保活并更新公网地址。", style = LabTypography.Supporting, color = LabV2.InkMuted)

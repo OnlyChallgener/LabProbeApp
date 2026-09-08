@@ -249,12 +249,18 @@ class MainActivity : ComponentActivity() {
         RouterRepositoryRegistry.get(prefs).start()
         applyLabProbeSystemBars()
         intent?.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
+        intent?.getStringExtra("ai_notice_content")?.let { content ->
+            AppNavigator.pendingAiNotice = (intent?.getStringExtra("ai_notice_title").orEmpty()) to content
+        }
         setContent { LabProbeApp(prefs) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
+        intent.getStringExtra("ai_notice_content")?.let { content ->
+            AppNavigator.pendingAiNotice = (intent.getStringExtra("ai_notice_title").orEmpty()) to content
+        }
     }
 
 }
@@ -262,6 +268,7 @@ class MainActivity : ComponentActivity() {
 /** Route requested from outside the composable tree (e.g. notification tap). */
 object AppNavigator {
     var pendingRoute by mutableStateOf<String?>(null)
+    var pendingAiNotice by mutableStateOf<Pair<String, String>?>(null)
 }
 
 /** Maps assistant clientAction route names to app route strings. */
@@ -2003,6 +2010,9 @@ fun LabProbeApp(prefs: AppPrefs) {
     LaunchedEffect(AppNavigator.pendingRoute) {
         AppNavigator.pendingRoute?.let { requested ->
             AppNavigator.pendingRoute = null
+            if (requested == "daily") {
+                dailyReturnRoute = "home"
+            }
             route = requested
         }
     }
@@ -2013,6 +2023,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     var dailyReturnRoute by remember { mutableStateOf("events") }
     var aiChatReturnRoute by remember { mutableStateOf("home") }
     var aiSettingsReturnRoute by remember { mutableStateOf("home") }
+    var favoritesReturnRoute by remember { mutableStateOf<String?>(null) }
     var autoRefresh by remember { mutableStateOf("实时") }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
@@ -2072,7 +2083,8 @@ fun LabProbeApp(prefs: AppPrefs) {
         while (isActive) {
             try {
                 aiClient.notifications(aiStore.lastNotificationId(aiClient.identity)).forEach { row ->
-                    if (AiNotifier.notifyAssistantMessage(context, row.title, row.content)) {
+                    val targetRoute = "ai_chat"
+                    if (AiNotifier.notifyAssistantMessage(context, row.title, row.content, route = targetRoute)) {
                         aiStore.saveLastNotificationId(aiClient.identity, row.id)
                     }
                 }
@@ -2396,6 +2408,13 @@ fun LabProbeApp(prefs: AppPrefs) {
                             prefs = prefs,
                             syncVersion = state.favoriteSyncVersion,
                             topNav = topNav,
+                            onBack = if (favoritesReturnRoute != null) {
+                                {
+                                    val target = favoritesReturnRoute ?: "home"
+                                    favoritesReturnRoute = null
+                                    route = target
+                                }
+                            } else null,
                             onOpenDns = { toolReturnRoute = "favorites"; route = "tool_dns" },
                             onOpenPortMapping = { toolReturnRoute = "favorites"; route = "tool_portmap" },
                             onOpenSettings = { settingsReturnRoute = "favorites"; route = "settings" },
@@ -2465,6 +2484,10 @@ fun LabProbeApp(prefs: AppPrefs) {
                                 nestedToolReturnRoute = toolReturnRoute
                                 toolReturnRoute = "tool_portmap"
                                 route = "tool_wireguard"
+                            },
+                            onOpenFavorites = {
+                                favoritesReturnRoute = "tool_portmap"
+                                route = "favorites"
                             },
                         )
                         "tool_stun" -> StunPenetrationScreen(

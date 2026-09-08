@@ -1,6 +1,7 @@
 package com.labprobe.app.feature.assistant
 
 import android.content.Context
+import com.labprobe.app.AppNavigator
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -2217,6 +2218,20 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     LaunchedEffect(messages.size, sending, pendingConfirmation) {
         val target = messages.size - 1 + if (pendingConfirmation != null || sending) 1 else 0
         if (target >= 0) runCatching { listState.animateScrollToItem(target) }
+    }
+
+    LaunchedEffect(AppNavigator.pendingAiNotice, loadingHistory) {
+        val notice = AppNavigator.pendingAiNotice ?: return@LaunchedEffect
+        if (loadingHistory) return@LaunchedEffect
+        AppNavigator.pendingAiNotice = null
+        val (title, content) = notice
+        val text = if (title.isNotBlank()) "【$title】\n\n$content" else content
+        if (messages.none { it.role == "assistant" && it.content == text }) {
+            messages.add(AiMessage(role = "assistant", content = text))
+            conversationId?.let { localCache.writeConversation(it, messages) }
+            val target = messages.size - 1
+            if (target >= 0) runCatching { listState.animateScrollToItem(target) }
+        }
     }
 
     LaunchedEffect(client.identity, restoreNonce) {

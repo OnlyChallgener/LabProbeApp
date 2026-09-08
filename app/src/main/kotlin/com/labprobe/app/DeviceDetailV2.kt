@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -15,7 +16,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,30 +71,43 @@ fun DeviceDetailScreen(
 
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(
-                    Modifier
-                        .size(112.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(profile.accent.copy(alpha = .065f))
-                        .clickable { editing = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)
+            Box(Modifier.fillMaxWidth()) {
+                Canvas(Modifier.fillMaxWidth().height(140.dp)) {
+                    val centerX = size.width / 2f
+                    val centerY = 56.dp.toPx()
+                    val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f))
+                    val solidStroke = Stroke(width = 1.dp.toPx())
+                    drawCircle(profile.accent.copy(alpha = 0.055f), radius = 68.dp.toPx(), center = Offset(centerX, centerY), style = dashStroke)
+                    drawCircle(profile.accent.copy(alpha = 0.035f), radius = 90.dp.toPx(), center = Offset(centerX, centerY), style = solidStroke)
+                    val tickLen = 10.dp.toPx()
+                    drawLine(profile.accent.copy(alpha = 0.18f), Offset(centerX - 98.dp.toPx(), centerY), Offset(centerX - 98.dp.toPx() + tickLen, centerY), 1.2.dp.toPx())
+                    drawLine(profile.accent.copy(alpha = 0.18f), Offset(centerX + 98.dp.toPx() - tickLen, centerY), Offset(centerX + 98.dp.toPx(), centerY), 1.2.dp.toPx())
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
-                    LabStatusBadge(device.online)
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(
+                        Modifier
+                            .size(112.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(profile.accent.copy(alpha = .065f))
+                            .clickable { editing = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
+                        LabStatusBadge(device.online)
+                    }
+                    Text(
+                        listOf(manufacturer, profile.label, cleanApiText(device.hostName)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
+                        fontSize = LabTypography.Supporting.fontSize,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Clip
+                    )
+                    Text(cleanApiText(device.ip).ifBlank { ipv6.ifBlank { device.mac } }, fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.Medium, color = LabV2.Primary, maxLines = 2, overflow = TextOverflow.Clip)
                 }
-                Text(
-                    listOf(manufacturer, profile.label, cleanApiText(device.hostName)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
-                    fontSize = LabTypography.Supporting.fontSize,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LabV2.InkMuted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Clip
-                )
-                Text(cleanApiText(device.ip).ifBlank { ipv6.ifBlank { device.mac } }, fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.Medium, color = LabV2.Primary, maxLines = 2, overflow = TextOverflow.Clip)
             }
         }
 
@@ -135,7 +152,7 @@ fun DeviceDetailScreen(
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            DeviceActionButton(Icons.Rounded.Power, if (waking) "发送中" else "WOL", Color(0xFF2563EB), Modifier.weight(1f), enabled = !waking) {
+            DeviceActionButton(Icons.Rounded.PowerSettingsNew, if (waking) "发送中" else "WOL", Color(0xFF2563EB), Modifier.weight(1f), enabled = !waking) {
                 if (device.online) {
                     toast(context, "设备当前在线")
                 } else {

@@ -305,6 +305,7 @@ fun MappingAndUpnpScreen(
     onBack: () -> Unit,
     onOpenSsh: (String, Int) -> Unit = { _, _ -> },
     onOpenWireGuard: () -> Unit = {},
+    onOpenFavorites: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val pager = rememberPagerState(initialPage = 0, pageCount = { 3 })
@@ -321,7 +322,14 @@ fun MappingAndUpnpScreen(
     ) { padding ->
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().padding(padding), key = { it }) { page ->
             when (page) {
-                0 -> PortMappingScreen(prefs = prefs, onBack = onBack, embedded = true, onOpenSsh = onOpenSsh, onOpenWireGuard = onOpenWireGuard)
+                0 -> PortMappingScreen(
+                    prefs = prefs,
+                    onBack = onBack,
+                    embedded = true,
+                    onOpenSsh = onOpenSsh,
+                    onOpenWireGuard = onOpenWireGuard,
+                    onOpenFavorites = onOpenFavorites,
+                )
                 1 -> NativePortMappingPage(prefs)
                 else -> UpnpPage(prefs)
             }

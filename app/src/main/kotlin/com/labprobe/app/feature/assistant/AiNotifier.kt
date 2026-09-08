@@ -28,19 +28,22 @@ object AiNotifier {
     }
 
     /** Returns true only after Android accepted the notification for delivery. */
-    fun notifyAssistantMessage(context: Context, title: String, content: String): Boolean {
+    fun notifyAssistantMessage(context: Context, title: String, content: String, route: String = "ai_chat"): Boolean {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return false
         ensureChannel(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
+        val requestCode = 4300 + (route.hashCode() and 0x3FFF)
         val openApp = PendingIntent.getActivity(
             context,
-            4300,
+            requestCode,
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra("navigate_route", "ai_chat")
+                putExtra("navigate_route", route)
+                putExtra("ai_notice_title", title)
+                putExtra("ai_notice_content", content)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

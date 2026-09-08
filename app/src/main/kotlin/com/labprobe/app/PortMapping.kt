@@ -58,8 +58,11 @@ import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.floor
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 private val PortBlue = Color(0xFF0284C7)
@@ -592,6 +595,7 @@ fun PortMappingScreen(
     embedded: Boolean = false,
     onOpenSsh: (String, Int) -> Unit = { _, _ -> },
     onOpenWireGuard: () -> Unit = {},
+    onOpenFavorites: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
@@ -775,8 +779,10 @@ fun PortMappingScreen(
             rule = selected,
             api = api,
             remoteEndpoint = linkedFavorite?.let { resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules, nativeDdnsResource.value.orEmpty()) }.orEmpty(),
+            isFavorited = linkedFavorite != null,
             onDismiss = { selectedId = null },
             onEdit = { editDraft = PortMapDraft.from(selected); selectedId = null },
+            onOpenFavorites = onOpenFavorites,
             onAddFavorite = {
                 upsertMappingFavorite(
                     prefs,
@@ -1736,8 +1742,10 @@ private fun PortMapDetailPage(
     rule: PortMapRule,
     api: PortMapApi,
     remoteEndpoint: String,
+    isFavorited: Boolean = false,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
+    onOpenFavorites: () -> Unit = {},
     onAddFavorite: () -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit
@@ -1759,20 +1767,25 @@ private fun PortMapDetailPage(
         onDismiss,
         unifiedTypography = true,
         sectionGap = 6.dp,
+        action = {
+            IconButton(onClick = onOpenFavorites) {
+                Icon(if (isFavorited) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, "收藏页", tint = PortBlue)
+            }
+        },
         titleStyleOverride = LabTypography.CardTitle,
         subtitleStyleOverride = LabTypography.Caption
     ) {
             LabCoreCard(compact = true) {
-                PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color, compactValue = true)
-                PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}", compactValue = true)
-                PortMapDetailLine("监听", "[::]:${rule.listenPort}", copyable = true, compactValue = true)
-                PortMapDetailLine("配置目标", rule.targetText, copyable = true, compactValue = true)
-                if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue, copyable = true, compactValue = true)
-                PortMapDetailLine("运行时间", portMapRunningText(rule), compactValue = true)
-                PortMapDetailLine("剩余时间", portMapRemainingText(rule), compactValue = true)
-                PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久", compactValue = true)
-                PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt), compactValue = true)
-                if (rule.revision > 0L) PortMapDetailLine("配置版本", "revision ${rule.revision}", compactValue = true)
+                PortMapDetailLine("状态", portMapStatus(rule).text, portMapStatus(rule).color)
+                PortMapDetailLine("期望 / 同步", "${portMapDesiredText(rule)} · ${portMapSyncText(rule)}")
+                PortMapDetailLine("监听", "[::]:${rule.listenPort}")
+                PortMapDetailLine("配置目标", rule.targetText)
+                if (rule.runtime.resolvedTarget.isNotBlank()) PortMapDetailLine("实际目标", rule.runtime.resolvedTarget, PortBlue)
+                PortMapDetailLine("运行时间", portMapRunningText(rule))
+                PortMapDetailLine("剩余时间", portMapRemainingText(rule))
+                PortMapDetailLine("启动有效期", if (rule.leaseSeconds > 0) "每次启动 ${formatPortDuration(rule.leaseSeconds)}" else "永久")
+                PortMapDetailLine("最近解析", formatEpoch(rule.runtime.lastResolvedAt))
+                if (rule.revision > 0L) PortMapDetailLine("配置版本", "revision ${rule.revision}")
             }
 
             LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)) {
@@ -1847,40 +1860,71 @@ private fun PortMapDetailPage(
                     }
                 }
                 remoteTest?.let { report ->
-                    PortMapDetailLine("DNS", report.dns, if (report.dns == "正常") PortGreen else PortRed)
-                    PortMapDetailLine("IPv6", report.ipv6, when (report.ipv6) {
-                        "可用" -> PortGreen
-                        "—" -> PortSlate
-                        else -> PortRed
-                    })
-                    if (rule.transportProtocol.equals("UDP", ignoreCase = true)) {
-                        PortMapDetailLine("UDP", report.udp, when (report.udp) {
-                            "可用" -> PortGreen
-                            "未验证" -> PortSlate
-                            else -> PortRed
-                        })
-                    } else {
-                        PortMapDetailLine("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed)
+                    Surface(
+                        color = Color(0xFFF8FAFC),
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    ) {
+                        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                PortMapDiagChip("DNS", report.dns, if (report.dns == "正常") PortGreen else PortRed, Modifier.weight(1f))
+                                PortMapDiagChip("IPv6", report.ipv6, when (report.ipv6) {
+                                    "可用" -> PortGreen
+                                    "—" -> PortSlate
+                                    else -> PortRed
+                                }, Modifier.weight(1f))
+                                if (rule.transportProtocol.equals("UDP", ignoreCase = true)) {
+                                    PortMapDiagChip("UDP", report.udp, when (report.udp) {
+                                        "可用" -> PortGreen
+                                        "未验证" -> PortSlate
+                                        else -> PortRed
+                                    }, Modifier.weight(1f))
+                                } else {
+                                    PortMapDiagChip("TCP", report.tcp, if (report.tcp == "可达") PortGreen else PortRed, Modifier.weight(1f))
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (report.https != "—") {
+                                    PortMapDiagChip("HTTPS", report.https, when (report.https) {
+                                        "正常" -> PortGreen
+                                        "证书警告" -> Color(0xFFF59E0B)
+                                        else -> PortRed
+                                    }, Modifier.weight(1f))
+                                }
+                                PortMapDiagChip("延迟", report.latencyMs?.let { "${it} ms" } ?: "—", PortBlue, Modifier.weight(1f))
+                            }
+                            if (report.reason.isNotBlank()) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("结果：", fontSize = 11.5.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        report.reason,
+                                        fontSize = 12.sp,
+                                        color = if (report.reason.contains("证书")) Color(0xFFF59E0B) else if (report.reachable) PortGreen else PortRed,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
                     }
-                    if (report.https != "—") PortMapDetailLine("HTTPS", report.https, when (report.https) {
-                        "正常" -> PortGreen
-                        "证书警告" -> Color(0xFFF59E0B)
-                        else -> PortRed
-                    })
-                    report.latencyMs?.let { PortMapDetailLine("延迟", "${it} ms", PortBlue) }
-                    if (report.reason.isNotBlank()) PortMapDetailLine(
-                        "结果",
-                        report.reason,
-                        if (report.reason.contains("证书")) Color(0xFFF59E0B) else if (report.reachable) PortGreen else PortRed
-                    )
                 }
             }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onAddFavorite, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = PortBlue)) {
-                Icon(Icons.Rounded.Bookmark, null, Modifier.size(18.dp))
+            OutlinedButton(
+                onClick = {
+                    if (!isFavorited) {
+                        onAddFavorite()
+                    }
+                    onOpenFavorites()
+                },
+                modifier = Modifier.weight(1f).height(46.dp),
+                shape = LabV2.ButtonShape,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PortBlue)
+            ) {
+                Icon(if (isFavorited) Icons.Rounded.BookmarkAdded else Icons.Rounded.Bookmark, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("加入收藏", style = LabTypography.Button)
+                Text(if (isFavorited) "查看收藏" else "加入收藏", style = LabTypography.Button)
             }
             Button(onClick = onToggle, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.shouldStop) PortRed else PortBlue)) {
                 Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
@@ -1924,20 +1968,40 @@ private fun PortMapDetailPage(
 }
 
 @Composable
+private fun PortMapDiagChip(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        color = Color.White,
+        shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFFE2E8F0)),
+        modifier = modifier
+    ) {
+        Row(
+            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(label, fontSize = 11.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Normal)
+            Text(value, fontSize = 11.5.sp, color = color, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
 private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2.Ink, copyable: Boolean = false, compactValue: Boolean = false) {
     val context = LocalContext.current
-    val valueStyle = if (compactValue) LabTypography.Body else LabTypography.Value
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(76.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(76.dp), fontSize = 12.sp, lineHeight = 16.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Medium)
         if (copyable && value.isNotBlank()) {
             SelectionContainer(Modifier.weight(1f)) {
-                Text(value, Modifier.fillMaxWidth(), fontSize = valueStyle.fontSize, lineHeight = valueStyle.lineHeight, color = color, fontWeight = FontWeight.SemiBold, softWrap = true)
+                Text(value, Modifier.fillMaxWidth(), fontSize = 12.5.sp, lineHeight = 17.sp, color = color, fontWeight = FontWeight.SemiBold, softWrap = true)
             }
-            IconButton(onClick = { copy(context, value) }, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(15.dp), tint = PortBlue)
+            IconButton(onClick = { copy(context, value) }, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(14.dp), tint = PortBlue)
             }
         } else {
-            Text(value.ifBlank { "—" }, Modifier.weight(1f), fontSize = valueStyle.fontSize, lineHeight = valueStyle.lineHeight, color = color, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
+            SelectionContainer(Modifier.weight(1f)) {
+                Text(value.ifBlank { "—" }, Modifier.fillMaxWidth(), fontSize = 12.5.sp, lineHeight = 17.sp, color = color, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Clip)
+            }
         }
     }
 }
@@ -1945,6 +2009,20 @@ private fun PortMapDetailLine(label: String, value: String, color: Color = LabV2
 @Composable
 private fun PortMapBigMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     PortMapCompactMetric(label = label, value = value, color = color, modifier = modifier)
+}
+
+private fun nicePortChartCeiling(rawMax: Float): Float {
+    val minCeil = 10 * 1024f // At least 10 KB/s ceiling so small bytes never distort Y ticks
+    if (rawMax <= minCeil) return minCeil
+    val mag = 10.0.pow(floor(log10(rawMax.toDouble()))).toFloat()
+    val norm = rawMax / mag
+    val ceilNorm = when {
+        norm <= 1f -> 1f
+        norm <= 2f -> 2f
+        norm <= 5f -> 5f
+        else -> 10f
+    }
+    return max(ceilNorm * mag, minCeil)
 }
 
 @Composable
@@ -1963,7 +2041,7 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
         }
         return
     }
-    val maxValue = rates.maxOf { max(it.second, it.third) }.coerceAtLeast(1f)
+    val maxValue = nicePortChartCeiling(rates.maxOf { max(it.second, it.third) })
     var selectedIndex by remember(rates) { mutableStateOf<Int?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Canvas(
@@ -1973,20 +2051,21 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
                 .background(Color(0xFFF8FBFF), RoundedCornerShape(14.dp))
                 .pointerInput(rates) {
                     detectTapGestures { point ->
-                        val left = 36.dp.toPx()
+                        val left = 46.dp.toPx()
                         val right = 7.dp.toPx()
                         val plotWidth = (size.width - left - right).coerceAtLeast(1f)
                         selectedIndex = (((point.x - left) / plotWidth).coerceIn(0f, 1f) * rates.lastIndex).roundToInt()
                     }
                 }
         ) {
-            val left = 36.dp.toPx()
+            val left = 46.dp.toPx()
             val right = 7.dp.toPx()
             val top = 9.dp.toPx()
             val bottom = 21.dp.toPx()
             val plotWidth = size.width - left - right
             val plotHeight = size.height - top - bottom
             val axisColor = Color(0xFF94A3B8)
+            val gridColor = Color(0xFFE2E8F0).copy(alpha = .7f)
             val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.rgb(148, 163, 184)
                 textSize = LabTypography.Caption.fontSize.toPx()
@@ -1998,8 +2077,11 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
             val yTicks = listOf(0f, maxValue / 2f, maxValue)
             yTicks.forEachIndexed { index, value ->
                 val y = top + plotHeight - (index / 2f) * plotHeight
+                if (index > 0) {
+                    drawLine(gridColor, Offset(left, y), Offset(left + plotWidth, y), 0.7.dp.toPx())
+                }
                 drawLine(axisColor, Offset(left - 3.dp.toPx(), y), Offset(left, y), 0.8.dp.toPx())
-                drawContext.canvas.nativeCanvas.drawText(formatPortRate(value), 1.dp.toPx(), y + 3.dp.toPx(), labelPaint)
+                drawContext.canvas.nativeCanvas.drawText(formatPortRate(value), 2.dp.toPx(), y + 3.5.dp.toPx(), labelPaint)
             }
 
             val xLabels = listOf("60分", "40分", "20分", "现在")
@@ -2047,6 +2129,7 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
 }
 
 private fun formatPortRate(value: Float): String = when {
+    value <= 0.001f -> "0"
     value >= 1024f * 1024f -> String.format(Locale.US, "%.1fMB/s", value / 1024f / 1024f)
     value >= 1024f -> String.format(Locale.US, "%.1fKB/s", value / 1024f)
     else -> "${value.roundToInt()}B/s"

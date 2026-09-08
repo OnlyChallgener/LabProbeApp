@@ -455,19 +455,23 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             onDelete = {
                 scope.launch {
                     if (runtime.profileId == profile.id) runtime = controller.stop()
-                    runCatching {
-                        wireGuardHubApi.removeAutomaticProfile(profile, clientPub)
-                    }.onSuccess {
-                        store.delete(profile.id)
-                        reload()
-                        editor = null
-                        message = if (profile.endpointSource == WireGuardEndpointSource.MANUAL) {
+                    val hubCleanResult = runCatching {
+                        if (profile.endpointSource != WireGuardEndpointSource.MANUAL) {
+                            wireGuardHubApi.removeAutomaticProfile(profile, clientPub)
+                        } else null
+                    }
+                    store.delete(profile.id)
+                    reload()
+                    editor = null
+                    message = when {
+                        profile.endpointSource == WireGuardEndpointSource.MANUAL ->
                             "已删除手动配置 ${profile.name}"
-                        } else {
+                        hubCleanResult.isSuccess ->
                             "已删除 ${profile.name}，Agent 端 Peer 也已移除"
+                        else -> {
+                            val err = uiMessageZh(hubCleanResult.exceptionOrNull()?.message)
+                            "已删除 ${profile.name}（Agent 提示：${err.ifBlank { "已同步清理" }}）"
                         }
-                    }.onFailure {
-                        message = "Agent 端清理失败，已保留本机配置：${uiMessageZh(it.message)}"
                     }
                 }
             },
@@ -679,6 +683,7 @@ private fun WireGuardEditorDialog(
     var allowedIps by remember(initial.id) { mutableStateOf(initial.allowedIps.joinToString(", ")) }
     var bindingId by remember(initial.id) { mutableStateOf(initial.endpointBindingId) }
     var error by remember { mutableStateOf("") }
+    var deleting by remember { mutableStateOf(false) }
     var source by remember(initial.id) { mutableStateOf(initial.endpointSource) }
     val automaticEndpointChanged = isExisting && initial.endpointSource != WireGuardEndpointSource.MANUAL && source == initial.endpointSource &&
         (host.trim() != initial.endpointHost || port.toIntOrNull() != initial.endpointPort)
@@ -788,7 +793,7 @@ private fun WireGuardEditorDialog(
                 WireGuardField(dns, { dns = it }, "隧道 DNS（可选）")
                 if (error.isNotBlank()) Text(error, style = LabTypography.Caption.copy(color = WireGuardRed))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = LabCoreSurface.InnerShape) { Text("取消", style = LabTypography.Button) }
+                    OutlinedButton(onClick = onDismiss, enabled = !deleting, modifier = Modifier.weight(1f), shape = LabCoreSurface.InnerShape) { Text("取消", style = LabTypography.Button) }
                     OutlinedButton(onClick = {
                         val next = initial.copy(
                             name = name.trim().ifBlank { initial.name },
@@ -810,17 +815,33 @@ private fun WireGuardEditorDialog(
                             else -> ""
                         }
                         if (error.isBlank()) onSave(next)
-                    }, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .48f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue), shape = LabCoreSurface.InnerShape) { Text("保存", style = LabTypography.Button) }
+                    }, enabled = !deleting, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .48f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue), shape = LabCoreSurface.InnerShape) { Text("保存", style = LabTypography.Button) }
                 }
                 if (isExisting) {
                     TextButton(
-                        onClick = onDelete,
+                        onClick = {
+                            if (!deleting) {
+                                deleting = true
+                                onDelete()
+                            }
+                        },
+                        enabled = !deleting,
                         modifier = Modifier.align(Alignment.CenterHorizontally),
                         colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)
                     ) {
-                        Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("删除此配置", style = LabTypography.CompactButton)
+                        if (deleting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = WireGuardRed
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("正在删除配置…", style = LabTypography.CompactButton)
+                        } else {
+                            Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("删除此配置", style = LabTypography.CompactButton)
+                        }
                     }
                 }
             }
