@@ -56,6 +56,7 @@ ALLOWED_FILES = {
     "app/src/main/kotlin/com/labprobe/app/ui/design/LabUiV2.kt",
     "app/src/test/kotlin/com/labprobe/app/DeviceDisplayNameTest.kt",
     "app/src/test/kotlin/com/labprobe/app/MaterialReferenceScreenTest.kt",
+    "app/src/test/kotlin/com/labprobe/app/StunModelTest.kt",
     "design.md",
     "tools/check_material_reference_ui.py",
 }
