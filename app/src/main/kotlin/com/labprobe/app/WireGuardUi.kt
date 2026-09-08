@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Stop
 
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -68,6 +69,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 
 private val WireGuardBlue = LabV2.Primary
 private val WireGuardGreen = LabV2.Green
@@ -394,24 +396,21 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             initial = serverConfig,
             onDismiss = { showServerSettings = false },
             onSave = { listenPort, mtu, address, enabled ->
-                scope.launch {
-                    syncing = true
-                    runCatching {
-                        val updated = wireGuardHubApi.updateServerConfig(listenPort, mtu, address, enabled)
-                        store.applyServerConfig(listenPort, mtu)
-                        serverConfig = updated
-                        val hadRunningClient = runtime.running
-                        if (!updated.enabled && hadRunningClient) runtime = controller.stop()
-                        reload()
-                        showServerSettings = false
-                        message = when {
-                            !updated.enabled && hadRunningClient -> "WireGuard 网关已停用，客户端连接已停止"
-                            !updated.enabled -> "WireGuard 网关已停用"
-                            else -> "网关参数已更新（已启用 · 端口 $listenPort · MTU $mtu），已同步至 Agent"
-                        }
-                    }.onFailure {
-                        message = "更新网关参数失败：${uiMessageZh(it.message)}"
+                syncing = true
+                try {
+                    val updated = wireGuardHubApi.updateServerConfig(listenPort, mtu, address, enabled)
+                    store.applyServerConfig(listenPort, mtu)
+                    serverConfig = updated
+                    val hadRunningClient = runtime.running
+                    if (!updated.enabled && hadRunningClient) runtime = controller.stop()
+                    reload()
+                    showServerSettings = false
+                    message = when {
+                        !updated.enabled && hadRunningClient -> "WireGuard 网关已停用，客户端连接已停止"
+                        !updated.enabled -> "WireGuard 网关已停用"
+                        else -> "网关参数已更新（已启用 · 端口 $listenPort · MTU $mtu），已同步至 Agent"
                     }
+                } finally {
                     syncing = false
                 }
             }
@@ -831,11 +830,18 @@ private fun WireGuardEditorDialog(
 
 
 @Composable
-private fun WireGuardField(value: String, onValueChange: (String) -> Unit, label: String, keyboardType: KeyboardType = KeyboardType.Text) {
+private fun WireGuardField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    enabled: Boolean = true,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
+        enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
@@ -875,15 +881,17 @@ private fun copyWireGuard(context: Context, label: String, value: String) {
 private fun WireGuardServerSettingsDialog(
     initial: WireGuardServerConfig,
     onDismiss: () -> Unit,
-    onSave: (listenPort: Int, mtu: Int, address: String, enabled: Boolean) -> Unit,
+    onSave: suspend (listenPort: Int, mtu: Int, address: String, enabled: Boolean) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
     var enabled by remember { mutableStateOf(initial.enabled) }
     var port by remember { mutableStateOf(initial.listenPort.toString()) }
     var mtu by remember { mutableStateOf(initial.mtu.toString()) }
     var address by remember { mutableStateOf(initial.address) }
     var error by remember { mutableStateOf("") }
 
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = { if (!saving) onDismiss() }) {
         Surface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
             Column(
                 Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -914,6 +922,7 @@ private fun WireGuardServerSettingsDialog(
                         }
                         Switch(
                             checked = enabled,
+                            enabled = !saving,
                             onCheckedChange = { enabled = it },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
@@ -925,16 +934,22 @@ private fun WireGuardServerSettingsDialog(
                     }
                 }
 
-                WireGuardField(port, { port = it.filter(Char::isDigit) }, "服务端监听端口（默认 51820）", KeyboardType.Number)
-                WireGuardField(mtu, { mtu = it.filter(Char::isDigit) }, "接口 MTU（默认 1420，推荐 1280~1500）", KeyboardType.Number)
-                WireGuardField(address, { address = it }, "服务端虚拟网段（默认 10.77.0.1/24）")
+                WireGuardField(port, { port = it.filter(Char::isDigit) }, "服务端监听端口（默认 51820）", KeyboardType.Number, enabled = !saving)
+                WireGuardField(mtu, { mtu = it.filter(Char::isDigit) }, "接口 MTU（默认 1420，推荐 1280~1500）", KeyboardType.Number, enabled = !saving)
+                WireGuardField(address, { address = it }, "服务端虚拟网段（默认 10.77.0.1/24）", enabled = !saving)
                 if (error.isNotBlank()) Text(error, style = LabTypography.Caption.copy(color = WireGuardRed))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = LabCoreSurface.InnerShape) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        enabled = !saving,
+                        modifier = Modifier.weight(1f),
+                        shape = LabCoreSurface.InnerShape
+                    ) {
                         Text("取消", style = LabTypography.Button)
                     }
                     Button(
                         onClick = {
+                            if (saving) return@Button
                             val portInt = port.toIntOrNull()
                             val mtuInt = mtu.toIntOrNull()
                             when {
@@ -943,15 +958,37 @@ private fun WireGuardServerSettingsDialog(
                                 address.isBlank() -> error = "请填写服务端虚拟网段"
                                 else -> {
                                     error = ""
-                                    onSave(portInt, mtuInt, address, enabled)
+                                    scope.launch {
+                                        saving = true
+                                        try {
+                                            onSave(portInt, mtuInt, address, enabled)
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Throwable) {
+                                            error = "保存失败：${uiMessageZh(e.message)}"
+                                        } finally {
+                                            saving = false
+                                        }
+                                    }
                                 }
                             }
                         },
+                        enabled = !saving,
                         modifier = Modifier.weight(1.3f),
                         colors = ButtonDefaults.buttonColors(containerColor = WireGuardBlue),
                         shape = LabCoreSurface.InnerShape
                     ) {
-                        Text("保存并同步", style = LabTypography.Button)
+                        if (saving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("正在保存并同步…", style = LabTypography.Button)
+                        } else {
+                            Text("保存并同步", style = LabTypography.Button)
+                        }
                     }
                 }
             }

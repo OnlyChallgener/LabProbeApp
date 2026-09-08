@@ -42,6 +42,8 @@ ALLOWED_FILES = {
     "app/src/main/kotlin/com/labprobe/app/PortMapping.kt",
     "app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt",
     "app/src/main/kotlin/com/labprobe/app/RouterNativeToolsUi.kt",
+    "app/src/main/kotlin/com/labprobe/app/RouterTrendUi.kt",
+    "app/src/main/kotlin/com/labprobe/app/WireGuardUi.kt",
     "app/src/main/kotlin/com/labprobe/app/ui/design/InteractionSheets.kt",
     "app/src/main/kotlin/com/labprobe/app/ui/design/LabDesignComponents.kt",
     "app/src/main/kotlin/com/labprobe/app/ui/design/LabMaterialPolish.kt",

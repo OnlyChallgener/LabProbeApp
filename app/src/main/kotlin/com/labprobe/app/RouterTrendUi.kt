@@ -121,7 +121,7 @@ private fun TrendCanvas(
     val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     val rawSpeedMax = samples.maxOfOrNull { maxOf(it.uploadBps, it.downloadBps).toDouble() } ?: 0.0
-    val rawSessionMax = samples.maxOfOrNull { it.sessions.toDouble() } ?: 0.0
+    val rawSessionMax = samples.maxOfOrNull { maxOf(it.ipv4, it.ipv6).toDouble() } ?: 0.0
     val speedMax = rememberTrendScale(rawSpeedMax, 1_000.0)
     val sessionMax = rememberTrendScale(rawSessionMax, 10.0)
 
@@ -131,7 +131,7 @@ private fun TrendCanvas(
 
     Canvas(
         Modifier.fillMaxWidth().height(222.dp)
-            .semantics { contentDescription = "路由器实时网络趋势图。绿色下载，蓝色上传，青色会话。长按拖动查看采样值。" }
+            .semantics { contentDescription = "路由器实时网络趋势图。绿色下载，蓝色上传，深蓝 IPv4 会话，天蓝 IPv6 会话。长按拖动查看采样值。" }
             .pointerInput(rightGutter) {
                 fun select(x: Float) {
                     val count = latestSamples.size
@@ -161,7 +161,7 @@ private fun TrendCanvas(
 
         fun text(value: String, x: Float, y: Float) { drawContext.canvas.nativeCanvas.drawText(value, x, y, paint) }
         text("网速 · ${unit.second}", 0f, 12.dp.toPx())
-        text("会话 · 个", 0f, 134.dp.toPx())
+        text("会话 · IPv4 (蓝) / IPv6 (青)", 0f, 134.dp.toPx())
 
         fun grid(top: Float, bottom: Float, max: Double, divisor: Double) {
             for (i in 0..2) {
@@ -232,7 +232,8 @@ private fun TrendCanvas(
 
             series(speedTop, speedBottom, speedMax, LabV2.Green) { it.downloadBps }
             series(speedTop, speedBottom, speedMax, LabV2.Primary) { it.uploadBps }
-            series(sessionsTop, sessionsBottom, sessionMax, Color(0xFF19B5AA)) { it.sessions }
+            series(sessionsTop, sessionsBottom, sessionMax, LabV2.Primary) { it.ipv4 }
+            series(sessionsTop, sessionsBottom, sessionMax, Color(0xFF0EA5E9)) { it.ipv6 }
 
             selected?.let { sel ->
                 val selIndex = samples.indexOf(sel).takeIf { it >= 0 } ?: (count - 1)
