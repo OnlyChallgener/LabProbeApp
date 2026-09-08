@@ -66,19 +66,7 @@ fun DeviceDetailScreen(
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(
-                    Modifier
-                        .size(112.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .then(
-                            if (LabMaterialPolish.enabled) Modifier
-                            else Modifier.background(profile.accent.copy(alpha = .065f))
-                        )
-                        .clickable { editing = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)
-                }
+                LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 104, modifier = Modifier.clickable { editing = true })
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
                     LabStatusBadge(device.online)
@@ -129,14 +117,10 @@ fun DeviceDetailScreen(
 
         CompactListCard(coreSurface = true) {
             Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                DeviceDetailPair("类型", profile.label, Modifier.weight(1f))
-                DeviceDetailPair("厂商", cleanApiText(device.manufacture).ifBlank { "--" }, Modifier.weight(1f))
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                DeviceDetailPair("主机名", cleanApiText(device.hostName).ifBlank { "--" }, Modifier.weight(1f))
-                DeviceDetailPair("备注", cleanApiText(device.remark).ifBlank { "--" }, Modifier.weight(1f))
-            }
+            DeviceDetailPair("类型", profile.label)
+            DeviceDetailPair("厂商", cleanApiText(device.manufacture).ifBlank { "--" })
+            DeviceDetailPair("主机名", cleanApiText(device.hostName).ifBlank { "--" })
+            DeviceDetailPair("备注", cleanApiText(device.remark).ifBlank { "--" })
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -200,10 +184,35 @@ private fun DeviceDetailAddress(label: String, value: String, color: Color, allo
 }
 
 @Composable
-private fun DeviceDetailPair(label: String, value: String, modifier: Modifier = Modifier) {
-    Row(modifier, verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(44.dp), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-        Text(value, Modifier.weight(1f), style = LabTypography.ValueStrong, maxLines = 3, overflow = TextOverflow.Clip)
+private fun DeviceDetailPair(label: String, value: String) {
+    val context = LocalContext.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = value != "--", interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(context, value) },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            Modifier.width(54.dp),
+            fontSize = LabTypography.Supporting.fontSize,
+            lineHeight = LabTypography.Supporting.lineHeight,
+            fontWeight = FontWeight.SemiBold,
+            color = LabV2.InkMuted
+        )
+        Text(
+            value,
+            Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            fontSize = LabTypography.Value.fontSize,
+            lineHeight = LabTypography.Value.lineHeight,
+            fontWeight = FontWeight.SemiBold,
+            color = if (value == "--") LabV2.InkFaint else LabV2.Ink,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip
+        )
     }
 }
 
