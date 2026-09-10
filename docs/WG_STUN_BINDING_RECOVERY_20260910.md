@@ -59,4 +59,11 @@
 - 2026-09-10：WireGuard 绑定候选仅接受启用、WireGuard 服务类型、UDP、当前网关目标和当前监听端口的规则；不再截断候选，同端口的非 WireGuard 或手动未绑定规则不会被误认作自动规则。
 - 2026-09-10：本机执行 `python -m unittest discover -s tools -p "test_*.py" -q`，35 项通过；`git diff --check` 通过。未安装或运行本地 Android SDK、Gradle、模拟器。
 - 2026-09-10：首次 GitHub CI `34449505345` 在 Kotlin 编译发现四处中文紧邻字符串模板变量的插值语法错误；已统一改为显式 `${action}`，本地仍只执行 Python 与差异检查，等待下一次 GitHub CI 复验。
-- 待记录：代码提交、GitHub Kotlin/Android 构建、Release APK 结果及现场部署核对。
+- 2026-09-10：提交 `50055d3`（核心修复）与 `393f1ee`（Kotlin 插值修复）均已推送至 `codex/wg-stun-operation-sync`。
+- 2026-09-10：GitHub CI `34449989177` 全部通过：Python 静态回归、242 项 Kotlin/Android 单元测试（0 failure / 0 error / 0 skipped）、Release 编译、签名 APK 校验与制品上传均成功。APK 制品为 `LabProbe-release-test-393f1ee3a7d61be4b893bf95426fbef3dfebb559`。
+
+## 现场复验边界
+
+- 测试 APK 可验证：WireGuard 自动规则标记、历史残留二次确认、手动同端口规则可独立改删、关闭错误提示、网关提交阶段提示与“刷新核对”。
+- 若停用/改端口仍立即返回 502，应同时查看反向代理对应 `/api/wireguard/server` 的 access/error log 和 Hub 进程；这属于部署入口/Hub 可用性问题，不能由 App 在状态不明时安全绕过。
+- 若 PUT 已返回 200、页面显示 Hub 已保存但长期无 Agent 回执，再检查 Relay/Agent 在线状态、HOOK token、部署版本及 WireGuard 内核执行结果。
