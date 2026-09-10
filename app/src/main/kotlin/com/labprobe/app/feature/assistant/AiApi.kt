@@ -63,8 +63,17 @@ class AiSettingsStore(context: Context) {
         return prefs.getInt("last_notification_id_${hubIdentity.hashCode()}", 0).coerceAtLeast(0)
     }
 
-    fun saveLastNotificationId(hubIdentity: String, value: Int) = prefs.edit()
-        .putInt(notificationCursorKey(hubIdentity), value.coerceAtLeast(0)).apply()
+    /** Call on IO. Persist before posting: prefer a missed alert to replay after a crash. */
+    fun saveLastNotificationId(hubIdentity: String, value: Int): Boolean = synchronized(notificationCursorLock) {
+        prefs.edit().putInt(
+            notificationCursorKey(hubIdentity),
+            maxOf(lastNotificationId(hubIdentity), value.coerceAtLeast(0)),
+        ).commit()
+    }
+
+    private companion object {
+        val notificationCursorLock = Any()
+    }
 
     private fun notificationCursorKey(hubIdentity: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -333,7 +342,8 @@ class AiApiClient(
         request(hubUrl.trimEnd('/') + "/api/ai/notifications?after=${afterId.coerceAtLeast(0)}", "GET", null).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiFailure(response.code, text))
-            val rows = JSONObject(text).optJSONArray("notifications") ?: JSONArray()
+            val rows = JSONObject(text).optJSONArray("notifications")
+                ?: error("AI 通知响应缺少列表")
             buildList {
                 for (index in 0 until rows.length()) {
                     val item = rows.optJSONObject(index) ?: continue

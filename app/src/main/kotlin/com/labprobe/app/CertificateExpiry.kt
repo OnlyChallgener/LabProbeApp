@@ -179,10 +179,16 @@ object CertificateReminderCenter {
     }
 
     private fun notify(context: Context, item: CertificateExpiryItem, remaining: Long, milestone: Int) {
+        val requestCode = 5200 + ((item.id + milestone).hashCode() and 0x000FFFFF)
         val openApp = PendingIntent.getActivity(
             context,
-            5200,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            requestCode,
+            Intent(context, MainActivity::class.java).apply {
+                data = Uri.parse("labprobe://daily/certificate/${Uri.encode(item.id)}")
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra("navigate_route", "daily")
+                putExtra("certificate_id", item.id)
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val title = if (remaining == 0L) "证书今天到期" else "证书将在 $remaining 天后到期"

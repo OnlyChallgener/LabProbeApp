@@ -1,5 +1,7 @@
 package com.labprobe.app.feature.assistant
 
+import java.security.MessageDigest
+
 data class AiSettings(
     val enabled: Boolean = false,
     val model: String = "deepseek-v4-flash",
@@ -79,6 +81,20 @@ data class AiNotification(
     val title: String,
     val content: String,
 )
+
+data class AiNotice(
+    val id: String,
+    val title: String,
+    val content: String,
+    val hubKey: String = "",
+)
+
+internal fun aiNotificationHubKey(identity: String): String {
+    if (identity.isBlank()) return ""
+    return MessageDigest.getInstance("SHA-256")
+        .digest(identity.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+}
 
 data class AiUsageSummary(
     val requests: Int = 0,

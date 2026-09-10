@@ -9,6 +9,8 @@ import com.labprobe.app.feature.router.ipv6.Ipv6Screen
 import com.labprobe.app.feature.assistant.AiFloatingPet
 import com.labprobe.app.feature.assistant.AiApiClient
 import com.labprobe.app.feature.assistant.AiNotifier
+import com.labprobe.app.feature.assistant.AiNotice
+import com.labprobe.app.feature.assistant.planAiNotificationBatch
 import com.labprobe.app.feature.assistant.AiSettingsStore
 import com.labprobe.app.feature.assistant.AiSettingsScreen
 import com.labprobe.app.feature.assistant.AiChatScreen
@@ -156,6 +158,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.supervisorScope
@@ -240,6 +243,8 @@ private val LabMaterialTypography: Typography = Typography(
 )
 
 class MainActivity : ComponentActivity() {
+    private var consumedNotificationKey: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = AppPrefs(this)
@@ -248,19 +253,51 @@ class MainActivity : ComponentActivity() {
         // is opened. The repository waits briefly so WSS startup stays first.
         RouterRepositoryRegistry.get(prefs).start()
         applyLabProbeSystemBars()
-        intent?.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
-        intent?.getStringExtra("ai_notice_content")?.let { content ->
-            AppNavigator.pendingAiNotice = (intent?.getStringExtra("ai_notice_title").orEmpty()) to content
+        consumedNotificationKey = savedInstanceState?.getString("consumed_notification_key")
+        intent?.let { incoming ->
+            if (savedInstanceState == null || incoming.dataString != consumedNotificationKey) {
+                consumeNotificationIntent(incoming)
+            }
         }
         setContent { LabProbeApp(prefs) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.getStringExtra("navigate_route")?.let { AppNavigator.pendingRoute = it }
-        intent.getStringExtra("ai_notice_content")?.let { content ->
-            AppNavigator.pendingAiNotice = (intent.getStringExtra("ai_notice_title").orEmpty()) to content
+        setIntent(intent)
+        consumeNotificationIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("consumed_notification_key", consumedNotificationKey)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun consumeNotificationIntent(incoming: Intent) {
+        val requested = notificationRoute(incoming.getStringExtra("navigate_route"))
+        val eventHubKey = incoming.getStringExtra("event_hub_key").orEmpty()
+        val prefs = AppPrefs(this)
+        val wrongEventHub = requested in setOf("events", "devices") && eventHubKey.isNotBlank() &&
+            eventHubKey != eventNotificationScopeDigest("${prefs.hub.trimEnd('/')}#${prefs.token.trim()}")
+        if (wrongEventHub) {
+            Toast.makeText(this, "此通知来自其他 Hub，请切换到对应连接查看事件", Toast.LENGTH_LONG).show()
+        } else if (requested != null) {
+            AppNavigator.pendingAiNotice = if (requested == "ai_chat") {
+                incoming.getStringExtra("ai_notice_content")?.let { content ->
+                    AiNotice(
+                        id = incoming.getStringExtra("ai_notice_id").orEmpty(),
+                        title = incoming.getStringExtra("ai_notice_title").orEmpty(),
+                        content = content,
+                        hubKey = incoming.getStringExtra("ai_notice_hub_key").orEmpty(),
+                    )
+                }
+            } else null
+            AppNavigator.pendingRoute = requested
         }
+        consumedNotificationKey = incoming.dataString
+        // Consumed extras must not reopen a notice when the Activity is recreated.
+        listOf("navigate_route", "ai_notice_id", "ai_notice_title", "ai_notice_content", "ai_notice_hub_key", "event_hub_key")
+            .forEach(incoming::removeExtra)
     }
 
 }
@@ -268,7 +305,11 @@ class MainActivity : ComponentActivity() {
 /** Route requested from outside the composable tree (e.g. notification tap). */
 object AppNavigator {
     var pendingRoute by mutableStateOf<String?>(null)
-    var pendingAiNotice by mutableStateOf<Pair<String, String>?>(null)
+    var pendingAiNotice by mutableStateOf<AiNotice?>(null)
+}
+
+internal fun notificationRoute(requested: String?): String? = requested?.takeIf {
+    it in setOf("home", "devices", "events", "daily", "settings", "ai_chat")
 }
 
 /** Maps assistant clientAction route names to app route strings. */
@@ -1167,6 +1208,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val foregroundRecoverySignals = Channel<Boolean>(Channel.CONFLATED)
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
+    private var eventNotificationSessionIdentity: String? = null
     private val cacheWriteVersion = AtomicLong(0L)
     private var cachePersistJob: Job? = null
     private val liteRealtimeApi = LiteRealtimeApi(prefs)
@@ -1739,15 +1781,30 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             if (webhookFavoriteChanges + liveFavoriteChanges > 0) favoriteSyncVersion++
         }
         CertificateReminderCenter.notifyDue(appContext, prefs)
-        if (dataChanged && (prefs.eventNotificationBaselineReady || previousEventKeys.isNotEmpty())) {
-            EventNotificationCenter.notifyNewEvents(
-                appContext,
-                applyEventDeviceNames(
-                    events.filter { eventNotificationIdentity(it) !in previousEventKeys },
-                    devices + onlineDevices + offlineDevices,
-                    deviceOverrides
-                )
+        val notificationIdentity = "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}"
+        val silentBaseline = eventNotificationSessionIdentity != notificationIdentity
+        eventNotificationSessionIdentity = notificationIdentity
+        if (dataChanged || silentBaseline) {
+            val notificationEvents = applyEventDeviceNames(
+                if (silentBaseline) events.toList()
+                else events.filter { eventNotificationIdentity(it) !in previousEventKeys },
+                devices + onlineDevices + offlineDevices,
+                deviceOverrides,
             )
+            cacheScope.launch {
+                try {
+                    if (notificationIdentity == "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}") {
+                        EventNotificationCenter.notifyNewEvents(
+                            appContext, notificationEvents,
+                            hubIdentity = notificationIdentity, silentBaseline = silentBaseline,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Notification permission/channel changes must not crash the data/UI sync.
+                }
+            }
         }
         prefs.eventNotificationBaselineReady = true
         if (dataChanged) {
@@ -2006,22 +2063,24 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LabProbeApp(prefs: AppPrefs) {
-    var route by remember { mutableStateOf("home") }
-    var selectedDeviceMac by remember { mutableStateOf<String?>(null) }
-    var toolReturnRoute by remember { mutableStateOf<String?>(null) }
-    var nestedToolReturnRoute by remember { mutableStateOf<String?>(null) }
-    var settingsReturnRoute by remember { mutableStateOf("favorites") }
-    var dailyReturnRoute by remember { mutableStateOf("events") }
-    var aiChatReturnRoute by remember { mutableStateOf("home") }
-    var aiSettingsReturnRoute by remember { mutableStateOf("home") }
-    var favoritesReturnRoute by remember { mutableStateOf<String?>(null) }
+    var route by rememberSaveable { mutableStateOf("home") }
+    var selectedDeviceMac by rememberSaveable { mutableStateOf<String?>(null) }
+    var toolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    var nestedToolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    var settingsReturnRoute by rememberSaveable { mutableStateOf("favorites") }
+    var dailyReturnRoute by rememberSaveable { mutableStateOf("events") }
+    var aiChatReturnRoute by rememberSaveable { mutableStateOf("home") }
+    var aiSettingsReturnRoute by rememberSaveable { mutableStateOf("home") }
+    var favoritesReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(AppNavigator.pendingRoute) {
         AppNavigator.pendingRoute?.let { requested ->
             AppNavigator.pendingRoute = null
-            if (requested == "daily") {
-                dailyReturnRoute = "home"
+            if (notificationRoute(requested) != null) {
+                if (requested == "daily" && route != "daily") dailyReturnRoute = route
+                if (requested == "ai_chat" && route != "ai_chat") aiChatReturnRoute = route
+                if (requested == "settings" && route != "settings") settingsReturnRoute = route
+                route = requested
             }
-            route = requested
         }
     }
     var autoRefresh by remember { mutableStateOf("实时") }
@@ -2080,12 +2139,28 @@ fun LabProbeApp(prefs: AppPrefs) {
         val aiStore = AiSettingsStore(context)
         val aiClient = AiApiClient(aiStore, prefs.hub, prefs.token, appPrefs = prefs)
         if (prefs.hub.isBlank()) return@LaunchedEffect
+        var baselinePending = true
         while (isActive) {
             try {
-                aiClient.notifications(aiStore.lastNotificationId(aiClient.identity)).forEach { row ->
-                    val targetRoute = "ai_chat"
-                    if (AiNotifier.notifyAssistantMessage(context, row.title, row.content, route = targetRoute)) {
-                        aiStore.saveLastNotificationId(aiClient.identity, row.id)
+                val cursor = withContext(Dispatchers.IO) { aiStore.lastNotificationId(aiClient.identity) }
+                val rows = aiClient.notifications(cursor)
+                ensureActive()
+                if (aiClient.identity != "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}") break
+                val batch = planAiNotificationBatch(cursor, baselinePending, rows)
+                val saved = withContext(Dispatchers.IO) {
+                    aiStore.saveLastNotificationId(aiClient.identity, batch.cursor)
+                }
+                ensureActive()
+                if (aiClient.identity != "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}") break
+                if (saved) {
+                    baselinePending = batch.baselinePending
+                    batch.latest?.let { row ->
+                        withContext(Dispatchers.IO) {
+                            AiNotifier.notifyAssistantMessage(
+                                context, row.title, row.content, route = "ai_chat",
+                                notificationId = row.id, hubIdentity = aiClient.identity,
+                            )
+                        }
                     }
                 }
             } catch (cancel: CancellationException) {

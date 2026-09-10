@@ -79,6 +79,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -124,9 +125,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Assistant-only palette. Do not replace these with default Material colors. */
 private object AiTone {
@@ -2017,6 +2020,81 @@ private fun AiPartialCopyDialog(message: AiMessage, onDismiss: () -> Unit) {
 }
 
 @Composable
+private fun AiNotificationDetailDialog(
+    notice: AiNotice,
+    belongsToCurrentHub: Boolean,
+    onCopy: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = AiTone.Surface,
+            border = BorderStroke(1.dp, AiTone.Border),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("AI 通知", style = LabTypography.CardTitle, color = AiTone.Ink)
+                    Text(
+                        "独立通知 · 不会加入当前对话或发送给模型",
+                        style = LabTypography.Caption.copy(color = AiTone.Muted),
+                    )
+                }
+                if (!belongsToCurrentHub) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = AiTone.Warning.copy(alpha = .09f),
+                        border = BorderStroke(1.dp, AiTone.Warning.copy(alpha = .35f)),
+                        tonalElevation = 0.dp,
+                        shadowElevation = 0.dp,
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text("通知属于其他连接", style = LabTypography.SectionTitle.copy(color = AiTone.Warning))
+                            Text(
+                                "请切换到收到此通知的 Hub 后再查看。为避免把内容带入错误的连接，此处不会显示通知正文。",
+                                style = LabTypography.Body.copy(color = AiTone.Ink),
+                            )
+                        }
+                    }
+                    AiAction("关闭", Modifier.fillMaxWidth(), onClick = onDismiss)
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(AiTone.Field)
+                            .verticalScroll(rememberScrollState())
+                            .padding(13.dp),
+                    ) {
+                        SelectionContainer {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (notice.title.isNotBlank()) {
+                                    Text(notice.title, style = LabTypography.SectionTitle.copy(color = AiTone.Ink))
+                                }
+                                Text(
+                                    notice.content,
+                                    Modifier.fillMaxWidth(),
+                                    style = LabTypography.Body.copy(color = AiTone.Ink),
+                                )
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiAction("复制全文", Modifier.weight(1f), primary = true, onClick = onCopy)
+                        AiAction("关闭", Modifier.weight(1f), onClick = onDismiss)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AiSwitchModelCard(retryPreview: String, onSwitch: () -> Unit, onDismiss: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -2160,6 +2238,16 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var selectedMessageKeys by remember(client.identity) { mutableStateOf<Set<String>>(emptySet()) }
     var messageSelectionBusy by remember(client.identity) { mutableStateOf(false) }
     var messageSelectionError by remember(client.identity) { mutableStateOf<String?>(null) }
+    var notificationId by rememberSaveable { mutableStateOf("") }
+    var notificationTitle by rememberSaveable { mutableStateOf("") }
+    var notificationContent by rememberSaveable { mutableStateOf("") }
+    var notificationHubKey by rememberSaveable { mutableStateOf("") }
+    var resolvedNotificationTitle by remember(notificationId, notificationHubKey, notificationTitle) {
+        mutableStateOf(if (aiNotificationContentIsStored(notificationTitle)) "" else notificationTitle)
+    }
+    var resolvedNotificationContent by remember(notificationId, notificationHubKey, notificationContent) {
+        mutableStateOf(if (aiNotificationContentIsStored(notificationContent)) "" else notificationContent)
+    }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     fun clearMessageActions() {
@@ -2220,17 +2308,29 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         if (target >= 0) runCatching { listState.animateScrollToItem(target) }
     }
 
-    LaunchedEffect(AppNavigator.pendingAiNotice, loadingHistory) {
+    LaunchedEffect(AppNavigator.pendingAiNotice) {
         val notice = AppNavigator.pendingAiNotice ?: return@LaunchedEffect
-        if (loadingHistory) return@LaunchedEffect
+        notificationId = notice.id
+        notificationTitle = notice.title
+        notificationContent = notice.content
+        notificationHubKey = notice.hubKey
         AppNavigator.pendingAiNotice = null
-        val (title, content) = notice
-        val text = if (title.isNotBlank()) "【$title】\n\n$content" else content
-        if (messages.none { it.role == "assistant" && it.content == text }) {
-            messages.add(AiMessage(role = "assistant", content = text))
-            conversationId?.let { localCache.writeConversation(it, messages) }
-            val target = messages.size - 1
-            if (target >= 0) runCatching { listState.animateScrollToItem(target) }
+    }
+
+    LaunchedEffect(notificationTitle, notificationContent, notificationHubKey, client.identity) {
+        val currentHubKey = aiNotificationHubKey(client.identity)
+        if (notificationHubKey.isBlank() || notificationHubKey == currentHubKey) {
+            val resolved = withContext(Dispatchers.IO) {
+                val title = if (aiNotificationContentIsStored(notificationTitle)) {
+                    aiNotificationResolveContent(context, notificationTitle)
+                } else notificationTitle
+                val content = if (aiNotificationContentIsStored(notificationContent)) {
+                    aiNotificationResolveContent(context, notificationContent)
+                } else notificationContent
+                title to content
+            }
+            resolvedNotificationTitle = resolved.first
+            resolvedNotificationContent = resolved.second
         }
     }
 
@@ -3287,6 +3387,25 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         }
         partialCopyMessage?.let { message ->
             AiPartialCopyDialog(message = message, onDismiss = { partialCopyMessage = null })
+        }
+        if (notificationId.isNotBlank() || notificationTitle.isNotBlank() || notificationContent.isNotBlank()) {
+            val notice = AiNotice(notificationId, resolvedNotificationTitle, resolvedNotificationContent, notificationHubKey)
+            val belongsToCurrentHub = notificationHubKey.isBlank() || notificationHubKey == aiNotificationHubKey(client.identity)
+            AiNotificationDetailDialog(
+                notice = notice,
+                belongsToCurrentHub = belongsToCurrentHub,
+                onCopy = {
+                    val fullText = if (resolvedNotificationTitle.isBlank()) resolvedNotificationContent
+                    else "$resolvedNotificationTitle\n\n$resolvedNotificationContent"
+                    clipboard.setText(AnnotatedString(fullText))
+                },
+                onDismiss = {
+                    notificationId = ""
+                    notificationTitle = ""
+                    notificationContent = ""
+                    notificationHubKey = ""
+                },
+            )
         }
     }
 }
