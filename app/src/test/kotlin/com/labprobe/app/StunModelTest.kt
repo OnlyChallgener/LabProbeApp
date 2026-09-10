@@ -135,7 +135,7 @@ class StunModelTest {
 
     @Test
     fun wireGuardBoundTargetChangesAreDetectedByFieldNotServiceName() {
-        val rule = sampleStunRule().copy(name = "任意名称", serviceType = "Custom")
+        val rule = sampleStunRule().copy(name = "任意名称", serviceType = "Custom", transportProtocol = "UDP")
 
         assertFalse(stunTargetBindingChanged(rule, StunDraft.from(rule)))
         assertTrue(stunTargetBindingChanged(rule, StunDraft.from(rule).copy(targetPort = "51821")))
@@ -197,7 +197,7 @@ class StunModelTest {
 
         val updated = reconcileStunFavoriteItems(listOf(existing), listOf(stopped)).single()
         assertEquals("https://192.168.5.46:443", updated.localEndpoint)
-        assertEquals("203.0.113.9:20001", updated.remoteEndpoint)
+        assertEquals(existing.remoteEndpoint, updated.remoteEndpoint)
         assertEquals(
             "已停止",
             favoriteServiceStatus(updated, "wan", stun = resolveFavoriteStun(updated, listOf(stopped))),
@@ -264,10 +264,15 @@ class StunModelTest {
 
     @Test
     fun sameNamedStunRuleDoesNotRebindFavoriteAndDismissalPreventsResurrection() {
-        val linked = sampleStunFavorite()
+        val linked = sampleStunFavorite().copy(title = "用户自定义名称", iconValue = "custom-icon")
         val unrelatedSameName = sampleStunRule().copy(id = "stun-2")
 
-        assertTrue(reconcileStunFavoriteItems(listOf(linked), listOf(unrelatedSameName)).isEmpty())
+        val result = reconcileStunFavoriteItems(listOf(linked), listOf(unrelatedSameName))
+        // New rules keep the existing auto-favorite behavior, but never inherit another ID's edits.
+        assertFalse(result.any { it.id == linked.id || it.stunRuleId == linked.stunRuleId })
+        assertEquals("stun-2", result.single().stunRuleId)
+        assertEquals(unrelatedSameName.name, result.single().title)
+        assertEquals("server", result.single().iconValue)
         assertTrue(
             reconcileStunFavoriteItems(
                 current = emptyList(),

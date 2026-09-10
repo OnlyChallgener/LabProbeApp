@@ -37,7 +37,8 @@
 - 2026-09-10：WG/STUN 首次推送 `9bec3c9`；[首轮 GitHub 构建](https://github.com/OnlyChallgener/LabProbeApp/actions/runs/34436951311) 的 Python 检查通过，Android 编译未通过，正在修正编译错误后重验。
 - 2026-09-10：用户明确将通知加入本轮，Sol 处理 AI 通知原文/独立入口，Luna 处理事件/证书通知及静态约束，主任务处理启动基线、游标与路由，Terra 处理 GitHub 编译反馈。不在本机运行 Android 工具。
 - 2026-09-10：修复首轮 CI 的 STUN `rememberUpdatedState` 缺失导入。通知追加后执行 Python 静态回归：24 项通过；差异空白检查通过。新增实际通知权限/去重、AI 游标迁移/顺序及通知载荷测试，仅提交 GitHub 执行。
-- 通知追加后的 GitHub 结果：验证后补充。
+- 2026-09-10：[第二轮 GitHub 构建](https://github.com/OnlyChallgener/LabProbeApp/actions/runs/34438337795) 已通过 Kotlin 编译，执行 221 项测试、4 项失败。核对后修正测试：WG 测试起始协议应为 UDP（原夹具 TCP→TCP 没有改变）；停止后应完整保留原 HTTPS 地址；同名新规则仍保留原有自动收藏行为，但不得继承旧 ID 的用户编辑。通知 Robolectric 用 Android 35 匹配现有 Java 17，避免默认 Android 36 要求 Java 21。未删除或跳过测试。
+- 修正测试后的 GitHub 结果：验证后补充。
 
 ## 明确限制与验收边界
 
