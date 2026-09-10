@@ -115,13 +115,13 @@ internal fun wireGuardRemoteMutationStatus(
     action: String,
     result: WireGuardRemoteMutationResult<*>,
 ): String = when (result) {
-    is WireGuardRemoteMutationResult.Applied<*> -> "$action已由 Agent 确认"
+    is WireGuardRemoteMutationResult.Applied<*> -> "${action}已由 Agent 确认"
     is WireGuardRemoteMutationResult.PendingVerification -> if (result.submittedRevision == null) {
-        "$action提交结果待核对；原本地配置保持不变。${result.message}"
+        "${action}提交结果待核对；原本地配置保持不变。${result.message}"
     } else {
-        "$action已提交，待核对；原本地配置保持不变。${result.message}"
+        "${action}已提交，待核对；原本地配置保持不变。${result.message}"
     }
-    is WireGuardRemoteMutationResult.NotSubmitted -> "$action失败，未更改：${result.message}"
+    is WireGuardRemoteMutationResult.NotSubmitted -> "${action}失败，未更改：${result.message}"
 }
 
 private fun wireGuardSourceColor(source: WireGuardEndpointSource): Color = when (source) {

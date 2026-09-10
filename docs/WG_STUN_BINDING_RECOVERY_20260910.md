@@ -58,4 +58,5 @@
 - 2026-09-10：STUN 页按本地与服务端真实绑定 ID 标记“WireGuard 自动管理”；本地仍引用时继续保护，仅服务端残留时要求二次确认。WG/STUN 错误按操作前缀隔离，支持关闭，成功刷新后不再回弹。
 - 2026-09-10：WireGuard 绑定候选仅接受启用、WireGuard 服务类型、UDP、当前网关目标和当前监听端口的规则；不再截断候选，同端口的非 WireGuard 或手动未绑定规则不会被误认作自动规则。
 - 2026-09-10：本机执行 `python -m unittest discover -s tools -p "test_*.py" -q`，35 项通过；`git diff --check` 通过。未安装或运行本地 Android SDK、Gradle、模拟器。
+- 2026-09-10：首次 GitHub CI `34449505345` 在 Kotlin 编译发现四处中文紧邻字符串模板变量的插值语法错误；已统一改为显式 `${action}`，本地仍只执行 Python 与差异检查，等待下一次 GitHub CI 复验。
 - 待记录：代码提交、GitHub Kotlin/Android 构建、Release APK 结果及现场部署核对。
