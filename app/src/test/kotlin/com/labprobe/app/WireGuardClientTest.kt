@@ -8,6 +8,143 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class WireGuardClientTest {
+    private fun portProfile(source: WireGuardEndpointSource, port: Int = 51820, follows: Boolean? = null) =
+        WireGuardProfile(id = "phone", name = "Phone", endpointSource = source,
+            endpointHost = "vpn.example.com", endpointPort = port, followsServerPort = follows)
+
+    @Test
+    fun gatewayPortChangesOnlyFollowingDdnsAndNeverManualOrStunPublicPorts() {
+        val following = portProfile(WireGuardEndpointSource.DDNS, follows = true)
+        assertEquals(51826, applyWireGuardServerConfig(following, 51826, 1380, 51820).endpointPort)
+        val legacy = portProfile(WireGuardEndpointSource.DDNS)
+        assertEquals(true, applyWireGuardServerConfig(legacy, 51826, 1380, 51820).followsServerPort)
+        val externalMapping = portProfile(WireGuardEndpointSource.DDNS, port = 45000)
+        val preserved = applyWireGuardServerConfig(externalMapping, 51826, 1380, 51820)
+        assertEquals(45000, preserved.endpointPort)
+        assertEquals(false, preserved.followsServerPort)
+        val fixedSamePort = portProfile(WireGuardEndpointSource.DDNS, follows = false)
+        assertEquals(51820, applyWireGuardServerConfig(fixedSamePort, 51826, 1380, 51820).endpointPort)
+        val manual = portProfile(WireGuardEndpointSource.MANUAL)
+        assertEquals(manual, applyWireGuardServerConfig(manual, 51826, 1380, 51820))
+        val stun = portProfile(WireGuardEndpointSource.STUN, port = 42137)
+        assertEquals(42137, applyWireGuardServerConfig(stun, 51826, 1380, 51820).endpointPort)
+    }
+
+    @Test
+    fun portAuthorityRoundTripsAndNewAutomaticProfilesFollowGateway() {
+        val explicit = portProfile(WireGuardEndpointSource.DDNS, follows = false)
+        assertEquals(false, WireGuardProfile.fromJson(explicit.toJson())!!.followsServerPort)
+        val legacy = portProfile(WireGuardEndpointSource.DDNS)
+        assertEquals(null, WireGuardProfile.fromJson(legacy.toJson())!!.followsServerPort)
+        assertEquals(true, WireGuardProfile.newProfile(WireGuardEndpointSource.DDNS).followsServerPort)
+        assertEquals(false, WireGuardProfile.newProfile(WireGuardEndpointSource.MANUAL).followsServerPort)
+    }
+
+    @Test
+    fun changingStunBindingResetsOldAddressAndRevision() {
+        val old = portProfile(WireGuardEndpointSource.STUN, 42137).copy(endpointBindingId = "old", endpointRevision = 100, profileRevision = 5)
+        val updated = editedWireGuardProfile(old, old.copy(endpointBindingId = "new"))
+        assertEquals(0L, updated.endpointRevision)
+        assertEquals(6L, updated.profileRevision)
+        assertEquals("", updated.endpointHost)
+        assertTrue(updated.endpointUpdateError.isNotBlank())
+        val renamed = editedWireGuardProfile(old, old.copy(name = "New name"))
+        assertEquals(100L, renamed.endpointRevision)
+        assertEquals(old.endpoint, renamed.endpoint)
+        val staleEditor = old.copy(name = "Renamed", endpointHost = "203.0.113.2", endpointPort = 1)
+        assertEquals(old.endpoint, editedWireGuardProfile(old, staleEditor).endpoint)
+    }
+
+    private fun serverWithBindings(): JSONObject = JSONObject().put("revision", 7).put("server", JSONObject()
+        .put("listenPort", 51820).put("mtu", 1420).put("enabled", false).put("futureField", "preserve")
+        .put("peers", JSONArray()
+            .put(JSONObject().put("id", "app-phone").put("publicKey", "shared-key"))
+            .put(JSONObject().put("id", "app-tablet").put("publicKey", "shared-key")))
+        .put("endpointProfiles", JSONArray()
+            .put(JSONObject().put("id", "app-phone").put("name", "Phone").put("endpointSource", "stun")
+                .put("stunRuleId", "shared-stun").put("port", 51820).put("resolvedEndpoint", "203.0.113.1:42137"))
+            .put(JSONObject().put("id", "app-tablet").put("name", "Tablet").put("endpointSource", "stun")
+                .put("stunRuleId", "shared-stun").put("port", 51820))
+            .put(JSONObject().put("id", "ddns-default").put("endpointSource", "ddns").put("port", 51820)
+                .put("hostname", "home.example.com").put("resolvedEndpoint", "home.example.com:51820"))
+            .put(JSONObject().put("id", "ddns-external").put("endpointSource", "ddns").put("port", 45000)
+                .put("hostname", "mapped.example.com").put("resolvedEndpoint", "mapped.example.com:45000"))))
+
+    @Test
+    fun settingsPayloadPreservesPeersUnknownFieldsAndExternalEndpoints() {
+        val root = serverWithBindings()
+        val payload = buildWireGuardServerSettingsPayload(root, 51826, 1380, "10.77.0.1/24", true)
+        assertEquals(7L, payload.getLong("expectedRevision"))
+        assertEquals("preserve", payload.getString("futureField"))
+        assertEquals(2, payload.getJSONArray("peers").length())
+        assertEquals(51820, root.getJSONObject("server").getInt("listenPort"))
+        val endpoints = payload.getJSONArray("endpointProfiles")
+        assertEquals(51826, endpoints.getJSONObject(0).getInt("port"))
+        assertEquals("203.0.113.1:42137", endpoints.getJSONObject(0).getString("resolvedEndpoint"))
+        assertEquals("home.example.com:51826", endpoints.getJSONObject(2).getString("resolvedEndpoint"))
+        assertEquals(45000, endpoints.getJSONObject(3).getInt("port"))
+        assertEquals("mapped.example.com:45000", endpoints.getJSONObject(3).getString("resolvedEndpoint"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun settingsPayloadRejectsInvalidPortInsteadOfClamping() {
+        buildWireGuardServerSettingsPayload(serverWithBindings(), 70000, 1420, "10.77.0.1/24", true)
+    }
+
+    @Test
+    fun deletingOneProfilePreservesSharedStunAndSharedKeyPeer() {
+        val profile = portProfile(WireGuardEndpointSource.STUN).copy(endpointBindingId = "shared-stun")
+        val root = serverWithBindings()
+        val payload = buildWireGuardProfileRemovalPayload(root, profile)
+        assertEquals(1, payload.getJSONArray("peers").length())
+        assertEquals("app-tablet", payload.getJSONArray("peers").getJSONObject(0).getString("id"))
+        assertEquals(3, payload.getJSONArray("endpointProfiles").length())
+        assertEquals("shared-stun", payload.getJSONArray("endpointProfiles").getJSONObject(0).getString("stunRuleId"))
+        assertEquals(listOf("Phone", "Tablet"), wireGuardStunDependents(root, "shared-stun"))
+        assertTrue(wireGuardStunDependents(root, "missing").isEmpty())
+        assertEquals(setOf("shared-stun"), wireGuardBoundStunIds(root, listOf(profile)))
+    }
+
+    @Test
+    fun newProfileNeverChangesServerListenPortOrEnablesDisabledServer() {
+        val root = serverWithBindings()
+        val profile = portProfile(WireGuardEndpointSource.DDNS, port = 51826, follows = true)
+        val payload = buildWireGuardServerPayload(root, profile, "new-public-key")
+        assertEquals(51820, payload.getInt("listenPort"))
+        assertFalse(payload.getBoolean("enabled"))
+        assertEquals("preserve", payload.getString("futureField"))
+    }
+
+    @Test
+    fun boundStunNeverFallsBackToAnotherReadyRule() {
+        val rule = parseStunSnapshot(JSONObject().put("rules", JSONArray().put(JSONObject()
+            .put("id", "other").put("transportProtocol", "UDP").put("targetPort", 51826)
+            .put("targetType", "router_self").put("targetIpv4", "127.0.0.1")))).rules.single()
+        val missing = portProfile(WireGuardEndpointSource.STUN).copy(endpointBindingId = "deleted")
+        assertEquals(null, boundWireGuardStunRule(missing, listOf(rule)))
+        assertEquals(null, boundWireGuardStunRule(missing.copy(endpointBindingId = ""), listOf(rule)))
+        assertEquals(rule, boundWireGuardStunRule(missing.copy(endpointBindingId = "other"), listOf(rule)))
+        assertTrue(isWireGuardStunTarget(rule, ""))
+        assertFalse(isWireGuardStunTarget(rule.copy(transportProtocol = "TCP"), ""))
+        assertFalse(isWireGuardStunTarget(rule.copy(targetType = "manual", targetIpv4 = "192.168.1.99"), "192.168.1.1"))
+    }
+
+    @Test
+    fun appliedSettingsNeedExactConfigAndExplicitRevisionAcknowledgement() {
+        val config = WireGuardServerConfig(listenPort = 51826, revision = 8)
+        val ready = WireGuardServerState(config, agentRevision = 8, applyResultRevision = 8,
+            applyResultOk = true, applyResultEnabled = true, capabilityRunning = true, interfaceRunning = true)
+        assertTrue(isWireGuardServerConfigApplied(ready, config))
+        assertFalse(isWireGuardServerConfigApplied(ready.copy(applyResultRevision = 7), config))
+        assertFalse(isWireGuardServerConfigApplied(ready.copy(applyResultOk = null), config))
+        assertFalse(isWireGuardServerConfigApplied(ready.copy(config = config.copy(listenPort = 51820)), config))
+        assertFalse(isWireGuardServerConfigApplied(ready.copy(applyResultEnabled = false), config))
+        val disabledConfig = config.copy(enabled = false)
+        val disabled = ready.copy(config = disabledConfig, applyResultEnabled = false, interfaceRunning = false)
+        assertTrue(isWireGuardServerConfigApplied(disabled, disabledConfig))
+        assertFalse(isWireGuardServerConfigApplied(disabled.copy(interfaceRunning = true), disabledConfig))
+    }
+
     @Test
     fun parsesIpv4AndBracketedIpv6Endpoints() {
         assertEquals("203.0.113.8" to 51820, parseWireGuardEndpoint("203.0.113.8:51820"))

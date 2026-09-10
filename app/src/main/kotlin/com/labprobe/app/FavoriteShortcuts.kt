@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,9 +92,27 @@ private fun normalizeFavoriteType(value: String?): String = when {
 
 private fun optionalFavoriteId(value: String?): String? = value?.trim()?.takeIf { it.isNotBlank() }
 
+/** Serializes every favorites read-modify-write, including STUN polling. */
+private val favoriteShortcutPersistenceLock = Any()
+
+private data class FavoriteShortcutDocument(
+    val items: List<FavoriteShortcut>,
+    val dismissedStunRuleIds: Set<String> = emptySet(),
+)
+
 internal fun parseFavoriteShortcutsJson(raw: String): List<FavoriteShortcut> {
-    val array = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
-    return (0 until array.length()).mapNotNull { index ->
+    return parseFavoriteShortcutDocument(raw).items
+}
+
+private fun parseFavoriteShortcutDocument(raw: String): FavoriteShortcutDocument {
+    val root = runCatching { JSONObject(raw) }.getOrNull()
+    val array = root?.optJSONArray("items") ?: runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
+    val dismissed = root?.optJSONArray("dismissedStunRuleIds")
+        ?.let { ids ->
+            (0 until ids.length()).mapNotNull { index -> optionalFavoriteId(ids.optString(index)) }.toSet()
+        }
+        .orEmpty()
+    val items = (0 until array.length()).mapNotNull { index ->
         val item = array.optJSONObject(index) ?: return@mapNotNull null
         val id = item.optString("id").trim()
         val title = item.optString("title").trim()
@@ -117,6 +136,7 @@ internal fun parseFavoriteShortcutsJson(raw: String): List<FavoriteShortcut> {
             serviceType = item.optString("serviceType").trim(),
         )
     }.sortedBy { it.order }
+    return FavoriteShortcutDocument(items = items, dismissedStunRuleIds = dismissed)
 }
 
 internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): String {
@@ -142,6 +162,17 @@ internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): Stri
         array.put(json)
     }
     return array.toString()
+}
+
+private fun serializeFavoriteShortcutDocument(
+    items: List<FavoriteShortcut>,
+    dismissedStunRuleIds: Set<String>,
+): String {
+    if (dismissedStunRuleIds.isEmpty()) return serializeFavoriteShortcutsJson(items)
+    return JSONObject()
+        .put("items", JSONArray(serializeFavoriteShortcutsJson(items)))
+        .put("dismissedStunRuleIds", JSONArray(dismissedStunRuleIds.sorted()))
+        .toString()
 }
 
 data class FavoriteMappingResolution(
@@ -341,7 +372,10 @@ internal fun upsertMappingFavorite(
     return saved
 }
 
-/** A STUN shortcut is system-owned and follows the latest authoritative rule snapshot. */
+/**
+ * A STUN shortcut owns only its association and live remote endpoint.  The
+ * rest is user-authored metadata and must survive routine endpoint refreshes.
+ */
 private fun favoriteFromStunRule(
     rule: StunRule,
     existing: FavoriteShortcut? = null,
@@ -360,7 +394,7 @@ private fun favoriteFromStunRule(
         formatServiceHostPort(it.host, publicPort)
     }.orEmpty()
     val publicEndpoint = cleanFavoriteEndpoint(publicAuthority, rule.serviceType)
-    val previousRemote = existing?.remoteEndpoint?.ifBlank { existing.wanUrl }.orEmpty()
+    val previousRemoteForNewFavorite = existing?.remoteEndpoint?.ifBlank { existing.wanUrl }.orEmpty()
     val remote = if (rule.ready && publicEndpoint.isNotBlank()) {
         if (hostname != null) {
             val hostPort = if (publicPort != null) "$hostname:$publicPort" else hostname
@@ -369,23 +403,44 @@ private fun favoriteFromStunRule(
             publicEndpoint
         }
     } else {
-        cleanFavoriteEndpoint(previousRemote, rule.serviceType)
+        cleanFavoriteEndpoint(previousRemoteForNewFavorite, rule.serviceType)
     }
-    return FavoriteShortcut(
-        id = "stun-${rule.id}",
-        title = rule.name.ifBlank { "STUN ${rule.serviceType}" },
-        description = "STUN 穿透 · ${rule.serviceType}",
-        iconType = "builtin",
-        iconValue = "server",
-        lanUrl = local,
-        wanUrl = remote,
-        order = existing?.order ?: order,
+    if (existing == null) {
+        return FavoriteShortcut(
+            id = "stun-${rule.id}",
+            title = rule.name.ifBlank { "STUN ${rule.serviceType}" },
+            description = "STUN 穿透 · ${rule.serviceType}",
+            iconType = "builtin",
+            iconValue = "server",
+            lanUrl = local,
+            wanUrl = remote,
+            order = order,
+            type = "stun",
+            stunRuleId = rule.id,
+            ddnsRecordId = ddnsRecordId,
+            localEndpoint = local,
+            remoteEndpoint = remote,
+            serviceType = rule.serviceType,
+        )
+    }
+
+    val previousRemote = existing.remoteEndpoint.ifBlank { existing.wanUrl }
+    val liveRemote = if (rule.ready && publicAuthority.isNotBlank()) {
+        val liveHost = hostname ?: parsedPublicEndpoint?.host.orEmpty()
+        if (liveHost.isBlank()) previousRemote else {
+            replaceFavoriteUrlHost(previousRemote, liveHost, publicPort)
+                ?: cleanFavoriteEndpoint(formatServiceHostPort(liveHost, publicPort), existing.serviceType.ifBlank { rule.serviceType })
+        }
+    } else {
+        previousRemote
+    }
+    // Do not regenerate title, icon, local address, scheme, path/query, or
+    // DDNS association.  Only the confirmed live remote endpoint is mutable.
+    return existing.copy(
         type = "stun",
         stunRuleId = rule.id,
-        ddnsRecordId = ddnsRecordId,
-        localEndpoint = local,
-        remoteEndpoint = remote,
-        serviceType = rule.serviceType,
+        remoteEndpoint = liveRemote,
+        wanUrl = liveRemote,
     )
 }
 
@@ -394,12 +449,14 @@ internal fun reconcileStunFavoriteItems(
     rules: List<StunRule>,
     ddnsSnapshot: LabProbeDdnsSnapshot? = null,
     nativeDdnsRecords: List<DdnsRecord> = emptyList(),
+    dismissedStunRuleIds: Set<String> = emptySet(),
 ): List<FavoriteShortcut> {
     val ruleIds = rules.mapTo(hashSetOf()) { it.id }
     val updated = current.filterNot { optionalFavoriteId(it.stunRuleId)?.let { id -> id !in ruleIds } == true }.toMutableList()
     rules.forEach { rule ->
         val index = updated.indexOfFirst { it.stunRuleId == rule.id }
         val existing = updated.getOrNull(index)
+        if (existing == null && rule.id in dismissedStunRuleIds) return@forEach
         val synced = favoriteFromStunRule(rule, existing, updated.size, ddnsSnapshot, nativeDdnsRecords)
         if (synced != null) {
             if (index >= 0) updated[index] = synced else updated += synced
@@ -414,18 +471,33 @@ internal fun reconcileStunFavorites(
     ddnsSnapshot: LabProbeDdnsSnapshot? = null,
     nativeDdnsRecords: List<DdnsRecord> = emptyList(),
 ): Boolean {
-    val current = prefs.favoriteShortcuts()
-    val updated = reconcileStunFavoriteItems(current, rules, ddnsSnapshot, nativeDdnsRecords)
-    if (updated == current) return false
-    prefs.saveFavoriteShortcuts(updated)
-    return true
+    return synchronized(favoriteShortcutPersistenceLock) {
+        val document = parseFavoriteShortcutDocument(prefs.favoriteShortcutsJson)
+        val updated = reconcileStunFavoriteItems(
+            current = document.items,
+            rules = rules,
+            ddnsSnapshot = ddnsSnapshot,
+            nativeDdnsRecords = nativeDdnsRecords,
+            dismissedStunRuleIds = document.dismissedStunRuleIds,
+        )
+        if (updated == document.items) return@synchronized false
+        prefs.saveFavoriteShortcuts(updated)
+        true
+    }
 }
 
-internal fun removeStunFavorite(prefs: AppPrefs, ruleId: String): Int {
-    val current = prefs.favoriteShortcuts()
-    val updated = current.filterNot { it.stunRuleId == ruleId }
-    if (updated.size != current.size) prefs.saveFavoriteShortcuts(updated.mapIndexed { order, item -> item.copy(order = order) })
-    return current.size - updated.size
+internal fun removeStunFavorite(prefs: AppPrefs, ruleId: String, rememberDismissal: Boolean = false): Int {
+    return synchronized(favoriteShortcutPersistenceLock) {
+        val current = prefs.favoriteShortcuts()
+        val updated = current.filterNot { it.stunRuleId == ruleId }
+        if (updated.size != current.size || rememberDismissal) {
+            prefs.saveFavoriteShortcuts(
+                updated.mapIndexed { order, item -> item.copy(order = order) },
+                dismissedStunRuleIds = if (rememberDismissal) setOf(ruleId) else emptySet(),
+            )
+        }
+        current.size - updated.size
+    }
 }
 
 internal fun resolveFavoriteLocalEndpoint(
@@ -649,11 +721,21 @@ private val favoriteImageClient = OkHttpClient.Builder()
     .build()
 
 fun AppPrefs.favoriteShortcuts(): List<FavoriteShortcut> {
-    return parseFavoriteShortcutsJson(favoriteShortcutsJson)
+    return synchronized(favoriteShortcutPersistenceLock) {
+        parseFavoriteShortcutsJson(favoriteShortcutsJson)
+    }
 }
 
-fun AppPrefs.saveFavoriteShortcuts(items: List<FavoriteShortcut>) {
-    favoriteShortcutsJson = serializeFavoriteShortcutsJson(items)
+fun AppPrefs.saveFavoriteShortcuts(
+    items: List<FavoriteShortcut>,
+    dismissedStunRuleIds: Set<String> = emptySet(),
+) {
+    synchronized(favoriteShortcutPersistenceLock) {
+        val existing = parseFavoriteShortcutDocument(favoriteShortcutsJson)
+        val activeStunIds = items.mapNotNull { optionalFavoriteId(it.stunRuleId) }.toSet()
+        val dismissed = (existing.dismissedStunRuleIds + dismissedStunRuleIds) - activeStunIds
+        favoriteShortcutsJson = serializeFavoriteShortcutDocument(items, dismissed)
+    }
 }
 
 fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
@@ -846,6 +928,9 @@ fun FavoritesScreen(
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val mappingApi = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val stunApi = remember(prefs.hub, prefs.token, prefs.hubDns) { StunApi(prefs) }
+    val operations = remember(prefs.hub, prefs.token, prefs.hubDns) { NetworkOperationRegistry.get(prefs) }
+    val operationState by operations.state.collectAsState()
+    val latestOperationState by rememberUpdatedState(operationState)
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val ddnsSnapshot = ddnsResource.value
@@ -900,9 +985,33 @@ fun FavoritesScreen(
         }
         shortcuts = prefs.favoriteShortcuts()
     }
+    LaunchedEffect(operationState?.targetId, operationState?.running, operationState?.completedVersion) {
+        if (operationState?.targetId?.startsWith("stun:") == true) {
+            // A pre-mutation snapshot must never remain usable after a STUN
+            // write; opening a favorite will wait for a confirmed refresh.
+            stunRules = null
+        }
+    }
     LaunchedEffect(stunApi, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
         while (true) {
-            runCatching { stunApi.list() }.getOrNull()?.takeIf { it.rulesLoaded }?.let { snapshot ->
+            val before = latestOperationState
+            if (before?.running == true) {
+                delay(400L)
+                continue
+            }
+            val fetched = try {
+                stunApi.list()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            val after = latestOperationState
+            if (after?.running == true || after?.completedVersion != before?.completedVersion) {
+                delay(400L)
+                continue
+            }
+            fetched?.takeIf { it.rulesLoaded }?.let { snapshot ->
                 stunRules = snapshot.rules
                 reconcileStunFavorites(prefs, snapshot.rules, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
             }
@@ -1083,6 +1192,10 @@ fun FavoritesScreen(
                                 toast(context, "关联映射已删除，无法复制旧地址")
                             } else if (currentStun.missing) {
                                 toast(context, "关联 STUN 规则已删除，无法复制旧地址")
+                            } else if (normalizeFavoriteType(shortcut.type) == "stun" && !currentStun.known) {
+                                toast(context, "STUN 状态尚未同步，无法确认最新地址")
+                            } else if (currentStun.rule != null && !currentStun.rule.ready) {
+                                toast(context, "STUN 穿透当前未就绪，无法确认最新地址")
                             } else {
                                 val address = if (mode == "wan" && shortcut.ddnsRecordId != null) {
                                     favoriteAddressForCopy(
@@ -1098,7 +1211,19 @@ fun FavoritesScreen(
                         onViewMapping = {
                             if (resolveFavoriteMapping(shortcut, mappingRules).missing) toast(context, "关联映射不存在") else onOpenPortMapping()
                         },
-                        onDelete = { persist(shortcuts.filterNot { it.id == shortcut.id }) },
+                        onDelete = {
+                            if (normalizeFavoriteType(shortcut.type) == "stun") {
+                                val ruleId = optionalFavoriteId(shortcut.stunRuleId)
+                                if (ruleId != null) {
+                                    removeStunFavorite(prefs, ruleId, rememberDismissal = true)
+                                    shortcuts = prefs.favoriteShortcuts()
+                                } else {
+                                    persist(shortcuts.filterNot { it.id == shortcut.id })
+                                }
+                            } else {
+                                persist(shortcuts.filterNot { it.id == shortcut.id })
+                            }
+                        },
                         onMoveBy = { delta ->
                             val from = shortcuts.indexOfFirst { it.id == shortcut.id }
                             if (from >= 0) {

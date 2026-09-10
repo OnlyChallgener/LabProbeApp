@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - codex/wg-stun-operation-sync
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +24,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run static Python regression tests
+        run: python -m unittest discover -s tools -p 'test_*.py' -v
 
       - uses: actions/setup-java@v4
         with:
@@ -54,18 +63,21 @@ jobs:
           test -f app/src/main/kotlin/com/labprobe/app/RouterControlUi.kt
           test -f app/src/main/kotlin/com/labprobe/app/FavoriteShortcuts.kt
           test -f docs/AI_ASSISTANT_UI_CONSTRAINTS.md
+          test -f docs/WG_STUN_OPERATION_SYNC_20260910.md
+          test -f tools/test_wg_stun_contracts.py
 
           ROOT_MD=$(find . -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort)
-          if [ "$ROOT_MD" != "README.md" ]; then
-            echo "Root documentation must be consolidated into README.md only." >&2
+          EXPECTED_ROOT_MD=$(printf '%s\n' README.md design.md | sort)
+          if [ "$ROOT_MD" != "$EXPECTED_ROOT_MD" ]; then
+            echo "Root documentation must match the tracked repository documents." >&2
             printf '%s\n' "$ROOT_MD" >&2
             exit 1
           fi
 
           WORKFLOWS=$(find .github/workflows -maxdepth 1 -type f -name '*.yml' -printf '%f\n' | sort)
-          EXPECTED_WORKFLOWS=$(printf '%s\n' android-release.yml ci.yml test-bundle.yml)
+          EXPECTED_WORKFLOWS=$(printf '%s\n' android-release.yml ci.yml test-bundle.yml ui-material-reference.yml | sort)
           if [ "$WORKFLOWS" != "$EXPECTED_WORKFLOWS" ]; then
-            echo "Only CI, Android Release and Test Bundle workflows are allowed." >&2
+            echo "Workflow files must match the tracked repository workflows." >&2
             printf '%s\n' "$WORKFLOWS" >&2
             exit 1
           fi
@@ -149,6 +161,17 @@ jobs:
           LABPROBE_KEY_ALIAS: ${{ secrets.LABPROBE_KEY_ALIAS }}
           LABPROBE_KEY_PASSWORD: ${{ secrets.LABPROBE_KEY_PASSWORD }}
         run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace --console=plain
+
+      - name: Upload Android test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LabProbe-android-test-reports-${{ github.sha }}
+          path: |
+            app/build/test-results/testDebugUnitTest
+            app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify signed release test APK
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository

@@ -57,6 +57,27 @@ class FavoriteLinkModelTest {
     }
 
     @Test
+    fun favoriteEnvelopeKeepsLegacyVisibleItemsReadable() {
+        val raw = JSONObject()
+            .put("items", JSONArray().put(
+                JSONObject()
+                    .put("id", "stun-stun-1")
+                    .put("title", "NAS")
+                    .put("iconType", "builtin")
+                    .put("iconValue", "server")
+                    .put("order", 0)
+                    .put("type", "stun")
+                    .put("stunRuleId", "stun-1")
+            ))
+            .put("dismissedStunRuleIds", JSONArray().put("stun-deleted"))
+            .toString()
+
+        val favorite = parseFavoriteShortcutsJson(raw).single()
+        assertEquals("stun-stun-1", favorite.id)
+        assertEquals("stun-1", favorite.stunRuleId)
+    }
+
+    @Test
     fun mappingFavoriteRoundTripKeepsAssociationFields() {
         val before = FavoriteShortcut(
             id = "favorite-1",

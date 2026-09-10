@@ -122,6 +122,29 @@ class StunModelTest {
     }
 
     @Test
+    fun mappedAddressIsStillConfirmingUntilTheFreshMappingAndForwarderAreReady() {
+        val pending = sampleStunRule().copy(
+            runtime = StunRuntime(publicEndpoint = "203.0.113.9:20001", mappingFresh = false),
+            nativeMappingState = "pending",
+        )
+
+        assertFalse(pending.ready)
+        assertEquals("已保存 / 正在确认穿透", stunRuleStateLabel(pending, agentOnline = true))
+        assertEquals("STUN 地址已获取", stunRuleStateLabel(sampleStunRule(), agentOnline = true))
+    }
+
+    @Test
+    fun wireGuardBoundTargetChangesAreDetectedByFieldNotServiceName() {
+        val rule = sampleStunRule().copy(name = "任意名称", serviceType = "Custom")
+
+        assertFalse(stunTargetBindingChanged(rule, StunDraft.from(rule)))
+        assertTrue(stunTargetBindingChanged(rule, StunDraft.from(rule).copy(targetPort = "51821")))
+        assertTrue(stunTargetBindingChanged(rule, StunDraft.from(rule).copy(targetIpv4 = "192.168.5.47")))
+        assertTrue(stunTargetBindingChanged(rule, StunDraft.from(rule).copy(transportProtocol = "TCP")))
+        assertTrue(stunTargetBindingChanged(rule, StunDraft.from(rule).copy(enabled = false)))
+    }
+
+    @Test
     fun validatesIpv4PortAndRemarkBeforeSaving() {
         assertEquals("请输入有效的内网 IPv4 地址", stunDraftValidationError(StunDraft(targetIpv4 = "192.168.5.999")))
         assertEquals("目标端口必须是 1–65535", stunDraftValidationError(StunDraft(targetIpv4 = "192.168.5.46", targetPort = "0")))
@@ -173,7 +196,7 @@ class StunModelTest {
         )
 
         val updated = reconcileStunFavoriteItems(listOf(existing), listOf(stopped)).single()
-        assertEquals("192.168.5.46:8080", updated.localEndpoint)
+        assertEquals("https://192.168.5.46:443", updated.localEndpoint)
         assertEquals("203.0.113.9:20001", updated.remoteEndpoint)
         assertEquals(
             "已停止",
@@ -208,6 +231,50 @@ class StunModelTest {
 
         assertEquals("https://198.51.100.20:20200", reconcileStunFavoriteItems(listOf(existing), listOf(refreshed)).single().remoteEndpoint)
         assertEquals(listOf(unrelated.copy(order = 0)), reconcileStunFavoriteItems(listOf(existing, unrelated), emptyList()))
+    }
+
+    @Test
+    fun stunFavoriteRefreshIsSourceKeyedAndPreservesUserMetadata() {
+        val existing = sampleStunFavorite().copy(
+            title = "我自己的 NAS 名称",
+            description = "保留此说明",
+            iconType = "url",
+            iconValue = "https://example.test/icon.png",
+            lanUrl = "https://192.168.5.46:443/local-path",
+            localEndpoint = "https://192.168.5.46:443/local-path",
+            wanUrl = "https://203.0.113.9:20001/admin?tab=1#logs",
+            remoteEndpoint = "https://203.0.113.9:20001/admin?tab=1#logs",
+            serviceType = "HTTPS",
+            ddnsRecordId = "ddns-home",
+        )
+        val refreshed = sampleStunRule().copy(
+            runtime = StunRuntime(publicEndpoint = "198.51.100.20:20200", publicPort = 20200, mappingFresh = true),
+        )
+
+        val updated = reconcileStunFavoriteItems(listOf(existing), listOf(refreshed)).single()
+        assertEquals(existing.title, updated.title)
+        assertEquals(existing.description, updated.description)
+        assertEquals(existing.iconType, updated.iconType)
+        assertEquals(existing.iconValue, updated.iconValue)
+        assertEquals(existing.localEndpoint, updated.localEndpoint)
+        assertEquals("ddns-home", updated.ddnsRecordId)
+        assertEquals("https://198.51.100.20:20200/admin?tab=1#logs", updated.remoteEndpoint)
+        assertEquals(updated.remoteEndpoint, updated.wanUrl)
+    }
+
+    @Test
+    fun sameNamedStunRuleDoesNotRebindFavoriteAndDismissalPreventsResurrection() {
+        val linked = sampleStunFavorite()
+        val unrelatedSameName = sampleStunRule().copy(id = "stun-2")
+
+        assertTrue(reconcileStunFavoriteItems(listOf(linked), listOf(unrelatedSameName)).isEmpty())
+        assertTrue(
+            reconcileStunFavoriteItems(
+                current = emptyList(),
+                rules = listOf(sampleStunRule()),
+                dismissedStunRuleIds = setOf("stun-1"),
+            ).isEmpty(),
+        )
     }
 
     private fun sampleStunFavorite() = FavoriteShortcut(
