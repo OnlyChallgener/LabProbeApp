@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class NetworkOperationTest {
@@ -49,6 +50,23 @@ class NetworkOperationTest {
         assertFalse(operations.state.value?.running ?: true)
         assertNull(operations.state.value?.error)
         assertEquals(2L, operations.state.value?.completedVersion)
+    }
+
+    @Test
+    fun consumesOnlyTheMatchingCompletedError() = runBlocking {
+        val operations = operations()
+
+        assertTrue(operations.launch("wg:gateway", "正在停用…") {
+            error("HTTP 502")
+        })
+        assertNull(operations.consumeCompletedError("stun:"))
+        assertEquals("HTTP 502", operations.state.value?.error)
+
+        val consumed = operations.consumeCompletedError("wg:")
+        assertNotNull(consumed)
+        assertEquals("wg:gateway", consumed?.targetId)
+        assertEquals("HTTP 502", consumed?.message)
+        assertNull(operations.state.value?.error)
     }
 
     @Test

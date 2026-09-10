@@ -106,6 +106,117 @@ class WireGuardClientTest {
     }
 
     @Test
+    fun dependencySnapshotUsesOnlyExactServerRuleAndProfileIds() {
+        val snapshot = parseWireGuardStunDependencySnapshot(serverWithBindings())
+
+        assertEquals(2, snapshot.references.size)
+        assertEquals(listOf("app-phone", "app-tablet"), snapshot.forRule("shared-stun").map { it.endpointProfileId })
+        assertEquals(listOf("app-phone", "app-tablet"), snapshot.forRule("shared-stun").map { it.peerId })
+        assertEquals("shared-stun", snapshot.forEndpointProfile("app-phone")?.ruleId)
+        assertTrue(snapshot.forRule("missing").isEmpty())
+    }
+
+    @Test
+    fun explicitRuleCleanupRemovesOnlyExactReferencesAndSameIdPeers() {
+        val root = serverWithBindings()
+        val plan = buildWireGuardRuleCleanupPlan(root, "shared-stun")
+
+        assertEquals(7L, plan.payload.getLong("expectedRevision"))
+        assertEquals(listOf("app-phone", "app-tablet"), plan.removedEndpointProfileIds)
+        assertEquals(listOf("app-phone", "app-tablet"), plan.removedPeerIds)
+        assertEquals(0, plan.payload.getJSONArray("peers").length())
+        assertEquals(2, plan.payload.getJSONArray("endpointProfiles").length())
+        assertEquals("ddns-default", plan.payload.getJSONArray("endpointProfiles").getJSONObject(0).getString("id"))
+        assertEquals("preserve", plan.payload.getString("futureField"))
+        assertEquals(2, root.getJSONObject("server").getJSONArray("peers").length())
+    }
+
+    @Test
+    fun automaticToManualTransitionRemovesOnlyOwnedRowsAndKeepsStunRuleExternal() {
+        val old = portProfile(WireGuardEndpointSource.STUN).copy(endpointBindingId = "shared-stun")
+        val manual = old.copy(endpointSource = WireGuardEndpointSource.MANUAL, endpointBindingId = "")
+        val plan = buildWireGuardProfileTransitionPlan(serverWithBindings(), old, manual, "")
+
+        assertEquals(listOf("app-phone"), plan.removedEndpointProfileIds)
+        assertEquals(listOf("app-phone"), plan.removedPeerIds)
+        assertEquals(1, plan.payload.getJSONArray("peers").length())
+        assertEquals("app-tablet", plan.payload.getJSONArray("peers").getJSONObject(0).getString("id"))
+        assertEquals("shared-stun", plan.payload.getJSONArray("endpointProfiles").getJSONObject(0).getString("stunRuleId"))
+        assertEquals("preserve", plan.payload.getString("futureField"))
+    }
+
+    @Test
+    fun automaticRebindReplacesOwnedServerRowsWithoutCarryingOldEndpoint() {
+        val old = portProfile(WireGuardEndpointSource.STUN).copy(endpointBindingId = "shared-stun")
+        val rebound = editedWireGuardProfile(old, old.copy(endpointBindingId = "new-rule"))
+        val plan = buildWireGuardProfileTransitionPlan(serverWithBindings(), old, rebound, "new-key")
+        val endpoints = plan.payload.getJSONArray("endpointProfiles")
+        val owned = (0 until endpoints.length()).map(endpoints::getJSONObject).single { it.getString("id") == "app-phone" }
+
+        assertEquals("new-rule", owned.getString("stunRuleId"))
+        assertEquals("", owned.getString("resolvedEndpoint"))
+        assertEquals(1, (0 until endpoints.length()).count { endpoints.getJSONObject(it).optString("stunRuleId") == "shared-stun" })
+        assertEquals(2, plan.payload.getJSONArray("peers").length())
+    }
+
+    @Test
+    fun mutationMessagesDistinguishNotSubmittedFromAcceptedPendingAgent() {
+        val upstream = HubHttpException(502, "上游服务暂不可用")
+        val read = wireGuardMutationFailureMessage(WireGuardMutationStage.READ_BEFORE_SUBMIT, upstream)
+        val submit = wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, upstream)
+        val wait = wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, upstream)
+
+        assertTrue(read.contains("尚未提交"))
+        assertTrue(submit.contains("未确认接收"))
+        assertTrue(wait.contains("已接受"))
+        assertTrue(wait.contains("等待 Agent"))
+        assertTrue(isWireGuardSubmissionUncertain(upstream))
+        assertTrue(isWireGuardSubmissionUncertain(java.io.IOException("timeout")))
+        assertFalse(isWireGuardSubmissionUncertain(HubHttpException(400, "bad payload")))
+        assertFalse(isWireGuardSubmissionUncertain(HubHttpException(409, "conflict")))
+    }
+
+    @Test
+    fun mutationPayloadDropsKnownRuntimeFieldsButPreservesFutureConfiguration() {
+        val server = serverWithBindings().getJSONObject("server")
+            .put("runtime", JSONObject().put("running", true))
+            .put("serverPublicKey", "read-only")
+        val payload = copyWireGuardServerForMutation(server)
+
+        assertFalse(payload.has("runtime"))
+        assertFalse(payload.has("serverPublicKey"))
+        assertEquals("preserve", payload.getString("futureField"))
+        assertEquals(4, payload.getJSONArray("endpointProfiles").length())
+    }
+
+    @Test
+    fun uncertainStunCreateClaimsOnlyOneExactNewCompatibleRule() {
+        fun row(id: String, port: Int, protocol: String = "UDP") = JSONObject()
+            .put("id", id)
+            .put("name", id)
+            .put("enabled", true)
+            .put("serviceType", "WireGuard")
+            .put("transportProtocol", protocol)
+            .put("targetType", "router_self")
+            .put("targetIpv4", "127.0.0.1")
+            .put("targetPort", port)
+        val after = parseStunSnapshot(JSONObject().put("rules", JSONArray()
+            .put(row("before", 51820))
+            .put(row("new-compatible", 51820))
+            .put(row("new-wrong-port", 51826))
+            .put(row("new-wrong-protocol", 51820, "TCP"))))
+
+        assertEquals(
+            listOf("new-compatible"),
+            compatibleNewWireGuardStunRules(setOf("before"), after, 51820, "").map { it.id },
+        )
+        assertEquals(
+            2,
+            compatibleNewWireGuardStunRules(emptySet(), after, 51820, "").size,
+        )
+    }
+
+    @Test
     fun newProfileNeverChangesServerListenPortOrEnablesDisabledServer() {
         val root = serverWithBindings()
         val profile = portProfile(WireGuardEndpointSource.DDNS, port = 51826, follows = true)

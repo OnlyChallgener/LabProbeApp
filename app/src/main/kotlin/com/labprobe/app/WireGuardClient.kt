@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.net.URI
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
@@ -556,6 +557,71 @@ data class WireGuardProvisionResult(
     val message: String,
 )
 
+data class WireGuardStunServerReference(
+    val ruleId: String,
+    val endpointProfileId: String,
+    val peerId: String,
+)
+
+data class WireGuardStunDependencySnapshot(
+    val references: List<WireGuardStunServerReference>,
+) {
+    fun forRule(ruleId: String): List<WireGuardStunServerReference> =
+        references.filter { it.ruleId == ruleId.trim() }
+
+    fun forEndpointProfile(endpointProfileId: String): WireGuardStunServerReference? =
+        references.firstOrNull { it.endpointProfileId == endpointProfileId.trim() }
+}
+
+data class WireGuardBindingCleanupResult(
+    val ruleId: String,
+    val removedEndpointProfileIds: List<String>,
+    val removedPeerIds: List<String>,
+    val appliedRevision: Long,
+)
+
+data class WireGuardProfileTransitionResult(
+    val profile: WireGuardProfile,
+    val removedEndpointProfileIds: List<String>,
+    val removedPeerIds: List<String>,
+    val appliedRevision: Long,
+)
+
+sealed interface WireGuardRemoteMutationResult<out T> {
+    data class Applied<T>(val value: T) : WireGuardRemoteMutationResult<T>
+    data class PendingVerification(
+        val submittedRevision: Long?,
+        val message: String,
+    ) : WireGuardRemoteMutationResult<Nothing>
+    data class NotSubmitted(val message: String) : WireGuardRemoteMutationResult<Nothing>
+}
+
+class WireGuardPendingVerificationException(
+    val submittedRevision: Long?,
+    message: String,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)
+
+internal data class WireGuardServerRemovalPlan(
+    val payload: JSONObject,
+    val removedEndpointProfileIds: List<String>,
+    val removedPeerIds: List<String>,
+)
+
+internal enum class WireGuardMutationStage { READ_BEFORE_SUBMIT, SUBMIT, WAIT_AGENT }
+
+internal fun isWireGuardSubmissionUncertain(error: Throwable): Boolean =
+    error is IOException || (error is HubHttpException && (error.statusCode == 408 || error.statusCode >= 500))
+
+internal fun wireGuardMutationFailureMessage(stage: WireGuardMutationStage, error: Throwable): String {
+    val reason = error.message?.trim().orEmpty().ifBlank { "上游服务暂不可用" }
+    return when (stage) {
+        WireGuardMutationStage.READ_BEFORE_SUBMIT -> "读取 WireGuard 配置失败，尚未提交：$reason"
+        WireGuardMutationStage.SUBMIT -> "提交 WireGuard 修改时 Hub 未确认接收；请先刷新核对，不要重复操作：$reason"
+        WireGuardMutationStage.WAIT_AGENT -> "Hub 已接受 WireGuard 修改，但等待 Agent 应用回执失败；请刷新核对，不要重复提交：$reason"
+    }
+}
+
 internal fun wireGuardPeerId(profileId: String): String =
     ("app-" + profileId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }).take(48)
 
@@ -565,10 +631,26 @@ internal fun wireGuardEndpointProfileId(profileId: String): String =
 internal fun wireGuardServerPublicKey(root: JSONObject): String =
     root.optJSONObject("agentStatus")?.optJSONObject("applyResult")?.optString("publicKey").orEmpty().trim()
 
+private val wireGuardServerReadOnlyFields = setOf(
+    "revision", "agentStatus", "runtime", "status", "applyResult", "capability",
+    "serverPublicKey", "publicKey", "createdAt", "updatedAt", "lastAppliedAt",
+)
+
+/** Keeps forward-compatible configuration fields but never echoes known runtime/read-only state into PUT. */
+internal fun copyWireGuardServerForMutation(server: JSONObject): JSONObject = JSONObject().apply {
+    val copy = JSONObject(server.toString())
+    val keys = copy.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        if (key !in wireGuardServerReadOnlyFields) put(key, copy.get(key))
+    }
+}
+
 internal fun buildWireGuardServerPayload(
     root: JSONObject,
     profile: WireGuardProfile,
     clientPublicKey: String,
+    replaceMatchingPublicKey: Boolean = true,
 ): JSONObject {
     require(profile.endpointSource != WireGuardEndpointSource.MANUAL) { "手动配置不会上传 Hub" }
     require(clientPublicKey.isNotBlank()) { "客户端公钥不可用" }
@@ -584,7 +666,9 @@ internal fun buildWireGuardServerPayload(
     val oldPeers = existing.optJSONArray("peers") ?: JSONArray()
     for (index in 0 until oldPeers.length()) {
         val row = oldPeers.optJSONObject(index) ?: continue
-        if (row.optString("id") != peerId && row.optString("publicKey") != clientPublicKey) peers.put(JSONObject(row.toString()))
+        if (row.optString("id") != peerId && (!replaceMatchingPublicKey || row.optString("publicKey") != clientPublicKey)) {
+            peers.put(JSONObject(row.toString()))
+        }
     }
     peers.put(JSONObject().apply {
         put("id", peerId)
@@ -623,7 +707,7 @@ internal fun buildWireGuardServerPayload(
         }
     })
 
-    return JSONObject(existing.toString()).apply {
+    return copyWireGuardServerForMutation(JSONObject(existing.toString())).apply {
         put("expectedRevision", root.optLong("revision", 0L))
         put("interfaceName", existing.optString("interfaceName", "labwg0").ifBlank { "labwg0" })
         put("address", existing.optString("address", "10.77.0.1/24").ifBlank { "10.77.0.1/24" })
@@ -742,7 +826,7 @@ private fun JSONObject.optNullableString(name: String): String =
 
 internal fun buildWireGuardServerEnablePayload(root: JSONObject): JSONObject {
     val server = root.optJSONObject("server") ?: throw IllegalStateException("WireGuard 网关配置不存在")
-    return JSONObject(server.toString())
+    return copyWireGuardServerForMutation(server)
         .put("expectedRevision", root.optLong("revision", 0L))
         .put("enabled", true)
 }
@@ -759,7 +843,7 @@ internal fun buildWireGuardServerSettingsPayload(
     require(mtu in 1280..1500) { "MTU 必须是 1280–1500" }
     val server = root.optJSONObject("server") ?: throw IllegalStateException("无法读取网关配置，未提交修改")
     val oldPort = server.optInt("listenPort", DEFAULT_WIREGUARD_PORT)
-    val payload = JSONObject(server.toString())
+    val payload = copyWireGuardServerForMutation(JSONObject(server.toString()))
         .put("expectedRevision", root.getLong("revision"))
         .put("listenPort", listenPort)
         .put("mtu", mtu)
@@ -797,6 +881,23 @@ internal fun wireGuardStunDependents(root: JSONObject, ruleId: String): List<Str
     }.distinct()
 }
 
+internal fun parseWireGuardStunDependencySnapshot(root: JSONObject): WireGuardStunDependencySnapshot {
+    val server = root.optJSONObject("server")
+        ?: throw IllegalStateException("无法读取 WireGuard 网关配置")
+    val endpoints = server.optJSONArray("endpointProfiles") ?: JSONArray()
+    val references = buildList {
+        for (index in 0 until endpoints.length()) {
+            val row = endpoints.optJSONObject(index) ?: continue
+            if (row.optString("endpointSource") != WireGuardEndpointSource.STUN.wireValue) continue
+            val ruleId = row.optString("stunRuleId").trim()
+            val endpointProfileId = row.optString("id").trim()
+            if (ruleId.isBlank() || endpointProfileId.isBlank()) continue
+            add(WireGuardStunServerReference(ruleId, endpointProfileId, endpointProfileId))
+        }
+    }
+    return WireGuardStunDependencySnapshot(references.distinct())
+}
+
 internal fun wireGuardBoundStunIds(root: JSONObject, profiles: List<WireGuardProfile>): Set<String> {
     val endpoints = root.optJSONObject("server")?.optJSONArray("endpointProfiles") ?: JSONArray()
     return buildSet {
@@ -813,6 +914,16 @@ internal fun isWireGuardStunTarget(rule: StunRule, routerIp: String): Boolean =
     rule.transportProtocol == "UDP" && (rule.targetType == "router_self" ||
         rule.targetIpv4 == "127.0.0.1" || (routerIp.isNotBlank() && rule.targetIpv4 == routerIp))
 
+internal fun compatibleNewWireGuardStunRules(
+    beforeIds: Set<String>,
+    after: StunSnapshot,
+    listenPort: Int,
+    routerIp: String,
+): List<StunRule> = if (!after.rulesLoaded) emptyList() else after.rules.filter {
+    it.id !in beforeIds && it.enabled && it.serviceType.equals("WireGuard", ignoreCase = true) &&
+        it.targetPort == listenPort && isWireGuardStunTarget(it, routerIp)
+}
+
 internal fun buildWireGuardProfileRemovalPayload(root: JSONObject, profile: WireGuardProfile): JSONObject {
     val server = root.optJSONObject("server") ?: throw IllegalStateException("无法读取网关配置，未删除")
     val id = wireGuardEndpointProfileId(profile.id)
@@ -825,7 +936,7 @@ internal fun buildWireGuardProfileRemovalPayload(root: JSONObject, profile: Wire
             }
         }
     }
-    return JSONObject(server.toString())
+    return copyWireGuardServerForMutation(server)
         .put("expectedRevision", root.getLong("revision"))
         .put("peers", withoutOwnRows("peers"))
         .put("endpointProfiles", withoutOwnRows("endpointProfiles"))
@@ -838,6 +949,83 @@ internal fun isWireGuardServerConfigApplied(state: WireGuardServerState, expecte
         state.applyResultOk != true || state.applyResultEnabled != expected.enabled || state.applyError.isNotBlank()) return false
     return if (expected.enabled) isWireGuardServerReady(state, expected.revision)
         else state.interfaceRunning != true
+}
+
+internal fun buildWireGuardRuleCleanupPlan(root: JSONObject, ruleId: String): WireGuardServerRemovalPlan {
+    val exactRuleId = ruleId.trim()
+    require(exactRuleId.isNotBlank()) { "必须明确指定 STUN 规则 ID" }
+    val server = root.optJSONObject("server") ?: throw IllegalStateException("无法读取网关配置，未清理")
+    val endpoints = server.optJSONArray("endpointProfiles") ?: JSONArray()
+    val endpointIds = buildList {
+        for (index in 0 until endpoints.length()) {
+            val row = endpoints.optJSONObject(index) ?: continue
+            if (row.optString("endpointSource") == WireGuardEndpointSource.STUN.wireValue &&
+                row.optString("stunRuleId").trim() == exactRuleId) {
+                val id = row.optString("id").trim()
+                require(id.isNotBlank()) { "服务端存在无 ID 的绑定，无法安全清理" }
+                add(id)
+            }
+        }
+    }.distinct()
+    val peerIds = buildList {
+        val peers = server.optJSONArray("peers") ?: JSONArray()
+        for (index in 0 until peers.length()) {
+            val id = peers.optJSONObject(index)?.optString("id")?.trim().orEmpty()
+            if (id in endpointIds) add(id)
+        }
+    }.distinct()
+    fun filteredRows(name: String, removedIds: Set<String>): JSONArray {
+        val rows = server.optJSONArray(name) ?: JSONArray()
+        return JSONArray().apply {
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+                if (row.optString("id").trim() !in removedIds) put(JSONObject(row.toString()))
+            }
+        }
+    }
+    val payload = copyWireGuardServerForMutation(server)
+        .put("expectedRevision", root.getLong("revision"))
+        .put("endpointProfiles", filteredRows("endpointProfiles", endpointIds.toSet()))
+        .put("peers", filteredRows("peers", peerIds.toSet()))
+    return WireGuardServerRemovalPlan(payload, endpointIds, peerIds)
+}
+
+internal fun buildWireGuardProfileTransitionPlan(
+    root: JSONObject,
+    oldProfile: WireGuardProfile,
+    newProfile: WireGuardProfile,
+    clientPublicKey: String,
+): WireGuardServerRemovalPlan {
+    require(oldProfile.id == newProfile.id) { "配置身份已改变，不能作为同一事务提交" }
+    require(oldProfile.endpointSource != WireGuardEndpointSource.MANUAL) { "旧配置不是自动配置" }
+    if (newProfile.endpointSource != WireGuardEndpointSource.MANUAL) require(clientPublicKey.isNotBlank()) { "客户端公钥不可用" }
+    val server = root.optJSONObject("server") ?: throw IllegalStateException("无法读取网关配置，未提交转换")
+    val ownedId = wireGuardEndpointProfileId(oldProfile.id)
+    fun withoutOwned(name: String): JSONArray {
+        val rows = server.optJSONArray(name) ?: JSONArray()
+        return JSONArray().apply {
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { row ->
+                if (row.optString("id") != ownedId) put(JSONObject(row.toString()))
+            }
+        }
+    }
+    val endpointWasPresent = (server.optJSONArray("endpointProfiles") ?: JSONArray()).let { rows ->
+        (0 until rows.length()).any { rows.optJSONObject(it)?.optString("id") == ownedId }
+    }
+    val peerWasPresent = (server.optJSONArray("peers") ?: JSONArray()).let { rows ->
+        (0 until rows.length()).any { rows.optJSONObject(it)?.optString("id") == ownedId }
+    }
+    val strippedServer = copyWireGuardServerForMutation(server)
+        .put("endpointProfiles", withoutOwned("endpointProfiles"))
+        .put("peers", withoutOwned("peers"))
+    val strippedRoot = JSONObject(root.toString()).put("server", strippedServer)
+    val payload = if (newProfile.endpointSource == WireGuardEndpointSource.MANUAL) {
+        JSONObject(strippedServer.toString()).put("expectedRevision", root.getLong("revision"))
+    } else buildWireGuardServerPayload(strippedRoot, newProfile, clientPublicKey, replaceMatchingPublicKey = false)
+    return WireGuardServerRemovalPlan(
+        payload,
+        if (endpointWasPresent) listOf(ownedId) else emptyList(),
+        if (peerWasPresent) listOf(ownedId) else emptyList(),
+    )
 }
 
 internal fun isWireGuardServerReady(state: WireGuardServerState, targetRevision: Long = state.config.revision): Boolean {
@@ -913,6 +1101,222 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         wireGuardStunDependents(root, ruleId)
     }
 
+    suspend fun loadStunDependencySnapshot(): WireGuardStunDependencySnapshot = withContext(Dispatchers.IO) {
+        val root = try {
+            getServer()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            throw IllegalStateException(wireGuardMutationFailureMessage(WireGuardMutationStage.READ_BEFORE_SUBMIT, error), error)
+        }
+        parseWireGuardStunDependencySnapshot(root)
+    }
+
+    private suspend fun submitRemovalPlan(
+        buildPlan: (JSONObject) -> WireGuardServerRemovalPlan,
+    ): WireGuardRemoteMutationResult<Pair<WireGuardServerRemovalPlan, WireGuardServerState>> {
+        var lastConflict: HubHttpException? = null
+        repeat(3) { attempt ->
+            val before = try {
+                getServer()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                return WireGuardRemoteMutationResult.NotSubmitted(
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.READ_BEFORE_SUBMIT, error),
+                )
+            }
+            val plan = try {
+                buildPlan(before)
+            } catch (error: Exception) {
+                return WireGuardRemoteMutationResult.NotSubmitted(error.message ?: "提交前校验失败")
+            }
+            val response = try {
+                requestText("/api/wireguard/server", "PUT", plan.payload.toString())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: HubHttpException) {
+                if (error.statusCode == 409 && attempt < 2) {
+                    lastConflict = error
+                    return@repeat
+                }
+                if (isWireGuardSubmissionUncertain(error)) {
+                    return WireGuardRemoteMutationResult.PendingVerification(
+                        submittedRevision = null,
+                        message = wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error),
+                    )
+                }
+                return WireGuardRemoteMutationResult.NotSubmitted(
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error),
+                )
+            } catch (error: Exception) {
+                if (isWireGuardSubmissionUncertain(error)) {
+                    return WireGuardRemoteMutationResult.PendingVerification(
+                        submittedRevision = null,
+                        message = wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error),
+                    )
+                }
+                return WireGuardRemoteMutationResult.NotSubmitted(
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error),
+                )
+            }
+            val expected = try {
+                parseWireGuardServerState(JSONObject(response)).config.also {
+                    require(it.revision > 0L) { "Hub 返回结果缺少配置版本" }
+                }
+            } catch (error: Exception) {
+                return WireGuardRemoteMutationResult.PendingVerification(
+                    submittedRevision = null,
+                    message = wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error),
+                )
+            }
+            val applied = try {
+                awaitServerConfig(expected)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                return WireGuardRemoteMutationResult.PendingVerification(
+                    submittedRevision = expected.revision,
+                    message = wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error),
+                )
+            }
+            return WireGuardRemoteMutationResult.Applied(plan to applied)
+        }
+        return WireGuardRemoteMutationResult.NotSubmitted(
+            wireGuardMutationFailureMessage(
+                WireGuardMutationStage.SUBMIT,
+                lastConflict ?: IllegalStateException("配置版本持续冲突，请刷新后重试"),
+            ),
+        )
+    }
+
+    suspend fun cleanupOrphanedStunBinding(
+        ruleId: String,
+        localProfiles: List<WireGuardProfile>,
+    ): WireGuardRemoteMutationResult<WireGuardBindingCleanupResult> = withContext(Dispatchers.IO) {
+        serverMutationMutex.withLock {
+            val exactRuleId = ruleId.trim()
+            if (exactRuleId.isBlank()) return@withLock WireGuardRemoteMutationResult.NotSubmitted("必须明确指定 STUN 规则 ID")
+            if (localProfiles.any {
+                it.endpointSource == WireGuardEndpointSource.STUN && it.endpointBindingId == exactRuleId
+            }) return@withLock WireGuardRemoteMutationResult.NotSubmitted("本机仍有 WireGuard 配置引用该穿透，不能作为残留清理")
+            val localEndpointIds = localProfiles.map { wireGuardEndpointProfileId(it.id) }.toSet()
+            val result = submitRemovalPlan { root ->
+                buildWireGuardRuleCleanupPlan(root, exactRuleId).also { plan ->
+                    require(plan.removedEndpointProfileIds.none { it in localEndpointIds }) {
+                        "本机仍有对应的 WireGuard 配置，不能作为仅服务端残留清理"
+                    }
+                    require(plan.removedEndpointProfileIds.isNotEmpty()) { "服务端已没有该 STUN 规则的 WireGuard 引用" }
+                }
+            }
+            val applied = when (result) {
+                is WireGuardRemoteMutationResult.Applied -> result.value
+                is WireGuardRemoteMutationResult.PendingVerification -> return@withLock result
+                is WireGuardRemoteMutationResult.NotSubmitted -> return@withLock result
+            }
+            val plan = applied.first
+            val state = applied.second
+            val latest = try {
+                getServer()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                    state.config.revision,
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error),
+                )
+            }
+            if (parseWireGuardStunDependencySnapshot(latest).forRule(exactRuleId).isNotEmpty()) {
+                return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                    state.config.revision,
+                    "Hub 已接受清理，但该规则引用仍存在；请刷新核对",
+                )
+            }
+            WireGuardRemoteMutationResult.Applied(WireGuardBindingCleanupResult(
+                ruleId = exactRuleId,
+                removedEndpointProfileIds = plan.removedEndpointProfileIds,
+                removedPeerIds = plan.removedPeerIds,
+                appliedRevision = state.config.revision,
+            ))
+        }
+    }
+
+    suspend fun transitionAutomaticProfile(
+        oldProfile: WireGuardProfile,
+        newProfile: WireGuardProfile,
+        clientPublicKey: String,
+    ): WireGuardRemoteMutationResult<WireGuardProfileTransitionResult> = withContext(Dispatchers.IO) {
+        serverMutationMutex.withLock {
+            val result = submitRemovalPlan { root ->
+                buildWireGuardProfileTransitionPlan(root, oldProfile, newProfile, clientPublicKey)
+            }
+            val applied = when (result) {
+                is WireGuardRemoteMutationResult.Applied -> result.value
+                is WireGuardRemoteMutationResult.PendingVerification -> return@withLock result
+                is WireGuardRemoteMutationResult.NotSubmitted -> return@withLock result
+            }
+            val (plan, state) = applied
+            val latest = try {
+                getServer()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                    state.config.revision,
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error),
+                )
+            }
+            val server = latest.getJSONObject("server")
+            val ownedId = wireGuardEndpointProfileId(oldProfile.id)
+            val endpointRows = server.optJSONArray("endpointProfiles") ?: JSONArray()
+            val peerRows = server.optJSONArray("peers") ?: JSONArray()
+            val endpoint = (0 until endpointRows.length()).mapNotNull(endpointRows::optJSONObject)
+                .firstOrNull { it.optString("id") == ownedId }
+            val peerExists = (0 until peerRows.length()).any { peerRows.optJSONObject(it)?.optString("id") == ownedId }
+            if (newProfile.endpointSource == WireGuardEndpointSource.MANUAL) {
+                if (endpoint != null || peerExists) return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                    state.config.revision, "自动配置的服务端引用仍存在；本机尚未切换",
+                )
+            } else {
+                if (endpoint == null || !peerExists) return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                    state.config.revision, "新自动配置未完整写入；本机尚未切换",
+                )
+                if (endpoint.optString("endpointSource") != newProfile.endpointSource.wireValue) {
+                    return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                        state.config.revision, "服务端端点来源与新配置不一致；本机尚未切换",
+                    )
+                }
+                if (newProfile.endpointSource == WireGuardEndpointSource.STUN) {
+                    if (endpoint.optString("stunRuleId") != newProfile.endpointBindingId) {
+                        return@withLock WireGuardRemoteMutationResult.PendingVerification(
+                            state.config.revision, "服务端 STUN 绑定与新配置不一致；本机尚未切换",
+                        )
+                    }
+                }
+            }
+            val publicKey = wireGuardServerPublicKey(latest).ifBlank { newProfile.serverPublicKey }
+            WireGuardRemoteMutationResult.Applied(WireGuardProfileTransitionResult(
+                profile = newProfile.copy(serverPublicKey = publicKey),
+                removedEndpointProfileIds = plan.removedEndpointProfileIds,
+                removedPeerIds = plan.removedPeerIds,
+                appliedRevision = state.config.revision,
+            ))
+        }
+    }
+
+    suspend fun removeAutomaticProfileTransaction(
+        profile: WireGuardProfile,
+    ): WireGuardRemoteMutationResult<WireGuardProfileTransitionResult> {
+        val localOnly = profile.copy(
+            endpointSource = WireGuardEndpointSource.MANUAL,
+            endpointBindingId = "",
+            endpointRevision = 0L,
+            endpointUpdatedAt = 0L,
+            endpointUpdateError = "",
+        )
+        return transitionAutomaticProfile(profile, localOnly, clientPublicKey = "")
+    }
+
     private fun routerLanIp(): String {
         requireOriginalConnection()
         val status = runCatching { hubApi.requestJson("/api/status") }.getOrNull()
@@ -979,9 +1383,37 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         enabled: Boolean = true,
     ): WireGuardServerConfig = withContext(Dispatchers.IO) {
         serverMutationMutex.withLock {
-            val payload = buildWireGuardServerSettingsPayload(getServer(), listenPort, mtu, address, enabled)
-            val saved = JSONObject(requestText("/api/wireguard/server", "PUT", payload.toString()))
-            parseWireGuardServerState(saved).config
+            val before = try {
+                getServer()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                throw IllegalStateException(wireGuardMutationFailureMessage(WireGuardMutationStage.READ_BEFORE_SUBMIT, error), error)
+            }
+            val payload = buildWireGuardServerSettingsPayload(before, listenPort, mtu, address, enabled)
+            val response = try {
+                requestText("/api/wireguard/server", "PUT", payload.toString())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (isWireGuardSubmissionUncertain(error)) {
+                    throw WireGuardPendingVerificationException(
+                        null,
+                        wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error),
+                        error,
+                    )
+                }
+                throw IllegalStateException(wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error), error)
+            }
+            try {
+                parseWireGuardServerState(JSONObject(response)).config
+            } catch (error: Exception) {
+                throw WireGuardPendingVerificationException(
+                    null,
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error),
+                    error,
+                )
+            }
         }
     }
 
@@ -996,7 +1428,13 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
     ): WireGuardServerUpdateResult = withContext(Dispatchers.IO) {
         serverMutationMutex.withLock {
             onProgress("正在核对网关与穿透依赖…")
-            val before = getServer()
+            val before = try {
+                getServer()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                throw IllegalStateException(wireGuardMutationFailureMessage(WireGuardMutationStage.READ_BEFORE_SUBMIT, error), error)
+            }
             val oldConfig = parseWireGuardServerState(before).config
             val authoritativeProfiles = resolveProfilesForPort(oldConfig.listenPort)
             // Disabling alone must remain possible even when a former STUN binding is missing.
@@ -1015,9 +1453,33 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
             }
             val payload = buildWireGuardServerSettingsPayload(before, listenPort, mtu, address, enabled, authoritativeProfiles)
             onProgress("正在提交网关修改…")
-            val saved = JSONObject(requestText("/api/wireguard/server", "PUT", payload.toString()))
-            val config = parseWireGuardServerState(saved).config
-            require(config.revision > 0L) { "网关修改结果待确认，请刷新核对" }
+            val response = try {
+                requestText("/api/wireguard/server", "PUT", payload.toString())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (isWireGuardSubmissionUncertain(error)) {
+                    throw WireGuardPendingVerificationException(
+                        null,
+                        wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error),
+                        error,
+                    )
+                }
+                throw IllegalStateException(wireGuardMutationFailureMessage(WireGuardMutationStage.SUBMIT, error), error)
+            }
+            val config = try {
+                parseWireGuardServerState(JSONObject(response)).config
+            } catch (error: Exception) {
+                throw WireGuardPendingVerificationException(
+                    null,
+                    wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error),
+                    error,
+                )
+            }
+            if (config.revision <= 0L) throw WireGuardPendingVerificationException(
+                null,
+                "Hub 已接受 WireGuard 修改，但返回结果缺少版本；请刷新核对，不要重复提交",
+            )
             onProgress("网关已提交，正在等待 Agent 应用回执…")
             try {
                 awaitServerConfig(config)
@@ -1025,7 +1487,8 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
                 throw cancelled
             } catch (error: Exception) {
                 return@withLock WireGuardServerUpdateResult(config, applied = false,
-                    warnings = listOf(error.message ?: "网关应用结果待确认"), pendingStunRuleIds = boundIds.toList(),
+                    warnings = listOf(wireGuardMutationFailureMessage(WireGuardMutationStage.WAIT_AGENT, error)),
+                    pendingStunRuleIds = boundIds.toList(),
                     previousListenPort = oldConfig.listenPort)
             }
             val warnings = mutableListOf<String>()
@@ -1071,7 +1534,8 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         requireOriginalConnection()
         profile.endpointBindingId.takeIf { it.isNotBlank() }?.let { id ->
             val selected = rules.firstOrNull { it.id == id } ?: throw IllegalArgumentException("绑定的 STUN 规则不存在")
-            require(selected.enabled && isWireGuardStunTarget(selected, routerIp) && selected.targetPort == listenPort) {
+            require(selected.enabled && selected.serviceType.equals("WireGuard", ignoreCase = true) &&
+                isWireGuardStunTarget(selected, routerIp) && selected.targetPort == listenPort) {
                 "请选择指向当前网关 UDP $listenPort 的已启用穿透规则"
             }
             return@withContext selected.id
@@ -1080,18 +1544,40 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
             it.enabled && isWireGuardStunTarget(it, routerIp) && it.targetPort == listenPort &&
                 it.serviceType.equals("WireGuard", ignoreCase = true)
         }
-        require(candidates.size <= 1) { "有多个可用 WG 穿透规则，请明确选择绑定" }
-        candidates.singleOrNull()?.let { return@withContext it.id }
-        api.create(
-            StunDraft(
-                serviceType = "WireGuard",
-                transportProtocol = "UDP",
-                targetType = "router_self",
-                targetIpv4 = "127.0.0.1",
-                targetPort = listenPort.toString(),
-                name = "WireGuard",
-            )
-        ).id
+        require(candidates.isEmpty()) {
+            "发现已有可用 WG 穿透规则；为避免把手动规则误认作自动规则，请明确选择绑定"
+        }
+        val draft = StunDraft(
+            serviceType = "WireGuard",
+            transportProtocol = "UDP",
+            targetType = "router_self",
+            targetIpv4 = "127.0.0.1",
+            targetPort = listenPort.toString(),
+            name = "WireGuard",
+        )
+        try {
+            api.create(draft).id.also { require(it.isNotBlank()) { "Hub 返回的 STUN 规则缺少 ID" } }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            val uncertain = error is IOException ||
+                (error is HubHttpException && (error.statusCode == 408 || error.statusCode >= 500))
+            if (!uncertain) throw error
+            val after = try {
+                api.list()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                throw IllegalStateException("STUN 创建结果待核对；请刷新列表，不要重复新增", error)
+            }
+            require(after.rulesLoaded) { "STUN 创建结果待核对；列表不完整，请刷新后明确选择，不要重复新增" }
+            val created = compatibleNewWireGuardStunRules(rules.map { it.id }.toSet(), after, listenPort, routerIp)
+            when (created.size) {
+                1 -> created.single().id
+                0 -> throw IllegalStateException("STUN 创建结果待核对；未发现可精确认领的新规则，请刷新后明确选择", error)
+                else -> throw IllegalStateException("发现多条新 WireGuard STUN 规则，未自动认领；请刷新后按规则 ID 选择", error)
+            }
+        }
     }
 
     suspend fun provision(profile: WireGuardProfile, clientPublicKey: String): WireGuardProvisionResult = withContext(Dispatchers.IO) {
@@ -1187,27 +1673,10 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
 
     suspend fun removeAutomaticProfile(profile: WireGuardProfile, clientPublicKey: String) = withContext(Dispatchers.IO) {
         if (profile.endpointSource == WireGuardEndpointSource.MANUAL) return@withContext
-        serverMutationMutex.withLock {
-            repeat(3) { attempt ->
-                val root = getServer()
-                val payload = buildWireGuardProfileRemovalPayload(root, profile)
-                try {
-                    val saved = JSONObject(requestText("/api/wireguard/server", "PUT", payload.toString()))
-                val config = parseWireGuardServerState(saved).config
-                require(config.revision > 0L) { "删除已提交，结果待确认；保留本机配置" }
-                awaitServerConfig(config)
-                val currentServer = getServer().getJSONObject("server")
-                val ownIds = setOf(profile.id, wireGuardEndpointProfileId(profile.id))
-                val stillPresent = listOf("peers", "endpointProfiles").any { name ->
-                    val rows = currentServer.optJSONArray(name) ?: JSONArray()
-                    (0 until rows.length()).any { rows.optJSONObject(it)?.optString("id") in ownIds }
-                }
-                check(!stillPresent) { "配置被其他操作重新写入，已保留本机配置，请刷新核对" }
-                return@withLock
-                } catch (error: HubHttpException) {
-                    if (error.statusCode != 409 || attempt == 2) throw error
-                }
-            }
+        when (val result = removeAutomaticProfileTransaction(profile)) {
+            is WireGuardRemoteMutationResult.Applied -> Unit
+            is WireGuardRemoteMutationResult.PendingVerification -> throw IllegalStateException(result.message)
+            is WireGuardRemoteMutationResult.NotSubmitted -> throw IllegalStateException(result.message)
         }
     }
 }

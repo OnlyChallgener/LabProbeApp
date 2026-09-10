@@ -133,7 +133,8 @@ class WireGuardStaticContracts(unittest.TestCase):
             "suspend fun ensureStunBinding",
         )
         self.assertIn("serverMutationMutex.withLock", sync)
-        self.assertIn("val before = getServer()", sync)
+        self.assertIn("val before = try", sync)
+        self.assertIn("getServer()", sync)
         self.assertIn("stunApi.update", sync)
         self.assertIn("onProgress", sync)
         self.assertIn("isWireGuardServerConfigApplied", self.client)

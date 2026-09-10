@@ -18,6 +18,12 @@ data class NetworkOperationState(
     val completedVersion: Long = 0L,
 )
 
+data class NetworkOperationError(
+    val targetId: String,
+    val message: String,
+    val completedVersion: Long,
+)
+
 class NetworkOperations internal constructor(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
 ) {
@@ -27,6 +33,29 @@ class NetworkOperations internal constructor(
     private val mutableState = MutableStateFlow<NetworkOperationState?>(null)
 
     val state: StateFlow<NetworkOperationState?> = mutableState.asStateFlow()
+
+    /**
+     * A page may acknowledge only the completed error that belongs to it.
+     * Keeping this operation-scoped prevents a WG/gateway failure from being
+     * consumed or rendered by the STUN page.
+     */
+    fun consumeCompletedError(targetPrefix: String? = null): NetworkOperationError? {
+        synchronized(lock) {
+            val current = mutableState.value ?: return null
+            val message = current.error?.trim().orEmpty()
+            if (current.running || message.isBlank()) return null
+            if (targetPrefix != null && !current.targetId.startsWith(targetPrefix)) return null
+            mutableState.value = current.copy(error = null)
+            return NetworkOperationError(
+                targetId = current.targetId,
+                message = message,
+                completedVersion = current.completedVersion,
+            )
+        }
+    }
+
+    fun acknowledgeCompletedError(targetPrefix: String? = null): Boolean =
+        consumeCompletedError(targetPrefix) != null
 
     fun launch(
         targetId: String,

@@ -60,6 +60,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -100,6 +101,35 @@ private val StunGreen = LabV2.Green
 private val StunAmber = LabV2.Amber
 private val StunRed = LabV2.Red
 private const val STUN_MAPPING_FRESH_SECONDS = 90L
+internal const val STUN_OPERATION_PREFIX = "stun:"
+
+internal fun isStunOperationTarget(targetId: String): Boolean = targetId.startsWith(STUN_OPERATION_PREFIX)
+
+internal data class StunWireGuardDependencySnapshot(
+    val localProfileNames: List<String> = emptyList(),
+    val remoteProfileNames: List<String> = emptyList(),
+)
+
+internal enum class StunWireGuardMutationPolicy {
+    ALLOW,
+    BLOCK_LOCAL_REFERENCE,
+    CONFIRM_REMOTE_RESIDUE,
+}
+
+internal fun stunWireGuardMutationPolicy(dependencies: StunWireGuardDependencySnapshot): StunWireGuardMutationPolicy = when {
+    dependencies.localProfileNames.isNotEmpty() -> StunWireGuardMutationPolicy.BLOCK_LOCAL_REFERENCE
+    dependencies.remoteProfileNames.isNotEmpty() -> StunWireGuardMutationPolicy.CONFIRM_REMOTE_RESIDUE
+    else -> StunWireGuardMutationPolicy.ALLOW
+}
+
+internal fun isWireGuardManagedStunRule(
+    ruleId: String,
+    localBindingIds: Set<String>,
+    remoteManagedRuleIds: Set<String>,
+): Boolean = ruleId.isNotBlank() && ruleId in localBindingIds + remoteManagedRuleIds
+
+internal fun stunResidualConfirmationText(action: String): String =
+    "Hub 仍记录 WireGuard 对此规则的绑定，但本机没有对应配置。确认清理残留 WG 绑定后再${action}？"
 
 data class StunRuntime(
     val state: String = "stopped",
@@ -377,11 +407,26 @@ internal fun stunAddressForCopy(serviceType: String, endpoint: String): String {
 
 internal fun stunTargetBindingChanged(rule: StunRule, draft: StunDraft): Boolean {
     val targetIpv4 = if (draft.targetType == "router_self") "127.0.0.1" else draft.targetIpv4.trim()
-    return rule.targetType != draft.targetType ||
-        rule.targetIpv4 != targetIpv4 ||
-        rule.targetPort != draft.targetPort.toIntOrNull() ||
-        !rule.transportProtocol.equals(draft.transportProtocol, ignoreCase = true) ||
-        (rule.enabled && !draft.enabled)
+    return stunDraftBindingChanged(
+        StunDraft(
+            enabled = rule.enabled,
+            transportProtocol = rule.transportProtocol,
+            targetType = rule.targetType,
+            targetIpv4 = rule.targetIpv4,
+            targetPort = rule.targetPort.toString(),
+        ),
+        draft.copy(targetIpv4 = targetIpv4),
+    )
+}
+
+internal fun stunDraftBindingChanged(previous: StunDraft, next: StunDraft): Boolean {
+    val previousIpv4 = if (previous.targetType == "router_self") "127.0.0.1" else previous.targetIpv4.trim()
+    val nextIpv4 = if (next.targetType == "router_self") "127.0.0.1" else next.targetIpv4.trim()
+    return previous.targetType != next.targetType ||
+        previousIpv4 != nextIpv4 ||
+        previous.targetPort.toIntOrNull() != next.targetPort.toIntOrNull() ||
+        !previous.transportProtocol.equals(next.transportProtocol, ignoreCase = true) ||
+        (previous.enabled && !next.enabled)
 }
 
 internal fun stunRuleStateLabel(rule: StunRule, agentOnline: Boolean, deleting: Boolean = false): String = when {
@@ -403,24 +448,34 @@ private fun isUncertainStunCreateFailure(failure: Throwable): Boolean =
     generateSequence(failure) { it.cause }
         .any { it is IOException || it.message.orEmpty().contains("timeout", ignoreCase = true) || it.message.orEmpty().contains("timed out", ignoreCase = true) }
 
-private suspend fun stunWireGuardDependents(
+private suspend fun stunWireGuardDependencySnapshot(
     prefs: AppPrefs,
     context: Context,
     ruleId: String,
-): List<String> {
+): StunWireGuardDependencySnapshot {
     // The Hub is authoritative for endpointProfiles.  Do not continue if that
     // read fails; a local cache alone cannot safely prove a rule is unused.
-    val remote = WireGuardHubApi(prefs).stunRuleDependents(ruleId)
+    val remote = WireGuardHubApi(prefs).loadStunDependencySnapshot()
+        .forRule(ruleId)
+        .map { reference ->
+            reference.endpointProfileId.ifBlank { reference.peerId }.ifBlank { "服务端 WireGuard 绑定" }
+        }
     val local = withContext(Dispatchers.IO) {
         WireGuardProfileStore(context.applicationContext, prefs).load()
             .filter { it.endpointSource == WireGuardEndpointSource.STUN && it.endpointBindingId == ruleId }
             .map { it.name.ifBlank { it.id } }
     }
-    return (remote + local).distinct()
+    return StunWireGuardDependencySnapshot(
+        localProfileNames = local.distinct(),
+        remoteProfileNames = remote.distinct(),
+    )
 }
 
 private fun stunDependencyBlocker(names: List<String>): String =
     "以下 WireGuard 配置正在使用此穿透：${names.joinToString("、")}。请先在 WireGuard 中移除或改绑后再继续。"
+
+private fun stunDependencyBlocker(dependencies: StunWireGuardDependencySnapshot): String =
+    stunDependencyBlocker((dependencies.localProfileNames + dependencies.remoteProfileNames).distinct())
 private fun formatStunBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
@@ -433,6 +488,13 @@ private fun copyStunAddress(context: Context, serviceType: String, endpoint: Str
     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("STUN 地址", value))
     toast(context, "地址已复制")
 }
+
+private data class StunResidualConfirmation(
+    val ruleId: String,
+    val actionLabel: String,
+    val draft: StunDraft? = null,
+    val continueMutation: () -> Unit,
+)
 
 @Composable
 fun StunPenetrationScreen(
@@ -464,14 +526,85 @@ fun StunPenetrationScreen(
     var pendingCreateRequest by remember { mutableStateOf<StunDraft?>(null) }
     var failedEditorDraft by remember { mutableStateOf<StunDraft?>(null) }
     var acknowledgedOperationVersion by remember { mutableStateOf(0L) }
+    var shownStunErrorVersion by remember { mutableStateOf(0L) }
     var historyTarget by remember { mutableStateOf<StunRule?>(null) }
     var history by remember { mutableStateOf<List<StunAddressRecord>>(emptyList()) }
     var menuFor by remember { mutableStateOf<String?>(null) }
     var leaving by remember { mutableStateOf(false) }
     var mutationGeneration by remember { mutableStateOf(0L) }
     var deletingRuleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var wireGuardManagedRuleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var dependencyCheckingRuleId by remember { mutableStateOf<String?>(null) }
+    var residualConfirmation by remember { mutableStateOf<StunResidualConfirmation?>(null) }
     val refreshMutex = remember { Mutex() }
-    val activeStunOperation = operationState?.takeIf { it.targetId.startsWith("stun:") }
+    val activeStunOperation = operationState?.takeIf { isStunOperationTarget(it.targetId) }
+    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
+        val localBindingIds = withContext(Dispatchers.IO) {
+            WireGuardProfileStore(context.applicationContext, prefs).load()
+                .filter { it.endpointSource == WireGuardEndpointSource.STUN }
+                .map { it.endpointBindingId.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
+        }
+        val remoteBindingIds = try {
+            WireGuardHubApi(prefs).loadStunDependencySnapshot().references
+                .map { it.ruleId }
+                .filter { it.isNotBlank() }
+                .toSet()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptySet()
+        }
+        wireGuardManagedRuleIds = localBindingIds + remoteBindingIds
+    }
+    fun beginStunDependencyCheck(
+        ruleId: String,
+        actionLabel: String,
+        draft: StunDraft? = null,
+        onAllowed: () -> Unit,
+    ) {
+        if (dependencyCheckingRuleId != null || latestOperationState?.running == true) {
+            error = "已有网络操作正在进行，请完成后再试"
+            return
+        }
+        dependencyCheckingRuleId = ruleId
+        scope.launch {
+            try {
+                val dependencies = stunWireGuardDependencySnapshot(prefs, context, ruleId)
+                if (dependencies.localProfileNames.isNotEmpty() || dependencies.remoteProfileNames.isNotEmpty()) {
+                    wireGuardManagedRuleIds = wireGuardManagedRuleIds + ruleId
+                } else {
+                    wireGuardManagedRuleIds = wireGuardManagedRuleIds - ruleId
+                }
+                when (stunWireGuardMutationPolicy(dependencies)) {
+                    StunWireGuardMutationPolicy.ALLOW -> onAllowed()
+                    StunWireGuardMutationPolicy.BLOCK_LOCAL_REFERENCE -> {
+                        error = stunDependencyBlocker(dependencies)
+                        editorSaving = false
+                    }
+                    StunWireGuardMutationPolicy.CONFIRM_REMOTE_RESIDUE -> {
+                        residualConfirmation = StunResidualConfirmation(
+                            ruleId = ruleId,
+                            actionLabel = actionLabel,
+                            draft = draft,
+                            continueMutation = onAllowed,
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                // A failed Hub/Agent dependency read proves nothing. Keep all
+                // local and remote references untouched and make the error
+                // dismissible instead of attempting a best-effort cleanup.
+                error = uiMessageZh(failure.message).ifBlank { "无法核实 WireGuard 绑定，未修改 STUN 规则" }
+                editorSaving = false
+            } finally {
+                dependencyCheckingRuleId = null
+            }
+        }
+    }
     suspend fun refresh(silent: Boolean = false, allowRunningTargetId: String? = null) {
         while (!leaving) {
             val activeBeforeLock = latestOperationState
@@ -503,9 +636,29 @@ fun StunPenetrationScreen(
                             agentOnline = effectiveAgentOnline,
                             agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { latest.agentLastSeenAt } ?: latest.agentLastSeenAt,
                         )
-                        error = if (!latest.rulesLoaded) "Hub 本次未返回 STUN 规则，已保留现有设置" else
-                            operationAfter?.takeIf { !it.running && it.targetId.startsWith("stun:") &&
-                                it.completedVersion > acknowledgedOperationVersion }?.error?.let(::uiMessageZh).orEmpty()
+                        val completedStunError = operationAfter?.takeIf {
+                            !it.running && isStunOperationTarget(it.targetId) &&
+                                it.completedVersion > acknowledgedOperationVersion &&
+                                it.completedVersion > shownStunErrorVersion &&
+                                !it.error.isNullOrBlank()
+                        }
+                        val completedStunErrorText = operationAfter?.error?.let(::uiMessageZh).orEmpty()
+                        val isSuccessfulStunRefresh = acceptsRules && completedStunError == null
+                        error = when {
+                            !latest.rulesLoaded -> "Hub 本次未返回 STUN 规则，已保留现有设置"
+                            completedStunError != null -> {
+                                shownStunErrorVersion = completedStunError.completedVersion
+                                completedStunErrorText.ifBlank { "STUN 操作失败" }
+                            }
+                            isSuccessfulStunRefresh && shownStunErrorVersion > 0L -> {
+                                operations.acknowledgeCompletedError(STUN_OPERATION_PREFIX)
+                                acknowledgedOperationVersion = maxOf(acknowledgedOperationVersion, shownStunErrorVersion)
+                                shownStunErrorVersion = 0L
+                                if (uncertainCreateRuleId == null) "" else error
+                            }
+                            isSuccessfulStunRefresh && uncertainCreateRuleId == null -> ""
+                            else -> error
+                        }
                         if (acceptsRules) {
                             withContext(Dispatchers.IO) {
                                 reconcileStunFavorites(prefs, latest.rules, ddnsSnapshot, nativeDdnsRecords)
@@ -522,7 +675,14 @@ fun StunPenetrationScreen(
                         throw cancelled
                     } catch (failure: Throwable) {
                         if (!leaving) {
-                            error = if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
+                            val operationAfter = latestOperationState
+                            val unrelatedOperationChanged = operationAfter?.let {
+                                it.completedVersion != operationVersion && !isStunOperationTarget(it.targetId)
+                            } == true
+                            error = if (unrelatedOperationChanged) {
+                                // A WG/gateway failure is not a STUN page error.
+                                error
+                            } else if (snapshot.rules.isNotEmpty() && (liveAgent?.online == true || snapshot.agentOnline)) {
                                 "Agent 在线，状态暂未同步；已保留全部穿透设置"
                             } else {
                                 uiMessageZh(failure.message).ifBlank { "无法读取 STUN 穿透状态" }
@@ -575,7 +735,7 @@ fun StunPenetrationScreen(
     LaunchedEffect(operationState?.completedVersion) {
         val completed = operationState ?: return@LaunchedEffect
         if (!completed.running && completed.completedVersion > 0L) {
-            if (completed.targetId.startsWith("stun:")) {
+            if (isStunOperationTarget(completed.targetId)) {
                 deletingRuleIds = deletingRuleIds - completed.targetId.removePrefix("stun:")
                 completed.error?.let { error = uiMessageZh(it).ifBlank { "STUN 操作失败" } }
                 if (completed.error?.contains("创建结果尚未确认") == true) {
@@ -646,7 +806,37 @@ fun StunPenetrationScreen(
                 color = if (informationalError) StunAmber.copy(alpha = .08f) else StunRed.copy(alpha = .08f),
                 border = BorderStroke(1.dp, (if (informationalError) StunAmber else StunRed).copy(alpha = .18f)),
             ) {
-                Text(error, color = if (informationalError) StunAmber else StunRed, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp))
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        error,
+                        color = if (informationalError) StunAmber else StunRed,
+                        fontSize = LabTypography.Supporting.fontSize,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            operations.acknowledgeCompletedError(STUN_OPERATION_PREFIX)
+                            val completedVersion = operationState
+                                ?.takeIf { !it.running && isStunOperationTarget(it.targetId) }
+                                ?.completedVersion
+                                ?: 0L
+                            acknowledgedOperationVersion = maxOf(
+                                acknowledgedOperationVersion,
+                                shownStunErrorVersion,
+                                completedVersion,
+                            )
+                            shownStunErrorVersion = 0L
+                            error = ""
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    ) {
+                        Text("关闭", style = LabTypography.CompactButton, color = if (informationalError) StunAmber else StunRed)
+                    }
+                }
             }
         }
         if (loading && snapshot.rules.isEmpty()) {
@@ -672,6 +862,11 @@ fun StunPenetrationScreen(
                 StunRuleCard(
                     rule = rule,
                     agentOnline = snapshot.agentOnline,
+                    wireGuardManaged = isWireGuardManagedStunRule(
+                        rule.id,
+                        wireGuardManagedRuleIds,
+                        emptySet(),
+                    ),
                     deleting = rule.id in deletingRuleIds,
                     operationLabel = activeStunOperation?.takeIf { it.running && it.targetId == "stun:${rule.id}" }?.label,
                     menuOpen = menuFor == rule.id,
@@ -687,27 +882,29 @@ fun StunPenetrationScreen(
                     onToggle = {
                         menuFor = null
                         val action = if (rule.enabled) "stop" else "start"
-                        if (!operations.launch("stun:${rule.id}", if (rule.enabled) "正在核实 WireGuard 依赖…" else "正在开始穿透…") { report ->
-                                if (rule.enabled) {
-                                    val dependents = stunWireGuardDependents(prefs, context, rule.id)
-                                    if (dependents.isNotEmpty()) throw IllegalStateException(stunDependencyBlocker(dependents))
-                                }
+                        val startToggle = {
+                            if (!operations.launch(STUN_OPERATION_PREFIX + rule.id, if (rule.enabled) "正在停止穿透…" else "正在开始穿透…") { report ->
                                 report(if (rule.enabled) "正在停止穿透…" else "正在开始穿透…")
                                 mutationGeneration++
                                 api.action(rule.id, action)
                                 mutationGeneration++
                                 report(if (rule.enabled) "已停止，正在确认状态…" else "已提交，正在确认穿透…")
-                                refresh(true, "stun:${rule.id}")
+                                refresh(true, STUN_OPERATION_PREFIX + rule.id)
                             }) {
-                            error = "已有网络操作正在进行，请完成后再试"
+                                error = "已有网络操作正在进行，请完成后再试"
+                            }
+                        }
+                        if (rule.enabled) {
+                            beginStunDependencyCheck(rule.id, "停用", onAllowed = startToggle)
+                        } else {
+                            startToggle()
                         }
                     },
                     onDelete = {
                         menuFor = null
                         val deletedId = rule.id
-                        if (!operations.launch("stun:$deletedId", "正在核实 WireGuard 依赖…") { report ->
-                                val dependents = stunWireGuardDependents(prefs, context, deletedId)
-                                if (dependents.isNotEmpty()) throw IllegalStateException(stunDependencyBlocker(dependents))
+                        val deleteRule = {
+                            if (!operations.launch(STUN_OPERATION_PREFIX + deletedId, "正在删除穿透…") { report ->
                                 deletingRuleIds = deletingRuleIds + deletedId
                                 report("正在删除穿透…")
                                 mutationGeneration++
@@ -716,10 +913,12 @@ fun StunPenetrationScreen(
                                 snapshot = snapshot.copy(rules = snapshot.rules.filterNot { it.id == deletedId })
                                 withContext(Dispatchers.IO) { removeStunFavorite(prefs, deletedId, rememberDismissal = true) }
                                 report("已删除，正在确认列表…")
-                                refresh(true, "stun:$deletedId")
+                                refresh(true, STUN_OPERATION_PREFIX + deletedId)
                             }) {
-                            error = "已有网络操作正在进行，请完成后再试"
+                                error = "已有网络操作正在进行，请完成后再试"
+                            }
                         }
+                        beginStunDependencyCheck(deletedId, "删除", onAllowed = deleteRule)
                     },
                 )
             }
@@ -748,18 +947,15 @@ fun StunPenetrationScreen(
                     // account-wide operation runner so the button cannot be raced.
                     editorSaving = true
                     val targetId = "stun:${request.id.ifBlank { "new" }}"
-                    if (operations.launch(targetId, "正在保存 STUN 穿透…") { report ->
+                    val startSave = {
+                        if (operations.launch(targetId, "正在保存 STUN 穿透…") { report ->
                         try {
                             if (!isCreate) {
-                                report("正在核实 WireGuard 依赖…")
+                                report("正在核实 STUN 规则…")
                                 val authoritative = api.list()
                                 require(authoritative.rulesLoaded) { "STUN 规则未完整加载，未保存修改" }
                                 val current = authoritative.rules.firstOrNull { it.id == request.id }
                                     ?: throw IllegalStateException("该 STUN 规则已不存在，请刷新核对")
-                                if (stunTargetBindingChanged(current, request)) {
-                                    val dependents = stunWireGuardDependents(prefs, context, current.id)
-                                    if (dependents.isNotEmpty()) throw IllegalStateException(stunDependencyBlocker(dependents))
-                                }
                             }
                             report("正在保存 STUN 穿透…")
                             mutationGeneration++
@@ -781,17 +977,85 @@ fun StunPenetrationScreen(
                             throw failure
                         }
                         }) {
-                        editor = null
-                        editorSaving = false
+                            editor = null
+                            editorSaving = false
+                        } else {
+                            editorSaving = false
+                            editorError = "已有网络操作正在进行，请完成后再试"
+                        }
+                    }
+                    if (!isCreate && stunDraftBindingChanged(draft, saved)) {
+                        beginStunDependencyCheck(
+                            ruleId = request.id,
+                            actionLabel = "保存修改",
+                            draft = saved,
+                            onAllowed = startSave,
+                        )
                     } else {
-                        editorSaving = false
-                        editorError = "已有网络操作正在进行，请完成后再试"
+                        startSave()
                     }
                 }
             }
         }
     }
     historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
+    residualConfirmation?.let { pending ->
+        AlertDialog(
+            onDismissRequest = {
+                residualConfirmation = null
+                if (pending.draft != null) editorSaving = false
+            },
+            title = { Text("发现 WireGuard 残留绑定", style = LabTypography.CardTitle) },
+            text = { Text(stunResidualConfirmationText(pending.actionLabel), style = LabTypography.Supporting) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        residualConfirmation = null
+                        dependencyCheckingRuleId = pending.ruleId
+                        scope.launch {
+                            try {
+                                val localProfiles = withContext(Dispatchers.IO) {
+                                    WireGuardProfileStore(context.applicationContext, prefs).load()
+                                }
+                                when (val cleanup = WireGuardHubApi(prefs).cleanupOrphanedStunBinding(
+                                    pending.ruleId,
+                                    localProfiles,
+                                )) {
+                                    is WireGuardRemoteMutationResult.Applied -> Unit
+                                    is WireGuardRemoteMutationResult.PendingVerification -> {
+                                        throw IllegalStateException("WireGuard 残留绑定尚未确认清理：${cleanup.message}")
+                                    }
+                                    is WireGuardRemoteMutationResult.NotSubmitted -> {
+                                        throw IllegalStateException("WireGuard 残留绑定未清理：${cleanup.message}")
+                                    }
+                                }
+                                wireGuardManagedRuleIds = wireGuardManagedRuleIds - pending.ruleId
+                                pending.continueMutation()
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (failure: Throwable) {
+                                error = uiMessageZh(failure.message).ifBlank {
+                                    "残留 WG 绑定未清理，STUN 规则保持不变"
+                                }
+                                editorSaving = false
+                            } finally {
+                                dependencyCheckingRuleId = null
+                            }
+                        }
+                    },
+                    enabled = dependencyCheckingRuleId == null,
+                ) { Text("清理残留并继续", style = LabTypography.Button) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        residualConfirmation = null
+                        if (pending.draft != null) editorSaving = false
+                    },
+                ) { Text("取消", style = LabTypography.Button) }
+            },
+        )
+    }
 }
 
 @Composable private fun StunIntro(agentOnline: Boolean, agentLastSeenAt: String, loading: Boolean, onRefresh: () -> Unit, onAdd: () -> Unit) {
@@ -838,6 +1102,7 @@ fun StunPenetrationScreen(
 @Composable private fun StunRuleCard(
     rule: StunRule,
     agentOnline: Boolean,
+    wireGuardManaged: Boolean,
     deleting: Boolean,
     operationLabel: String?,
     menuOpen: Boolean,
@@ -873,6 +1138,17 @@ fun StunPenetrationScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text("${rule.serviceType} · ${rule.transportProtocol}", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                }
+                if (wireGuardManaged) {
+                    Surface(shape = RoundedCornerShape(99.dp), color = StunBlue.copy(alpha = .10f)) {
+                        Text(
+                            "WireGuard 自动管理",
+                            color = StunBlue,
+                            style = LabTypography.Caption,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
                 }
                 Surface(shape = RoundedCornerShape(99.dp), color = stateColor.copy(alpha = .10f)) {
                     Text(stateText, color = stateColor, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))

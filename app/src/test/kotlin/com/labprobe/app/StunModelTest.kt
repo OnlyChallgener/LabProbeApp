@@ -8,6 +8,41 @@ import org.junit.Test
 
 class StunModelTest {
     @Test
+    fun wireGuardDependencyPolicyUsesExplicitReferencesOnly() {
+        assertEquals(
+            StunWireGuardMutationPolicy.ALLOW,
+            stunWireGuardMutationPolicy(StunWireGuardDependencySnapshot()),
+        )
+        assertEquals(
+            StunWireGuardMutationPolicy.CONFIRM_REMOTE_RESIDUE,
+            stunWireGuardMutationPolicy(StunWireGuardDependencySnapshot(remoteProfileNames = listOf("old-profile"))),
+        )
+        assertEquals(
+            StunWireGuardMutationPolicy.BLOCK_LOCAL_REFERENCE,
+            stunWireGuardMutationPolicy(
+                StunWireGuardDependencySnapshot(
+                    localProfileNames = listOf("local-profile"),
+                    remoteProfileNames = listOf("old-profile"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun samePortDoesNotImplyWireGuardOwnership() {
+        assertTrue(isWireGuardManagedStunRule("stun-1", setOf("stun-1"), emptySet()))
+        assertFalse(isWireGuardManagedStunRule("stun-2", setOf("stun-1"), emptySet()))
+        assertFalse(isWireGuardManagedStunRule("stun-2", emptySet(), emptySet()))
+    }
+
+    @Test
+    fun stunOperationIsolationUsesOnlyStunPrefix() {
+        assertTrue(isStunOperationTarget("stun:rule-1"))
+        assertFalse(isStunOperationTarget("wg:gateway"))
+        assertFalse(isStunOperationTarget("gateway"))
+    }
+
+    @Test
     fun stunSnapshotDistinguishesUnknownRulesFromConfirmedEmptyRules() {
         assertFalse(parseStunSnapshot(JSONObject()).rulesLoaded)
         assertTrue(parseStunSnapshot(JSONObject().put("rules", org.json.JSONArray())).rulesLoaded)
