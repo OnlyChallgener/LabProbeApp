@@ -73,58 +73,26 @@ fun DeviceDetailScreen(
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
             Box(Modifier.fillMaxWidth()) {
-                Canvas(Modifier.fillMaxWidth().height(108.dp)) {
+                Canvas(Modifier.fillMaxWidth().height(124.dp)) {
                     val centerX = size.width / 2f
-                    val centerY = 50.dp.toPx()
+                    val centerY = 58.dp.toPx()
                     val accent = profile.accent
+                    val ringStroke = Stroke(width = 1.2.dp.toPx())
                     val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f))
-                    val ringStroke = Stroke(width = 1.dp.toPx())
 
-                    drawCircle(accent.copy(alpha = 0.08f), radius = 54.dp.toPx(), center = Offset(centerX, centerY), style = ringStroke)
-                    drawCircle(accent.copy(alpha = 0.04f), radius = 66.dp.toPx(), center = Offset(centerX, centerY), style = dashStroke)
-
-                    val innerR = 54.dp.toPx()
-                    val outerMargin = 8.dp.toPx()
-                    drawLine(accent.copy(alpha = 0.18f), Offset(outerMargin, centerY), Offset(centerX - innerR, centerY), 1.dp.toPx())
-                    drawLine(accent.copy(alpha = 0.18f), Offset(centerX + innerR, centerY), Offset(size.width - outerMargin, centerY), 1.dp.toPx())
-
-                    drawCircle(accent.copy(alpha = 0.35f), radius = 2.5.dp.toPx(), center = Offset(outerMargin, centerY))
-                    drawCircle(accent.copy(alpha = 0.35f), radius = 2.5.dp.toPx(), center = Offset(size.width - outerMargin, centerY))
+                    drawCircle(accent.copy(alpha = 0.07f), radius = 56.dp.toPx(), center = Offset(centerX, centerY), style = ringStroke)
+                    drawCircle(accent.copy(alpha = 0.035f), radius = 70.dp.toPx(), center = Offset(centerX, centerY), style = dashStroke)
                 }
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    Box(
+                        Modifier
+                            .size(100.dp)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(profile.accent.copy(alpha = .08f))
+                            .clickable { editing = true },
+                        contentAlignment = Alignment.Center
                     ) {
-                        HeroTelemetryPill(
-                            icon = if (wifi) Icons.Rounded.Wifi else Icons.Rounded.Lan,
-                            primaryText = if (wifi) "$band Wi-Fi" else "有线网络",
-                            secondaryText = if (wifi && signal != "--") signal else if (device.online) "已连通" else "已离线",
-                            accent = if (wifi) LabV2.Amber else LabV2.Primary,
-                            alignment = Alignment.Start,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            Modifier
-                                .size(96.dp)
-                                .clip(RoundedCornerShape(24.dp))
-                                .background(profile.accent.copy(alpha = .08f))
-                                .clickable { editing = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 82)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        HeroTelemetryPill(
-                            icon = if (device.online) Icons.Rounded.Speed else Icons.Rounded.AccessTime,
-                            primaryText = if (rate != "--") rate else if (device.online) "正常连通" else "离线",
-                            secondaryText = if (device.online) "在线 $onlineTime" else "未在线",
-                            accent = if (device.online) LabV2.Green else LabV2.InkMuted,
-                            alignment = Alignment.End,
-                            modifier = Modifier.weight(1f)
-                        )
+                        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 86)
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -140,6 +108,42 @@ fun DeviceDetailScreen(
                         overflow = TextOverflow.Clip
                     )
                     Text(cleanApiText(device.ip).ifBlank { ipv6.ifBlank { device.mac } }, fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.Medium, color = LabV2.Primary, maxLines = 2, overflow = TextOverflow.Clip)
+
+                    Spacer(Modifier.height(2.dp))
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        DeviceHeroMetricPill(
+                            icon = if (wifi) Icons.Rounded.Wifi else Icons.Rounded.Lan,
+                            title = if (wifi) "$band Wi-Fi" else "有线网络",
+                            subtitle = if (wifi && signal != "--") signal else if (device.online) "已连接" else "离线",
+                            accent = if (wifi) LabV2.Amber else LabV2.Primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        DeviceHeroMetricPill(
+                            icon = Icons.Rounded.Speed,
+                            title = if (rate != "--") rate else if (device.online) "正常连通" else "--",
+                            subtitle = "实时速率",
+                            accent = if (device.online) LabV2.Green else LabV2.InkMuted,
+                            modifier = Modifier.weight(1f)
+                        )
+                        DeviceHeroMetricPill(
+                            icon = if (wifi) Icons.Rounded.SignalCellularAlt else Icons.Rounded.SettingsEthernet,
+                            title = if (wifi && signal != "--") signal else if (device.online) "良好" else "--",
+                            subtitle = if (wifi) "无线信号" else "网线直连",
+                            accent = if (wifi) LabV2.Cyan else LabV2.Primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        DeviceHeroMetricPill(
+                            icon = if (device.online) Icons.Rounded.CheckCircle else Icons.Rounded.AccessTime,
+                            title = if (device.online) onlineTime else "已离线",
+                            subtitle = "在网时长",
+                            accent = if (device.online) LabV2.Green else LabV2.InkMuted,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }
@@ -301,54 +305,38 @@ private fun DeviceDetailGridItem(
 }
 
 @Composable
-private fun HeroTelemetryPill(
+private fun DeviceHeroMetricPill(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    primaryText: String,
-    secondaryText: String,
+    title: String,
+    subtitle: String,
     accent: Color,
-    alignment: Alignment.Horizontal,
     modifier: Modifier = Modifier
 ) {
     val polished = LabMaterialPolish.enabled
     val polishColors = LabMaterialPolish.colors
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = if (polished) polishColors.surfaceInset else LabCoreSurface.Inner,
-        border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
+        border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = 0.65f))
     ) {
         Column(
-            Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
-            horizontalAlignment = alignment,
-            verticalArrangement = Arrangement.spacedBy(1.dp)
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = if (alignment == Alignment.End) Arrangement.End else Arrangement.Start,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (alignment != Alignment.End) {
-                    Icon(icon, null, Modifier.size(12.dp), tint = accent)
-                    Spacer(Modifier.width(3.dp))
-                }
-                Text(
-                    primaryText,
-                    fontSize = LabTypography.Caption.fontSize,
-                    lineHeight = LabTypography.Caption.lineHeight,
-                    fontWeight = FontWeight.SemiBold,
-                    color = LabV2.Ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (alignment == Alignment.End) {
-                    Spacer(Modifier.width(3.dp))
-                    Icon(icon, null, Modifier.size(12.dp), tint = accent)
-                }
-            }
+            Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = accent)
             Text(
-                secondaryText,
-                fontSize = LabTypography.Caption.fontSize,
-                lineHeight = LabTypography.Caption.lineHeight,
+                title,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = LabV2.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
                 color = accent,
                 maxLines = 1,

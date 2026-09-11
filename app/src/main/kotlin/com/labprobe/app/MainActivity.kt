@@ -2479,20 +2479,41 @@ fun LabProbeApp(prefs: AppPrefs) {
                                     animationSpec = tween(140, easing = FastOutSlowInEasing)
                                 ) { if (forward) -nudge / 2 else nudge / 2 } + fadeOut(tween(140))
                                 slideIn togetherWith slideOut
-                            } else if (targetState !in mainRoutes && initialState in mainRoutes) {
-                                (slideInHorizontally(tween(180, easing = FastOutSlowInEasing)) { 36 } + fadeIn(tween(180))) togetherWith
-                                    fadeOut(tween(120))
-                            } else if (initialState !in mainRoutes && targetState in mainRoutes) {
-                                fadeIn(tween(180)) togetherWith
-                                    (slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { 36 } + fadeOut(tween(140)))
                             } else {
-                                fadeIn(animationSpec = tween(160)) togetherWith
-                                    fadeOut(animationSpec = tween(120))
+                                val isReturningToMain = targetState in mainRoutes && initialState !in mainRoutes
+                                val isReturningToRouterSettings = targetState == "router_settings"
+                                val isReturningToTools = targetState == "tools"
+                                val isReturningToDevices = targetState == "devices" && (initialState == "device_detail" || initialState == "device_traffic")
+                                val isBackward = isReturningToMain || isReturningToRouterSettings || isReturningToTools || isReturningToDevices
+
+                                if (isBackward) {
+                                    val slideIn = slideInHorizontally(
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                    ) { -it / 5 } + fadeIn(tween(120))
+                                    val slideOut = slideOutHorizontally(
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                    ) { it }
+                                    slideIn togetherWith slideOut
+                                } else {
+                                    val slideIn = slideInHorizontally(
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                    ) { it }
+                                    val slideOut = slideOutHorizontally(
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                    ) { -it / 5 } + fadeOut(tween(120))
+                                    slideIn togetherWith slideOut
+                                }
                             }
                         }
                     ) { r ->
                         saveableStateHolder.SaveableStateProvider(r) {
-                            LabMaterialReferenceTheme(r) { when (r) {
+                            val routeIsDark = r == "health_score" || r == "network_health"
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .then(if (routeIsDark) Modifier.background(Color(0xFF10171F)) else Modifier.appBackground())
+                            ) {
+                                LabMaterialReferenceTheme(r) { when (r) {
                         "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                         "health_score", "network_health" -> NetworkHealthScreen(
                             prefs = prefs,
@@ -2654,6 +2675,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
                             else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
                             } }
+                            }
                         }
                     }
                     val assistantRoutes = setOf("ai_settings", "ai_chat", "ai_usage")
@@ -2727,6 +2749,7 @@ fun ScreenShell(
     Column(
         Modifier
             .fillMaxSize()
+            .appBackground()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)
@@ -2761,6 +2784,7 @@ fun DetailShell(
     Column(
         Modifier
             .fillMaxSize()
+            .appBackground()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
         verticalArrangement = Arrangement.spacedBy(sectionGap)

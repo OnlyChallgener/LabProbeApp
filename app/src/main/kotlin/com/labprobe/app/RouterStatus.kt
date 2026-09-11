@@ -589,24 +589,16 @@ private fun RouterHeroCard(
     onEdit: () -> Unit,
     onOpenRouter: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "traffic_flow")
-    val flowPhase by infiniteTransition.animateFloat(
+    val isTransmitting = ui.downloadBps > 1024L || ui.uploadBps > 1024L
+    val infiniteTransition = rememberInfiniteTransition(label = "router_pulse")
+    val pulseProgress by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
+            animation = tween(durationMillis = if (isTransmitting) 1800 else 3200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
         ),
-        label = "flow_phase"
-    )
-    val orbitAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 18000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orbit_angle"
+        label = "pulse_progress"
     )
     val refreshAngle by animateFloatAsState(
         targetValue = if (refreshing) 360f else 0f,
@@ -616,18 +608,17 @@ private fun RouterHeroCard(
 
     val downRate = remember(ui.downloadBps) { formatOfficialRate(ui.downloadBps) }
     val upRate = remember(ui.uploadBps) { formatOfficialRate(ui.uploadBps) }
-    val isTransmitting = ui.downloadBps > 1024L || ui.uploadBps > 1024L
 
     RouterGlassCard(contentPadding = PaddingValues(0.dp)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left Wing: Router visual + WAN topology light-packet flow
+            // Left Wing: Clean centered router visual with subtle breathing aura
             Box(
                 Modifier
-                    .weight(.96f)
-                    .height(172.dp)
+                    .weight(.92f)
+                    .height(168.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .clickable(onClick = onOpenRouter),
                 contentAlignment = Alignment.Center
@@ -635,96 +626,74 @@ private fun RouterHeroCard(
                 Canvas(Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
-                    val routerCenter = Offset(w * 0.50f, h * 0.54f)
-                    val wanCenter = Offset(24.dp.toPx(), 24.dp.toPx())
+                    val center = Offset(w * 0.50f, h * 0.52f)
+                    val baseRadius = size.minDimension * 0.38f
 
-                    // 1. Router base concentric orbits
-                    val orbitR1 = 52.dp.toPx()
-                    val orbitR2 = 68.dp.toPx()
-                    val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 6f), 0f))
-                    drawCircle(Color(0x184AA8FF), radius = orbitR1, center = routerCenter, style = dashStroke)
-                    drawCircle(Color(0x1038D9C5), radius = orbitR2, center = routerCenter, style = dashStroke)
+                    // 1. Subtle, gentle breathing pulse ring
+                    val pulseRadius = baseRadius * (1f + 0.16f * pulseProgress)
+                    val pulseAlpha = if (ui.online) {
+                        (0.12f * (1f - 0.35f * pulseProgress)).coerceIn(0.04f, 0.12f)
+                    } else 0.04f
+                    val pulseColor = if (ui.online) {
+                        if (isTransmitting) Color(0xFF0EA5E9) else Color(0xFF10B981)
+                    } else Color(0xFF94A3B8)
 
-                    // Orbiting satellites around router
-                    val rad1 = Math.toRadians(orbitAngle.toDouble())
-                    val sat1 = Offset(routerCenter.x + (orbitR1 * Math.cos(rad1)).toFloat(), routerCenter.y + (orbitR1 * Math.sin(rad1)).toFloat())
-                    drawCircle(Color(0x8038D9C5), radius = 2.4.dp.toPx(), center = sat1)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(pulseColor.copy(alpha = pulseAlpha), Color.Transparent),
+                            center = center,
+                            radius = pulseRadius * 1.25f
+                        ),
+                        radius = pulseRadius * 1.25f,
+                        center = center
+                    )
 
-                    val rad2 = Math.toRadians((orbitAngle + 180.0) % 360.0)
-                    val sat2 = Offset(routerCenter.x + (orbitR2 * Math.cos(rad2)).toFloat(), routerCenter.y + (orbitR2 * Math.sin(rad2)).toFloat())
-                    drawCircle(Color(0x7073A7FF), radius = 2.dp.toPx(), center = sat2)
+                    // 2. Soft outer boundary ring
+                    drawCircle(
+                        color = pulseColor.copy(alpha = if (ui.online) 0.15f else 0.06f),
+                        radius = baseRadius * 1.05f,
+                        center = center,
+                        style = Stroke(width = 1.2.dp.toPx())
+                    )
 
-                    // 2. Data transmission pipeline from WAN to Router
-                    val p0 = wanCenter
-                    val p1 = Offset(wanCenter.x + 28.dp.toPx(), wanCenter.y + 4.dp.toPx())
-                    val p2 = Offset(routerCenter.x - 24.dp.toPx(), routerCenter.y - 48.dp.toPx())
-                    val p3 = Offset(routerCenter.x, routerCenter.y - 28.dp.toPx())
-
-                    val pipeline = Path().apply {
-                        moveTo(p0.x, p0.y)
-                        cubicTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y)
-                    }
-                    // Baseline pipeline glow
-                    drawLine(Color(0x1E73A7FF), p0, p1, 1.2.dp.toPx())
-                    drawPath(pipeline, Color(0x3273A7FF), style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
-
-                    // 3. Flowing light packets along Bezier curve
-                    val packetCount = if (isTransmitting) 5 else 3
-                    for (i in 0 until packetCount) {
-                        val t = (flowPhase + i.toFloat() / packetCount) % 1f
-                        val pos = evalCubicBezier(p0, p1, p2, p3, t)
-                        val color = if (ui.downloadBps >= ui.uploadBps) Color(0xFF22C55E) else Color(0xFF0EA5E9)
-                        val alpha = (1f - (2f * t - 1f).let { it * it }).coerceIn(0.2f, 1f)
-                        // Soft halo
-                        drawCircle(color.copy(alpha = 0.28f * alpha), radius = 5.dp.toPx(), center = pos)
-                        // Core bead
-                        drawCircle(color.copy(alpha = 0.85f * alpha), radius = 2.2.dp.toPx(), center = pos)
-                    }
-
-                    // 4. WAN Node badge background
-                    drawCircle(Color(0x2222C55E), radius = 18.dp.toPx(), center = wanCenter)
-                    drawCircle(Color(0xFFE8FDF0), radius = 13.dp.toPx(), center = wanCenter)
-                    drawCircle(Color(0xFF86EFAC), radius = 13.dp.toPx(), center = wanCenter, style = Stroke(1.2.dp.toPx()))
-                }
-
-                // WAN Icon inside the top-left node
-                Box(
-                    Modifier
-                        .size(26.dp)
-                        .align(Alignment.TopStart)
-                        .padding(start = 11.dp, top = 11.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Rounded.Public,
-                        contentDescription = "WAN",
-                        modifier = Modifier.size(14.dp),
-                        tint = Color(0xFF16A34A)
+                    // 3. Inner soft pedestal
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(Color.White.copy(alpha = 0.85f), Color(0xFFF1F5F9).copy(alpha = 0.50f)),
+                            center = center,
+                            radius = baseRadius
+                        ),
+                        radius = baseRadius,
+                        center = center
                     )
                 }
 
-                // 3D Router Image
+                // 3D Router Image centered
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.router_skeuomorphic_v3),
                     contentDescription = "路由器",
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp),
                     contentScale = ContentScale.Fit
                 )
             }
 
             // Right Wing: Router identity + Speeds + Connections
             Column(
-                Modifier.weight(1.04f).padding(start = 3.dp),
+                Modifier.weight(1.08f).padding(start = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Row 1: Green bolt + Name + Edit + Online pill
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = CircleShape, color = Color(0xFF16A34A), modifier = Modifier.size(24.dp)) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (ui.online) Color(0xFF16A34A) else Color(0xFF94A3B8),
+                        modifier = Modifier.size(22.dp)
+                    ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp), tint = Color.White)
+                            Icon(Icons.Rounded.Bolt, null, Modifier.size(14.dp), tint = Color.White)
                         }
                     }
-                    Spacer(Modifier.width(5.dp))
+                    Spacer(Modifier.width(6.dp))
                     Row(
                         Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically
@@ -736,7 +705,7 @@ private fun RouterHeroCard(
                             color = Color(0xFF10264F),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 105.dp)
+                            modifier = Modifier.widthIn(max = 110.dp)
                         )
                         Spacer(Modifier.width(3.dp))
                         Icon(
@@ -753,7 +722,7 @@ private fun RouterHeroCard(
                     ) {
                         Text(
                             if (ui.online) "在线" else "离线",
-                            Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             fontSize = LabTypography.Caption.fontSize,
                             fontWeight = FontWeight.SemiBold,
                             color = if (ui.online) Color(0xFF16A34A) else Color(0xFFDC2626)
@@ -841,16 +810,6 @@ private fun RouterHeroCard(
     }
 }
 
-private fun evalCubicBezier(p0: Offset, p1: Offset, p2: Offset, p3: Offset, t: Float): Offset {
-    val u = 1f - t
-    val tt = t * t
-    val uu = u * u
-    val uuu = uu * u
-    val ttt = tt * t
-    val x = uuu * p0.x + 3f * uu * t * p1.x + 3f * u * tt * p2.x + ttt * p3.x
-    val y = uuu * p0.y + 3f * uu * t * p1.y + 3f * u * tt * p2.y + ttt * p3.y
-    return Offset(x, y)
-}
 
 private fun formatOfficialRate(bps: Long): Pair<String, String> {
     val kbps = bps / 1000.0

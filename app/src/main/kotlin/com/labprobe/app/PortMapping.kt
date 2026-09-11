@@ -608,17 +608,16 @@ fun PortMappingScreen(
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
     val liveAgent by presenceStore.state.collectAsState()
-    val persistentRules = remember(prefs.hub, prefs.hubDns) { PortMappingRuleStore.load(context, prefs) }
     val initialRules = remember(prefs.hub, prefs.hubDns) {
-        PortMappingMemoryCache.rules.ifEmpty { persistentRules.rules }
+        PortMappingMemoryCache.rules
     }
     val scope = rememberCoroutineScope()
     var rules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(initialRules) }
     var rulesRevision by remember(prefs.hub, prefs.hubDns) {
-        mutableLongStateOf(maxOf(PortMappingMemoryCache.rulesRevision, persistentRules.revision))
+        mutableLongStateOf(PortMappingMemoryCache.rulesRevision)
     }
     var rulesUpdatedAt by remember(prefs.hub, prefs.hubDns) {
-        mutableStateOf(PortMappingMemoryCache.rulesUpdatedAt.ifBlank { persistentRules.updatedAt })
+        mutableStateOf(PortMappingMemoryCache.rulesUpdatedAt)
     }
     var snapshotRevision by remember(prefs.hub, prefs.hubDns) {
         mutableLongStateOf(PortMappingMemoryCache.snapshotRevision)
@@ -632,6 +631,20 @@ fun PortMappingScreen(
     var filter by remember { mutableStateOf("全部") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
+
+    LaunchedEffect(prefs.hub, prefs.hubDns) {
+        if (PortMappingMemoryCache.rules.isEmpty()) {
+            val persistent = withContext(Dispatchers.IO) {
+                PortMappingRuleStore.load(context, prefs)
+            }
+            if (rules.isEmpty() && persistent.rules.isNotEmpty()) {
+                rules = persistent.rules
+                rulesRevision = maxOf(rulesRevision, persistent.revision)
+                rulesUpdatedAt = rulesUpdatedAt.ifBlank { persistent.updatedAt }
+                loading = false
+            }
+        }
+    }
 
     LaunchedEffect(routerRepository) {
         routerRepository.refreshLabProbeDdns(false)

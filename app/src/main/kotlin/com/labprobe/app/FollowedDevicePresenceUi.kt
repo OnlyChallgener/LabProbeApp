@@ -17,10 +17,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -148,6 +151,9 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
                         if (hour.onlineDurationMillis > 0L) "${hour.hour}点 · 在线 $dur"
                         else "${hour.hour}点 · 未在线"
                     }
+                    val totalToday = presence.todayHours.sumOf { it.onlineDurationMillis }
+                    val currentHour = now.atZone(zoneId).hour
+                    val maxToday = (currentHour + 1).coerceAtLeast(1) * 3600_000L
                     PresenceChartData(
                         values = presence.todayHours.map { it.onlineDurationMillis },
                         labelsByIndex = presence.todayHours.map { hour ->
@@ -162,11 +168,14 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
                                 ?.coerceAtLeast(60L * 60L * 1000L)
                                 ?: 60L * 60L * 1000L) / 60_000L
                         } 分钟",
-                        highlightIndex = now.atZone(zoneId).hour
+                        highlightIndex = currentHour,
+                        totalDurationMillis = totalToday,
+                        maxPossibleMillis = maxToday,
+                        rangeLabel = "今日在网概况"
                     )
                 }
-                PresenceRange.SEVEN_DAYS -> dailyChartData(presence.last7Days)
-                PresenceRange.TEN_DAYS -> dailyChartData(presence.last10Days)
+                PresenceRange.SEVEN_DAYS -> dailyChartData(presence.last7Days, "近7天在网概况")
+                PresenceRange.TEN_DAYS -> dailyChartData(presence.last10Days, "近10天在网概况")
             }
         }
         PresenceBarChart(chart)
@@ -226,10 +235,13 @@ private data class PresenceChartData(
     val detailLabels: List<String>,
     val maximum: Long,
     val scaleLabel: String,
-    val highlightIndex: Int = -1
+    val highlightIndex: Int = -1,
+    val totalDurationMillis: Long = 0L,
+    val maxPossibleMillis: Long = 1L,
+    val rangeLabel: String = "统计概览"
 )
 
-private fun dailyChartData(days: List<FollowedDevicePresenceDay>): PresenceChartData {
+private fun dailyChartData(days: List<FollowedDevicePresenceDay>, rangeLabel: String = "日常统计"): PresenceChartData {
     val values = days.map { it.onlineDurationMillis }
     val formatter = DateTimeFormatter.ofPattern("M/d", Locale.CHINA)
     val labels = days.mapIndexed { index, day ->
@@ -249,6 +261,8 @@ private fun dailyChartData(days: List<FollowedDevicePresenceDay>): PresenceChart
     }
     val highestValue = values.maxOrNull() ?: 0L
     val maximum = highestValue.coerceAtLeast(60L * 60L * 1000L)
+    val total = values.sum()
+    val maxPossible = (days.size.coerceAtLeast(1) * 24L * 3600_000L)
     return PresenceChartData(
         values = values,
         labelsByIndex = labels,
@@ -259,7 +273,10 @@ private fun dailyChartData(days: List<FollowedDevicePresenceDay>): PresenceChart
         } else {
             "每日在线小时"
         },
-        highlightIndex = values.lastIndex
+        highlightIndex = values.lastIndex,
+        totalDurationMillis = total,
+        maxPossibleMillis = maxPossible,
+        rangeLabel = rangeLabel
     )
 }
 
@@ -384,6 +401,160 @@ private fun PresenceBarChart(data: PresenceChartData) {
                 }
             }
         }
+
+        Spacer(Modifier.height(6.dp))
+
+        // Plan B: Dynamic Insight Panel filling white space with rich summary / slice metrics
+        PresenceInsightPanel(
+            data = data,
+            selectedIndex = selectedIndex,
+            onClear = { selectedIndex = null }
+        )
+    }
+}
+
+@Composable
+private fun PresenceInsightPanel(
+    data: PresenceChartData,
+    selectedIndex: Int?,
+    onClear: () -> Unit
+) {
+    val polished = LabMaterialPolish.enabled
+    val isSelected = selectedIndex != null && selectedIndex in data.values.indices
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) Color(0xFFF0F7FF) else (if (polished) LabMaterialPolish.colors.surfaceInset else LabCoreSurface.Inner),
+        border = BorderStroke(1.dp, if (isSelected) Color(0xFFCCE3FA) else LabCoreSurface.Border.copy(alpha = 0.6f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (isSelected) {
+            val idx = selectedIndex!!
+            val dur = data.values[idx]
+            val slotMax = if (data.values.size > 12) 3600_000L else 24L * 3600_000L
+            val pct = ((dur.toFloat() / slotMax.toFloat()) * 100f).coerceIn(0f, 100f).roundToInt()
+            val detail = data.detailLabels.getOrNull(idx).orEmpty()
+
+            Column(
+                Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = LabV2.Primary
+                    ) {
+                        Text(
+                            "已选时段",
+                            Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        detail,
+                        Modifier.weight(1f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF10264F),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFFE2E8F0),
+                        onClick = onClear
+                    ) {
+                        Text(
+                            "✕",
+                            Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF475569)
+                        )
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (dur > 0L) "时段活跃度：$pct%" else "该时段无在线活动记录",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (dur > 0L) Color(0xFF0284C7) else Color(0xFF94A3B8)
+                    )
+                    Text(
+                        if (dur > 0L) "时长 ${formatPresenceDuration(dur)}" else "离线",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (dur > 0L) LabV2.PrimaryStrong else Color(0xFF94A3B8)
+                    )
+                }
+            }
+        } else {
+            // Default global range summary
+            val onlineRate = if (data.maxPossibleMillis > 0L) {
+                ((data.totalDurationMillis.toFloat() / data.maxPossibleMillis.toFloat()) * 100f).coerceIn(0f, 100f).roundToInt()
+            } else 0
+
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        data.rangeLabel,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        "在线率 $onlineRate%",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (onlineRate > 50) LabV2.Green else LabV2.Primary
+                    )
+                }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "累计在网",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        formatPresenceDuration(data.totalDurationMillis).ifBlank { "0分钟" },
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LabV2.Ink
+                    )
+                }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text(
+                        "最高峰值",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LabV2.InkMuted
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        formatPresenceDuration(data.maximum).ifBlank { "--" },
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0284C7)
+                    )
+                }
+            }
+        }
+    }
+}
     }
 }
 
