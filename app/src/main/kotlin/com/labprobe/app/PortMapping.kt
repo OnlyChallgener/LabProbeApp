@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -31,6 +32,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -2043,54 +2045,72 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
     }
     val maxValue = nicePortChartCeiling(rates.maxOf { max(it.second, it.third) })
     var selectedIndex by remember(rates) { mutableStateOf<Int?>(null) }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Canvas(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .background(Color(0xFFF8FBFF), RoundedCornerShape(14.dp))
                 .pointerInput(rates) {
+                    val left = 10.dp.toPx()
+                    val right = 10.dp.toPx()
+                    val plotWidth = (size.width - left - right).coerceAtLeast(1f)
                     detectTapGestures { point ->
-                        val left = 46.dp.toPx()
-                        val right = 7.dp.toPx()
-                        val plotWidth = (size.width - left - right).coerceAtLeast(1f)
                         selectedIndex = (((point.x - left) / plotWidth).coerceIn(0f, 1f) * rates.lastIndex).roundToInt()
                     }
                 }
+                .pointerInput(rates) {
+                    val left = 10.dp.toPx()
+                    val right = 10.dp.toPx()
+                    val plotWidth = (size.width - left - right).coerceAtLeast(1f)
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            selectedIndex = (((offset.x - left) / plotWidth).coerceIn(0f, 1f) * rates.lastIndex).roundToInt()
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            selectedIndex = (((change.position.x - left) / plotWidth).coerceIn(0f, 1f) * rates.lastIndex).roundToInt()
+                        }
+                    )
+                }
         ) {
-            val left = 46.dp.toPx()
-            val right = 7.dp.toPx()
-            val top = 9.dp.toPx()
-            val bottom = 21.dp.toPx()
+            val left = 10.dp.toPx()
+            val right = 10.dp.toPx()
+            val top = 16.dp.toPx()
+            val bottom = 22.dp.toPx()
             val plotWidth = size.width - left - right
             val plotHeight = size.height - top - bottom
-            val axisColor = Color(0xFF94A3B8)
-            val gridColor = Color(0xFFE2E8F0).copy(alpha = .7f)
+            val gridColor = Color(0xFFE2E8F0).copy(alpha = .75f)
             val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.rgb(148, 163, 184)
                 textSize = LabTypography.Caption.fontSize.toPx()
             }
-
-            drawLine(axisColor, Offset(left, top), Offset(left, top + plotHeight), 0.8.dp.toPx())
-            drawLine(axisColor, Offset(left, top + plotHeight), Offset(left + plotWidth, top + plotHeight), 0.8.dp.toPx())
-
-            val yTicks = listOf(0f, maxValue / 2f, maxValue)
-            yTicks.forEachIndexed { index, value ->
-                val y = top + plotHeight - (index / 2f) * plotHeight
-                if (index > 0) {
-                    drawLine(gridColor, Offset(left, y), Offset(left + plotWidth, y), 0.7.dp.toPx())
-                }
-                drawLine(axisColor, Offset(left - 3.dp.toPx(), y), Offset(left, y), 0.8.dp.toPx())
-                drawContext.canvas.nativeCanvas.drawText(formatPortRate(value), 2.dp.toPx(), y + 3.5.dp.toPx(), labelPaint)
+            val peakPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.rgb(148, 163, 184)
+                textSize = (LabTypography.Caption.fontSize.toPx() * 0.95f)
+                textAlign = android.graphics.Paint.Align.RIGHT
             }
 
+            // Top peak watermark text
+            val peakText = "峰值 ${formatPortRate(maxValue)}"
+            drawContext.canvas.nativeCanvas.drawText(peakText, size.width - right - 2.dp.toPx(), top - 4.dp.toPx(), peakPaint)
+
+            // Horizontal dashed grid reference lines
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+            drawLine(gridColor, Offset(left, top), Offset(left + plotWidth, top), 0.7.dp.toPx(), pathEffect = dashEffect)
+            val midY = top + plotHeight / 2f
+            drawLine(gridColor, Offset(left, midY), Offset(left + plotWidth, midY), 0.7.dp.toPx(), pathEffect = dashEffect)
+
+            // Solid baseline
+            drawLine(Color(0xFFE2E8F0), Offset(left, top + plotHeight), Offset(left + plotWidth, top + plotHeight), 0.8.dp.toPx())
+
+            // X-axis time labels
             val xLabels = listOf("60分", "40分", "20分", "现在")
             xLabels.forEachIndexed { index, label ->
                 val x = left + plotWidth * index / 3f
-                drawLine(axisColor, Offset(x, top + plotHeight), Offset(x, top + plotHeight + 3.dp.toPx()), 0.8.dp.toPx())
                 val textWidth = labelPaint.measureText(label)
                 val drawX = when (index) { 0 -> x; 3 -> x - textWidth; else -> x - textWidth / 2f }
-                drawContext.canvas.nativeCanvas.drawText(label, drawX, size.height - 3.dp.toPx(), labelPaint)
+                drawContext.canvas.nativeCanvas.drawText(label, drawX, size.height - 4.dp.toPx(), labelPaint)
             }
 
             fun seriesPoints(selector: (Triple<Long, Float, Float>) -> Float): List<Offset> = rates.mapIndexed { index, row ->
@@ -2103,26 +2123,75 @@ private fun PortMapTrafficChart(points: List<PortMapHistoryPoint>, modifier: Mod
                 moveTo(values.first().x, values.first().y)
                 values.drop(1).forEach { lineTo(it.x, it.y) }
             }
+            fun areaPath(values: List<Offset>, baselineY: Float) = Path().apply {
+                if (values.isEmpty()) return@apply
+                moveTo(values.first().x, baselineY)
+                values.forEach { lineTo(it.x, it.y) }
+                lineTo(values.last().x, baselineY)
+                close()
+            }
 
             val upload = seriesPoints { it.second }
             val download = seriesPoints { it.third }
-            drawPath(linePath(upload), PortBlue, style = Stroke(1.3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-            drawPath(linePath(download), PortGreen, style = Stroke(1.3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
 
+            // Draw gradient area fills under curves
+            drawPath(
+                areaPath(download, top + plotHeight),
+                Brush.verticalGradient(
+                    colors = listOf(PortGreen.copy(alpha = 0.12f), PortGreen.copy(alpha = 0.01f)),
+                    startY = top,
+                    endY = top + plotHeight
+                )
+            )
+            drawPath(
+                areaPath(upload, top + plotHeight),
+                Brush.verticalGradient(
+                    colors = listOf(PortBlue.copy(alpha = 0.14f), PortBlue.copy(alpha = 0.01f)),
+                    startY = top,
+                    endY = top + plotHeight
+                )
+            )
+
+            // Draw line strokes
+            drawPath(linePath(download), PortGreen, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(linePath(upload), PortBlue, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+
+            // Draw scrubber cursor
             selectedIndex?.coerceIn(0, rates.lastIndex)?.let { index ->
                 val x = upload[index].x
-                drawLine(Color(0xFF64748B).copy(alpha = .55f), Offset(x, top), Offset(x, top + plotHeight), 0.8.dp.toPx())
-                drawCircle(PortBlue, 2.8.dp.toPx(), upload[index])
-                drawCircle(PortGreen, 2.8.dp.toPx(), download[index])
+                drawLine(
+                    Color(0xFF64748B).copy(alpha = .45f),
+                    Offset(x, top),
+                    Offset(x, top + plotHeight),
+                    1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
+                )
+                drawCircle(PortBlue.copy(alpha = 0.25f), 5.dp.toPx(), upload[index])
+                drawCircle(PortBlue, 2.5.dp.toPx(), upload[index])
+                drawCircle(PortGreen.copy(alpha = 0.25f), 5.dp.toPx(), download[index])
+                drawCircle(PortGreen, 2.5.dp.toPx(), download[index])
             }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            ChartLegendDot(PortBlue, "上传")
-            Spacer(Modifier.width(14.dp))
-            ChartLegendDot(PortGreen, "下载")
-            selectedIndex?.coerceIn(0, rates.lastIndex)?.let { index ->
-                Spacer(Modifier.width(12.dp))
-                Text("↑ ${formatPortRate(rates[index].second)}  ↓ ${formatPortRate(rates[index].third)}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ChartLegendDot(PortBlue, "上传")
+                Spacer(Modifier.width(10.dp))
+                ChartLegendDot(PortGreen, "下载")
+            }
+            val currentRate = selectedIndex?.coerceIn(0, rates.lastIndex)?.let { rates[it] } ?: rates.lastOrNull()
+            if (currentRate != null) {
+                val labelPrefix = if (selectedIndex != null) "光标: " else "最新: "
+                Text(
+                    "$labelPrefix↑ ${formatPortRate(currentRate.second)}  ↓ ${formatPortRate(currentRate.third)}",
+                    fontSize = LabTypography.Caption.fontSize,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (selectedIndex != null) LabV2.Primary else LabV2.InkMuted,
+                    maxLines = 1
+                )
             }
         }
     }

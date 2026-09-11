@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -72,28 +73,60 @@ fun DeviceDetailScreen(
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
             Box(Modifier.fillMaxWidth()) {
-                Canvas(Modifier.fillMaxWidth().height(140.dp)) {
+                Canvas(Modifier.fillMaxWidth().height(108.dp)) {
                     val centerX = size.width / 2f
-                    val centerY = 56.dp.toPx()
-                    val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f))
-                    val solidStroke = Stroke(width = 1.dp.toPx())
-                    drawCircle(profile.accent.copy(alpha = 0.055f), radius = 68.dp.toPx(), center = Offset(centerX, centerY), style = dashStroke)
-                    drawCircle(profile.accent.copy(alpha = 0.035f), radius = 90.dp.toPx(), center = Offset(centerX, centerY), style = solidStroke)
-                    val tickLen = 10.dp.toPx()
-                    drawLine(profile.accent.copy(alpha = 0.18f), Offset(centerX - 98.dp.toPx(), centerY), Offset(centerX - 98.dp.toPx() + tickLen, centerY), 1.2.dp.toPx())
-                    drawLine(profile.accent.copy(alpha = 0.18f), Offset(centerX + 98.dp.toPx() - tickLen, centerY), Offset(centerX + 98.dp.toPx(), centerY), 1.2.dp.toPx())
+                    val centerY = 50.dp.toPx()
+                    val accent = profile.accent
+                    val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f))
+                    val ringStroke = Stroke(width = 1.dp.toPx())
+
+                    drawCircle(accent.copy(alpha = 0.08f), radius = 54.dp.toPx(), center = Offset(centerX, centerY), style = ringStroke)
+                    drawCircle(accent.copy(alpha = 0.04f), radius = 66.dp.toPx(), center = Offset(centerX, centerY), style = dashStroke)
+
+                    val innerR = 54.dp.toPx()
+                    val outerMargin = 8.dp.toPx()
+                    drawLine(accent.copy(alpha = 0.18f), Offset(outerMargin, centerY), Offset(centerX - innerR, centerY), 1.dp.toPx())
+                    drawLine(accent.copy(alpha = 0.18f), Offset(centerX + innerR, centerY), Offset(size.width - outerMargin, centerY), 1.dp.toPx())
+
+                    drawCircle(accent.copy(alpha = 0.35f), radius = 2.5.dp.toPx(), center = Offset(outerMargin, centerY))
+                    drawCircle(accent.copy(alpha = 0.35f), radius = 2.5.dp.toPx(), center = Offset(size.width - outerMargin, centerY))
                 }
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(
-                        Modifier
-                            .size(112.dp)
-                            .clip(RoundedCornerShape(28.dp))
-                            .background(profile.accent.copy(alpha = .065f))
-                            .clickable { editing = true },
-                        contentAlignment = Alignment.Center
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 100)
+                        HeroTelemetryPill(
+                            icon = if (wifi) Icons.Rounded.Wifi else Icons.Rounded.Lan,
+                            primaryText = if (wifi) "$band Wi-Fi" else "有线网络",
+                            secondaryText = if (wifi && signal != "--") signal else if (device.online) "已连通" else "已离线",
+                            accent = if (wifi) LabV2.Amber else LabV2.Primary,
+                            alignment = Alignment.Start,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .size(96.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(profile.accent.copy(alpha = .08f))
+                                .clickable { editing = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            LabMiniDeviceIcon(profile.iconKey, profile.accent, sizeDp = 82)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        HeroTelemetryPill(
+                            icon = if (device.online) Icons.Rounded.Speed else Icons.Rounded.AccessTime,
+                            primaryText = if (rate != "--") rate else if (device.online) "正常连通" else "离线",
+                            secondaryText = if (device.online) "在线 $onlineTime" else "未在线",
+                            accent = if (device.online) LabV2.Green else LabV2.InkMuted,
+                            alignment = Alignment.End,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
+
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         Text(device.remark.ifBlank { device.name.ifBlank { device.mac } }, style = LabTypography.CardTitle, maxLines = 2, overflow = TextOverflow.Clip)
                         LabStatusBadge(device.online)
@@ -142,17 +175,23 @@ fun DeviceDetailScreen(
 
         CompactListCard(coreSurface = true) {
             Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            DeviceDetailAddress("IPv4", cleanApiText(device.ip).ifBlank { "--" }, LabV2.Primary)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceDetailGridItem("IPv4", cleanApiText(device.ip).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp, valueColor = LabV2.Primary)
+                DeviceDetailGridItem("MAC", cleanMac(device.mac).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp, valueColor = profile.accent)
+            }
             DeviceDetailAddress("IPv6", ipv6.ifBlank { "--" }, LabV2.Cyan, allowTwoLines = true)
-            DeviceDetailAddress("MAC", cleanMac(device.mac).ifBlank { "--" }, profile.accent)
         }
 
         CompactListCard(coreSurface = true) {
             Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            DeviceDetailPair("类型", profile.label)
-            DeviceDetailPair("厂商", manufacturer.ifBlank { "--" })
-            DeviceDetailPair("主机名", cleanApiText(device.hostName).ifBlank { "--" })
-            DeviceDetailPair("备注", cleanApiText(device.remark).ifBlank { "--" })
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceDetailGridItem("类型", profile.label, Modifier.weight(1f), labelWidth = 44.dp)
+                DeviceDetailGridItem("厂商", manufacturer.ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceDetailGridItem("主机名", cleanApiText(device.hostName).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 44.dp)
+                DeviceDetailGridItem("备注", cleanApiText(device.remark).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
+            }
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -199,7 +238,7 @@ private fun DeviceDetailAddress(label: String, value: String, color: Color, allo
     val context = LocalContext.current
     val polished = LabMaterialPolish.enabled
     Row(Modifier.fillMaxWidth().clickable(enabled = value != "--", interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(context, value) }, verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.width(54.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(label, Modifier.width(36.dp).padding(top = 1.dp), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
         Text(
             value,
             Modifier.weight(1f).then(if (allowTwoLines && polished) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
@@ -216,17 +255,30 @@ private fun DeviceDetailAddress(label: String, value: String, color: Color, allo
 }
 
 @Composable
-private fun DeviceDetailPair(label: String, value: String) {
+private fun DeviceDetailGridItem(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    labelWidth: Dp = 42.dp,
+    valueColor: Color = LabV2.Ink,
+    allowCopy: Boolean = true
+) {
     val context = LocalContext.current
     Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(enabled = value != "--", interactionSource = remember { MutableInteractionSource() }, indication = null) { copy(context, value) },
+        modifier = modifier
+            .then(
+                if (allowCopy && value != "--") {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { copy(context, value) }
+                } else Modifier
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             label,
-            Modifier.width(54.dp),
+            modifier = Modifier.width(labelWidth),
             fontSize = LabTypography.Supporting.fontSize,
             lineHeight = LabTypography.Supporting.lineHeight,
             fontWeight = FontWeight.SemiBold,
@@ -234,18 +286,81 @@ private fun DeviceDetailPair(label: String, value: String) {
         )
         Text(
             value,
-            Modifier
+            modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(rememberScrollState()),
             fontSize = LabTypography.Value.fontSize,
             lineHeight = LabTypography.Value.lineHeight,
             fontWeight = FontWeight.SemiBold,
-            color = if (value == "--") LabV2.InkFaint else LabV2.Ink,
+            color = if (value == "--") LabV2.InkFaint else valueColor,
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Clip
         )
     }
+}
+
+@Composable
+private fun HeroTelemetryPill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    primaryText: String,
+    secondaryText: String,
+    accent: Color,
+    alignment: Alignment.Horizontal,
+    modifier: Modifier = Modifier
+) {
+    val polished = LabMaterialPolish.enabled
+    val polishColors = LabMaterialPolish.colors
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = if (polished) polishColors.surfaceInset else LabCoreSurface.Inner,
+        border = if (polished) null else androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
+    ) {
+        Column(
+            Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+            horizontalAlignment = alignment,
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (alignment == Alignment.End) Arrangement.End else Arrangement.Start,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (alignment != Alignment.End) {
+                    Icon(icon, null, Modifier.size(12.dp), tint = accent)
+                    Spacer(Modifier.width(3.dp))
+                }
+                Text(
+                    primaryText,
+                    fontSize = LabTypography.Caption.fontSize,
+                    lineHeight = LabTypography.Caption.lineHeight,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LabV2.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (alignment == Alignment.End) {
+                    Spacer(Modifier.width(3.dp))
+                    Icon(icon, null, Modifier.size(12.dp), tint = accent)
+                }
+            }
+            Text(
+                secondaryText,
+                fontSize = LabTypography.Caption.fontSize,
+                lineHeight = LabTypography.Caption.lineHeight,
+                fontWeight = FontWeight.Medium,
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceDetailPair(label: String, value: String) {
+    DeviceDetailGridItem(label, value, Modifier.fillMaxWidth(), labelWidth = 54.dp)
 }
 
 @Composable

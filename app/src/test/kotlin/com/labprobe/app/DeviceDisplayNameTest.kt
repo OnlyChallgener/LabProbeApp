@@ -44,7 +44,7 @@ class DeviceDisplayNameTest {
         assertEquals("Xiaomi", formatManufacturer("xiaomi"))
         assertEquals("TP-Link", formatManufacturer("tp-link"))
         assertEquals("OPPO", formatManufacturer("oppo"))
-        assertEquals("vivo", formatManufacturer("vivo"))
+        assertEquals("VIVO", formatManufacturer("vivo"))
         assertEquals("OnePlus", formatManufacturer("oneplus"))
     }
 

@@ -18,6 +18,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -34,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -139,21 +142,29 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
 
         val chart = remember(presence, selectedRange) {
             when (selectedRange) {
-                PresenceRange.TODAY -> PresenceChartData(
-                    values = presence.todayHours.map { it.onlineDurationMillis },
-                    labelsByIndex = presence.todayHours.map { hour ->
-                        if (hour.hour % 4 == 0) "${hour.hour}点" else ""
-                    },
-                    maximum = presence.todayHours.maxOfOrNull { it.onlineDurationMillis }
-                        ?.coerceAtLeast(60L * 60L * 1000L)
-                        ?: 60L * 60L * 1000L,
-                    scaleLabel = "每小时 · 最高 ${
-                        (presence.todayHours.maxOfOrNull { it.onlineDurationMillis }
+                PresenceRange.TODAY -> {
+                    val detailLabels = presence.todayHours.map { hour ->
+                        val dur = formatPresenceDuration(hour.onlineDurationMillis)
+                        if (hour.onlineDurationMillis > 0L) "${hour.hour}点 · 在线 $dur"
+                        else "${hour.hour}点 · 未在线"
+                    }
+                    PresenceChartData(
+                        values = presence.todayHours.map { it.onlineDurationMillis },
+                        labelsByIndex = presence.todayHours.map { hour ->
+                            if (hour.hour % 4 == 0) "${hour.hour}点" else ""
+                        },
+                        detailLabels = detailLabels,
+                        maximum = presence.todayHours.maxOfOrNull { it.onlineDurationMillis }
                             ?.coerceAtLeast(60L * 60L * 1000L)
-                            ?: 60L * 60L * 1000L) / 60_000L
-                    } 分钟",
-                    highlightIndex = now.atZone(zoneId).hour
-                )
+                            ?: 60L * 60L * 1000L,
+                        scaleLabel = "每小时 · 最高 ${
+                            (presence.todayHours.maxOfOrNull { it.onlineDurationMillis }
+                                ?.coerceAtLeast(60L * 60L * 1000L)
+                                ?: 60L * 60L * 1000L) / 60_000L
+                        } 分钟",
+                        highlightIndex = now.atZone(zoneId).hour
+                    )
+                }
                 PresenceRange.SEVEN_DAYS -> dailyChartData(presence.last7Days)
                 PresenceRange.TEN_DAYS -> dailyChartData(presence.last10Days)
             }
@@ -212,6 +223,7 @@ private fun PresenceRangeButton(label: String, selected: Boolean, onClick: () ->
 private data class PresenceChartData(
     val values: List<Long>,
     val labelsByIndex: List<String>,
+    val detailLabels: List<String>,
     val maximum: Long,
     val scaleLabel: String,
     val highlightIndex: Int = -1
@@ -225,11 +237,22 @@ private fun dailyChartData(days: List<FollowedDevicePresenceDay>): PresenceChart
             day.date.format(formatter)
         } else ""
     }
+    val detailLabels = days.map { day ->
+        val dateLabel = "${day.date.monthValue}月${day.date.dayOfMonth}日"
+        if (day.onlineDurationMillis > 0L) {
+            val dur = formatPresenceDuration(day.onlineDurationMillis)
+            val starts = if (day.onlineStarts > 0) " (${day.onlineStarts}次上线)" else ""
+            "$dateLabel · 在线 $dur$starts"
+        } else {
+            "$dateLabel · 未在线"
+        }
+    }
     val highestValue = values.maxOrNull() ?: 0L
     val maximum = highestValue.coerceAtLeast(60L * 60L * 1000L)
     return PresenceChartData(
         values = values,
         labelsByIndex = labels,
+        detailLabels = detailLabels,
         maximum = maximum,
         scaleLabel = if (highestValue > 0L) {
             "每日在线 · 最高 ${formatPresenceDuration(highestValue)}"
@@ -243,14 +266,40 @@ private fun dailyChartData(days: List<FollowedDevicePresenceDay>): PresenceChart
 @Composable
 private fun PresenceBarChart(data: PresenceChartData) {
     val hasData = data.values.any { it > 0L }
+    var selectedIndex by remember(data) { mutableStateOf<Int?>(null) }
+    val isSelected = selectedIndex != null
+    val displayLabel = selectedIndex?.let { data.detailLabels.getOrNull(it) } ?: data.scaleLabel
+
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            data.scaleLabel,
-            modifier = Modifier.fillMaxWidth(),
-            style = LabTypography.Caption.copy(color = LabV2.InkMuted),
-            textAlign = TextAlign.End,
-            maxLines = 1
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (isSelected) {
+                Text(
+                    "已选",
+                    style = LabTypography.Caption.copy(color = LabV2.PrimaryStrong, fontWeight = FontWeight.SemiBold)
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                displayLabel,
+                modifier = Modifier.weight(1f),
+                style = LabTypography.Caption.copy(
+                    color = if (isSelected) LabV2.PrimaryStrong else LabV2.InkMuted,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                ),
+                textAlign = TextAlign.End,
+                maxLines = 1
+            )
+            if (isSelected) {
+                Spacer(Modifier.width(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(99.dp),
+                    color = Color.Transparent,
+                    onClick = { selectedIndex = null }
+                ) {
+                    Text("✕", modifier = Modifier.padding(horizontal = 4.dp), style = LabTypography.Caption.copy(color = LabV2.InkMuted))
+                }
+            }
+        }
         Box(Modifier.fillMaxWidth().height(82.dp)) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                 repeat(3) {
@@ -267,8 +316,19 @@ private fun PresenceBarChart(data: PresenceChartData) {
                         val fraction = if (data.maximum > 0L) {
                             (value.toFloat() / data.maximum.toFloat()).coerceIn(0f, 1f)
                         } else 0f
+                        val isBarSelected = selectedIndex == index
+                        val isDefaultHighlight = selectedIndex == null && index == data.highlightIndex
+                        val isDimmed = selectedIndex != null && !isBarSelected
                         Box(
-                            Modifier.weight(1f).fillMaxHeight(),
+                            Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    selectedIndex = if (selectedIndex == index) null else index
+                                },
                             contentAlignment = Alignment.BottomCenter
                         ) {
                             if (value > 0L) {
@@ -278,8 +338,12 @@ private fun PresenceBarChart(data: PresenceChartData) {
                                         .fillMaxHeight(fraction.coerceAtLeast(.035f))
                                         .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
                                         .background(
-                                            if (index == data.highlightIndex) LabV2.PrimaryStrong
-                                            else LabV2.Primary.copy(alpha = .56f)
+                                            when {
+                                                isBarSelected -> LabV2.PrimaryStrong
+                                                isDefaultHighlight -> LabV2.PrimaryStrong
+                                                isDimmed -> LabV2.Primary.copy(alpha = .22f)
+                                                else -> LabV2.Primary.copy(alpha = .56f)
+                                            }
                                         )
                                 )
                             }
