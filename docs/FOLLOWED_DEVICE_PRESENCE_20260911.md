@@ -58,3 +58,4 @@
 - 2026-09-11：审查生命周期与并发细节：`setForeground` 设置 `startupPresenceReminderPending` 标记；成功同步时单次消费标记；SharedPreferences 原子提交；`CancellationException` 保持重抛；异常不阻断数据流。
 - 2026-09-11：本地 Python 静态契约测试与回归（44 项用例全部通过，包括 `test_followed_device_presence_contracts.py`、`test_notification_contracts.py`、`test_wg_stun_contracts.py`、`test_wg_stun_recovery_contracts.py`）；Git diff 检查无空白或格式异常。
 - 2026-09-11：GitHub CI `34575806321` 通过：Python 静态契约测试、Kotlin/Android 单元测试与 Release 编译全部通过。
+- 2026-09-11：GitHub Test Bundle `34576541390` 通过并发布测试版 Prerelease：`test-bundle/followed-device-presence-20260911`；包含签名测试 APK `LabProbe-v0.12.0-build241-test.apk`。
