@@ -2,6 +2,8 @@
 
 极客网探 Android 客户端，使用 Kotlin + Jetpack Compose。仓库长期只维护 `main` 主线；历史版本通过 Git Tag 与 GitHub Release 留档，不再为每个 build 创建长期 release 分支、一次性 workflow 或独立版本说明文件。
 
+> 💡 **安装升级与跨端协同**：详见全组件指引文档 ➜ [全系统安装与升级完整指南 (App / Hub / Relay)](INSTALL_AND_UPDATE_GUIDE.md)
+
 ## 界面预览
 
 <div align="center">
