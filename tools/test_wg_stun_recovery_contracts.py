@@ -132,5 +132,46 @@ class WireGuardRecoveryUiContracts(unittest.TestCase):
         self.assertIn("请勿重复提交", self.ui)
 
 
+class WireGuardNativeStunBindingContracts(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.core = source(
+            "app/src/main/kotlin/com/labprobe/app/WireGuardClient.kt"
+        )
+
+    def test_wireguard_rejects_relay_proxy_and_requires_current_router(self) -> None:
+        target = section(
+            self.core,
+            "internal fun isWireGuardStunTarget",
+            "internal fun isLegacyWireGuardRelayStunTarget",
+        )
+        self.assertIn("rule.usesRouterNativeMapping", target)
+        self.assertIn('rule.targetType != "router_self"', target)
+        self.assertIn("routerIp.isNotBlank()", target)
+        self.assertIn("rule.targetIpv4 == routerIp", target)
+
+    def test_automatic_rule_uses_router_native_target_payload(self) -> None:
+        binding = section(
+            self.core,
+            "suspend fun ensureStunBinding",
+            "suspend fun provision",
+        )
+        self.assertIn('targetType = "manual"', binding)
+        self.assertIn("targetIpv4 = routerIp", binding)
+        self.assertNotIn('targetIpv4 = "127.0.0.1"', binding)
+        self.assertIn("isLegacyWireGuardRelayStunTarget", binding)
+        self.assertIn("api.update(selected.id, correctedDraft)", binding)
+        self.assertIn("修正结果待核对", binding)
+
+    def test_definite_hub_rejection_is_not_reported_as_unknown_delivery(self) -> None:
+        message = section(
+            self.core,
+            "internal fun wireGuardMutationFailureMessage",
+            "internal fun wireGuardPeerId",
+        )
+        self.assertIn("isWireGuardSubmissionUncertain(error)", message)
+        self.assertIn("Hub 拒绝 WireGuard 修改，未更改", message)
+
+
 if __name__ == "__main__":
     unittest.main()

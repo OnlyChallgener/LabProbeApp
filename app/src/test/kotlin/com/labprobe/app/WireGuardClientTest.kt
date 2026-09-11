@@ -174,6 +174,12 @@ class WireGuardClientTest {
         assertTrue(isWireGuardSubmissionUncertain(java.io.IOException("timeout")))
         assertFalse(isWireGuardSubmissionUncertain(HubHttpException(400, "bad payload")))
         assertFalse(isWireGuardSubmissionUncertain(HubHttpException(409, "conflict")))
+        val rejected = wireGuardMutationFailureMessage(
+            WireGuardMutationStage.SUBMIT,
+            HubHttpException(400, "bad payload"),
+        )
+        assertTrue(rejected.contains("Hub 拒绝"))
+        assertFalse(rejected.contains("未确认接收"))
     }
 
     @Test
@@ -197,9 +203,10 @@ class WireGuardClientTest {
             .put("enabled", true)
             .put("serviceType", "WireGuard")
             .put("transportProtocol", protocol)
-            .put("targetType", "router_self")
-            .put("targetIpv4", "127.0.0.1")
+            .put("targetType", "manual")
+            .put("targetIpv4", "192.168.5.1")
             .put("targetPort", port)
+            .put("forwardMode", "router_native")
         val after = parseStunSnapshot(JSONObject().put("rules", JSONArray()
             .put(row("before", 51820))
             .put(row("new-compatible", 51820))
@@ -208,11 +215,11 @@ class WireGuardClientTest {
 
         assertEquals(
             listOf("new-compatible"),
-            compatibleNewWireGuardStunRules(setOf("before"), after, 51820, "").map { it.id },
+            compatibleNewWireGuardStunRules(setOf("before"), after, 51820, "192.168.5.1").map { it.id },
         )
         assertEquals(
             2,
-            compatibleNewWireGuardStunRules(emptySet(), after, 51820, "").size,
+            compatibleNewWireGuardStunRules(emptySet(), after, 51820, "192.168.5.1").size,
         )
     }
 
@@ -230,14 +237,28 @@ class WireGuardClientTest {
     fun boundStunNeverFallsBackToAnotherReadyRule() {
         val rule = parseStunSnapshot(JSONObject().put("rules", JSONArray().put(JSONObject()
             .put("id", "other").put("transportProtocol", "UDP").put("targetPort", 51826)
-            .put("targetType", "router_self").put("targetIpv4", "127.0.0.1")))).rules.single()
+            .put("targetType", "manual").put("targetIpv4", "192.168.1.1")
+            .put("forwardMode", "router_native")))).rules.single()
         val missing = portProfile(WireGuardEndpointSource.STUN).copy(endpointBindingId = "deleted")
         assertEquals(null, boundWireGuardStunRule(missing, listOf(rule)))
         assertEquals(null, boundWireGuardStunRule(missing.copy(endpointBindingId = ""), listOf(rule)))
         assertEquals(rule, boundWireGuardStunRule(missing.copy(endpointBindingId = "other"), listOf(rule)))
-        assertTrue(isWireGuardStunTarget(rule, ""))
-        assertFalse(isWireGuardStunTarget(rule.copy(transportProtocol = "TCP"), ""))
+        assertTrue(isWireGuardStunTarget(rule, "192.168.1.1"))
+        assertFalse(isWireGuardStunTarget(rule.copy(transportProtocol = "TCP"), "192.168.1.1"))
         assertFalse(isWireGuardStunTarget(rule.copy(targetType = "manual", targetIpv4 = "192.168.1.99"), "192.168.1.1"))
+        assertFalse(isWireGuardStunTarget(rule.copy(
+            targetType = "router_self",
+            targetIpv4 = "127.0.0.1",
+            forwardMode = "relay_proxy",
+        ), "192.168.1.1"))
+        val legacy = rule.copy(
+            targetType = "router_self",
+            targetIpv4 = "127.0.0.1",
+            forwardMode = "relay_proxy",
+        )
+        assertTrue(isLegacyWireGuardRelayStunTarget(legacy, 51826))
+        assertFalse(isLegacyWireGuardRelayStunTarget(legacy.copy(targetPort = 51820), 51826))
+        assertFalse(isLegacyWireGuardRelayStunTarget(legacy.copy(serviceType = "HTTPS"), 51826))
     }
 
     @Test

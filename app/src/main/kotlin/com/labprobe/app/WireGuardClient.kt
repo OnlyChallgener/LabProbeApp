@@ -617,7 +617,11 @@ internal fun wireGuardMutationFailureMessage(stage: WireGuardMutationStage, erro
     val reason = error.message?.trim().orEmpty().ifBlank { "上游服务暂不可用" }
     return when (stage) {
         WireGuardMutationStage.READ_BEFORE_SUBMIT -> "读取 WireGuard 配置失败，尚未提交：$reason"
-        WireGuardMutationStage.SUBMIT -> "提交 WireGuard 修改时 Hub 未确认接收；请先刷新核对，不要重复操作：$reason"
+        WireGuardMutationStage.SUBMIT -> if (isWireGuardSubmissionUncertain(error)) {
+            "提交 WireGuard 修改时 Hub 未确认接收；请先刷新核对，不要重复操作：$reason"
+        } else {
+            "Hub 拒绝 WireGuard 修改，未更改：$reason"
+        }
         WireGuardMutationStage.WAIT_AGENT -> "Hub 已接受 WireGuard 修改，但等待 Agent 应用回执失败；请刷新核对，不要重复提交：$reason"
     }
 }
@@ -911,8 +915,13 @@ internal fun wireGuardBoundStunIds(root: JSONObject, profiles: List<WireGuardPro
 }
 
 internal fun isWireGuardStunTarget(rule: StunRule, routerIp: String): Boolean =
-    rule.transportProtocol == "UDP" && (rule.targetType == "router_self" ||
-        rule.targetIpv4 == "127.0.0.1" || (routerIp.isNotBlank() && rule.targetIpv4 == routerIp))
+    rule.transportProtocol == "UDP" && rule.usesRouterNativeMapping &&
+        rule.targetType != "router_self" && routerIp.isNotBlank() && rule.targetIpv4 == routerIp
+
+internal fun isLegacyWireGuardRelayStunTarget(rule: StunRule, listenPort: Int): Boolean =
+    rule.enabled && rule.serviceType.equals("WireGuard", ignoreCase = true) &&
+        rule.transportProtocol == "UDP" && rule.targetPort == listenPort &&
+        !rule.usesRouterNativeMapping && rule.targetType == "router_self" && rule.targetIpv4 == "127.0.0.1"
 
 internal fun compatibleNewWireGuardStunRules(
     beforeIds: Set<String>,
@@ -1531,9 +1540,36 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         require(snapshot.rulesLoaded) { "穿透规则尚未完整加载，请稍后重试" }
         val rules = snapshot.rules
         val routerIp = routerLanIp()
+        require(routerIp.isNotBlank() && routerIp != "127.0.0.1") {
+            "无法确认当前路由器 LAN 地址，未创建 WireGuard STUN 规则"
+        }
         requireOriginalConnection()
         profile.endpointBindingId.takeIf { it.isNotBlank() }?.let { id ->
-            val selected = rules.firstOrNull { it.id == id } ?: throw IllegalArgumentException("绑定的 STUN 规则不存在")
+            var selected = rules.firstOrNull { it.id == id } ?: throw IllegalArgumentException("绑定的 STUN 规则不存在")
+            if (isLegacyWireGuardRelayStunTarget(selected, listenPort)) {
+                val correctedDraft = StunDraft.from(selected).copy(
+                    targetType = "manual",
+                    targetIpv4 = routerIp,
+                    targetPort = listenPort.toString(),
+                )
+                selected = try {
+                    api.update(selected.id, correctedDraft)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (!isWireGuardSubmissionUncertain(error)) throw error
+                    val verified = runCatching { api.list() }.getOrNull()?.takeIf { it.rulesLoaded }
+                        ?.rules?.firstOrNull { it.id == selected.id }
+                    if (verified == null || !isWireGuardStunTarget(verified, routerIp) ||
+                        verified.targetPort != listenPort) {
+                        throw IllegalStateException(
+                            "旧 WireGuard STUN 规则修正结果待核对；请刷新后再保存，不要重复操作",
+                            error,
+                        )
+                    }
+                    verified
+                }
+            }
             require(selected.enabled && selected.serviceType.equals("WireGuard", ignoreCase = true) &&
                 isWireGuardStunTarget(selected, routerIp) && selected.targetPort == listenPort) {
                 "请选择指向当前网关 UDP $listenPort 的已启用穿透规则"
@@ -1550,8 +1586,8 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         val draft = StunDraft(
             serviceType = "WireGuard",
             transportProtocol = "UDP",
-            targetType = "router_self",
-            targetIpv4 = "127.0.0.1",
+            targetType = "manual",
+            targetIpv4 = routerIp,
             targetPort = listenPort.toString(),
             name = "WireGuard",
         )
