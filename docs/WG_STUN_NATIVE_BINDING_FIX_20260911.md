@@ -34,3 +34,4 @@ App 自动创建的 WireGuard STUN 规则使用了 `router_self + 127.0.0.1`。H
 - Kotlin 单元测试、Android Release 编译、签名与 APK 制品由 GitHub Actions 完成。
 - 2026-09-11：根据现场截图复现配置链路并核对 App/Hub 契约，确认自动创建 payload 与 Hub 原生映射校验冲突。
 - 2026-09-11：完成自动创建、旧绑定精确修正、候选筛选、错误语义及 Kotlin/Python 回归用例修改。
+- 2026-09-11：首次 GitHub CI 完成 Kotlin/Release 编译，但一个旧绑定测试数据缺少 `enabled/serviceType` 字段而失败；已补齐真实规则必需字段后重新提交验证。

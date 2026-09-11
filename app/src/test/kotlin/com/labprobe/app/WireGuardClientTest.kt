@@ -236,7 +236,8 @@ class WireGuardClientTest {
     @Test
     fun boundStunNeverFallsBackToAnotherReadyRule() {
         val rule = parseStunSnapshot(JSONObject().put("rules", JSONArray().put(JSONObject()
-            .put("id", "other").put("transportProtocol", "UDP").put("targetPort", 51826)
+            .put("id", "other").put("enabled", true).put("serviceType", "WireGuard")
+            .put("transportProtocol", "UDP").put("targetPort", 51826)
             .put("targetType", "manual").put("targetIpv4", "192.168.1.1")
             .put("forwardMode", "router_native")))).rules.single()
         val missing = portProfile(WireGuardEndpointSource.STUN).copy(endpointBindingId = "deleted")
