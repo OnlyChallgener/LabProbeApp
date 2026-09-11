@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import org.json.JSONObject
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 /** Debug-only fixtures: no Hub connection, network test, or production state mutation. */
 @Composable
@@ -38,6 +40,7 @@ fun MaterialReferencePreviewScreen(screen: String) {
         AppState(prefs, context).apply {
             devices = listOf(first, second)
             onlineDevices = devices
+            events = materialReferenceDeviceEvents(first.mac)
             hubConnected = true
             mqttConnected = true
             realtimeDataFresh = true
@@ -106,6 +109,29 @@ private fun materialReferenceDevice(name: String, mac: String, ip: String, type:
 
 private fun materialReferencePingPoints() = listOf(18, 21, 19, 22, 20, 24, 18, 19, 23, 20).mapIndexed { index, ms ->
     PingPoint(index + 1, ms, "seq=${index + 1} time=${ms}ms", (index + 1) * 1000L)
+}
+
+private fun materialReferenceDeviceEvents(mac: String): List<EventItem> {
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    val now = ZonedDateTime.now()
+    fun event(id: Int, type: String, at: ZonedDateTime) = EventItem(
+        id = id,
+        title = if (type == "device_online") "书房笔记本 上线" else "书房笔记本 离线",
+        type = type,
+        name = "书房笔记本",
+        oldValue = "",
+        newValue = "",
+        time = at.format(formatter),
+        mac = mac
+    )
+    return listOf(
+        event(6, "device_online", now.minusHours(2).minusMinutes(18)),
+        event(5, "device_offline", now.minusDays(1).withHour(18).withMinute(40)),
+        event(4, "device_online", now.minusDays(1).withHour(15).withMinute(20)),
+        event(3, "device_offline", now.minusDays(2).withHour(12).withMinute(10)),
+        event(2, "device_online", now.minusDays(2).withHour(8).withMinute(5)),
+        event(1, "device_offline", now.minusDays(3).withHour(20).withMinute(30))
+    )
 }
 
 private fun materialReferencePingHistory() = PingHistoryEntry(

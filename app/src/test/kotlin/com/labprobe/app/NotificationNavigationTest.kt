@@ -5,7 +5,7 @@ import org.junit.Test
 
 class NotificationNavigationTest {
     @Test fun notificationDestinationsAreExplicit() {
-        listOf("devices", "events", "daily", "ai_chat", "settings", "home").forEach {
+        listOf("devices", "device_detail", "events", "daily", "ai_chat", "settings", "home").forEach {
             assertEquals(it, notificationRoute(it))
         }
         assertNull(notificationRoute(null))

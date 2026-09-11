@@ -274,10 +274,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun consumeNotificationIntent(incoming: Intent) {
+        val notificationKey = incoming.dataString
+        if (!notificationKey.isNullOrBlank() && notificationKey == consumedNotificationKey) return
         val requested = notificationRoute(incoming.getStringExtra("navigate_route"))
         val eventHubKey = incoming.getStringExtra("event_hub_key").orEmpty()
         val prefs = AppPrefs(this)
-        val wrongEventHub = requested in setOf("events", "devices") && eventHubKey.isNotBlank() &&
+        val wrongEventHub = requested in setOf("events", "devices", "device_detail") && eventHubKey.isNotBlank() &&
             eventHubKey != eventNotificationScopeDigest("${prefs.hub.trimEnd('/')}#${prefs.token.trim()}")
         if (wrongEventHub) {
             Toast.makeText(this, "此通知来自其他 Hub，请切换到对应连接查看事件", Toast.LENGTH_LONG).show()
@@ -292,11 +294,14 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             } else null
+            AppNavigator.pendingDeviceMac = if (requested == "device_detail") {
+                incoming.getStringExtra("device_mac")?.let(::cleanMac)?.takeIf(::isValidMac)
+            } else null
             AppNavigator.pendingRoute = requested
         }
-        consumedNotificationKey = incoming.dataString
+        consumedNotificationKey = notificationKey
         // Consumed extras must not reopen a notice when the Activity is recreated.
-        listOf("navigate_route", "ai_notice_id", "ai_notice_title", "ai_notice_content", "ai_notice_hub_key", "event_hub_key")
+        listOf("navigate_route", "ai_notice_id", "ai_notice_title", "ai_notice_content", "ai_notice_hub_key", "event_hub_key", "device_mac")
             .forEach(incoming::removeExtra)
     }
 
@@ -306,10 +311,11 @@ class MainActivity : ComponentActivity() {
 object AppNavigator {
     var pendingRoute by mutableStateOf<String?>(null)
     var pendingAiNotice by mutableStateOf<AiNotice?>(null)
+    var pendingDeviceMac by mutableStateOf<String?>(null)
 }
 
 internal fun notificationRoute(requested: String?): String? = requested?.takeIf {
-    it in setOf("home", "devices", "events", "daily", "settings", "ai_chat")
+    it in setOf("home", "devices", "device_detail", "events", "daily", "settings", "ai_chat")
 }
 
 /** Maps assistant clientAction route names to app route strings. */
@@ -1209,6 +1215,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
     private var eventNotificationSessionIdentity: String? = null
+    private var startupPresenceReminderPending = true
     private val cacheWriteVersion = AtomicLong(0L)
     private var cachePersistJob: Job? = null
     private val liteRealtimeApi = LiteRealtimeApi(prefs)
@@ -1592,6 +1599,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     }
 
     fun setForeground(active: Boolean) {
+        if (active && !foregroundActive) startupPresenceReminderPending = true
         foregroundActive = active
         if (!active) stopRealtime()
     }
@@ -1784,20 +1792,44 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val notificationIdentity = "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}"
         val silentBaseline = eventNotificationSessionIdentity != notificationIdentity
         eventNotificationSessionIdentity = notificationIdentity
-        if (dataChanged || silentBaseline) {
+        val notifyLatestPresenceOnOpen = startupPresenceReminderPending
+        startupPresenceReminderPending = false
+        if (dataChanged || silentBaseline || notifyLatestPresenceOnOpen) {
+            val followedDeviceMacs = deviceOverrides.asSequence()
+                .filter { it.followedOverride == true }
+                .map { cleanMac(it.mac) }
+                .filter(::isValidMac)
+                .toSet()
             val notificationEvents = applyEventDeviceNames(
                 if (silentBaseline) events.toList()
                 else events.filter { eventNotificationIdentity(it) !in previousEventKeys },
                 devices + onlineDevices + offlineDevices,
                 deviceOverrides,
             )
+            val startupPresenceEvents = if (notifyLatestPresenceOnOpen) {
+                applyEventDeviceNames(
+                    events.toList(),
+                    devices + onlineDevices + offlineDevices,
+                    deviceOverrides,
+                )
+            } else emptyList()
             cacheScope.launch {
                 try {
                     if (notificationIdentity == "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}") {
-                        EventNotificationCenter.notifyNewEvents(
-                            appContext, notificationEvents,
-                            hubIdentity = notificationIdentity, silentBaseline = silentBaseline,
-                        )
+                        if (dataChanged || silentBaseline) {
+                            EventNotificationCenter.notifyNewEvents(
+                                appContext, notificationEvents,
+                                hubIdentity = notificationIdentity, silentBaseline = silentBaseline,
+                                followedDeviceMacs = followedDeviceMacs,
+                            )
+                        }
+                        if (notifyLatestPresenceOnOpen) {
+                            EventNotificationCenter.notifyLatestFollowedPresenceOnOpen(
+                                appContext, startupPresenceEvents,
+                                hubIdentity = notificationIdentity,
+                                followedDeviceMacs = followedDeviceMacs,
+                            )
+                        }
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -2074,11 +2106,21 @@ fun LabProbeApp(prefs: AppPrefs) {
     var favoritesReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(AppNavigator.pendingRoute) {
         AppNavigator.pendingRoute?.let { requested ->
+            val requestedDeviceMac = AppNavigator.pendingDeviceMac
             AppNavigator.pendingRoute = null
+            AppNavigator.pendingDeviceMac = null
             if (notificationRoute(requested) != null) {
                 if (requested == "daily" && route != "daily") dailyReturnRoute = route
                 if (requested == "ai_chat" && route != "ai_chat") aiChatReturnRoute = route
                 if (requested == "settings" && route != "settings") settingsReturnRoute = route
+                if (requested == "device_detail") {
+                    val mac = requestedDeviceMac?.let(::cleanMac)?.takeIf(::isValidMac)
+                    if (mac == null) {
+                        route = "devices"
+                        return@let
+                    }
+                    selectedDeviceMac = mac
+                }
                 route = requested
             }
         }

@@ -31,4 +31,25 @@ class DeviceEventsNormalizationTest {
             reconcileOfflineDevicesWithNormalizedEvents(emptyList(), normalized, emptyList())
         )
     }
+
+    @Test
+    fun onlineTransitionResetsOfflineDuplicateCooldown() {
+        val raw = listOf(
+            event(1, "device_online", "2026-08-11 09:00:00"),
+            event(2, "device_offline", "2026-08-11 09:10:00"),
+            event(3, "device_online", "2026-08-11 09:11:00"),
+            event(4, "device_offline", "2026-08-11 09:12:00")
+        )
+
+        val normalized = normalizeDeviceEvents(raw)
+
+        assertEquals(listOf(4, 3, 2, 1), normalized.map(EventItem::id))
+    }
+
+    @Test
+    fun invalidOrTrailingTimestampTextIsRejected() {
+        assertEquals(null, parseEventMillis("2026-02-31 09:00:00"))
+        assertEquals(null, parseEventMillis("2026-08-11 09:00:00 extra"))
+        assertEquals(null, parseEventMillis("2026-08-11 25:00:00"))
+    }
 }

@@ -1,6 +1,7 @@
 package com.labprobe.app
 
 import java.text.SimpleDateFormat
+import java.text.ParsePosition
 import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
@@ -117,6 +118,10 @@ fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {
             if (previousState == "online") return@forEach
             stateByKey[key] = "online"
             at?.let { onlineAtByKey[key] = it }
+            // A confirmed online transition starts a new state interval. An
+            // offline event shortly after it is therefore not a duplicate of
+            // the previous interval's offline boundary.
+            lastOfflineAtByKey.remove(key)
             kept += event
             return@forEach
         }
@@ -192,7 +197,11 @@ fun parseEventMillis(raw: String): Long? {
     val s = raw.trim()
     if (s.isBlank() || s == "-") return null
     for (pattern in EVENT_TIME_PATTERNS) {
-        val parsed = runCatching { SimpleDateFormat(pattern, Locale.CHINA).parse(s) }.getOrNull() ?: continue
+        val parsed = runCatching {
+            val formatter = SimpleDateFormat(pattern, Locale.CHINA).apply { isLenient = false }
+            val position = ParsePosition(0)
+            formatter.parse(s, position)?.takeIf { position.index == s.length }
+        }.getOrNull() ?: continue
         val cal = Calendar.getInstance(Locale.CHINA)
         cal.time = parsed
         if (pattern == "MM-dd HH:mm:ss") {

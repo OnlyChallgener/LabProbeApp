@@ -66,6 +66,8 @@ class NotificationContractTests(unittest.TestCase):
 
     def test_event_notifications_are_one_batch_with_unique_events_intent(self):
         self.require(r"internal fun eventNotificationRoute\(events: List<EventItem>\).*device_online.*device_offline.*\"devices\".*\"events\"", self.events, "event routing must use the actual device presence types", re.S)
+        self.require(r"internal fun filterEventNotifications\(.*followedDeviceMacs: Set<String>.*cleanMac\(event\.mac\)", self.events, "device presence notifications must be scoped to followed MAC addresses", re.S)
+        self.require(r"events\.size == 1.*\"device_detail\"", self.events, "one followed device event must open its detail", re.S)
         self.require(r"val\s+notificationRoute\s*=\s*eventNotificationRoute\(newEvents\)", self.notify_events, "notification route must be selected from the batch")
         self.require(r"val\s+summary\s*=\s*newEvents\.size\s*>\s*1", self.notify_events, "batch size must choose summary mode")
         self.require(r"if\s*\(summary\)\s*setGroup\(EVENT_GROUP_KEY\)\.setGroupSummary\(true\)", self.notify_events, "multi-event batch must be a grouped summary")
@@ -74,6 +76,7 @@ class NotificationContractTests(unittest.TestCase):
         self.require(r"putExtra\(\"navigate_route\",\s*notificationRoute\)", self.notify_events, "event PendingIntent must carry the selected allowlisted route")
         self.require(r"putExtra\(\"event_identity\",\s*eventIdentity\)", self.notify_events, "event identity must be carried to MainActivity")
         self.require(r"putExtra\(\"event_hub_key\",\s*scopeDigest\)", self.notify_events, "event hub scope must be carried to MainActivity")
+        self.require(r"putExtra\(\"device_mac\",\s*it\)", self.notify_events, "single followed-device notifications must carry the target MAC")
         self.require(r"newEvents\.take\(8\)", self.notify_events, "summary text must have a bounded number of event lines")
         self.require(r"\.notify\(\s*\"labprobe-events-\$scopeDigest\"", self.notify_events, "notification tag must isolate hubs")
         self.assertEqual(1, self.notify_events.count("NotificationManagerCompat.from(context).notify("), "a batch may post only one system notification")
@@ -81,6 +84,44 @@ class NotificationContractTests(unittest.TestCase):
             re.search(r"forEach\s*\{[^}]*notify\(", self.notify_events, re.S),
             "event delivery must not post one notification per row",
         )
+
+    def test_app_open_presence_reminder_is_latest_only_hourly_and_shares_realtime_claim(self):
+        main = (ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt").read_text(encoding="utf-8")
+        self.require(
+            r"EVENT_OPEN_REMINDER_COOLDOWN_MS\s*=\s*60L\s*\*\s*60L\s*\*\s*1000L",
+            self.events,
+            "app-open presence reminders must use an explicit one-hour window",
+        )
+        self.require(
+            r"fun selectLatestFollowedPresenceReminder\(.*filterEventNotifications\(events, followedDeviceMacs\).*"
+            r"filter \{ it\.isDevicePresenceEvent\(\) \}.*maxWithOrNull.*elapsed >= cooldownMs",
+            self.events,
+            "startup reminder policy must choose only the latest followed presence event and enforce cooldown",
+            re.S,
+        )
+        self.require(
+            r"private fun claimLatestFollowedPresenceReminder\(.*synchronized\(store\).*"
+            r"eventOpenReminderPreferenceKey\(scopeDigest\).*\.commit\(\)",
+            self.events,
+            "hourly reminder claims must be synchronously persisted per Hub",
+            re.S,
+        )
+        self.require(
+            r"fun notifyNewEvents\(.*claimLatestFollowedPresenceReminder\(.*postEventNotification",
+            self.events,
+            "realtime delivery must claim the same hourly reminder identity before posting",
+            re.S,
+        )
+        self.require(
+            r"fun notifyLatestFollowedPresenceOnOpen\(.*claimLatestFollowedPresenceReminder\(.*"
+            r"postEventNotification\(context, listOf\(event\), scopeDigest\)",
+            self.events,
+            "app-open delivery must post one claimed event only",
+            re.S,
+        )
+        self.assertIn("startupPresenceReminderPending = true", main)
+        self.assertIn("notifyLatestFollowedPresenceOnOpen", main)
+        self.assertIn("if (active && !foregroundActive) startupPresenceReminderPending = true", main)
 
     def test_certificate_route_is_observed_daily_route_and_keeps_existing_dedupe(self):
         self.require(r"data\s*=\s*Uri\.parse\(\"labprobe://daily/certificate/\$\{Uri\.encode\(item\.id\)\}\"\)", self.cert_notify, "certificate PendingIntent must target the observed daily route")
@@ -123,6 +164,9 @@ class NotificationContractTests(unittest.TestCase):
         self.assertIn("incoming::removeExtra", main)
         self.assertIn("notificationRoute(incoming.getStringExtra", main)
         self.assertIn("wrongEventHub", main)
+        self.assertIn('setOf("events", "devices", "device_detail")', main)
+        self.assertIn("AppNavigator.pendingDeviceMac", main)
+        self.assertIn('it in setOf("home", "devices", "device_detail"', main)
         self.assertIn("eventNotificationSessionIdentity != notificationIdentity", main)
         self.assertIn("silentBaseline = silentBaseline", main)
 

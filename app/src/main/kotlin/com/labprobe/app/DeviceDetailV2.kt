@@ -136,6 +136,10 @@ fun DeviceDetailScreen(
             }
         }
 
+        if (device.followedOverride == true) {
+            FollowedDevicePresenceSection(device = device, events = state.events)
+        }
+
         CompactListCard(coreSurface = true) {
             Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             DeviceDetailAddress("IPv4", cleanApiText(device.ip).ifBlank { "--" }, LabV2.Primary)
