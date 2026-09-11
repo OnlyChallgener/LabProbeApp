@@ -37,3 +37,4 @@ App 自动创建的 WireGuard STUN 规则使用了 `router_self + 127.0.0.1`。H
 - 2026-09-11：首次 GitHub CI 完成 Kotlin/Release 编译，但一个旧绑定测试数据缺少 `enabled/serviceType` 字段而失败；已补齐真实规则必需字段后重新提交验证。
 - 2026-09-11：GitHub CI `34561413744` 通过：38 项 Python 静态回归、242 项 Kotlin/Android 单元测试与 Release 编译全部成功。该次为手动分支验证，未执行签名 APK 上传步骤。
 - 2026-09-11：GitHub Test Bundle `34562081484` 通过：242 项 Kotlin/Android 单元测试、签名 Release APK 构建、APK 签名校验与制品上传均成功；制品为 `LabProbe-v0.12.0-build241-test-apk`。
+- 2026-09-11：测试发布 `test-bundle/wg-stun-native-20260911` 完成。GitHub Test Bundle `34568223418` 通过并发布预发布 APK `LabProbe-v0.12.0-build241-test.apk`；SHA-256：`b9fe1e9e9eeaafd126f04abc2b048446f3ddc5c31e795e30c7a8adc522327a24`。
