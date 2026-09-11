@@ -57,3 +57,4 @@
 - 2026-09-11：完成关注设备通知过滤（filterEventNotifications）、单关注设备直达详情（eventNotificationTarget / MainActivity）、前台打开成功同步 1 小时限频提醒与实时通知共享去重（selectLatestFollowedPresenceReminder / claimLatestFollowedPresenceReminder / notifyLatestFollowedPresenceOnOpen）。
 - 2026-09-11：审查生命周期与并发细节：`setForeground` 设置 `startupPresenceReminderPending` 标记；成功同步时单次消费标记；SharedPreferences 原子提交；`CancellationException` 保持重抛；异常不阻断数据流。
 - 2026-09-11：本地 Python 静态契约测试与回归（44 项用例全部通过，包括 `test_followed_device_presence_contracts.py`、`test_notification_contracts.py`、`test_wg_stun_contracts.py`、`test_wg_stun_recovery_contracts.py`）；Git diff 检查无空白或格式异常。
+- 2026-09-11：GitHub CI `34575806321` 通过：Python 静态契约测试、Kotlin/Android 单元测试与 Release 编译全部通过。
