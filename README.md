@@ -1,6 +1,29 @@
 # LabProbe App
 
 极客网探 Android 客户端，使用 Kotlin + Jetpack Compose。仓库长期只维护 `main` 主线；历史版本通过 Git Tag 与 GitHub Release 留档，不再为每个 build 创建长期 release 分支、一次性 workflow 或独立版本说明文件。
+## 界面预览
+
+<div align="center">
+
+| 路由器状态与 15 分钟实时动态走势 | 极客网络工具箱与双栈状态 |
+| :---: | :---: |
+| <img src="docs/images/screenshot_router_status.png" width="320" alt="路由器状态与动态走势" /> | <img src="docs/images/screenshot_toolbox.png" width="320" alt="极客网络工具箱与双栈状态" /> |
+| **实时遥测、温度/连接数与 15 分钟平滑流量趋势** | **双栈出口、运营商检测、NAT 类型与网络工具** |
+
+| 转发、穿透、WireGuard 与深度诊断 | 智能 AI 对话运维与指令交互 |
+| :---: | :---: |
+| <img src="docs/images/screenshot_features.png" width="320" alt="转发穿透与深度诊断" /> | <img src="docs/images/screenshot_ai_assistant.png" width="320" alt="智能 AI 助手" /> |
+| **STUN 穿透联动防火墙、WireGuard 多模式漫游** | **多模型 AI 对话、自然语言排障与 TCP 压测引导** |
+
+</div>
+
+### 核心特性
+
+- **📡 路由器全维状态与 15 分钟平滑趋势**：深度接入适配路由器（如锐捷 BE72 等），实时掌控硬件温度、CPU/内存/存储占用、上下行速率及 IPv4/IPv6 连接数；内置最近 15 分钟滚动平滑流量走势与连接数曲线，支持手势长按拖动回溯历史读数。
+- **🧰 全场景极客网络工具箱**：实时呈现本机 IPv4/IPv6 出口、NAT 类型、运营商归属及协议栈优先级；集成延迟测试、端口扫描、路由追踪、UDP 探针、DNS 质量检测、WiFi 漫游、MTU/PMTU 测试、SSH 终端与 WOL 局域网唤醒。
+- **🛡️ 端口转发、STUN 穿透与安全防护**：支持 IPv6 端口映射、原生端口映射与 UPnP；提供 STUN 自动穿透并实时联动 Hub 防火墙出入站规则；内置 RFC3489 / RFC5780 路由器原生 NAT 诊断与 TCP 峰值连接数压测工具。
+- **🌐 原生 WireGuard 客户端与无缝漫游**：基于官方 Android tunnel 库，支持我的配置（手动）、DDNS 动态域名以及 STUN 公网映射三种独立 Ownership 模式，实现移动蜂窝与 Wi-Fi 之间的智能无缝漫游。
+- **🤖 智能 AI 对话运维助手**：集成智能会话能力，支持通过自然语言快速查询 Hub 状态、在线设备、IPv6 地址，并智能引导路由器峰值连接数测试与故障诊断。
 
 ## 项目组成
 
