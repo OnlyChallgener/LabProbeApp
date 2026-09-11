@@ -3,7 +3,12 @@ package com.labprobe.app
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -86,6 +91,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -103,6 +109,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private data class RouterPortUi(
@@ -582,81 +589,142 @@ private fun RouterHeroCard(
     onEdit: () -> Unit,
     onOpenRouter: () -> Unit
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "traffic_flow")
+    val flowPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "flow_phase"
+    )
+    val orbitAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 18000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "orbit_angle"
+    )
+    val refreshAngle by animateFloatAsState(
+        targetValue = if (refreshing) 360f else 0f,
+        animationSpec = if (refreshing) infiniteRepeatable(animation = tween(900, easing = LinearEasing)) else tween(300),
+        label = "refresh_rotation"
+    )
+
+    val downRate = remember(ui.downloadBps) { formatOfficialRate(ui.downloadBps) }
+    val upRate = remember(ui.uploadBps) { formatOfficialRate(ui.uploadBps) }
+    val isTransmitting = ui.downloadBps > 1024L || ui.uploadBps > 1024L
+
     RouterGlassCard(contentPadding = PaddingValues(0.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Left Wing: Router visual + WAN topology light-packet flow
             Box(
-                Modifier.weight(.98f).height(160.dp).clip(RoundedCornerShape(20.dp)).clickable(onClick = onOpenRouter),
+                Modifier
+                    .weight(.96f)
+                    .height(172.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable(onClick = onOpenRouter),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(Modifier.fillMaxSize()) {
-                    val c = Offset(size.width * .50f, size.height * .51f)
-                    val radius = size.minDimension
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(Color(0x244AA8FF), Color(0x0D73A7FF), Color.Transparent),
-                            center = c,
-                            radius = radius * .52f
-                        ),
-                        radius = radius * .52f,
-                        center = c
-                    )
-                    drawCircle(Color(0x2873A7FF), radius = radius * .43f, center = c, style = Stroke(1.25.dp.toPx()))
-                    drawCircle(Color(0x1A42D6C5), radius = radius * .34f, center = c, style = Stroke(1.dp.toPx()))
-                    drawCircle(Color(0x1273A7FF), radius = radius * .26f, center = c, style = Stroke(.8.dp.toPx()))
-                    drawArc(
-                        color = Color(0x4973A7FF),
-                        startAngle = -34f,
-                        sweepAngle = 104f,
-                        useCenter = false,
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
-                        size = Size(size.width * .82f, size.height * .82f),
-                        topLeft = Offset(size.width * .09f, size.height * .09f)
-                    )
-                    drawArc(
-                        color = Color(0x3638D9C5),
-                        startAngle = 142f,
-                        sweepAngle = 82f,
-                        useCenter = false,
-                        style = Stroke(width = 1.55.dp.toPx(), cap = StrokeCap.Round),
-                        size = Size(size.width * .68f, size.height * .68f),
-                        topLeft = Offset(size.width * .16f, size.height * .16f)
-                    )
-                    val nodes = listOf(
-                        Offset(size.width * .10f, size.height * .68f),
-                        Offset(size.width * .28f, size.height * .85f),
-                        Offset(size.width * .73f, size.height * .14f),
-                        Offset(size.width * .91f, size.height * .30f),
-                        Offset(size.width * .88f, size.height * .76f)
-                    )
-                    drawLine(Color(0x2673A7FF), nodes[0], nodes[1], 1.15.dp.toPx())
-                    drawLine(Color(0x1F73A7FF), nodes[2], nodes[3], 1.15.dp.toPx())
-                    drawLine(Color(0x1838D9C5), Offset(size.width * .72f, size.height * .67f), nodes[4], 1.dp.toPx())
-                    nodes.forEachIndexed { index, node ->
-                        drawCircle(
-                            color = if (index == 1 || index == 4) Color(0x8242D6C5) else Color(0x7073A7FF),
-                            radius = if (index == 1 || index == 4) 2.4.dp.toPx() else 1.8.dp.toPx(),
-                            center = node
-                        )
+                    val w = size.width
+                    val h = size.height
+                    val routerCenter = Offset(w * 0.50f, h * 0.54f)
+                    val wanCenter = Offset(24.dp.toPx(), 24.dp.toPx())
+
+                    // 1. Router base concentric orbits
+                    val orbitR1 = 52.dp.toPx()
+                    val orbitR2 = 68.dp.toPx()
+                    val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 6f), 0f))
+                    drawCircle(Color(0x184AA8FF), radius = orbitR1, center = routerCenter, style = dashStroke)
+                    drawCircle(Color(0x1038D9C5), radius = orbitR2, center = routerCenter, style = dashStroke)
+
+                    // Orbiting satellites around router
+                    val rad1 = Math.toRadians(orbitAngle.toDouble())
+                    val sat1 = Offset(routerCenter.x + (orbitR1 * Math.cos(rad1)).toFloat(), routerCenter.y + (orbitR1 * Math.sin(rad1)).toFloat())
+                    drawCircle(Color(0x8038D9C5), radius = 2.4.dp.toPx(), center = sat1)
+
+                    val rad2 = Math.toRadians((orbitAngle + 180.0) % 360.0)
+                    val sat2 = Offset(routerCenter.x + (orbitR2 * Math.cos(rad2)).toFloat(), routerCenter.y + (orbitR2 * Math.sin(rad2)).toFloat())
+                    drawCircle(Color(0x7073A7FF), radius = 2.dp.toPx(), center = sat2)
+
+                    // 2. Data transmission pipeline from WAN to Router
+                    val p0 = wanCenter
+                    val p1 = Offset(wanCenter.x + 28.dp.toPx(), wanCenter.y + 4.dp.toPx())
+                    val p2 = Offset(routerCenter.x - 24.dp.toPx(), routerCenter.y - 48.dp.toPx())
+                    val p3 = Offset(routerCenter.x, routerCenter.y - 28.dp.toPx())
+
+                    val pipeline = Path().apply {
+                        moveTo(p0.x, p0.y)
+                        cubicTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y)
                     }
+                    // Baseline pipeline glow
+                    drawLine(Color(0x1E73A7FF), p0, p1, 1.2.dp.toPx())
+                    drawPath(pipeline, Color(0x3273A7FF), style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
+
+                    // 3. Flowing light packets along Bezier curve
+                    val packetCount = if (isTransmitting) 5 else 3
+                    for (i in 0 until packetCount) {
+                        val t = (flowPhase + i.toFloat() / packetCount) % 1f
+                        val pos = evalCubicBezier(p0, p1, p2, p3, t)
+                        val color = if (ui.downloadBps >= ui.uploadBps) Color(0xFF22C55E) else Color(0xFF0EA5E9)
+                        val alpha = (1f - (2f * t - 1f).let { it * it }).coerceIn(0.2f, 1f)
+                        // Soft halo
+                        drawCircle(color.copy(alpha = 0.28f * alpha), radius = 5.dp.toPx(), center = pos)
+                        // Core bead
+                        drawCircle(color.copy(alpha = 0.85f * alpha), radius = 2.2.dp.toPx(), center = pos)
+                    }
+
+                    // 4. WAN Node badge background
+                    drawCircle(Color(0x2222C55E), radius = 18.dp.toPx(), center = wanCenter)
+                    drawCircle(Color(0xFFE8FDF0), radius = 13.dp.toPx(), center = wanCenter)
+                    drawCircle(Color(0xFF86EFAC), radius = 13.dp.toPx(), center = wanCenter, style = Stroke(1.2.dp.toPx()))
                 }
+
+                // WAN Icon inside the top-left node
+                Box(
+                    Modifier
+                        .size(26.dp)
+                        .align(Alignment.TopStart)
+                        .padding(start = 11.dp, top = 11.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Rounded.Public,
+                        contentDescription = "WAN",
+                        modifier = Modifier.size(14.dp),
+                        tint = Color(0xFF16A34A)
+                    )
+                }
+
+                // 3D Router Image
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.router_skeuomorphic_v3),
                     contentDescription = "路由器",
-                    modifier = Modifier.fillMaxSize().padding(7.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
                     contentScale = ContentScale.Fit
                 )
             }
-            Column(Modifier.weight(1.02f).padding(start = 1.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+
+            // Right Wing: Router identity + Speeds + Connections
+            Column(
+                Modifier.weight(1.04f).padding(start = 3.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Row 1: Green bolt + Name + Edit + Online pill
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = CircleShape, color = LabV2.Green, modifier = Modifier.size(25.dp)) {
+                    Surface(shape = CircleShape, color = Color(0xFF16A34A), modifier = Modifier.size(24.dp)) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp), tint = Color.White)
                         }
                     }
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(5.dp))
                     Row(
                         Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically
@@ -664,141 +732,236 @@ private fun RouterHeroCard(
                         Text(
                             ui.name,
                             fontSize = LabTypography.CardTitle.fontSize,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             color = Color(0xFF10264F),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 102.dp)
+                            modifier = Modifier.widthIn(max = 105.dp)
                         )
                         Spacer(Modifier.width(3.dp))
                         Icon(
                             Icons.Rounded.Edit,
-                            null,
+                            "修改名称",
                             Modifier.size(15.dp).clip(CircleShape).clickable(onClick = onEdit),
-                            tint = Color(0xFF8B99B2)
+                            tint = Color(0xFF94A3B8)
                         )
                     }
-                    Spacer(Modifier.width(3.dp))
+                    Spacer(Modifier.width(4.dp))
                     Surface(
                         shape = RoundedCornerShape(99.dp),
-                        color = if (ui.online) Color(0xFFD9F8E5) else Color(0xFFFFE5E8)
+                        color = if (ui.online) Color(0xFFE8FDF0) else Color(0xFFFFECEE)
                     ) {
                         Text(
                             if (ui.online) "在线" else "离线",
-                            Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
                             fontSize = LabTypography.Caption.fontSize,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (ui.online) LabV2.Green else LabV2.Red
+                            color = if (ui.online) Color(0xFF16A34A) else Color(0xFFDC2626)
                         )
                     }
                 }
+
+                // Row 2: Dual rate columns (Download & Upload)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SpeedValue(Icons.Rounded.South, ui.downloadBps, "下载速率", LabV2.Green, Modifier.weight(1f))
-                    SpeedValue(Icons.Rounded.North, ui.uploadBps, "上传速率", LabV2.Primary, Modifier.weight(1f))
+                    SpeedMetricColumn(
+                        isDownload = true,
+                        value = downRate.first,
+                        unit = downRate.second,
+                        label = "下载速率",
+                        accent = Color(0xFF16A34A),
+                        bgLight = Color(0xFFE8FDF0),
+                        modifier = Modifier.weight(1f)
+                    )
+                    SpeedMetricColumn(
+                        isDownload = false,
+                        value = upRate.first,
+                        unit = upRate.second,
+                        label = "上传速率",
+                        accent = Color(0xFF2563EB),
+                        bgLight = Color(0xFFEFF6FF),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
+
+                // Row 3: IPv4 / IPv6 connection count chips
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ConnectionCountChip("IPv4 连接数", ui.ipv4Connections, LabV2.Primary, Modifier.weight(1f))
-                    ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF0EA5E9), Modifier.weight(1f))
+                    ConnectionCountPill("IPv4 连接数", ui.ipv4Connections, Color(0xFF0284C7), Modifier.weight(1f))
+                    ConnectionCountPill("IPv6 连接数", ui.ipv6Connections, Color(0xFF0EA5E9), Modifier.weight(1f))
                 }
+
                 if (ui.telemetryStale) {
                     Text("实时数据暂时未变化，已保留上次结果", fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
+
+        // Bottom Dock (4-column inset metric strip)
         Box(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 7.dp)
-                .clip(RoundedCornerShape(21.dp))
-                .background(Brush.horizontalGradient(listOf(Color(0xFFF8FBFF), Color(0xFFF2F7FF), Color(0xFFF8FBFF))))
-                .border(1.dp, Color(0xFFE2EAF5), RoundedCornerShape(21.dp))
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xFFF7FAFD))
+                .border(1.dp, Color(0xFFE6EFF8), RoundedCornerShape(18.dp))
         ) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                HeroMetric(Icons.Rounded.DeviceThermostat, "温度", temperatureText(ui.temperature), LabV2.Green, Modifier.weight(1f))
-                HeroDivider()
-                HeroMetric(Icons.Rounded.Schedule, "运行时间", uptimeText(ui.uptimeSeconds), LabV2.Primary, Modifier.weight(1f))
-                HeroDivider()
-                HeroMetric(
+            Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                HeroMetricItem(Icons.Rounded.DeviceThermostat, "温度", temperatureText(ui.temperature), Color(0xFF10B981), Modifier.weight(1f))
+                Box(Modifier.width(1.dp).height(30.dp).background(Color(0xFFE2EAF5)))
+                HeroMetricItem(Icons.Rounded.Schedule, "运行时间", uptimeText(ui.uptimeSeconds), Color(0xFF0284C7), Modifier.weight(1f))
+                Box(Modifier.width(1.dp).height(30.dp).background(Color(0xFFE2EAF5)))
+                HeroMetricItem(
                     Icons.Rounded.Group,
                     "连接数",
                     "${ui.onlineDevices} 台",
-                    Color(0xFF22C9B5),
-                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(onClick = onOpenDevices)
+                    Color(0xFF0D9488),
+                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(onClick = onOpenDevices)
                 )
-                HeroDivider()
+                Box(Modifier.width(1.dp).height(30.dp).background(Color(0xFFE2EAF5)))
                 Row(
-                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled = !refreshing, onClick = onRefresh),
+                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(enabled = !refreshing, onClick = onRefresh),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LabV2.Primary)
-                    else Icon(Icons.Rounded.Refresh, null, Modifier.size(22.dp), tint = LabV2.Primary)
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (refreshing) "刷新中" else "刷新", fontSize = (LabTypography.Value.fontSize.value - 1f).sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+                    Icon(
+                        Icons.Rounded.Refresh,
+                        contentDescription = "刷新",
+                        modifier = Modifier.size(20.dp).rotate(refreshAngle),
+                        tint = Color(0xFF0284C7)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (refreshing) "刷新中" else "刷新",
+                        fontSize = (LabTypography.Value.fontSize.value - 1f).sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF10264F)
+                    )
                 }
             }
         }
     }
 }
 
+private fun evalCubicBezier(p0: Offset, p1: Offset, p2: Offset, p3: Offset, t: Float): Offset {
+    val u = 1f - t
+    val tt = t * t
+    val uu = u * u
+    val uuu = uu * u
+    val ttt = tt * t
+    val x = uuu * p0.x + 3f * uu * t * p1.x + 3f * u * tt * p2.x + ttt * p3.x
+    val y = uuu * p0.y + 3f * uu * t * p1.y + 3f * u * tt * p2.y + ttt * p3.y
+    return Offset(x, y)
+}
+
+private fun formatOfficialRate(bps: Long): Pair<String, String> {
+    val kbps = bps / 1000.0
+    val mbps = kbps / 1000.0
+    val gbps = mbps / 1000.0
+    return when {
+        bps <= 0 -> "0.00" to "Kbps"
+        bps < 1_000 -> String.format(Locale.US, "%.2f", bps.toDouble()) to "bps"
+        bps < 1_000_000 -> String.format(Locale.US, "%.2f", kbps) to "Kbps"
+        bps < 1_000_000_000 -> String.format(Locale.US, "%.2f", mbps) to "Mbps"
+        else -> String.format(Locale.US, "%.2f", gbps) to "Gbps"
+    }
+}
+
 @Composable
-private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color, modifier: Modifier) {
-    val rate = bitRateParts(bps)
+private fun SpeedMetricColumn(
+    isDownload: Boolean,
+    value: String,
+    unit: String,
+    label: String,
+    accent: Color,
+    bgLight: Color,
+    modifier: Modifier = Modifier
+) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 shape = CircleShape,
-                color = Color.Transparent,
-                border = BorderStroke(.9.dp, color),
+                color = bgLight,
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.6f)),
                 modifier = Modifier.size(18.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, null, Modifier.size(10.dp), tint = color)
+                    Icon(
+                        if (isDownload) Icons.Rounded.South else Icons.Rounded.North,
+                        contentDescription = null,
+                        modifier = Modifier.size(10.dp),
+                        tint = accent
+                    )
                 }
             }
+            Spacer(Modifier.width(3.dp))
+            Text(
+                value,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = accent,
+                maxLines = 1
+            )
             Spacer(Modifier.width(2.dp))
-            Text(rate.first, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
-            Spacer(Modifier.width(1.dp))
-            Text(rate.second, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text(
+                unit,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = accent,
+                maxLines = 1
+            )
         }
-        Text(label, Modifier.padding(start = 21.dp), fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        Text(
+            label,
+            Modifier.padding(start = 21.dp),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color(0xFF8B99B2)
+        )
     }
 }
 
 @Composable
-private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier) {
+private fun ConnectionCountPill(label: String, count: Long, color: Color, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = color.copy(alpha = .065f),
-        border = BorderStroke(1.dp, color.copy(alpha = .13f))
+        color = Color(0xFFF0F7FF),
+        border = BorderStroke(1.dp, Color(0xFFD6E8FA))
     ) {
         Row(
-            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+            Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Text(
+                label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF64748B),
+                maxLines = 1
+            )
             Spacer(Modifier.width(4.dp))
-            Text(count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text(
+                count.toString(),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = color,
+                maxLines = 1
+            )
         }
     }
 }
 
 @Composable
-private fun HeroMetric(icon: ImageVector, label: String, value: String, color: Color, modifier: Modifier) {
-    Row(modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-        Icon(icon, null, Modifier.size(22.dp), tint = color)
-        Spacer(Modifier.width(6.dp))
+private fun HeroMetricItem(icon: ImageVector, label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Row(modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+        Icon(icon, null, Modifier.size(20.dp), tint = color)
+        Spacer(Modifier.width(5.dp))
         Column {
-            Text(label, fontSize = (LabTypography.Caption.fontSize.value - .5f).sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
-            Text(value, fontSize = (LabTypography.Value.fontSize.value - 1f).sp, color = Color(0xFF10264F), fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(label, fontSize = 11.sp, color = Color(0xFF8B99B2), fontWeight = FontWeight.Medium)
+            Text(value, fontSize = 13.sp, color = Color(0xFF10264F), fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
-
-@Composable
-private fun HeroDivider() = Box(Modifier.width(1.dp).height(38.dp).background(Color(0xFFDCE6F3)))
 
 @Composable
 private fun RouterRealtimeCard(ui: RouterDashboardUi, state: AppState) {
