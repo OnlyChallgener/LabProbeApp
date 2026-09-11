@@ -555,8 +555,6 @@ private fun PresenceInsightPanel(
         }
     }
 }
-    }
-}
 
 @Composable
 private fun FollowedDevicePresenceSheet(

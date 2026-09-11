@@ -625,6 +625,9 @@ fun PortMappingScreen(
     var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
     var agent by remember { mutableStateOf(PortMappingMemoryCache.agent ?: PortMapAgentInfo(false, "Router", "", 20000, 20020)) }
     var canonicalDevicesLoaded by remember { mutableStateOf(false) }
+    var hasPersistedDocument by remember(prefs.hub, prefs.hubDns) {
+        mutableStateOf(PortMappingMemoryCache.rules.isNotEmpty())
+    }
     var loading by remember { mutableStateOf(PortMappingMemoryCache.agent == null && initialRules.isEmpty()) }
     var refreshInFlight by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -633,16 +636,15 @@ fun PortMappingScreen(
     var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
 
     LaunchedEffect(prefs.hub, prefs.hubDns) {
-        if (PortMappingMemoryCache.rules.isEmpty()) {
-            val persistent = withContext(Dispatchers.IO) {
-                PortMappingRuleStore.load(context, prefs)
-            }
-            if (rules.isEmpty() && persistent.rules.isNotEmpty()) {
-                rules = persistent.rules
-                rulesRevision = maxOf(rulesRevision, persistent.revision)
-                rulesUpdatedAt = rulesUpdatedAt.ifBlank { persistent.updatedAt }
-                loading = false
-            }
+        val persistent = withContext(Dispatchers.IO) {
+            PortMappingRuleStore.load(context, prefs)
+        }
+        hasPersistedDocument = persistent.hasDocument
+        if (rules.isEmpty() && persistent.rules.isNotEmpty()) {
+            rules = persistent.rules
+            rulesRevision = maxOf(rulesRevision, persistent.revision)
+            rulesUpdatedAt = rulesUpdatedAt.ifBlank { persistent.updatedAt }
+            loading = false
         }
     }
 
@@ -669,6 +671,7 @@ fun PortMappingScreen(
         rulesRevision = revision.coerceAtLeast(rulesRevision)
         snapshotRevision = sourceRevision.coerceAtLeast(snapshotRevision)
         rulesUpdatedAt = updatedAt.ifBlank { rulesUpdatedAt }
+        hasPersistedDocument = true
         PortMappingMemoryCache.rules = next
         PortMappingMemoryCache.rulesRevision = rulesRevision
         PortMappingMemoryCache.snapshotRevision = snapshotRevision
@@ -700,7 +703,7 @@ fun PortMappingScreen(
                 currentRules = rules,
                 currentRulesRevision = rulesRevision,
                 currentSnapshotRevision = snapshotRevision,
-                hasPersistedDocument = persistentRules.hasDocument,
+                hasPersistedDocument = hasPersistedDocument,
             )
             if (mayAccept) {
                 commitRulesLocally(snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt, snapshot.revision)
