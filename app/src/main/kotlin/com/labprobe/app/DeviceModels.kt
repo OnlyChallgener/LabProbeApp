@@ -1,8 +1,10 @@
 package com.labprobe.app
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 
+@Immutable
 data class DeviceItem(
     val name: String,
     val mac: String,
@@ -40,6 +42,7 @@ data class DeviceItem(
     val todayOnlineDate: String = ""
 )
 
+@Immutable
 data class DeviceVisualProfile(
     val type: String,
     val label: String,
@@ -51,6 +54,7 @@ data class DeviceVisualProfile(
     val iconKey: String = "unknown"
 )
 
+@Immutable
 data class EventItem(
     val id: Int,
     val title: String,

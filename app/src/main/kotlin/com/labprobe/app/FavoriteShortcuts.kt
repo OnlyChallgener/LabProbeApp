@@ -58,6 +58,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import androidx.compose.runtime.Immutable
 import java.io.File
 import java.net.URI
 import java.util.Locale
@@ -65,6 +66,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
+@Immutable
 data class FavoriteShortcut(
     val id: String,
     val title: String,

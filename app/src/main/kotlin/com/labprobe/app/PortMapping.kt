@@ -75,6 +75,7 @@ private val PortSlate = Color(0xFF718096)
 private val PortSheetBg = Color(0xFFFFFFFF)
 private val PortPopupBg = Color(0xFFFFFFFF)
 
+@Immutable
 data class PortMapRuntime(
     val state: String = "stopped",
     val resolvedTarget: String = "",
@@ -90,6 +91,7 @@ data class PortMapRuntime(
     val lastError: String = ""
 )
 
+@Immutable
 data class PortMapRule(
     val id: String,
     val name: String,
@@ -135,6 +137,7 @@ data class PortMapRule(
     }
 }
 
+@Immutable
 data class PortMapAgentInfo(
     val online: Boolean,
     val router: String,

@@ -74,6 +74,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -94,6 +95,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -121,6 +123,7 @@ private data class RouterPortUi(
     val speedLabel: String = ""
 )
 
+@Immutable
 private data class RouterDashboardUi(
     val name: String = "路由器",
     val model: String = "--",
@@ -985,7 +988,7 @@ private fun ExpandableNetworkRow(
             Icon(
                 Icons.Rounded.KeyboardArrowDown,
                 null,
-                Modifier.size(22.dp).rotate(if (expanded) 180f else 0f),
+                Modifier.size(22.dp).graphicsLayer { rotationZ = if (expanded) 180f else 0f },
                 tint = Color(0xFF60728F)
             )
         }

@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import androidx.compose.runtime.Immutable
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -11,6 +12,7 @@ import java.time.ZoneId
  * use [durationMillis] directly, which is calculated against the supplied
  * `now` value for that open interval.
  */
+@Immutable
 internal data class FollowedDevicePresenceSession(
     val startedAt: Instant,
     val endedAt: Instant?,
@@ -20,6 +22,7 @@ internal data class FollowedDevicePresenceSession(
 }
 
 /** A local-calendar aggregate, suitable for a daily duration chart. */
+@Immutable
 internal data class FollowedDevicePresenceDay(
     val date: LocalDate,
     val onlineDurationMillis: Long,
@@ -27,6 +30,7 @@ internal data class FollowedDevicePresenceDay(
 )
 
 /** One local hour in the selected day's 24-column distribution chart. */
+@Immutable
 internal data class FollowedDevicePresenceHour(
     val hour: Int,
     val onlineDurationMillis: Long
@@ -41,6 +45,7 @@ internal data class FollowedDevicePresenceHour(
  * normalized event history ends online and the current device snapshot is
  * also online; it is capped by the supplied [now] instant.
  */
+@Immutable
 internal data class FollowedDevicePresence(
     val isAvailable: Boolean,
     val hasPresenceEvents: Boolean,
