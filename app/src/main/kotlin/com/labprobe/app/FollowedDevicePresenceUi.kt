@@ -22,7 +22,6 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.HorizontalDivider
-import com.labprobe.app.ui.design.LabTypography
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import androidx.compose.material3.Icon
