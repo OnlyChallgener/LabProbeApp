@@ -107,7 +107,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
 
     DetailShell(
         title = "路由设置",
-        subtitle = "已预加载配置快照 · 页面打开不重复请求",
+        subtitle = "管理网络、远程访问与安全",
         onBack = onBack,
         compactHeader = true,
         unifiedTypography = true

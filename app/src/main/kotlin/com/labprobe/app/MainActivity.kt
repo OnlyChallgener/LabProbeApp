@@ -1796,12 +1796,22 @@ fun LabProbeApp(prefs: AppPrefs) {
                                     animationSpec = tween(140, easing = FastOutSlowInEasing)
                                 ) { if (forward) -nudge / 2 else nudge / 2 } + fadeOut(tween(140))
                                 slideIn togetherWith slideOut
+                            } else if (initialState == "router_settings" || targetState == "router_settings") {
+                                val isBackward = targetState in mainRoutes ||
+                                    (targetState == "router_settings" && initialState.startsWith("tool_"))
+                                // Pair opaque pages at equal offsets; whole-page alpha exposes the old page.
+                                val slideIn = slideInHorizontally(
+                                    animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                ) { if (isBackward) -it else it }
+                                val slideOut = slideOutHorizontally(
+                                    animationSpec = tween(220, easing = FastOutSlowInEasing)
+                                ) { if (isBackward) it else -it }
+                                slideIn togetherWith slideOut
                             } else {
                                 val isReturningToMain = targetState in mainRoutes && initialState !in mainRoutes
-                                val isReturningToRouterSettings = targetState == "router_settings"
                                 val isReturningToTools = targetState == "tools"
                                 val isReturningToDevices = targetState == "devices" && (initialState == "device_detail" || initialState == "device_traffic")
-                                val isBackward = isReturningToMain || isReturningToRouterSettings || isReturningToTools || isReturningToDevices
+                                val isBackward = isReturningToMain || isReturningToTools || isReturningToDevices
 
                                 if (isBackward) {
                                     val slideIn = slideInHorizontally(

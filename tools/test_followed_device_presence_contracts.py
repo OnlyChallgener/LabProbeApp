@@ -38,7 +38,7 @@ class FollowedDevicePresenceContractTests(unittest.TestCase):
 
     def test_detail_adds_only_the_local_presence_component(self):
         self.assertIn("if (device.followedOverride == true)", self.detail)
-        self.assertIn("FollowedDevicePresenceSection(device = device, events = state.events)", self.detail)
+        self.assertIn("FollowedDevicePresenceSection(device = device, presence = presence, now = now, zoneId = zoneId)", self.detail)
         self.assertNotIn("HubApi", self.ui)
         self.assertNotIn("RouterRepository", self.ui)
 

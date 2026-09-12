@@ -22,15 +22,12 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,42 +40,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private enum class PresenceRange(val label: String) {
-    TODAY("今天"),
-    SEVEN_DAYS("近7天"),
-    TEN_DAYS("近10天")
-}
-
 /** Compact, followed-device-only presentation. No network or persistence work is performed here. */
 @Composable
-internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<EventItem>) {
-    if (device.followedOverride != true) return
+internal fun FollowedDevicePresenceSection(
+    device: DeviceItem,
+    presence: FollowedDevicePresence,
+    now: Instant,
+    zoneId: ZoneId
+) {
+    if (device.followedOverride != true || !presence.isAvailable) return
 
-    val zoneId = ZoneId.systemDefault()
-    var nowEpochMs by remember(device.mac) { mutableLongStateOf(System.currentTimeMillis()) }
     var selectedRangeName by rememberSaveable(device.mac) { mutableStateOf(PresenceRange.TODAY.name) }
     var showRecords by remember { mutableStateOf(false) }
-
-    LaunchedEffect(device.mac) {
-        nowEpochMs = System.currentTimeMillis()
-        while (true) {
-            delay(60_000L)
-            nowEpochMs = System.currentTimeMillis()
-        }
-    }
-
-    val now = remember(nowEpochMs) { Instant.ofEpochMilli(nowEpochMs) }
-    val presence = remember(device.mac, device.followedOverride, device.online, events, now, zoneId) {
-        followedDevicePresence(device = device, events = events, now = now, zoneId = zoneId)
-    }
-    if (!presence.isAvailable) return
 
     val selectedRange = remember(selectedRangeName) {
         PresenceRange.entries.firstOrNull { it.name == selectedRangeName } ?: PresenceRange.TODAY
@@ -103,16 +82,6 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PresenceSummaryMetric(
-                label = "连续在线",
-                value = when {
-                    !device.online -> "当前离线"
-                    presence.currentOnlineDurationMillis != null -> formatPresenceDuration(presence.currentOnlineDurationMillis)
-                    else -> "记录不足"
-                },
-                color = if (device.online) LabV2.Green else LabV2.InkMuted,
-                modifier = Modifier.weight(1f)
-            )
             PresenceSummaryMetric(
                 label = "今日在线",
                 value = if (!presence.hasPresenceEvents) {
@@ -143,44 +112,12 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
             }
         }
 
-        val chart = remember(presence, selectedRange) {
-            when (selectedRange) {
-                PresenceRange.TODAY -> {
-                    val detailLabels = presence.todayHours.map { hour ->
-                        val dur = formatPresenceDuration(hour.onlineDurationMillis)
-                        if (hour.onlineDurationMillis > 0L) "${hour.hour}点 · 在线 $dur"
-                        else "${hour.hour}点 · 未在线"
-                    }
-                    val totalToday = presence.todayHours.sumOf { it.onlineDurationMillis }
-                    val currentHour = now.atZone(zoneId).hour
-                    val maxToday = (currentHour + 1).coerceAtLeast(1) * 3600_000L
-                    PresenceChartData(
-                        values = presence.todayHours.map { it.onlineDurationMillis },
-                        labelsByIndex = presence.todayHours.map { hour ->
-                            if (hour.hour % 4 == 0) "${hour.hour}点" else ""
-                        },
-                        detailLabels = detailLabels,
-                        maximum = presence.todayHours.maxOfOrNull { it.onlineDurationMillis }
-                            ?.coerceAtLeast(60L * 60L * 1000L)
-                            ?: 60L * 60L * 1000L,
-                        scaleLabel = "每小时 · 最高 ${
-                            (presence.todayHours.maxOfOrNull { it.onlineDurationMillis }
-                                ?.coerceAtLeast(60L * 60L * 1000L)
-                                ?: 60L * 60L * 1000L) / 60_000L
-                        } 分钟",
-                        highlightIndex = currentHour,
-                        totalDurationMillis = totalToday,
-                        maxPossibleMillis = maxToday,
-                        rangeLabel = "今日在网概况"
-                    )
-                }
-                PresenceRange.SEVEN_DAYS -> dailyChartData(presence.last7Days, "近7天在网概况")
-                PresenceRange.TEN_DAYS -> dailyChartData(presence.last10Days, "近10天在网概况")
-            }
+        val chart = remember(presence, selectedRange, now, zoneId) {
+            presenceChartData(presence, selectedRange, now, zoneId)
         }
-        PresenceBarChart(chart)
+        key(device.mac) { PresenceBarChart(chart) }
         Text(
-            "基于设备上下线事件统计 · 缺失记录不计入在线",
+            "按已过时间计算在线率 · 缺失记录不计入在线",
             modifier = Modifier.fillMaxWidth(),
             style = LabTypography.Caption.copy(color = LabV2.InkMuted),
             maxLines = 1,
@@ -229,61 +166,10 @@ private fun PresenceRangeButton(label: String, selected: Boolean, onClick: () ->
     }
 }
 
-private data class PresenceChartData(
-    val values: List<Long>,
-    val labelsByIndex: List<String>,
-    val detailLabels: List<String>,
-    val maximum: Long,
-    val scaleLabel: String,
-    val highlightIndex: Int = -1,
-    val totalDurationMillis: Long = 0L,
-    val maxPossibleMillis: Long = 1L,
-    val rangeLabel: String = "统计概览"
-)
-
-private fun dailyChartData(days: List<FollowedDevicePresenceDay>, rangeLabel: String = "日常统计"): PresenceChartData {
-    val values = days.map { it.onlineDurationMillis }
-    val formatter = DateTimeFormatter.ofPattern("M/d", Locale.CHINA)
-    val labels = days.mapIndexed { index, day ->
-        if (index == 0 || index == days.lastIndex / 2 || index == days.lastIndex) {
-            day.date.format(formatter)
-        } else ""
-    }
-    val detailLabels = days.map { day ->
-        val dateLabel = "${day.date.monthValue}月${day.date.dayOfMonth}日"
-        if (day.onlineDurationMillis > 0L) {
-            val dur = formatPresenceDuration(day.onlineDurationMillis)
-            val starts = if (day.onlineStarts > 0) " (${day.onlineStarts}次上线)" else ""
-            "$dateLabel · 在线 $dur$starts"
-        } else {
-            "$dateLabel · 未在线"
-        }
-    }
-    val highestValue = values.maxOrNull() ?: 0L
-    val maximum = highestValue.coerceAtLeast(60L * 60L * 1000L)
-    val total = values.sum()
-    val maxPossible = (days.size.coerceAtLeast(1) * 24L * 3600_000L)
-    return PresenceChartData(
-        values = values,
-        labelsByIndex = labels,
-        detailLabels = detailLabels,
-        maximum = maximum,
-        scaleLabel = if (highestValue > 0L) {
-            "每日在线 · 最高 ${formatPresenceDuration(highestValue)}"
-        } else {
-            "每日在线小时"
-        },
-        highlightIndex = values.lastIndex,
-        totalDurationMillis = total,
-        maxPossibleMillis = maxPossible,
-        rangeLabel = rangeLabel
-    )
-}
-
 @Composable
 private fun PresenceBarChart(data: PresenceChartData) {
     val hasData = data.values.any { it > 0L }
-    var selectedIndex by remember(data) { mutableStateOf<Int?>(null) }
+    var selectedIndex by remember(data.selectionKey) { mutableStateOf<Int?>(null) }
     val isSelected = selectedIndex != null
     val displayLabel = selectedIndex?.let { data.detailLabels.getOrNull(it) } ?: data.scaleLabel
 
@@ -404,7 +290,6 @@ private fun PresenceBarChart(data: PresenceChartData) {
 
         Spacer(Modifier.height(6.dp))
 
-        // Plan B: Dynamic Insight Panel filling white space with rich summary / slice metrics
         PresenceInsightPanel(
             data = data,
             selectedIndex = selectedIndex,
@@ -431,8 +316,8 @@ private fun PresenceInsightPanel(
         if (isSelected) {
             val idx = selectedIndex!!
             val dur = data.values[idx]
-            val slotMax = if (data.values.size > 12) 3600_000L else 24L * 3600_000L
-            val pct = ((dur.toFloat() / slotMax.toFloat()) * 100f).coerceIn(0f, 100f).roundToInt()
+            val elapsedMillis = data.elapsedMillisByIndex.getOrElse(idx) { 0L }
+            val pct = if (data.hasRecords) presenceOnlineRate(dur, elapsedMillis) else null
             val detail = data.detailLabels.getOrNull(idx).orEmpty()
 
             Column(
@@ -476,20 +361,21 @@ private fun PresenceInsightPanel(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        if (dur > 0L) "时段活跃度：$pct%" else "该时段无在线活动记录",
+                        when {
+                            !data.hasRecords -> "记录不足"
+                            elapsedMillis <= 0L -> "暂无已过时长"
+                            else -> "时段在线率：$pct%"
+                        },
                         style = LabTypography.Supporting.copy(fontWeight = FontWeight.Medium, color = if (dur > 0L) Color(0xFF0284C7) else Color(0xFF94A3B8))
                     )
                     Text(
-                        if (dur > 0L) "时长 ${formatPresenceDuration(dur)}" else "离线",
+                        if (data.hasRecords && elapsedMillis > 0L) "时长 ${formatPresenceDuration(dur)}" else "--",
                         style = LabTypography.Supporting.copy(fontWeight = FontWeight.Bold, color = if (dur > 0L) LabV2.PrimaryStrong else Color(0xFF94A3B8))
                     )
                 }
             }
         } else {
-            // Default global range summary
-            val onlineRate = if (data.maxPossibleMillis > 0L) {
-                ((data.totalDurationMillis.toFloat() / data.maxPossibleMillis.toFloat()) * 100f).coerceIn(0f, 100f).roundToInt()
-            } else 0
+            val onlineRate = data.onlineRatePercent
 
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
@@ -503,8 +389,8 @@ private fun PresenceInsightPanel(
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
-                        "在线率 $onlineRate%",
-                        style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = if (onlineRate > 50) LabV2.Green else LabV2.Primary)
+                        onlineRate?.let { "在线率 $it%" } ?: if (data.hasRecords) "暂无统计时长" else "记录不足",
+                        style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = if ((onlineRate ?: 0) > 50) LabV2.Green else LabV2.Primary)
                     )
                 }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -514,7 +400,7 @@ private fun PresenceInsightPanel(
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
-                        formatPresenceDuration(data.totalDurationMillis).ifBlank { "0分钟" },
+                        if (data.hasRecords) formatPresenceDuration(data.totalDurationMillis) else "--",
                         style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = LabV2.Ink)
                     )
                 }
@@ -525,7 +411,7 @@ private fun PresenceInsightPanel(
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
-                        formatPresenceDuration(data.maximum).ifBlank { "--" },
+                        if (data.hasRecords) formatPresenceDuration(data.peakDurationMillis) else "--",
                         style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
                     )
                 }
@@ -614,20 +500,6 @@ private fun PresenceTimelineRow(session: FollowedDevicePresenceSession, now: Ins
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-private fun formatPresenceDuration(durationMillis: Long): String {
-    if (durationMillis <= 0L) return "0分"
-    val totalMinutes = (durationMillis.coerceAtLeast(0L) / 60_000L)
-    if (totalMinutes <= 0L) return "<1分"
-    val days = totalMinutes / (24L * 60L)
-    val hours = (totalMinutes % (24L * 60L)) / 60L
-    val minutes = totalMinutes % 60L
-    return buildString {
-        if (days > 0L) append(days).append("天")
-        if (hours > 0L) append(hours).append("小时")
-        if (minutes > 0L && days == 0L) append(minutes).append("分")
     }
 }
 

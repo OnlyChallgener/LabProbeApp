@@ -1,6 +1,5 @@
 package com.labprobe.app
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -16,10 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,6 +23,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import java.time.ZoneId
 
 @Composable
 fun DeviceDetailScreen(
@@ -64,25 +61,22 @@ fun DeviceDetailScreen(
     val rate = cleanApiText(device.rxrate).ifBlank { "--" }
     val band = if (wifi) cleanApiText(device.band).ifBlank { "Wi-Fi" } else "有线"
     val wifiName = if (wifi) cleanApiText(device.ssid) else ""
-    val onlineTime = cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let(::formatDurationText).orEmpty().ifBlank { "--" }
+    val events = state.events
+    val now = rememberDevicePresenceNow(device, events)
+    val zoneId = ZoneId.systemDefault()
+    val presence = remember(device.mac, device.followedOverride, device.online, events, now, zoneId) {
+        followedDevicePresence(device = device, events = events, now = now, zoneId = zoneId)
+    }
+    val onlineDurationMillis = deviceDetailOnlineDurationMillis(device, presence, now)
+    val onlineTime = onlineDurationMillis?.let(::formatPresenceDuration) ?: "记录不足"
     var editing by remember { mutableStateOf(false) }
     var waking by remember { mutableStateOf(false) }
 
     val manufacturer = resolveDeviceManufacturer(device)
 
-    DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
+    DetailShell("设备详情", "连接状态与在线记录", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
             Box(Modifier.fillMaxWidth()) {
-                Canvas(Modifier.fillMaxWidth().height(124.dp)) {
-                    val centerX = size.width / 2f
-                    val centerY = 58.dp.toPx()
-                    val accent = profile.accent
-                    val ringStroke = Stroke(width = 1.2.dp.toPx())
-                    val dashStroke = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f))
-
-                    drawCircle(accent.copy(alpha = 0.07f), radius = 56.dp.toPx(), center = Offset(centerX, centerY), style = ringStroke)
-                    drawCircle(accent.copy(alpha = 0.035f), radius = 70.dp.toPx(), center = Offset(centerX, centerY), style = dashStroke)
-                }
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(
                         Modifier
@@ -118,14 +112,14 @@ fun DeviceDetailScreen(
                         DeviceHeroMetricPill(
                             icon = if (wifi) Icons.Rounded.Wifi else Icons.Rounded.Lan,
                             title = if (wifi) "$band Wi-Fi" else "有线网络",
-                            subtitle = if (wifi && signal != "--") signal else if (device.online) "已连接" else "离线",
+                            subtitle = "连接方式",
                             accent = if (wifi) LabV2.Amber else LabV2.Primary,
                             modifier = Modifier.weight(1f)
                         )
                         DeviceHeroMetricPill(
                             icon = Icons.Rounded.Speed,
-                            title = if (rate != "--") rate else if (device.online) "正常连通" else "--",
-                            subtitle = "实时速率",
+                            title = rate,
+                            subtitle = "协商速率",
                             accent = if (device.online) LabV2.Green else LabV2.InkMuted,
                             modifier = Modifier.weight(1f)
                         )
@@ -139,7 +133,7 @@ fun DeviceDetailScreen(
                         DeviceHeroMetricPill(
                             icon = if (device.online) Icons.Rounded.CheckCircle else Icons.Rounded.AccessTime,
                             title = if (device.online) onlineTime else "已离线",
-                            subtitle = "在网时长",
+                            subtitle = "连续在线",
                             accent = if (device.online) LabV2.Green else LabV2.InkMuted,
                             modifier = Modifier.weight(1f)
                         )
@@ -149,12 +143,7 @@ fun DeviceDetailScreen(
         }
 
         CompactListCard(coreSurface = true) {
-            Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                DeviceDetailMetric("频段", band, LabV2.Primary, Modifier.weight(1f))
-                DeviceDetailMetric("信号", signal, LabV2.Amber, Modifier.weight(1f))
-                DeviceDetailMetric("速率", rate, LabV2.Green, Modifier.weight(1f))
-            }
+            Text("网络与流量", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
             if (wifiName.isNotBlank()) {
                 Surface(shape = RoundedCornerShape(14.dp), color = LabV2.Primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .09f))) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -167,14 +156,13 @@ fun DeviceDetailScreen(
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                DeviceDetailMetric("在线", onlineTime, LabV2.Green, Modifier.weight(1f))
                 DeviceDetailMetric("今日上传", cleanApiText(device.todayUpload).ifBlank { "--" }, LabV2.Primary, Modifier.weight(1f))
                 DeviceDetailMetric("今日下载", cleanApiText(device.todayDownload).ifBlank { "--" }, LabV2.Cyan, Modifier.weight(1f))
             }
         }
 
         if (device.followedOverride == true) {
-            FollowedDevicePresenceSection(device = device, events = state.events)
+            FollowedDevicePresenceSection(device = device, presence = presence, now = now, zoneId = zoneId)
         }
 
         CompactListCard(coreSurface = true) {
