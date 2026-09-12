@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.HorizontalDivider
+import com.labprobe.app.ui.design.LabTypography
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import androidx.compose.material3.Icon
@@ -447,18 +448,14 @@ private fun PresenceInsightPanel(
                         Text(
                             "已选时段",
                             Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = Color.White)
                         )
                     }
                     Spacer(Modifier.width(6.dp))
                     Text(
                         detail,
                         Modifier.weight(1f),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF10264F),
+                        style = LabTypography.Supporting.copy(fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F)),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -470,9 +467,7 @@ private fun PresenceInsightPanel(
                         Text(
                             "✕",
                             Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF475569)
+                            style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = Color(0xFF475569))
                         )
                     }
                 }
@@ -483,15 +478,11 @@ private fun PresenceInsightPanel(
                 ) {
                     Text(
                         if (dur > 0L) "时段活跃度：$pct%" else "该时段无在线活动记录",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (dur > 0L) Color(0xFF0284C7) else Color(0xFF94A3B8)
+                        style = LabTypography.Supporting.copy(fontWeight = FontWeight.Medium, color = if (dur > 0L) Color(0xFF0284C7) else Color(0xFF94A3B8))
                     )
                     Text(
                         if (dur > 0L) "时长 ${formatPresenceDuration(dur)}" else "离线",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (dur > 0L) LabV2.PrimaryStrong else Color(0xFF94A3B8)
+                        style = LabTypography.Supporting.copy(fontWeight = FontWeight.Bold, color = if (dur > 0L) LabV2.PrimaryStrong else Color(0xFF94A3B8))
                     )
                 }
             }
@@ -509,46 +500,34 @@ private fun PresenceInsightPanel(
                 Column(Modifier.weight(1f)) {
                     Text(
                         data.rangeLabel,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LabV2.InkMuted
+                        style = LabTypography.Supporting.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
                         "在线率 $onlineRate%",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (onlineRate > 50) LabV2.Green else LabV2.Primary
+                        style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = if (onlineRate > 50) LabV2.Green else LabV2.Primary)
                     )
                 }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "累计在网",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LabV2.InkMuted
+                        style = LabTypography.Supporting.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
                         formatPresenceDuration(data.totalDurationMillis).ifBlank { "0分钟" },
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = LabV2.Ink
+                        style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = LabV2.Ink)
                     )
                 }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                     Text(
                         "最高峰值",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LabV2.InkMuted
+                        style = LabTypography.Supporting.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
                         formatPresenceDuration(data.maximum).ifBlank { "--" },
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0284C7)
+                        style = LabTypography.Value.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0284C7))
                     )
                 }
             }
