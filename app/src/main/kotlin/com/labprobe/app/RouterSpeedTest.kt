@@ -35,13 +35,13 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathBuilder
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.labprobe.app.ui.design.LabTypography
-import com.labprobe.app.ui.design.LabV2
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -634,13 +634,7 @@ private fun SpeedHistoryRow(record: SpeedHistoryRecord) {
 /** Custom glyph for the 6th nav slot: router body with antenna and signal arc. */
 object RouterToolsIcon {
     val vector: ImageVector by lazy {
-        ImageVector.Builder(
-            name = "RouterTools",
-            defaultWidth = 24.dp,
-            defaultHeight = 24.dp,
-            viewportWidth = 24f,
-            viewportHeight = 24f
-        ).apply {
+        val path = PathBuilder().apply {
             // signal arc
             moveTo(4.6f, 11.4f)
             arcTo(9.6f, 9.6f, 0f, false, true, 19.4f, 11.4f)
@@ -659,5 +653,18 @@ object RouterToolsIcon {
             curveTo(2.6f, 15.4f, 3.4f, 14.6f, 4.4f, 14.6f)
             close()
         }.build()
+        ImageVector.Builder(
+            name = "RouterTools",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).addPath(
+            path = path,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ).build()
     }
 }
