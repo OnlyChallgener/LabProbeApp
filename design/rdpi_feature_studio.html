@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>路由工具页 + RDPI 特征工作室 · 方案与界面设计 v2</title>
+<style>
+:root{
+  --bg:#F5F7FA; --card:#FFFFFF; --ink:#1B2733; --muted:#8A97A6;
+  --blue:#0095D8; --green:#00C783; --amber:#F59E0B; --red:#E5484D;
+  --border:#E6EBF1; --field:#F2F5F9;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);padding:28px 18px 60px}
+.wrap{max-width:1120px;margin:0 auto}
+h1{font-size:24px;font-weight:700;margin-bottom:6px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:26px}
+h2{font-size:17px;font-weight:700;margin:34px 0 14px;display:flex;align-items:center;gap:8px}
+h2::before{content:"";width:4px;height:16px;border-radius:2px;background:var(--blue)}
+.grid{display:grid;gap:14px}
+.cols-2{grid-template-columns:1fr 1fr}
+.cols-3{grid-template-columns:1fr 1fr 1fr}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px}
+.card h3{font-size:14px;font-weight:700;margin-bottom:10px}
+.card p,.card li{font-size:13px;line-height:1.75;color:#3D4A59}
+.card ul{padding-left:18px}
+code{background:var(--field);border-radius:6px;padding:1px 6px;font-size:12px;font-family:ui-monospace,Consolas,monospace;color:#0B6FA4}
+pre{background:#0F1720;color:#D7E3F0;border-radius:12px;padding:14px 16px;font-size:12px;line-height:1.65;overflow:auto;font-family:ui-monospace,Consolas,monospace}
+flow{display:flex;gap:0;align-items:stretch;flex-wrap:wrap}
+.fstep{flex:1;min-width:150px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;position:relative}
+.fstep+.fstep{margin-left:26px}
+.fstep+.fstep::before{content:"→";position:absolute;left:-22px;top:50%;transform:translateY(-50%);color:var(--blue);font-weight:700;font-size:16px}
+.fstep .no{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--blue);color:#fff;font-size:12px;align-items:center;justify-content:center;margin-bottom:8px;font-weight:700}
+.fstep b{font-size:13px;display:block;margin-bottom:4px}
+.fstep span{font-size:12px;color:var(--muted);line-height:1.6;display:block}
+.note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.7}
+/* phone mockup — 顶部页栏,与 App 一致 */
+.phone-row{display:flex;gap:30px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+.phone{width:360px;background:#EDEFF3;border-radius:38px;padding:10px;box-shadow:0 18px 40px rgba(20,35,55,.14)}
+.screen{background:var(--bg);border-radius:30px;overflow:hidden;height:780px;display:flex;flex-direction:column}
+.statusbar{display:flex;justify-content:space-between;padding:10px 20px 4px;font-size:11px;color:var(--muted)}
+/* 顶部一级页栏(OneUiTopNav 同构) */
+.topnav{display:flex;gap:4px;margin:6px 12px 10px;background:#fff;border:1px solid var(--border);border-radius:16px;padding:5px}
+.tn{flex:1;text-align:center;padding:7px 0 5px;border-radius:12px;font-size:10.5px;color:#9AA7B5}
+.tn .d{width:18px;height:18px;margin:0 auto 2px;border-radius:6px;background:#D6DEE7}
+.tn.on{background:#E3F3FC;color:var(--blue);font-weight:700}
+.tn.on .d{background:var(--blue)}
+.pagetitle{padding:2px 18px 8px;display:flex;align-items:baseline;gap:8px}
+.pagetitle b{font-size:19px}
+.pagetitle span{font-size:11px;color:var(--muted)}
+.body{flex:1;overflow-y:auto;padding:2px 14px 16px;display:flex;flex-direction:column;gap:12px}
+.mcard{background:#fff;border:1px solid var(--border);border-radius:16px;padding:14px}
+.mrow{display:flex;align-items:center;gap:10px}
+.ic{width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;background:#F2F5F9}
+.mtitle{font-size:14px;font-weight:600}
+.msub{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5}
+.chip{margin-left:auto;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.seclabel{font-size:12px;color:var(--muted);font-weight:600;margin-top:2px}
+.kv{display:flex;justify-content:space-between;font-size:12px;margin-top:8px}
+.kv span{color:var(--muted)}
+.kv b{font-weight:600}
+.pkt{background:#0F1720;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.7;color:#C7E3F7;margin-top:10px;white-space:pre;overflow-x:auto}
+.pkt em{color:#7FD4A8;font-style:normal}
+.pkt s{color:#F0B37E;text-decoration:none}
+.btn{display:block;text-align:center;margin-top:12px;padding:10px 0;border-radius:12px;font-size:13px;font-weight:600}
+.btn.primary{background:var(--blue);color:#fff}
+.btn.ghost{border:1px solid var(--border);color:#3D4A59;background:#fff}
+/* 工具页内部二级 Tab(分段控件) */
+.segtabs{display:flex;gap:8px;padding:0 0 4px}
+.segtabs .tab{flex:1;text-align:center;padding:8px 0;border-radius:12px;font-size:12.5px;color:var(--muted);background:#fff;border:1px solid var(--border)}
+.segtabs .tab.on{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:600}
+.back{display:flex;align-items:center;gap:6px;padding:0 2px 8px;font-size:13px;color:var(--ink);font-weight:600}
+.back i{font-style:normal;color:var(--blue);font-size:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>路由工具页信息架构 + RDPI 特征工作室 · 设计 v2</h1>
+  <div class="sub">v2 修正:页栏回到顶部(与 App 的 OneUiTopNav 一致,不是底部栏);特征工作室只是「路由工具」页里的一项,新增独立入口卡;儿童上网在工具页留入口 · 2026-09-18</div>
+
+  <h2>一、路由工具页信息架构(与官方 APP 全量对齐的主线)</h2>
+  <div class="grid cols-2">
+    <div class="card"><h3>「路由」一级页 = 工具面板</h3>
+      <ul>
+        <li><b>网络测速</b>卡(面板首卡,路由器原生测速)</li>
+        <li><b>儿童上网</b>(官方 APP 全功能对齐:上网计划 / 应用管控 / 停网时段 / 暂停联网)</li>
+        <li><b>路由设置与诊断</b>:映射与 UPnP · 防火墙 · 网络自检 · NAT 诊断 · IPv6 · DDNS · WireGuard · Webhook</li>
+        <li><b>特征工作室</b>(本期新增项,排在设置区之后;只是其中一项,不占满页面)</li>
+      </ul>
+    </div>
+    <div class="card"><h3>儿童上网 = 官方 APP 逻辑全量匹配</h3>
+      <ul>
+        <li>页面:设备总览(绑定终端)→ 单设备页(上网计划卡片列表、应用黑/白名单、立即暂停/恢复、断网时段)</li>
+        <li>操作逻辑:计划 = 时间窗 + 模式(internet_window / app_allowlist / app_blocklist);App→Hub 命令队列→路由器,与 Hub 既有 10 个 action 一一对应</li>
+        <li>执行层:固件 child_guard(uci + sniffer),已真机闭环验证通过</li>
+        <li>本期只补「路由工具页入口」,页面本身保持已对齐的实现不动</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>二、已验证的可行性基础(特征工作室)</h2>
+  <div class="grid cols-3">
+    <div class="card"><h3>特征库本体</h3><p>原生识别引擎 nDPI,特征库纯 JSON:<code>/usr/share/ndpi/db.default.json</code>(hosts / payloads(hex+pos)/ user-agents / http-gets)。改完 <code>ubus send rdpi_reinit</code> 热加载,<code>rdpi -e 名称</code> 回读验证。</p></div>
+    <div class="card"><h3>已有先例</h3><p><code>/root/rdpi-backup/db.default.before-wechat.json</code> — 本机已成功手工注入过微信规则。自定义叠加、修复误识别均可行。</p></div>
+    <div class="card"><h3>防丢机制</h3><p>官方 <code>rdpi_feature_lib_upgrade.sh</code> 升级会覆盖库 → Hub 持有「期望特征集」,检测库版本/SHA 变化后自动 diff 重放。</p></div>
+  </div>
+
+  <h2>三、全链路:抓包 → 分析 → 特征包 → 同步</h2>
+  <flow>
+    <div class="fstep"><span class="no">1</span><b>抓包(NAS / 手机)</b><span>tcpdump 目标设备流量;App 上传 pcap:<code>POST /api/rdpi/captures</code></span></div>
+    <div class="fstep"><span class="no">2</span><b>分析(Hub)</b><span>提取 DNS/SNI/UA/固定 hex/端口行为,与原生库 diff,产出分析报告(未识别簇+置信度)</span></div>
+    <div class="fstep"><span class="no">3</span><b>生成特征包</b><span>符合 db.default.json schema 的增量 JSON,人工在 App 确认后入库(签名+SHA256)</span></div>
+    <div class="fstep"><span class="no">4</span><b>同步路由器</b><span>Agent <code>rdpi_feature</code> 命令:备份→合并→reinit→rdpi -e 验证→上报(过渡期走 SSH 通道)</span></div>
+    <div class="fstep"><span class="no">5</span><b>闭环验证</b><span>被测设备再跑流量 → flow_dump 出现新 index → 卡片显示「已识别·命中 N 次」,失败自动回滚</span></div>
+  </flow>
+
+  <h2>四、Hub API(新增)</h2>
+  <div class="grid cols-2">
+    <div class="card"><h3>抓包 / 分析 / 特征包</h3>
+<pre>POST /api/rdpi/captures          # 上传 pcap(multipart)
+POST /api/rdpi/captures/:id/analyze
+GET  /api/rdpi/analysis/:id
+{ "unknownClusters":[
+  {"hosts":["*.example.cn"],"packets":412,
+   "sni":"mp.example.cn","confidence":0.93,
+   "suggestIndex":"7-1-9-1"} ] }
+
+POST /api/rdpi/features          # 生成特征包草稿
+GET  /api/rdpi/features
+PUT  /api/rdpi/features/:id
+POST /api/rdpi/features/:id/sync # 下发路由器</pre></div>
+    <div class="card"><h3>路由器侧(Agent 命令,过渡期 SSH)</h3>
+<pre>GET /api/router/rdpi/commands
+{ "action":"apply_feature_pack",
+  "packUrl":"...", "sha256":"...",
+  "mergeStrategy":"additive" }
+POST /api/router/rdpi/ack
+{ "applied":true, "reinit":"ok",
+  "verify":{"7-1-9-1":"rdpi -e OK"},
+  "backup":"/root/rdpi-backup/..." }
+
+POST /api/router/rdpi/status
+{ "dbSha256":"...", "dbVersion":"...",
+  "customPacks":["fp-xxx"] }</pre>
+    <p class="note">Agent 0.2.48 暂无此能力:过渡期由 Hub 经 SSH(192.168.5.46→192.168.5.1 已验证)执行同流程;Agent 适配器就绪后无缝切换。</p></div>
+  </div>
+
+  <h2>五、App 界面原型(顶部页栏 · 路由工具 hub + 特征工作室子页)</h2>
+  <div class="phone-row">
+    <!-- A: 路由工具 hub -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>02:10</span><span>5G 5G ▂▄▆</span></div>
+      <div class="topnav">
+        <div class="tn"><div class="d"></div>首页</div>
+        <div class="tn"><div class="d"></div>设备</div>
+        <div class="tn"><div class="d"></div>工具</div>
+        <div class="tn on"><div class="d"></div>路由</div>
+        <div class="tn"><div class="d"></div>记录</div>
+        <div class="tn"><div class="d"></div>收藏</div>
+      </div>
+      <div class="pagetitle"><b>路由工具</b><span>路由器原生能力 · 与官方网页端同源接口</span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mrow">
+            <div class="ic" style="background:#E3F3FC">⚡</div>
+            <div><div class="mtitle">网络测速</div><div class="msub">路由器直连宽带测速 · 节点可选</div></div>
+            <div class="chip" style="background:#EDEFF3;color:#8A97A6">进入</div>
+          </div>
+          <div class="kv"><span>上次</span><b>587.52 ↓ / 49.10 ↑ Mbps</b></div>
+        </div>
+        <div class="seclabel">儿童上网</div>
+        <div class="mcard">
+          <div class="mrow">
+            <div class="ic" style="background:#E2F8EF">🧒</div>
+            <div><div class="mtitle">儿童上网</div><div class="msub">上网计划 · 应用管控 · 停网时段</div></div>
+            <div class="chip" style="background:#E2F8EF;color:#0A9E6B">3 台已绑定</div>
+          </div>
+        </div>
+        <div class="seclabel">路由设置与诊断</div>
+        <div class="mcard"><div class="mrow"><div class="ic">🗺️</div><div><div class="mtitle">映射与 UPnP</div><div class="msub">IPv6 映射 · 端口映射 · UPnP</div></div></div></div>
+        <div class="mcard"><div class="mrow"><div class="ic">🧱</div><div><div class="mtitle">防火墙</div><div class="msub">入站 · 出站 · 转发规则</div></div></div></div>
+        <div class="mcard"><div class="mrow"><div class="ic">🧪</div><div><div class="mtitle">网络自检</div><div class="msub">物理接线与协商速率检测</div></div></div></div>
+        <div class="mcard"><div class="mrow"><div class="ic">📡</div><div><div class="mtitle">特征工作室</div><div class="msub">抓包分析 · 自定义特征 · 库修复</div></div><div class="chip" style="background:#FCF1DD;color:#B7791F">新</div></div></div>
+        <div class="mcard"><div class="mrow"><div class="ic">🌐</div><div><div class="mtitle">IPv6 设置 · DDNS · WireGuard · 更多</div><div class="msub">共 8 项原生设置与诊断</div></div></div></div>
+      </div>
+    </div></div>
+
+    <!-- B: 特征工作室(子页) -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>02:10</span><span>5G 5G ▂▄▆</span></div>
+      <div class="topnav">
+        <div class="tn"><div class="d"></div>首页</div>
+        <div class="tn"><div class="d"></div>设备</div>
+        <div class="tn"><div class="d"></div>工具</div>
+        <div class="tn on"><div class="d"></div>路由</div>
+        <div class="tn"><div class="d"></div>记录</div>
+        <div class="tn"><div class="d"></div>收藏</div>
+      </div>
+      <div class="pagetitle" style="padding-bottom:4px"><b>特征工作室</b></div>
+      <div style="padding:0 14px 8px"><div class="back"><i>‹</i> 路由工具</div></div>
+      <div class="segtabs" style="padding:0 14px 10px">
+        <div class="tab">特征库</div><div class="tab on">抓包分析</div><div class="tab">我的特征包</div>
+      </div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mrow">
+            <div class="ic" style="background:#E3F3FC">📡</div>
+            <div><div class="mtitle">抓包任务 · NAS-01</div><div class="msub">目标 192.168.5.98 · 进行中 3m12s</div></div>
+            <div class="chip" style="background:#E3F3FC;color:#0080BE">抓包中</div>
+          </div>
+          <div class="kv"><span>已捕获</span><b>1,204 包 · 2.1MB</b></div>
+          <div class="btn ghost" style="margin-top:10px">停止并分析</div>
+        </div>
+        <div class="mcard">
+          <div class="mrow">
+            <div class="ic" style="background:#E2F8EF">🔍</div>
+            <div><div class="mtitle">分析报告 #47</div><div class="msub">来自 wechat-fix.pcap · 09-17 13:30</div></div>
+            <div class="chip" style="background:#E2F8EF;color:#0A9E6B">已完成</div>
+          </div>
+          <div class="kv" style="margin-top:10px"><span>未识别流量簇</span><b>2 个</b></div>
+          <div class="pkt"><s>SNI</s>  mp.example.cn          <em>0.93</em>
+<s>DNS</s>  *.example.cn ×214      <em>0.88</em>
+<s>UA</s>   ExampleApp/8.2.1       <em>0.81</em>
+<s>HEX</s>  17 03 03 00 .. @pos0   <em>0.64</em></div>
+          <div class="kv"><span>建议归属</span><b>communication / 7-1-9-1</b></div>
+          <div class="btn primary" style="margin-top:10px">生成特征包草稿</div>
+        </div>
+        <div class="mcard">
+          <div class="mrow">
+            <div class="ic">🗂️</div>
+            <div><div class="mtitle">历史抓包</div><div class="msub">3 个 pcap · 共 6.4MB</div></div>
+            <div class="chip" style="background:#EDEFF3;color:#8A97A6">归档</div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <p class="note" style="text-align:center">页栏在顶部,与 App 现有 OneUiTopNav 完全同构;工具子页(特征工作室)以「页内返回 + 分段 Tab」呈现,不新增底部栏。</p>
+
+  <h2>六、落地顺序</h2>
+  <div class="card">
+    <ul>
+      <li><b>已做</b>:路由工具页加「儿童上网」入口(返回目标随来源页);动画/映射修复;本设计 v2。</li>
+      <li><b>第 1 步</b>:Hub 加 <code>/api/rdpi/*</code> + 特征包存储;路由器侧先用 SSH 通道执行「备份→合并→reinit→验证」,把微信修复包正式化。</li>
+      <li><b>第 2 步</b>:Agent 加 <code>rdpi_feature</code> 命令(与儿童上网适配器同批),App 按本原型实现特征工作室三 Tab。</li>
+      <li><b>长线</b>:以官方 APP 为基准逐项对齐「路由」域全功能(计划表/设备分组/上网报告等)。</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

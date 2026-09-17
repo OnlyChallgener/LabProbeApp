@@ -21,3 +21,5 @@ keystore/
 __pycache__/
 *.py[cod]
 
+
+*.apk

@@ -2365,9 +2365,9 @@ fun LabProbeApp(prefs: AppPrefs) {
     )
 
     MaterialTheme(colorScheme = light, typography = LabMaterialTypography) {
-        val mainRoutes = listOf("home", "devices", "tools", "events", "favorites")
-        val navTitles = listOf("首页", "设备", "工具", "记录", "收藏")
-        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, Icons.Rounded.History, Icons.Rounded.Star)
+        val mainRoutes = listOf("home", "devices", "tools", "router_tools", "events", "favorites")
+        val navTitles = listOf("首页", "设备", "工具", "路由", "记录", "收藏")
+        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, RouterToolsIcon.vector, Icons.Rounded.History, Icons.Rounded.Star)
         val normalized = when {
             route.startsWith("tool_") -> toolReturnRoute?.takeIf { it in mainRoutes } ?: "tools"
             route == "daily" -> dailyReturnRoute.takeIf { it in mainRoutes } ?: "events"
@@ -2375,7 +2375,8 @@ fun LabProbeApp(prefs: AppPrefs) {
             route == "router_status" -> "home"
             route == "router_settings" -> "home"
             route == "wol" -> "devices"
-            route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" -> "devices"
+            route == "device_traffic" || route == "device_detail" -> "devices"
+            route == "child_internet_overview" || route == "child_internet_device" -> childInternetReturnRoute.takeIf { it in mainRoutes } ?: "devices"
             route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
             route == "ai_settings" || route == "ai_chat" || route == "ai_usage" -> "home"
             else -> route
@@ -2386,6 +2387,9 @@ fun LabProbeApp(prefs: AppPrefs) {
                 route == "router_settings" -> "router_settings"
                 route in mainRoutes -> route
                 else -> normalized
+            }
+            if (target == "child_internet_overview" && route != "device_detail") {
+                childInternetReturnRoute = if (route in mainRoutes) route else "devices"
             }
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
@@ -2487,7 +2491,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                                 slideIn togetherWith slideOut
                             } else {
                                 val isReturningToMain = targetState in mainRoutes && initialState !in mainRoutes
-                                val isReturningToRouterSettings = targetState == "router_settings"
+                                // 返回路由设置 = 从其子页(tool_*)退回;从一级页正向进入时走前进动画
+                                val isReturningToRouterSettings = targetState == "router_settings" && initialState.startsWith("tool_")
                                 val isReturningToTools = targetState == "tools"
                                 val isReturningToDevices = targetState == "devices" && (initialState == "device_detail" || initialState == "device_traffic" || initialState == "child_internet_overview")
                                 val isReturningFromChildInternet = initialState == "child_internet_device" && targetState == childInternetReturnRoute
@@ -2544,7 +2549,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" }
                         )
                         "child_internet_overview" -> ChildInternetOverviewScreen(
-                            onBack = { route = "devices" },
+                            onBack = { route = childInternetReturnRoute },
                             repository = childInternetRepository,
                             onOpenDevice = { deviceId ->
                                 selectedDeviceMac = deviceId
@@ -2563,6 +2568,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             if (it == "ai_settings") aiSettingsReturnRoute = "tools"
                             route = it
                         }
+                        "router_tools" -> RouterToolsScreen(prefs, topNav) { target -> navigate(target) }
                         "events" -> EventsScreen(state, { scope.launch { state.refreshAll(forceFull = true) } }, { dailyReturnRoute = "events"; route = "daily" }, topNav)
                         "daily" -> DailyScreen(prefs) { route = dailyReturnRoute }
                         "favorites" -> FavoritesScreen(
