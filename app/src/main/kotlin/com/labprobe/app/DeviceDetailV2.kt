@@ -33,6 +33,7 @@ fun DeviceDetailScreen(
     state: AppState,
     deviceMac: String?,
     onBack: () -> Unit,
+    onOpenChildInternet: () -> Unit,
     onOpenPortMap: () -> Unit,
     onOpenSsh: () -> Unit
 ) {
@@ -195,6 +196,27 @@ fun DeviceDetailScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DeviceDetailGridItem("主机名", cleanApiText(device.hostName).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 44.dp)
                 DeviceDetailGridItem("备注", cleanApiText(device.remark).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
+            }
+        }
+
+        Surface(
+            onClick = onOpenChildInternet,
+            modifier = Modifier.fillMaxWidth(),
+            shape = LabCoreSurface.CompactShape,
+            color = Color.White,
+            border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                LabV2ToolIcon(Icons.Rounded.ChildCare, LabV2.Cyan, size = 42)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("儿童上网", style = LabTypography.SectionTitle)
+                    Text("上网计划、应用许可与使用报告", style = LabTypography.Supporting, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = LabV2.InkFaint)
             }
         }
 

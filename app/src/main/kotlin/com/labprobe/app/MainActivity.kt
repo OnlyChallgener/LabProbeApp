@@ -2097,6 +2097,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 fun LabProbeApp(prefs: AppPrefs) {
     var route by rememberSaveable { mutableStateOf("home") }
     var selectedDeviceMac by rememberSaveable { mutableStateOf<String?>(null) }
+    var childInternetReturnRoute by rememberSaveable { mutableStateOf("device_detail") }
     var toolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var nestedToolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var settingsReturnRoute by rememberSaveable { mutableStateOf("favorites") }
@@ -2128,6 +2129,9 @@ fun LabProbeApp(prefs: AppPrefs) {
     var autoRefresh by remember { mutableStateOf("实时") }
     val context = LocalContext.current
     val state = remember { AppState(prefs, context) }
+    // Preview/test code may opt into FakeChildInternetRepository explicitly;
+    // the installed app always uses the Hub-backed implementation.
+    val childInternetRepository = remember(prefs) { RealChildInternetRepository(prefs) }
     val scope = rememberCoroutineScope()
     var appForeground by remember { mutableStateOf(true) }
     val diagnosisProbes = remember(state, prefs) { DiagnosisProbes(context.applicationContext, prefs, state) }
@@ -2371,7 +2375,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             route == "router_status" -> "home"
             route == "router_settings" -> "home"
             route == "wol" -> "devices"
-            route == "device_traffic" || route == "device_detail" -> "devices"
+            route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" -> "devices"
             route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
             route == "ai_settings" || route == "ai_chat" || route == "ai_usage" -> "home"
             else -> route
@@ -2408,7 +2412,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
             nestedToolReturnRoute = null
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
             if (route.startsWith("tool_")) {
                 backFromTool()
             } else {
@@ -2421,6 +2425,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                     "devices" -> "home"
                     "device_traffic" -> "devices"
                     "device_detail" -> "devices"
+                    "child_internet_overview" -> "devices"
+                    "child_internet_device" -> childInternetReturnRoute
                     "settings" -> settingsReturnRoute
                     "ai_settings" -> aiSettingsReturnRoute
                     "ai_chat" -> aiChatReturnRoute
@@ -2483,8 +2489,9 @@ fun LabProbeApp(prefs: AppPrefs) {
                                 val isReturningToMain = targetState in mainRoutes && initialState !in mainRoutes
                                 val isReturningToRouterSettings = targetState == "router_settings"
                                 val isReturningToTools = targetState == "tools"
-                                val isReturningToDevices = targetState == "devices" && (initialState == "device_detail" || initialState == "device_traffic")
-                                val isBackward = isReturningToMain || isReturningToRouterSettings || isReturningToTools || isReturningToDevices
+                                val isReturningToDevices = targetState == "devices" && (initialState == "device_detail" || initialState == "device_traffic" || initialState == "child_internet_overview")
+                                val isReturningFromChildInternet = initialState == "child_internet_device" && targetState == childInternetReturnRoute
+                                val isBackward = isReturningToMain || isReturningToRouterSettings || isReturningToTools || isReturningToDevices || isReturningFromChildInternet
 
                                 if (isBackward) {
                                     val slideIn = slideInHorizontally(
@@ -2532,8 +2539,24 @@ fun LabProbeApp(prefs: AppPrefs) {
                             state = state,
                             deviceMac = selectedDeviceMac,
                             onBack = { route = "devices" },
+                            onOpenChildInternet = { childInternetReturnRoute = "device_detail"; route = "child_internet_device" },
                             onOpenPortMap = { toolReturnRoute = "device_detail"; route = "tool_portmap" },
                             onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" }
+                        )
+                        "child_internet_overview" -> ChildInternetOverviewScreen(
+                            onBack = { route = "devices" },
+                            repository = childInternetRepository,
+                            onOpenDevice = { deviceId ->
+                                selectedDeviceMac = deviceId
+                                childInternetReturnRoute = "child_internet_overview"
+                                route = "child_internet_device"
+                            }
+                        )
+                        "child_internet_device" -> ChildInternetDeviceScreen(
+                            state = state,
+                            deviceId = selectedDeviceMac,
+                            repository = childInternetRepository,
+                            onBack = { route = childInternetReturnRoute }
                         )
                         "tools" -> ToolsHomeScreen(prefs, topNav) {
                             toolReturnRoute = null
