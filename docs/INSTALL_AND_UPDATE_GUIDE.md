@@ -10,9 +10,9 @@
 
 | 组件名称 | 推荐版本 | 运行平台 | 核心职责 |
 | :--- | :---: | :---: | :--- |
-| **LabProbe App** | `v0.13.0+` (build 242+) | Android 10+ (手机/平板) | 状态呈现、儿童上网、网络工具箱、路由控制、穿透与诊断 |
+| **LabProbe App** | `v0.13.1+` (build 243+) | Android 10+ (手机/平板) | 状态呈现、儿童上网、网络工具箱、路由控制、穿透与诊断 |
 | **LabProbe Hub** | `v0.11.x+` (最新主线) | Linux AMD64 / ARM64 (Docker) | 数据聚合、状态持久化 (SQLite)、WSS/REST 接口、更新仓 |
-| **LabRelay** | `v0.2.47+` | Linux aarch64 (适配路由器 / OpenWrt) | 硬件遥测、儿童守护适配、TCP 穿透与压测、NDP 邻居与接口数据采集 |
+| **LabRelay** | `v0.2.48+` | Linux aarch64 (适配路由器 / OpenWrt) | 硬件遥测、儿童守护适配、TCP 穿透与压测、NDP 邻居与接口数据采集 |
 
 ---
 

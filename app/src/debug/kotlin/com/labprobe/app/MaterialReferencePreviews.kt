@@ -67,7 +67,7 @@ fun MaterialReferencePreviewScreen(screen: String) {
         when (screen) {
             "home" -> HomeScreen(prefs, state, "实时", {}, {}, {}, nav)
             "devices" -> DevicesScreen(state, nav, {}, {})
-            "detail" -> DeviceDetailScreen(state, first.mac, {}, {}, {})
+            "detail" -> DeviceDetailScreen(state, first.mac, {}, {}, {}, {})
             "ping" -> PingScreen(prefs, {})
             "result" -> DetailShell("延迟测试", "ICMP · IPv6 · 真实时间轴", {}) {
                 PingLatencyCard(materialReferencePingPoints(), LabV2.Primary, {})
