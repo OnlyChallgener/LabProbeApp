@@ -12,6 +12,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Assessment
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -67,7 +70,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -197,7 +202,7 @@ fun ChildInternetDeviceScreen(
                         )
                     }
                 }
-                ChildInternetTab.ATTENTION -> ChildInternetAttentionScreen(deviceState.attentionEntries)
+                ChildInternetTab.ATTENTION -> ChildInternetAttentionScreen(deviceState.attentionEntries.ifEmpty { deriveAttentionEntries(deviceState) })
             }
         }
     }
@@ -316,6 +321,7 @@ private fun UsageBars(bars: List<UsageBar>, today: Boolean) {
     ) {
         bars.forEachIndexed { index, bar ->
             val fraction = (bar.minutes.toFloat() / maxValue).coerceIn(0f, 1f)
+            val highlighted = (today && bar.label == "0点") || (!today && index == bars.lastIndex)
             Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.weight(1f))
                 Box(
@@ -323,10 +329,16 @@ private fun UsageBars(bars: List<UsageBar>, today: Boolean) {
                         .fillMaxWidth(.55f)
                         .height((8 + fraction * 100).dp)
                         .clip(RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp))
-                        .background(if ((today && bar.label == "0点") || (!today && index == bars.lastIndex)) LabV2.Primary.copy(alpha = .62f) else LabV2.BorderStrong.copy(alpha = .72f))
+                        .background(
+                            if (highlighted) {
+                                Brush.verticalGradient(listOf(LabV2.Primary.copy(alpha = .28f), LabV2.Primary.copy(alpha = .88f)))
+                            } else {
+                                SolidColor(LabV2.BorderStrong.copy(alpha = .72f))
+                            }
+                        )
                 )
                 Spacer(Modifier.height(7.dp))
-                Text(bar.label, style = LabTypography.Caption.copy(color = if (index == bars.lastIndex) LabV2.Primary else LabV2.InkMuted), maxLines = 1)
+                Text(bar.label, style = LabTypography.Caption.copy(color = if (highlighted) LabV2.Primary else LabV2.InkMuted, fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Medium), maxLines = 1)
             }
         }
     }
@@ -426,6 +438,13 @@ private fun ChildInternetPlanEditor(
                             colors = SwitchDefaults.colors(checkedTrackColor = LabV2.Cyan)
                         )
                     }
+                }
+            }
+            if (plan.configured) {
+                LabCoreCard(contentPadding = PaddingValues(16.dp)) {
+                    PlanWeekStrip(plan.repeatDays)
+                    Spacer(Modifier.height(4.dp))
+                    PlanTimeline(plan)
                 }
             }
             LabCoreCard(contentPadding = PaddingValues(16.dp)) {
@@ -704,6 +723,25 @@ private fun AppSelectionRow(
     }
 }
 
+/**
+ * 官方逻辑对齐:00:00-06:00 的使用计入「深夜上网」警示;当天无深夜使用则显示「一切正常」。
+ * 服务端暂不下发 attentionEntries,先用今日使用记录本地推导。
+ */
+internal fun deriveAttentionEntries(device: ChildInternetDeviceState): List<ParentAttentionEntry> {
+    val date = java.time.LocalDate.now().toString()
+    val lateNight = device.todayUsage.entries.filter { entry ->
+        val hour = entry.timeRange.substringBefore('-').trim().substringBefore(':').toIntOrNull() ?: 24
+        hour < 6
+    }
+    if (lateNight.isEmpty()) {
+        return listOf(ParentAttentionEntry("今天", date, "一切正常", normal = true))
+    }
+    val total = lateNight.sumOf { it.durationMinutes }
+    val apps = lateNight.map { it.appName }.distinct().joinToString("、")
+    val ranges = lateNight.joinToString("，") { it.timeRange }
+    return listOf(ParentAttentionEntry("今天", date, "【深夜上网】累计${total}分钟：$ranges |包括${apps}等应用", normal = false))
+}
+
 @Composable
 private fun ChildInternetAttentionScreen(entries: List<ParentAttentionEntry>) {
     Column(
@@ -744,6 +782,140 @@ private fun ChildInternetAttentionScreen(entries: List<ParentAttentionEntry>) {
         }
         Text("— 仅可查看最近10天的记录 —", style = LabTypography.Supporting, modifier = Modifier.align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
+private fun PlanWeekStrip(selectedDays: Set<Int>) {
+    val today = java.time.LocalDate.now().dayOfWeek.value.coerceIn(1, 7)
+    val labels = listOf("一", "二", "三", "四", "五", "六", "日")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        labels.forEachIndexed { index, label ->
+            val day = index + 1
+            val isToday = day == today
+            val selected = day in selectedDays
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        when {
+                            isToday -> LabV2.Cyan
+                            selected -> LabV2.Cyan.copy(alpha = .13f)
+                            else -> LabV2.Field
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isToday) "今" else label,
+                    style = LabTypography.Body.copy(
+                        color = when {
+                            isToday -> Color.White
+                            selected -> LabV2.Primary
+                            else -> LabV2.InkMuted
+                        },
+                        fontWeight = if (isToday || selected) FontWeight.Bold else FontWeight.Medium
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanTimeline(plan: DeviceGuardPlan) {
+    val allowedApps = plan.categories.filter { it.enabled }.flatMap { it.apps }.filter { it.selected }
+    Column(Modifier.fillMaxWidth()) {
+        PlanTimelineRow(blocked = true, time = "00:00-${plan.startTime}", label = "禁网", first = true, last = false)
+        PlanTimelineRow(blocked = false, time = "${plan.startTime}-${plan.endTime}", label = if (allowedApps.isEmpty()) "时段内允许上网" else "部分APP允许上网", apps = allowedApps, first = false, last = false)
+        PlanTimelineRow(blocked = true, time = "${plan.endTime}-23:59", label = "禁网", first = false, last = true)
+    }
+}
+
+@Composable
+private fun PlanTimelineRow(
+    blocked: Boolean,
+    time: String,
+    label: String,
+    apps: List<SelectableAppItem> = emptyList(),
+    first: Boolean,
+    last: Boolean
+) {
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(16.dp).fillMaxHeight()) {
+            if (!first) Box(Modifier.align(Alignment.TopCenter).width(2.dp).fillMaxHeight(.5f).background(LabV2.Border))
+            if (!last) Box(Modifier.align(Alignment.BottomCenter).width(2.dp).fillMaxHeight(.5f).background(LabV2.Border))
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (blocked) LabV2.BorderStrong else LabV2.Cyan)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Surface(
+            modifier = Modifier.weight(1f).padding(vertical = 5.dp),
+            shape = RoundedCornerShape(15.dp),
+            color = LabCoreSurface.Inner
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = if (blocked) LabV2.Red.copy(alpha = .10f) else LabV2.Green.copy(alpha = .12f),
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (blocked) Icons.Rounded.Block else Icons.Rounded.Check,
+                            null,
+                            tint = if (blocked) LabV2.Red else LabV2.Green,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(time, style = LabTypography.SectionTitle)
+                    Text(label, style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+                }
+                if (!blocked && apps.isNotEmpty()) StackedAppIcons(apps)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StackedAppIcons(apps: List<SelectableAppItem>) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        val shown = apps.take(3)
+        if (shown.size > 1) Spacer(Modifier.width((6 * (shown.size - 1)).dp))
+        shown.forEachIndexed { index, app ->
+            Box(Modifier.offset(x = ((-6) * index).dp)) {
+                Surface(
+                    shape = CircleShape,
+                    color = LabCoreSurface.Card,
+                    border = androidx.compose.foundation.BorderStroke(2.dp, LabCoreSurface.Card)
+                ) {
+                    Box(Modifier.padding(1.dp)) { DashboardAppIcon(app.iconKey, app.localIconPath, sizeDp = 26) }
+                }
+            }
+        }
+        if (apps.size > 3) {
+            Spacer(Modifier.width(3.dp))
+            Surface(shape = RoundedCornerShape(9.dp), color = LabV2.Field) {
+                Text(
+                    "${apps.size}+",
+                    Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
+                    style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+                )
+            }
+        }
     }
 }
 

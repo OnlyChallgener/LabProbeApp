@@ -314,7 +314,27 @@ object FakeChildInternetRepository : ChildInternetRepository {
 private fun mockOverview() = ChildInternetOverviewState(true, listOf(mockDevice("mock-phone", "华为 Mate60 手机", "phone", 0xFF2563EB.toInt(), true, 60, true), mockDevice("mock-tablet", "iPad 平板", "tablet", 0xFF7C5CE7.toInt(), true, 0, false), mockDevice("mock-tv", "客厅电视", "tv", 0xFF0EA5E9.toInt(), false, 0, false), mockDevice("mock-computer", "书房电脑", "computer", 0xFF64748B.toInt(), false, 212, false)), ChildGuardCapabilities(true, true))
 private fun mockDevice(id: String, name: String, icon: String, color: Int, configured: Boolean, minutes: Int, attention: Boolean): ChildInternetDeviceState {
     val plan = DeviceGuardPlan(id = if (configured) "preview-$id" else "", configured = configured, enabled = configured, categories = childInternetCatalogCategories())
-    return ChildInternetDeviceState(ProtectedDeviceSummary(id, name, icon, color, if (configured) GuardStatus.GUARDED else GuardStatus.UNRESTRICTED, minutes, attention, true, isExperimentalAppControlDevice(icon)), plan, plans = if (configured) listOf(plan) else emptyList(), todayUsage = InternetUsageSummary(minutes, emptyList(), emptyList()), recentUsage = InternetUsageSummary(0, emptyList(), emptyList()), attentionEntries = emptyList())
+    val sampleEntries = if (attention) listOf(
+        InternetUsageEntry("e1", "抖音系列", "tiktok", null, 27, "00:16-00:43", 1),
+        InternetUsageEntry("e2", "百度", "baidu", null, 5, "00:50-00:55", 1),
+        InternetUsageEntry("e3", "小红书", "xiaohongshu", null, 42, "07:27-08:09", 1)
+    ) else emptyList()
+    val todayBars = if (attention) (0..23).map { hour ->
+        UsageBar("${hour}点", when (hour) {
+            0 -> 27; 1 -> 12; 2 -> 6; 7 -> 42; 8 -> 18; 13 -> 22; 19 -> 30; 20 -> 14; else -> 0
+        })
+    } else emptyList()
+    val recentBars = if (attention) listOf("周二", "周三", "周四", "周五", "周六", "周日", "周一", "周二", "周三", "今天")
+        .mapIndexed { i, label -> UsageBar(label, if (i == 9) minutes else 8 + (i * 13) % 55) }
+    else emptyList()
+    return ChildInternetDeviceState(
+        ProtectedDeviceSummary(id, name, icon, color, if (configured) GuardStatus.GUARDED else GuardStatus.UNRESTRICTED, minutes, attention, true, isExperimentalAppControlDevice(icon)),
+        plan,
+        plans = if (configured) listOf(plan) else emptyList(),
+        todayUsage = InternetUsageSummary(minutes, todayBars, sampleEntries),
+        recentUsage = InternetUsageSummary(0, recentBars, sampleEntries),
+        attentionEntries = emptyList()
+    )
 }
 
 internal fun childInternetCatalogCategories(allowedRdpiIds: Set<String>? = null, allowedAppIds: Set<String> = emptySet()) = listOf(
