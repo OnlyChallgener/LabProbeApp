@@ -37,7 +37,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathBuilder
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -633,26 +633,16 @@ private fun SpeedHistoryRow(record: SpeedHistoryRecord) {
 
 /** Custom glyph for the 6th nav slot: router body with antenna and signal arc. */
 object RouterToolsIcon {
+    private const val GLYPH =
+        "M4.6,11.4 A9.6,9.6 0 0,1 19.4,11.4 " + // signal arc
+        "M12,14.6 L12,6.8 " + // antenna
+        "M4.4,14.6 L19.6,14.6 " +
+        "C20.6,14.6 21.4,15.4 21.4,16.4 L21.4,18.4 " +
+        "C21.4,19.4 20.6,20.2 19.6,20.2 L4.4,20.2 " +
+        "C3.4,20.2 2.6,19.4 2.6,18.4 L2.6,16.4 " +
+        "C2.6,15.4 3.4,14.6 4.4,14.6 Z" // router body
+
     val vector: ImageVector by lazy {
-        val path = PathBuilder().apply {
-            // signal arc
-            moveTo(4.6f, 11.4f)
-            arcTo(9.6f, 9.6f, 0f, false, true, 19.4f, 11.4f)
-            // antenna
-            moveTo(12f, 14.6f)
-            lineTo(12f, 6.8f)
-            // router body
-            moveTo(4.4f, 14.6f)
-            lineTo(19.6f, 14.6f)
-            curveTo(20.6f, 14.6f, 21.4f, 15.4f, 21.4f, 16.4f)
-            lineTo(21.4f, 18.4f)
-            curveTo(21.4f, 19.4f, 20.6f, 20.2f, 19.6f, 20.2f)
-            lineTo(4.4f, 20.2f)
-            curveTo(3.4f, 20.2f, 2.6f, 19.4f, 2.6f, 18.4f)
-            lineTo(2.6f, 16.4f)
-            curveTo(2.6f, 15.4f, 3.4f, 14.6f, 4.4f, 14.6f)
-            close()
-        }.build()
         ImageVector.Builder(
             name = "RouterTools",
             defaultWidth = 24.dp,
@@ -660,7 +650,7 @@ object RouterToolsIcon {
             viewportWidth = 24f,
             viewportHeight = 24f
         ).addPath(
-            path = path,
+            pathData = addPathNodes(GLYPH),
             stroke = SolidColor(Color.Black),
             strokeLineWidth = 2f,
             strokeLineCap = StrokeCap.Round,
