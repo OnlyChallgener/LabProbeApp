@@ -478,6 +478,23 @@ private fun ChildInternetReportScreen(device: ChildInternetDeviceState, onRefres
     }
 }
 
+@Composable
+private fun ReportStatMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = 0.08f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(label, style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontSize = 11.sp))
+            Text(value, style = LabTypography.SectionTitle.copy(color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
 /** 官方说明页标题（来自官方 bundle 字符串表，便于家长对照）。 */
 internal const val USAGE_REPORT_EXPLAINER_TITLE = "关于\u201c上网时长\u201d和\u201c应用详情\u201d计算方式说明"
 
