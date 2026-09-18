@@ -2376,7 +2376,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             route == "router_settings" -> "home"
             route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
-            route == "child_internet_overview" || route == "child_internet_device" -> childInternetReturnRoute.takeIf { it in mainRoutes } ?: "devices"
+            route == "child_internet_overview" || route == "child_internet_device" || route == "child_internet_picker" -> childInternetReturnRoute.takeIf { it in mainRoutes } ?: "devices"
             route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
             route == "ai_settings" || route == "ai_chat" || route == "ai_usage" -> "home"
             else -> route
@@ -2416,7 +2416,7 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
             nestedToolReturnRoute = null
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" || route == "child_internet_picker" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
             if (route.startsWith("tool_")) {
                 backFromTool()
             } else {
@@ -2431,6 +2431,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                     "device_detail" -> "devices"
                     "child_internet_overview" -> "devices"
                     "child_internet_device" -> childInternetReturnRoute
+                    "child_internet_picker" -> "child_internet_overview"
                     "settings" -> settingsReturnRoute
                     "ai_settings" -> aiSettingsReturnRoute
                     "ai_chat" -> aiChatReturnRoute
@@ -2496,7 +2497,8 @@ fun LabProbeApp(prefs: AppPrefs) {
                                 val isReturningToTools = targetState == "tools"
                                 val isReturningToDevices = targetState == "devices" && (initialState == "device_detail" || initialState == "device_traffic" || initialState == "child_internet_overview")
                                 val isReturningFromChildInternet = initialState == "child_internet_device" && targetState == childInternetReturnRoute
-                                val isBackward = isReturningToMain || isReturningToRouterSettings || isReturningToTools || isReturningToDevices || isReturningFromChildInternet
+                                val isReturningFromPicker = initialState == "child_internet_picker" && targetState == "child_internet_overview"
+                                val isBackward = isReturningToMain || isReturningToRouterSettings || isReturningToTools || isReturningToDevices || isReturningFromChildInternet || isReturningFromPicker
 
                                 if (isBackward) {
                                     val slideIn = slideInHorizontally(
@@ -2551,11 +2553,16 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "child_internet_overview" -> ChildInternetOverviewScreen(
                             onBack = { route = childInternetReturnRoute },
                             repository = childInternetRepository,
+                            onAddDevice = { route = "child_internet_picker" },
                             onOpenDevice = { deviceId ->
                                 selectedDeviceMac = deviceId
                                 childInternetReturnRoute = "child_internet_overview"
                                 route = "child_internet_device"
                             }
+                        )
+                        "child_internet_picker" -> ChildInternetDevicePickerScreen(
+                            repository = childInternetRepository,
+                            onBack = { route = "child_internet_overview" }
                         )
                         "child_internet_device" -> ChildInternetDeviceScreen(
                             state = state,

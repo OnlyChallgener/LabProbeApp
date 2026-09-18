@@ -22,6 +22,9 @@ interface ChildInternetRepository {
     fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit = {})
     fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit = {})
     fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit = {})
+    fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit)
+    fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit)
+    fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit)
 }
 
 /** Production repository. Failure stays visible; it never substitutes preview data. */
@@ -140,6 +143,24 @@ class RealChildInternetRepository(
         failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
     )
 
+    override fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit) = launch(
+        request = { ChildGuardHubApi(HubApi(prefs), routerId).candidates() },
+        success = { onResult(Result.success(it)) },
+        failure = { onResult(Result.failure(it)) }
+    )
+
+    override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) = launch(
+        request = { ChildGuardHubApi(HubApi(prefs), routerId).addDevice(listOf(mac), name) },
+        success = { refresh(); onResult(Result.success(Unit)) },
+        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
+    )
+
+    override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) = launch(
+        request = { ChildGuardHubApi(HubApi(prefs), routerId).removeDevice(uid) },
+        success = { refresh(); onResult(Result.success(Unit)) },
+        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
+    )
+
     private fun <T> launch(before: (() -> Unit)? = null, request: suspend () -> T, success: (T) -> Unit = {}, failure: (Throwable) -> Unit = {}) {
         before?.invoke()
         scope.launch { runCatching { withContext(Dispatchers.IO) { request() } }.onSuccess(success).onFailure(failure) }
@@ -187,6 +208,12 @@ internal class ChildGuardHubApi(private val hub: HubApi, routerId: String) {
     fun setPlanEnabled(uid: String, planId: String, enabled: Boolean) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(planId)}/enabled$routerQuery", "POST", JSONObject().put("enabled", enabled))
     fun pauseDevice(uid: String) = write("$base/devices/${pathPart(uid)}/pause$routerQuery", "POST")
     fun resumeDevice(uid: String) = write("$base/devices/${pathPart(uid)}/resume$routerQuery", "POST")
+    fun candidates() = parseChildGuardCandidates(get("$base/devices/candidates$routerQuery"))
+    fun addDevice(macs: List<String>, name: String? = null) = write("$base/devices$routerQuery", "POST", JSONObject().apply {
+        put("macs", JSONArray(macs))
+        name?.takeIf { it.isNotBlank() }?.let { put("deviceName", it) }
+    })
+    fun removeDevice(uid: String) = write("$base/devices/${pathPart(uid)}$routerQuery", "DELETE")
     private fun get(path: String) = checked(hub.requestJson(path))
     private fun write(path: String, method: String, body: JSONObject = JSONObject()) = checked(hub.requestJson(path, method, body))
     private fun checked(root: JSONObject): JSONObject {
@@ -231,6 +258,22 @@ internal fun parseChildGuardDevices(root: JSONObject): List<ChildInternetDeviceS
                 todayMinutes = item.optInt("todayMinutes", 0), hasAttention = item.bool("hasAttention"),
                 macAddresses = item.stringSet("macs", "mac")
             ), plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
+        )
+    }
+}
+
+internal fun parseChildGuardCandidates(root: JSONObject): List<ChildGuardDeviceCandidate> {
+    val devices = root.optJSONArray("devices") ?: JSONArray()
+    return (0 until devices.length()).mapNotNull { i ->
+        val item = devices.optJSONObject(i) ?: return@mapNotNull null
+        val mac = item.text("mac").ifBlank { return@mapNotNull null }
+        ChildGuardDeviceCandidate(
+            mac = mac,
+            ip = item.text("ip"),
+            hostname = item.text("hostname"),
+            guarded = item.bool("guarded"),
+            uid = item.text("uid"),
+            name = item.text("name")
         )
     }
 }
@@ -309,6 +352,24 @@ object FakeChildInternetRepository : ChildInternetRepository {
     override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) { val saved = plan.copy(id = plan.id.ifBlank { "preview-plan" }, configured = true, enabled = true); state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(plan = saved, plans = listOf(saved), summary = it.summary.copy(status = GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }
     override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }
+    override fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit) {
+        onResult(Result.success(listOf(
+            ChildGuardDeviceCandidate("aa:bb:cc:dd:ee:01", "192.168.1.101", "小明的手机", guarded = true, uid = "MOCK-PHONE", name = "华为 Mate60 手机"),
+            ChildGuardDeviceCandidate("aa:bb:cc:dd:ee:02", "192.168.1.102", "iPad", guarded = false),
+            ChildGuardDeviceCandidate("aa:bb:cc:dd:ee:03", "192.168.1.103", "客厅电视", guarded = false),
+            ChildGuardDeviceCandidate("aa:bb:cc:dd:ee:04", "192.168.1.104", "书房电脑", guarded = false)
+        )))
+    }
+    override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) {
+        if (state.devices.none { it.summary.matchesChildGuardDevice(mac) }) {
+            state = state.copy(devices = state.devices + mockDevice("candidate-$mac", name.ifBlank { "新设备" }, "phone", 0xFF2563EB.toInt(), false, 0, false))
+        }
+        onResult(Result.success(Unit))
+    }
+    override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) {
+        state = state.copy(devices = state.devices.filterNot { it.summary.deviceId == uid })
+        onResult(Result.success(Unit))
+    }
 }
 
 private fun mockOverview() = ChildInternetOverviewState(true, listOf(mockDevice("mock-phone", "华为 Mate60 手机", "phone", 0xFF2563EB.toInt(), true, 60, true), mockDevice("mock-tablet", "iPad 平板", "tablet", 0xFF7C5CE7.toInt(), true, 0, false), mockDevice("mock-tv", "客厅电视", "tv", 0xFF0EA5E9.toInt(), false, 0, false), mockDevice("mock-computer", "书房电脑", "computer", 0xFF64748B.toInt(), false, 212, false)), ChildGuardCapabilities(true, true))

@@ -117,4 +117,20 @@ class ChildInternetRepositoryTest {
         val parsed = parseChildGuardPlans(JSONObject().put("plans", JSONArray().put(plan))).single()
         assertEquals(setOf(1, 3, 7), parsed.repeatDays)
     }
+
+    @Test
+    fun candidateListParsesDhcpLeaseShapeWithGuardStatus() {
+        val root = JSONObject().put("ok", true).put("devices", JSONArray()
+            .put(JSONObject().put("mac", "aa:bb:cc:dd:ee:01").put("ip", "192.168.1.101").put("hostname", "小明的手机").put("guarded", true).put("uid", "9A59FF88998744D4B7B4FB05E3E0255C").put("name", "华为 Mate60 手机"))
+            .put(JSONObject().put("mac", "aa:bb:cc:dd:ee:02").put("ip", "192.168.1.102").put("hostname", "iPad").put("guarded", false))
+        )
+        val parsed = parseChildGuardCandidates(root)
+        assertEquals(2, parsed.size)
+        val guarded = parsed.first { it.guarded }
+        assertEquals("9A59FF88998744D4B7B4FB05E3E0255C", guarded.uid)
+        assertEquals("华为 Mate60 手机", guarded.displayName)
+        val free = parsed.first { !it.guarded }
+        assertEquals("iPad", free.displayName)
+        assertEquals("", free.uid)
+    }
 }

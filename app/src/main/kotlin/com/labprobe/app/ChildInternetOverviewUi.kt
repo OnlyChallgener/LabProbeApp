@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.QueryStats
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.dp
 fun ChildInternetOverviewScreen(
     onBack: () -> Unit,
     onOpenDevice: (String) -> Unit,
+    onAddDevice: () -> Unit,
     repository: ChildInternetRepository
 ) {
     val overview = repository.state
@@ -71,13 +73,26 @@ fun ChildInternetOverviewScreen(
                 Text(overview.error, style = LabTypography.Supporting.copy(color = LabV2.Red))
             }
         }
-        Text("守护设备", style = LabTypography.SectionTitle, modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("守护设备", style = LabTypography.SectionTitle, modifier = Modifier.weight(1f).padding(horizontal = 2.dp, vertical = 2.dp))
+            OutlinedButton(onClick = onAddDevice, shape = RoundedCornerShape(50), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 13.dp, vertical = 4.dp)) {
+                Icon(Icons.Rounded.Add, null, tint = LabV2.Cyan, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(4.dp))
+                Text("添加设备", style = LabTypography.CompactButton, color = LabV2.Cyan)
+            }
+        }
         if (overview.devices.isEmpty()) {
             LabCoreCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 28.dp)) {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     LabV2ToolIcon(Icons.Rounded.ChildCare, LabV2.InkMuted, size = 48, muted = true)
                     Text("还没有守护设备", style = LabTypography.SectionTitle)
-                    Text("从设备详情中添加需要管理的设备", style = LabTypography.Supporting)
+                    Text("选择需要管理的设备加入守护", style = LabTypography.Supporting)
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(onClick = onAddDevice, shape = RoundedCornerShape(50)) {
+                        Icon(Icons.Rounded.Add, null, tint = LabV2.Cyan, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text("添加设备", style = LabTypography.CompactButton, color = LabV2.Cyan)
+                    }
                 }
             }
         } else {

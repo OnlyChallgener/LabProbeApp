@@ -133,6 +133,22 @@ data class ChildInternetOverviewState(
 )
 
 /**
+ * A LAN device from the router's DHCP lease table, as returned by the
+ * `list_devices` relay command. `guarded` distinguishes already-managed
+ * devices (with their `uid`/`name`) from candidates still awaiting selection.
+ */
+data class ChildGuardDeviceCandidate(
+    val mac: String,
+    val ip: String,
+    val hostname: String,
+    val guarded: Boolean,
+    val uid: String = "",
+    val name: String = ""
+) {
+    val displayName: String get() = name.ifBlank { hostname.ifBlank { mac } }
+}
+
+/**
  * `none` is the firmware's normal inactive value. Any non-empty, unbound PID
  * remains visible as UNKNOWN instead of being presented as an active plan.
  */
