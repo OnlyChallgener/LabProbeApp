@@ -1,6 +1,5 @@
 package com.labprobe.app
 
-import android.app.TimePickerDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -8,7 +7,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +62,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
@@ -159,7 +160,7 @@ fun ChildInternetDeviceScreen(
             label = "child-internet-tab"
         ) { tab ->
             when (tab) {
-                ChildInternetTab.REPORT -> ChildInternetReportScreen(deviceState)
+                ChildInternetTab.REPORT -> ChildInternetReportScreen(deviceState) { repository.loadUsageReport(resolvedId) {} }
                 ChildInternetTab.PLAN -> {
                     if (!deviceState.plan.configured && !showPlanEditor) {
                         ChildInternetPlanEmptyState(onOpen = { showPlanEditor = true })
@@ -269,7 +270,7 @@ private fun ChildInternetTabs(selected: ChildInternetTab, onSelect: (ChildIntern
 }
 
 @Composable
-private fun ChildInternetReportScreen(device: ChildInternetDeviceState) {
+private fun ChildInternetReportScreen(device: ChildInternetDeviceState, onRefresh: () -> Unit) {
     val context = LocalContext.current
     var period by rememberSaveable(device.summary.deviceId) { mutableStateOf("今日") }
     val usage = if (period == "今日") device.todayUsage else device.recentUsage
@@ -282,7 +283,7 @@ private fun ChildInternetReportScreen(device: ChildInternetDeviceState) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(if (period == "今日") "今日上网时长" else "最近10天上网时长", style = LabTypography.CardTitle)
-                    Text("流量活跃度（含内网）", style = LabTypography.Supporting)
+                    Text(usageSourceLabel(device.usageSource), style = LabTypography.Supporting)
                 }
                 Text(formatChildDuration(usage.totalMinutes), style = LabTypography.PageTitle)
             }
@@ -304,11 +305,38 @@ private fun ChildInternetReportScreen(device: ChildInternetDeviceState) {
                 usage.entries.forEach { entry -> UsageEntryRow(entry) }
             }
         }
-        TextButton(onClick = { toast(context, "第一阶段使用本地模拟统计") }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            Text("统计与预期不一致？请看这里", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+        TextButton(onClick = onRefresh, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Text("刷新统计", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+        }
+        TextButton(onClick = { toast(context, "$USAGE_REPORT_EXPLAINER_TITLE\n\n$USAGE_REPORT_EXPLAINER") }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Text(USAGE_REPORT_EXPLAINER_TITLE, style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
         }
         Spacer(Modifier.height(4.dp))
     }
+}
+
+/** 官方说明页标题（来自官方 bundle 字符串表，便于家长对照）。 */
+internal const val USAGE_REPORT_EXPLAINER_TITLE = "关于\u201c上网时长\u201d和\u201c应用详情\u201d计算方式说明"
+
+/**
+ * 口径说明写在这里，而不是让家长自己猜为什么时长比官方少。
+ *
+ * 官方的算法是「按设备上的动态应用检测 + 单应用流量量级」去**预测**时长
+ * （官方原文：微信约 KB/s 级别、视频刷新约 MB/s 级别）。我们是**实测**：
+ * 每 60 秒采样一次流量，只有真正出现活跃流量的时间段才计入时长，
+ * 后台心跳 / 保活连接只记流量、不计时长。两者口径不同，数字会有差异。
+ */
+internal const val USAGE_REPORT_EXPLAINER =
+    "官方按「动态应用检测 + 单应用流量量级」预测时长；我们是实测：" +
+        "路由器每 60 秒采样一次流量，只有出现活跃流量的时间段才计入时长，" +
+        "后台心跳 / 保活连接只记流量、不计时长，所以数字可能比官方略少。" +
+        "统计含内网使用；应用识别在 IPv4 维度，走 IPv6 的应用可能不计入；保留最近 10 天。"
+
+private fun usageSourceLabel(source: String): String = when (source) {
+    "hub" -> "路由器采样 · Hub 聚合 · 已过滤后台心跳"
+    "relay" -> "路由器实时读取 · Hub 聚合尚未收到"
+    "empty" -> "暂无数据 · 等待路由器首次上报"
+    else -> "已过滤后台心跳"
 }
 
 @Composable
@@ -403,6 +431,19 @@ private fun ChildInternetPlanEditor(
 ) {
     val context = LocalContext.current
     var confirmDelete by rememberSaveable(plan.id) { mutableStateOf(false) }
+    var timePickerTarget by remember { mutableStateOf<TimeFieldTarget?>(null) }
+    timePickerTarget?.let { target ->
+        val isStart = target == TimeFieldTarget.Start
+        LabTimeWheelDialog(
+            title = if (isStart) "开始时间" else "结束时间",
+            initial = if (isStart) plan.startTime else plan.endTime,
+            onDismiss = { timePickerTarget = null },
+            onConfirm = { value ->
+                onPlanChange(if (isStart) plan.copy(startTime = value) else plan.copy(endTime = value))
+                timePickerTarget = null
+            }
+        )
+    }
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -450,9 +491,9 @@ private fun ChildInternetPlanEditor(
             LabCoreCard(contentPadding = PaddingValues(16.dp)) {
                 SectionLead(Icons.Rounded.Schedule, "允许上网的时段", LabV2.Cyan)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TimeField("开始时间", plan.startTime, Modifier.weight(1f)) { showTimePicker(context, plan.startTime) { onPlanChange(plan.copy(startTime = it)) } }
+                    TimeField("开始时间", plan.startTime, Modifier.weight(1f)) { timePickerTarget = TimeFieldTarget.Start }
                     Text("至", style = LabTypography.SectionTitle)
-                    TimeField("结束时间", plan.endTime, Modifier.weight(1f)) { showTimePicker(context, plan.endTime) { onPlanChange(plan.copy(endTime = it)) } }
+                    TimeField("结束时间", plan.endTime, Modifier.weight(1f)) { timePickerTarget = TimeFieldTarget.End }
                 }
                 Text("重复时间", style = LabTypography.Supporting.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(top = 5.dp))
                 RepeatDayPicker(plan.repeatDays) { onPlanChange(plan.copy(repeatDays = it)) }
@@ -598,12 +639,13 @@ private fun ChildInternetAppSelectionScreen(
     onDone: (List<SelectableAppItem>) -> Unit
 ) {
     var search by rememberSaveable(category.id) { mutableStateOf("") }
-    var age by rememberSaveable(category.id) { mutableStateOf("全部") }
     var selectedIds by rememberSaveable(category.id) {
         mutableStateOf(category.apps.filter { it.selected }.mapTo(arrayListOf()) { it.id })
     }
+    // 年龄分级已按产品决策整体移除：官方那份分级来自锐捷云端应用目录，
+    // 路由器本地 RDPI 表不携带，本地猜不出来 => 不做，而不是做了看着像真的。
     val filtered = category.apps.filter { app ->
-        app.name.contains(search, ignoreCase = true) && (age == "全部" || app.ageRating == age)
+        app.name.contains(search, ignoreCase = true)
     }
     val allFilteredSelected = filtered.isNotEmpty() && filtered.all { it.id in selectedIds }
 
@@ -620,22 +662,6 @@ private fun ChildInternetAppSelectionScreen(
                 leadingIcon = { Icon(Icons.Rounded.Search, null, tint = LabV2.InkFaint, modifier = Modifier.size(19.dp)) }
             )
             Spacer(Modifier.height(10.dp))
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("适用年龄：", style = LabTypography.Body.copy(color = LabV2.InkMuted))
-                listOf("全部", "4+岁", "9+岁", "12+岁", "17+岁").forEach { option ->
-                    FilterChip(
-                        selected = age == option,
-                        onClick = { age = option },
-                        label = { Text(option, style = LabTypography.Supporting) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LabV2.Cyan.copy(alpha = .12f), selectedLabelColor = LabV2.Primary)
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 shape = RoundedCornerShape(22.dp),
@@ -678,7 +704,7 @@ private fun ChildInternetAppSelectionScreen(
                             Column(Modifier.fillMaxWidth().padding(vertical = 44.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 LabV2ToolIcon(Icons.Rounded.Search, LabV2.InkMuted, size = 48, muted = true)
                                 Text("没有匹配的应用", style = LabTypography.SectionTitle)
-                                Text("换个关键词或年龄范围试试", style = LabTypography.Supporting)
+                                Text("换个关键词试试", style = LabTypography.Supporting)
                             }
                         }
                     }
@@ -925,13 +951,139 @@ private fun StackedAppIcons(apps: List<SelectableAppItem>) {
     }
 }
 
-private fun showTimePicker(context: android.content.Context, current: String, onSelected: (String) -> Unit) {
-    val parts = current.split(":")
-    val hour = parts.getOrNull(0)?.toIntOrNull() ?: 17
-    val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    TimePickerDialog(context, { _, selectedHour, selectedMinute ->
-        onSelected("%02d:%02d".format(selectedHour, selectedMinute))
-    }, hour, minute, true).show()
+private enum class TimeFieldTarget { Start, End }
+
+/**
+ * 官方同款「滚轮」时间选择器。
+ *
+ * 取代旧的系统 [android.app.TimePickerDialog]（时钟表盘样式）：
+ * 小时 / 分钟两列磁吸滚动，中间高亮当前选中项，顶部标题、底部「取消 / 确定」，
+ * 与官方 APP 的交互与视觉保持一致。
+ */
+@Composable
+private fun LabTimeWheelDialog(
+    title: String,
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val parts = initial.split(":")
+    val initialHour = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 0
+    val initialMinute = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
+    // Keyed on the incoming value so switching between 开始时间 / 结束时间 always
+    // rebuilds the wheels at the right position instead of reusing stale state.
+    key(initial) {
+        var hour by remember { mutableStateOf(initialHour) }
+        var minute by remember { mutableStateOf(initialMinute) }
+
+        Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+                shape = RoundedCornerShape(26.dp),
+                color = LabCoreSurface.Card
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp)) {
+                    Text(
+                        title,
+                        style = LabTypography.CardTitle,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TimeWheelColumn(value = hour, range = 0..23, modifier = Modifier.weight(1f)) { hour = it }
+                        Text(":", style = LabTypography.CardTitle.copy(fontSize = 22.sp, color = LabV2.Ink))
+                        TimeWheelColumn(value = minute, range = 0..59, modifier = Modifier.weight(1f)) { minute = it }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(46.dp),
+                            shape = RoundedCornerShape(50)
+                        ) { Text("取消", style = LabTypography.Button.copy(color = LabV2.InkMuted)) }
+                        Button(
+                            onClick = { onConfirm("%02d:%02d".format(hour, minute)) },
+                            modifier = Modifier.weight(1f).height(46.dp),
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
+                        ) { Text("确定", style = LabTypography.Button) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 单列磁吸滚轮。上下各补 [halfWindow] 个等高空行，让首尾数值也能滚到正中央；
+ * 通过布局信息找出视口中心行，实时回调选中值。
+ */
+@Composable
+private fun TimeWheelColumn(
+    value: Int,
+    range: IntRange,
+    modifier: Modifier = Modifier,
+    onValueChange: (Int) -> Unit
+) {
+    val values = remember(range) { range.toList() }
+    val rowHeight = 38.dp
+    val halfWindow = 2
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = value.coerceIn(0, values.lastIndex))
+    val fling = rememberSnapFlingBehavior(lazyListState = listState, snapPosition = SnapPosition.Center)
+    val centeredIndex by remember(values) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+            info.visibleItemsInfo
+                .minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - center) }
+                ?.index ?: -1
+        }
+    }
+    LaunchedEffect(centeredIndex, values) {
+        val picked = values.getOrNull(centeredIndex - halfWindow) ?: return@LaunchedEffect
+        if (picked != value) onValueChange(picked)
+    }
+    Box(modifier.height(rowHeight * (halfWindow * 2 + 1)), contentAlignment = Alignment.Center) {
+        // 中央选中高亮条（置于滚动列表之下，文字浮于其上）
+        Box(
+            Modifier.fillMaxWidth().height(rowHeight)
+                .clip(RoundedCornerShape(12.dp))
+                .background(LabV2.Cyan.copy(alpha = .10f))
+        )
+        LazyColumn(state = listState, flingBehavior = fling, modifier = Modifier.fillMaxSize()) {
+            items(halfWindow) { Spacer(Modifier.height(rowHeight)) }
+            items(values) { item ->
+                val selected = item == value
+                Box(Modifier.fillMaxWidth().height(rowHeight), contentAlignment = Alignment.Center) {
+                    Text(
+                        "%02d".format(item),
+                        style = LabTypography.SectionTitle.copy(
+                            fontSize = if (selected) 20.sp else 15.sp,
+                            color = if (selected) LabV2.Primary else LabV2.InkFaint,
+                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium
+                        )
+                    )
+                }
+            }
+            items(halfWindow) { Spacer(Modifier.height(rowHeight)) }
+        }
+        // 上下渐隐遮罩（无 pointerInput，不拦截滚动手势）
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to LabCoreSurface.Card,
+                    .22f to Color.Transparent,
+                    .78f to Color.Transparent,
+                    1f to LabCoreSurface.Card
+                )
+            )
+        )
+    }
 }
 
 private fun deviceGuardPlanSaver(base: DeviceGuardPlan): Saver<DeviceGuardPlan, ArrayList<String>> = Saver(

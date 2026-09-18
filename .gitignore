@@ -23,3 +23,9 @@ __pycache__/
 
 
 *.apk
+
+# Local reverse-engineering scratch (official APK, firmware tarballs, pcaps,
+# analysis HTML). Large binaries, never shipped with the app.
+# Anchored to the repo root on purpose: a bare `test/` would also swallow
+# `app/src/test/`, which is real source.
+/test/

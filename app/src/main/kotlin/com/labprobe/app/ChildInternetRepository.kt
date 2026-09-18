@@ -12,6 +12,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 interface ChildInternetRepository {
     val state: ChildInternetOverviewState
@@ -25,6 +27,8 @@ interface ChildInternetRepository {
     fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit)
     fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit)
     fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit)
+    /** Fetch the official-style 上网统计 for one device (today + the 10-day window). */
+    fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit)
 }
 
 /** Production repository. Failure stays visible; it never substitutes preview data. */
@@ -55,6 +59,18 @@ class RealChildInternetRepository(
                 val runtime = api.runtime(device.summary.deviceId)
                 val hint = deviceHints.values.firstOrNull { device.summary.matchesChildGuardDevice(it.uid) || device.summary.matchesChildGuardDevice(it.mac) }
                 val resolvedIconKey = hint?.iconKey ?: device.summary.iconKey
+                // Usage is collected by the relay, aggregated by the Hub and read
+                // back here. A missing report must not blank the whole page, so a
+                // failure degrades to "no data" for this device only.
+                val usage = if (caps.childGuard) {
+                    runCatching {
+                        api.usageReport(
+                            uid = device.summary.deviceId,
+                            macs = device.summary.macAddresses,
+                            days = USAGE_REPORT_WINDOW_DAYS
+                        )
+                    }.getOrNull()
+                } else null
                 device.copy(
                     summary = device.summary.copy(
                         name = device.summary.name.ifBlank { hint?.name.orEmpty() },
@@ -65,12 +81,17 @@ class RealChildInternetRepository(
                             plans.any { it.enabled } -> GuardStatus.GUARDED
                             else -> GuardStatus.UNRESTRICTED
                         },
+                        todayMinutes = usage?.today?.totalMinutes ?: 0,
+                        hasAttention = (usage?.today?.totalMinutes ?: 0) > 0,
                         appManagementSupported = caps.appManagementSupported,
                         experimentalAppControl = caps.appManagementSupported && isExperimentalAppControlDevice(resolvedIconKey)
                     ),
                     plan = plans.firstOrNull() ?: DeviceGuardPlan(categories = childInternetCatalogCategories()),
                     plans = plans,
-                    runtime = runtime
+                    runtime = runtime,
+                    todayUsage = usage?.today ?: InternetUsageSummary(0, empty24HourBars(), emptyList()),
+                    recentUsage = usage?.recent ?: InternetUsageSummary(0, emptyList(), emptyList()),
+                    usageSource = usage?.source.orEmpty()
                 )
             }
             val selectedDeviceShells = deviceHints.values
@@ -161,6 +182,39 @@ class RealChildInternetRepository(
         failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
     )
 
+    /**
+     * Re-reads just the usage report for one device (the report page's own
+     * refresh), leaving the rest of the overview untouched.
+     */
+    override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) = launch(
+        request = {
+            val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(deviceId) }
+            val api = ChildGuardHubApi(HubApi(prefs), routerId)
+            api.usageReport(
+                uid = resolveRouterUid(deviceId),
+                macs = device?.summary?.macAddresses.orEmpty(),
+                days = USAGE_REPORT_WINDOW_DAYS
+            )
+        },
+        success = { report -> applyUsageReport(deviceId, report); onResult(Result.success(Unit)) },
+        failure = { onResult(Result.failure(it)) }
+    )
+
+    private fun applyUsageReport(deviceId: String, report: ChildGuardUsageReport) {
+        state = state.copy(devices = state.devices.map { device ->
+            if (!device.summary.matchesChildGuardDevice(deviceId)) return@map device
+            device.copy(
+                summary = device.summary.copy(
+                    todayMinutes = report.today.totalMinutes,
+                    hasAttention = report.today.totalMinutes > 0
+                ),
+                todayUsage = report.today,
+                recentUsage = report.recent,
+                usageSource = report.source
+            )
+        })
+    }
+
     private fun <T> launch(before: (() -> Unit)? = null, request: suspend () -> T, success: (T) -> Unit = {}, failure: (Throwable) -> Unit = {}) {
         before?.invoke()
         scope.launch { runCatching { withContext(Dispatchers.IO) { request() } }.onSuccess(success).onFailure(failure) }
@@ -179,7 +233,10 @@ class RealChildInternetRepository(
             experimentalAppControl = capabilities.appManagementSupported && isExperimentalAppControlDevice(iconKey),
             macAddresses = setOf(mac)
         ),
-        plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
+        plan = DeviceGuardPlan(categories = childInternetCatalogCategories()),
+        // A stable 24-bar frame, so the chart renders an empty day rather than
+        // collapsing to nothing before the first report arrives.
+        todayUsage = InternetUsageSummary(0, empty24HourBars(), emptyList())
     )
 
     private fun resolveRouterUid(deviceId: String): String = state.devices
@@ -214,6 +271,23 @@ internal class ChildGuardHubApi(private val hub: HubApi, routerId: String) {
         name?.takeIf { it.isNotBlank() }?.let { put("deviceName", it) }
     })
     fun removeDevice(uid: String) = write("$base/devices/${pathPart(uid)}$routerQuery", "DELETE")
+
+    /**
+     * Official-style 上网统计. `macs` is passed straight through so the Hub can
+     * answer from its own aggregate table without a router round-trip; the uid
+     * is still sent so the Hub can resolve the device itself if it ever needs to.
+     */
+    fun usageReport(uid: String, macs: Set<String>, date: String? = null, days: Int = 1): ChildGuardUsageReport {
+        val query = buildString {
+            append(routerQuery)
+            append("&days=").append(days.coerceAtLeast(1))
+            date?.takeIf { it.isNotBlank() }?.let { append("&date=").append(pathPart(it)) }
+            val macList = macs.filter { it.isNotBlank() }
+            if (macList.isNotEmpty()) append("&macs=").append(pathPart(macList.joinToString(",")))
+        }
+        return parseChildGuardUsageReport(get("$base/devices/${pathPart(uid)}/usage-report$query"))
+    }
+
     private fun get(path: String) = checked(hub.requestJson(path))
     private fun write(path: String, method: String, body: JSONObject = JSONObject()) = checked(hub.requestJson(path, method, body))
     private fun checked(root: JSONObject): JSONObject {
@@ -302,6 +376,89 @@ internal fun parseChildGuardRuntime(root: JSONObject, fallbackUid: String = ""):
     return ChildGuardRuntimeState(d.text("uid").ifBlank { fallbackUid }, bound, effect, mapRuntimeEffectPolicy(effect, bound), paused = d.bool("blocked", "paused"))
 }
 
+/** The 上网统计 window. Matches the Hub's relay/Hub retention (10 days). */
+internal const val USAGE_REPORT_WINDOW_DAYS = 10
+
+internal data class ChildGuardUsageReport(
+    val today: InternetUsageSummary,
+    val recent: InternetUsageSummary,
+    val source: String = "",
+    val date: String = ""
+)
+
+internal fun empty24HourBars(): List<UsageBar> = (0 until 24).map { hour -> UsageBar("${hour}点", 0) }
+
+/**
+ * Parses the Hub's usage report into the two summaries the report page renders.
+ *
+ * * 今日 — 24 hourly bars from `hourly[]`, plus per-app rows from `apps[]`.
+ * * 最近10天 — one bar per day from `range.days[]` (the Hub gap-fills the
+ *   window, so the bar count is stable), plus `range.apps[]` for the summary.
+ *
+ * Apps that earned no active time are dropped: a backgrounded app that only sent
+ * heartbeats is not "used", and listing thirty of them as 0 分钟 would be noise.
+ */
+internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "今天"): ChildGuardUsageReport {
+    val d = root.data()
+    val todayMinutes = d.optInt("onlineMinutes", 0).coerceAtLeast(0)
+    val hourly = d.optJSONArray("hourly") ?: JSONArray()
+    val minutesByHour = HashMap<Int, Int>()
+    (0 until hourly.length()).forEach { i ->
+        val row = hourly.optJSONObject(i) ?: return@forEach
+        minutesByHour[row.optInt("hour", -1)] = row.optInt("minutes", 0).coerceAtLeast(0)
+    }
+    val todayBars = (0 until 24).map { hour -> UsageBar("${hour}点", minutesByHour[hour] ?: 0) }
+    val todayEntries = parseUsageEntries(d.optJSONArray("apps"))
+
+    val range = d.optJSONObject("range")
+    val rangeDays = range?.optJSONArray("days") ?: JSONArray()
+    val dayCount = rangeDays.length()
+    val recentBars = (0 until dayCount).map { index ->
+        val row = rangeDays.optJSONObject(index)
+        UsageBar(
+            label = childUsageDayLabel(row?.text("date").orEmpty(), isToday = index == dayCount - 1, fallback = todayLabel),
+            minutes = row?.optInt("onlineMinutes", 0)?.coerceAtLeast(0) ?: 0
+        )
+    }
+    val recentEntries = parseUsageEntries(range?.optJSONArray("apps"))
+    return ChildGuardUsageReport(
+        today = InternetUsageSummary(todayMinutes, todayBars, todayEntries),
+        recent = InternetUsageSummary(recentBars.sumOf { it.minutes }, recentBars, recentEntries),
+        source = d.text("source"),
+        date = d.text("date")
+    )
+}
+
+private fun parseUsageEntries(rows: JSONArray?): List<InternetUsageEntry> {
+    if (rows == null) return emptyList()
+    return (0 until rows.length()).mapNotNull { index ->
+        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+        val app = row.text("app", "name").ifBlank { return@mapNotNull null }
+        val minutes = row.optInt("minutes", 0).coerceAtLeast(0)
+        if (minutes <= 0) return@mapNotNull null
+        InternetUsageEntry(
+            id = app,
+            appName = app,
+            iconKey = dashboardIconKey(app),
+            durationMinutes = minutes,
+            // The aggregates carry no per-session timestamps, so there is no
+            // honest time range to show; 次数 from `sessions` still is.
+            timeRange = "",
+            count = row.optInt("sessions", 0).coerceAtLeast(0)
+        )
+    }
+}
+
+/** 今天 / 昨天 / 周四 … for the 最近N天 bars, without needing java.time. */
+private fun childUsageDayLabel(isoDate: String, isToday: Boolean, fallback: String = "今天"): String {
+    if (isToday) return fallback
+    if (isoDate.isBlank()) return ""
+    return runCatching {
+        val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate) ?: return@runCatching isoDate.takeLast(5)
+        SimpleDateFormat("E", Locale.CHINA).format(parsed).removePrefix("星期")
+    }.getOrDefault(isoDate.takeLast(5))
+}
+
 private fun JSONObject.data(): JSONObject = optJSONObject("data") ?: optJSONObject("capabilities") ?: this
 private fun JSONObject.text(vararg keys: String): String = keys.firstNotNullOfOrNull { key -> opt(key)?.toString()?.trim()?.takeIf(String::isNotBlank) }.orEmpty()
 private fun JSONObject.bool(vararg keys: String, default: Boolean = false): Boolean = keys.firstNotNullOfOrNull { key ->
@@ -370,6 +527,7 @@ object FakeChildInternetRepository : ChildInternetRepository {
         state = state.copy(devices = state.devices.filterNot { it.summary.deviceId == uid })
         onResult(Result.success(Unit))
     }
+    override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) = onResult(Result.success(Unit))
 }
 
 private fun mockOverview() = ChildInternetOverviewState(true, listOf(mockDevice("mock-phone", "华为 Mate60 手机", "phone", 0xFF2563EB.toInt(), true, 60, true), mockDevice("mock-tablet", "iPad 平板", "tablet", 0xFF7C5CE7.toInt(), true, 0, false), mockDevice("mock-tv", "客厅电视", "tv", 0xFF0EA5E9.toInt(), false, 0, false), mockDevice("mock-computer", "书房电脑", "computer", 0xFF64748B.toInt(), false, 212, false)), ChildGuardCapabilities(true, true))
@@ -409,7 +567,9 @@ internal fun childInternetCatalogCategories(allowedRdpiIds: Set<String>? = null,
 )
 private fun catalogCategory(id: String, name: String, names: List<String>, allowed: Set<String>?, appIds: Set<String>): AppCategoryPlan {
     val baseEnabled = id in setOf("education", "media", "tools")
-    val apps = names.mapIndexed { i, name -> val appId = "$id-$i"; val rdpi = childInternetRdpiIds(name); val selected = when { allowed == null -> baseEnabled || i < 2; appId in appIds -> true; else -> rdpi.any { it in allowed } }; SelectableAppItem(appId, name, listOf("4+岁", "9+岁", "12+岁", "17+岁")[i % 4], dashboardIconKey(name), selected = selected, rdpiIds = rdpi) }
+    // 不含年龄分级：官方该值来自锐捷云端应用目录，本地无真实数据源，
+    // 已按产品决策整体移除（见 SelectableAppItem，模型里不再有该字段）。
+    val apps = names.mapIndexed { i, name -> val appId = "$id-$i"; val rdpi = childInternetRdpiIds(name); val selected = when { allowed == null -> baseEnabled || i < 2; appId in appIds -> true; else -> rdpi.any { it in allowed } }; SelectableAppItem(appId, name, dashboardIconKey(name), selected = selected, rdpiIds = rdpi) }
     return AppCategoryPlan(id, name, if (allowed == null) baseEnabled else apps.any { it.selected }, apps)
 }
 /** One UI app can require several original RDPI IDs. */

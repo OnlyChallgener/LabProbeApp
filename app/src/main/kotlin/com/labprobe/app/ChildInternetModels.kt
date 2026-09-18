@@ -15,7 +15,6 @@ enum class GuardStatus(val label: String) {
 data class SelectableAppItem(
     val id: String,
     val name: String,
-    val ageRating: String,
     val iconKey: String,
     val localIconPath: String? = null,
     val selected: Boolean = true,
@@ -121,7 +120,13 @@ data class ChildInternetDeviceState(
     val runtime: ChildGuardRuntimeState = ChildGuardRuntimeState(deviceId = summary.deviceId),
     val todayUsage: InternetUsageSummary = InternetUsageSummary(0, emptyList(), emptyList()),
     val recentUsage: InternetUsageSummary = InternetUsageSummary(0, emptyList(), emptyList()),
-    val attentionEntries: List<ParentAttentionEntry> = emptyList()
+    val attentionEntries: List<ParentAttentionEntry> = emptyList(),
+    /**
+     * Where [todayUsage]/[recentUsage] came from: `hub` (the router pushed
+     * aggregates), `relay` (read live off the router) or `empty`. Diagnostic
+     * only — the report page renders the same way for all three.
+     */
+    val usageSource: String = ""
 )
 
 data class ChildInternetOverviewState(
