@@ -351,7 +351,7 @@ private fun UsageEntryRow(entry: InternetUsageEntry) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(11.dp)
     ) {
-        DashboardAppIcon(entry.iconKey, entry.localIconPath, sizeDp = 48)
+        DashboardAppIcon(entry.iconKey, entry.localIconPath, sizeDp = 48, label = entry.appName)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(entry.appName, style = LabTypography.SectionTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(formatChildDuration(entry.durationMinutes), style = LabTypography.Supporting)
@@ -375,7 +375,7 @@ private fun ChildInternetPlanEmptyState(onOpen: () -> Unit) {
             Surface(shape = CircleShape, color = LabV2.BackgroundTop, modifier = Modifier.size(132.dp)) {
                 Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ChildCare, null, tint = LabV2.Primary.copy(alpha = .78f), modifier = Modifier.size(68.dp)) }
             }
-            DashboardAppIcon("tiktok", sizeDp = 44, modifier = Modifier.align(Alignment.TopStart))
+            DashboardAppIcon("douyin", sizeDp = 44, modifier = Modifier.align(Alignment.TopStart))
             DashboardAppIcon("wechat", sizeDp = 44, modifier = Modifier.align(Alignment.TopEnd))
             DashboardAppIcon("bilibili", sizeDp = 44, modifier = Modifier.align(Alignment.BottomEnd))
         }
@@ -478,6 +478,12 @@ private fun ChildInternetPlanEditor(
                             if (rowCategories.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
+                    Text(
+                        "非库内的应用暂时无法禁用",
+                        style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                        modifier = Modifier.padding(top = 2.dp).fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
             } else {
                 Text("当前设备不支持应用控制，仍可设置上网时段", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
@@ -576,7 +582,7 @@ private fun AppCategoryCard(
             }
             Text("允许 ${category.allowedCount} 款  ›", style = LabTypography.Supporting.copy(color = if (category.enabled) LabV2.Cyan else LabV2.InkMuted, fontWeight = FontWeight.SemiBold))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                category.apps.take(3).forEach { app -> DashboardAppIcon(app.iconKey, app.localIconPath, sizeDp = 22) }
+                category.apps.take(3).forEach { app -> DashboardAppIcon(app.iconKey, app.localIconPath, sizeDp = 22, label = app.name) }
                 Surface(shape = RoundedCornerShape(8.dp), color = LabV2.Field) {
                     Text("${category.apps.size}+", Modifier.padding(horizontal = 4.dp, vertical = 4.dp), style = LabTypography.Caption)
                 }
@@ -712,7 +718,7 @@ private fun AppSelectionRow(
         if (iconKey == null) {
             LabV2ToolIcon(Icons.Rounded.Workspaces, LabV2.Cyan, size = 46)
         } else {
-            DashboardAppIcon(iconKey, localIconPath, sizeDp = 46)
+            DashboardAppIcon(iconKey, localIconPath, sizeDp = 46, label = title)
         }
         Text(title, style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Checkbox(
@@ -902,7 +908,7 @@ private fun StackedAppIcons(apps: List<SelectableAppItem>) {
                     color = LabCoreSurface.Card,
                     border = androidx.compose.foundation.BorderStroke(2.dp, LabCoreSurface.Card)
                 ) {
-                    Box(Modifier.padding(1.dp)) { DashboardAppIcon(app.iconKey, app.localIconPath, sizeDp = 26) }
+                    Box(Modifier.padding(1.dp)) { DashboardAppIcon(app.iconKey, app.localIconPath, sizeDp = 26, label = app.name) }
                 }
             }
         }

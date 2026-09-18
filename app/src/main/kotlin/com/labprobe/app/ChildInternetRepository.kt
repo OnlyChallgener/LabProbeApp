@@ -315,9 +315,9 @@ private fun mockOverview() = ChildInternetOverviewState(true, listOf(mockDevice(
 private fun mockDevice(id: String, name: String, icon: String, color: Int, configured: Boolean, minutes: Int, attention: Boolean): ChildInternetDeviceState {
     val plan = DeviceGuardPlan(id = if (configured) "preview-$id" else "", configured = configured, enabled = configured, categories = childInternetCatalogCategories())
     val sampleEntries = if (attention) listOf(
-        InternetUsageEntry("e1", "抖音系列", "tiktok", null, 27, "00:16-00:43", 1),
+        InternetUsageEntry("e1", "抖音系列", "douyin", null, 27, "00:16-00:43", 1),
         InternetUsageEntry("e2", "百度", "baidu", null, 5, "00:50-00:55", 1),
-        InternetUsageEntry("e3", "小红书", "xiaohongshu", null, 42, "07:27-08:09", 1)
+        InternetUsageEntry("e3", "小红书", "rednote", null, 42, "07:27-08:09", 1)
     ) else emptyList()
     val todayBars = if (attention) (0..23).map { hour ->
         UsageBar("${hour}点", when (hour) {
@@ -353,4 +353,32 @@ private fun catalogCategory(id: String, name: String, names: List<String>, allow
 }
 /** One UI app can require several original RDPI IDs. */
 internal fun childInternetRdpiIds(name: String): Set<String> = if (name == "微信") setOf("7-1-2-0", "7-1-2-3", "7-1-2-12", "7-1-2-14") else emptySet()
-private fun dashboardIconKey(name: String) = when (name) { "微信" -> "wechat"; "哔哩哔哩" -> "bilibili"; "百度" -> "baidu"; "华为应用市场" -> "huawei"; else -> name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "missing" } }
+
+/**
+ * RDPI 中文名 -> 图标 key。内置图标包（assets/appicons）覆盖国内应用，
+ * 其余回落 Homarr Dashboard Icons CDN（kebab-case 命名），最后由
+ * 首字头像兜底，保证任何应用都不会出现灰色占位方块。
+ */
+private fun dashboardIconKey(name: String) = when (name) {
+    "微信" -> "wechat"; "企业微信" -> "wecom"; "微信读书" -> "weread"; "微信视频号" -> "wechat"
+    "QQ" -> "qq"; "QQ音乐" -> "qq-music"; "QQ浏览器" -> "qq-browser"; "腾讯课堂" -> "tencent-classroom"; "腾讯会议" -> "tencent-meeting"
+    "腾讯视频" -> "tencent-video"; "哔哩哔哩" -> "bilibili"; "微视" -> "weishi"
+    "抖音" -> "douyin"; "抖音系列" -> "douyin"; "快手" -> "kuaishou"; "小红书" -> "rednote"
+    "爱奇艺" -> "iqiyi"; "优酷" -> "youku"; "芒果TV" -> "mango-tv"; "咪咕视频" -> "migu-video"
+    "网易云音乐" -> "netease-music"; "酷狗音乐" -> "kugou-music"; "酷我音乐" -> "kuwo-music"
+    "喜马拉雅" -> "himalaya"; "喜马拉雅儿童" -> "himalaya"
+    "百度" -> "baidu"; "百度贴吧" -> "baidu-tieba"; "百度网盘" -> "baidu-netdisk"; "百度地图" -> "baidu-map"; "百度翻译" -> "baidu-fanyi"
+    "高德地图" -> "amap"; "腾讯地图" -> "tencent-map"; "夸克" -> "quark"; "UC浏览器" -> "uc-browser"
+    "阿里云盘" -> "aliyunpan"; "迅雷" -> "xunlei"; "菜鸟" -> "cainiao"; "顺丰速运" -> "sf-express"
+    "微博" -> "weibo"; "知乎" -> "zhihu"; "豆瓣" -> "douban"; "Soul" -> "soul"; "陌陌" -> "momo"; "探探" -> "tantan"
+    "钉钉" -> "dingtalk"; "飞书" -> "feishu"; "WPS Office" -> "wps-office"
+    "淘宝" -> "taobao"; "京东" -> "jingdong"; "拼多多" -> "pinduoduo"; "支付宝" -> "alipay"
+    "美团" -> "meituan"; "饿了么" -> "eleme"; "滴滴出行" -> "didi"
+    "闲鱼" -> "goofish"; "得物" -> "dewu"; "转转" -> "zhuanzhun"
+    "携程旅行" -> "ctrip"; "去哪儿旅行" -> "qunar"; "同程旅行" -> "tongcheng"; "马蜂窝" -> "mafengwo"
+    "淘票票" -> "taopiaopiao"; "铁路12306" -> "railway-12306"; "大众点评" -> "dianping"
+    "华为应用市场" -> "huawei"; "小米应用商店" -> "xiaomi-global"; "应用宝" -> "yyb"; "酷安" -> "coolapk"; "App Store" -> "appstore"
+    "Steam" -> "steam"; "Keep" -> "keep"; "虎扑" -> "hupu"; "IT之家" -> "ithome"; "雪球" -> "xueqiu"
+    "番茄小说" -> "fanqie-novel"; "米游社" -> "mihoyo-bbs"; "瑞幸咖啡" -> "luckin"
+    else -> name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "missing" }
+}
