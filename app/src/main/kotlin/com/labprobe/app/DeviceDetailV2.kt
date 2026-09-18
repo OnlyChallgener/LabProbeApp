@@ -35,7 +35,8 @@ fun DeviceDetailScreen(
     onBack: () -> Unit,
     onOpenChildInternet: () -> Unit,
     onOpenPortMap: () -> Unit,
-    onOpenSsh: () -> Unit
+    onOpenSsh: () -> Unit,
+    childInternetRepository: ChildInternetRepository? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -199,8 +200,25 @@ fun DeviceDetailScreen(
             }
         }
 
+        val childState = childInternetRepository?.state?.devices?.firstOrNull {
+            it.summary.matchesChildGuardDevice(device.mac) || it.summary.matchesChildGuardDevice(device.name)
+        }
+
         Surface(
-            onClick = onOpenChildInternet,
+            onClick = {
+                if (childState == null && childInternetRepository != null) {
+                    childInternetRepository.addGuardDevice(device.mac, device.name) { result ->
+                        result.onSuccess {
+                            toast(context, "已加入儿童守护")
+                            onOpenChildInternet()
+                        }.onFailure {
+                            toast(context, it.message ?: "添加失败")
+                        }
+                    }
+                } else {
+                    onOpenChildInternet()
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
             shape = LabCoreSurface.CompactShape,
             color = Color.White,
@@ -213,10 +231,61 @@ fun DeviceDetailScreen(
             ) {
                 LabV2ToolIcon(Icons.Rounded.ChildCare, LabV2.Cyan, size = 42)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("儿童上网", style = LabTypography.SectionTitle)
-                    Text("上网计划、应用许可与使用报告", style = LabTypography.Supporting, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("儿童上网", style = LabTypography.SectionTitle)
+                        if (childState != null) {
+                            val badgeColor = when (childState.summary.status) {
+                                GuardStatus.BLOCKED -> LabV2.Red
+                                GuardStatus.GUARDED -> LabV2.Green
+                                else -> LabV2.Cyan
+                            }
+                            val badgeText = when (childState.summary.status) {
+                                GuardStatus.BLOCKED -> "已禁网"
+                                GuardStatus.GUARDED -> "管控中"
+                                else -> "已守护"
+                            }
+                            Surface(shape = RoundedCornerShape(20.dp), color = badgeColor.copy(alpha = .10f)) {
+                                Text(
+                                    badgeText,
+                                    Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                    style = LabTypography.Caption.copy(color = badgeColor, fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        } else {
+                            Surface(shape = RoundedCornerShape(20.dp), color = LabV2.Field) {
+                                Text(
+                                    "未守护",
+                                    Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                    style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontWeight = FontWeight.Medium)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        if (childState != null) {
+                            "今日上网 ${formatChildDuration(childState.summary.todayMinutes)} · 点击管理计划与报告"
+                        } else {
+                            "设置允许上网时段、应用限制与活跃报告"
+                        },
+                        style = LabTypography.Supporting,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
-                Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = LabV2.InkFaint)
+                if (childState == null) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = LabV2.Cyan.copy(alpha = .12f)
+                    ) {
+                        Text(
+                            "+ 加入守护",
+                            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            style = LabTypography.CompactButton.copy(color = LabV2.Cyan, fontWeight = FontWeight.SemiBold)
+                        )
+                    }
+                } else {
+                    Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = LabV2.InkFaint)
+                }
             }
         }
 

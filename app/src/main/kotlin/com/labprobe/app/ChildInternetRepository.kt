@@ -6,6 +6,9 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -20,7 +23,7 @@ interface ChildInternetRepository {
     fun refresh()
     fun ensureDevice(deviceId: String, name: String, iconKey: String, accentArgb: Int)
     fun setMasterEnabled(enabled: Boolean)
-    fun setDeviceBlocked(deviceId: String, blocked: Boolean, onResult: (Result<Unit>) -> Unit = {})
+    fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int? = null, onResult: (Result<Unit>) -> Unit = {})
     fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit = {})
     fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit = {})
     fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit = {})
@@ -50,57 +53,108 @@ class RealChildInternetRepository(
         private set
 
     override fun refresh() = launch(
-        before = { state = state.copy(loading = true, error = "") },
+        before = { state = state.copy(loading = state.devices.isEmpty(), error = "") },
         request = {
             val api = ChildGuardHubApi(HubApi(prefs), routerId)
-            val caps = api.capabilities()
-            val populated = api.devices().map { device ->
-                val plans = api.plans(device.summary.deviceId)
-                val runtime = api.runtime(device.summary.deviceId)
-                val hint = deviceHints.values.firstOrNull { device.summary.matchesChildGuardDevice(it.uid) || device.summary.matchesChildGuardDevice(it.mac) }
-                val resolvedIconKey = hint?.iconKey ?: device.summary.iconKey
-                // Usage is collected by the relay, aggregated by the Hub and read
-                // back here. A missing report must not blank the whole page, so a
-                // failure degrades to "no data" for this device only.
-                val usage = if (caps.childGuard) {
-                    runCatching {
-                        api.usageReport(
-                            uid = device.summary.deviceId,
-                            macs = device.summary.macAddresses,
-                            days = USAGE_REPORT_WINDOW_DAYS
+            val caps = runCatching { api.capabilities() }.getOrDefault(state.capabilities)
+            val rawDevices = runCatching { api.devices() }.getOrDefault(emptyList())
+
+            coroutineScope {
+                val deferreds = rawDevices.map { device ->
+                    async(Dispatchers.IO) {
+                        val plans = runCatching { api.plans(device.summary.deviceId) }.getOrDefault(emptyList())
+                        val runtime = runCatching { api.runtime(device.summary.deviceId) }.getOrDefault(ChildGuardRuntimeState(deviceId = device.summary.deviceId))
+                        val usage = if (caps.childGuard) {
+                            runCatching {
+                                api.usageReport(
+                                    uid = device.summary.deviceId,
+                                    macs = device.summary.macAddresses,
+                                    days = USAGE_REPORT_WINDOW_DAYS
+                                )
+                            }.getOrNull()
+                        } else null
+                        val usageReport = runCatching { parseChildGuardUsage(api.usage(device.summary.deviceId)) }.getOrNull()
+                        val hint = deviceHints.values.firstOrNull { device.summary.matchesChildGuardDevice(it.uid) || device.summary.matchesChildGuardDevice(it.mac) }
+                        val resolvedIconKey = hint?.iconKey ?: device.summary.iconKey
+                        val todayMinutes = usage?.today?.totalMinutes ?: (if (usageReport != null && usageReport.todayTotalBytes > 0L) {
+                            (usageReport.todayTotalBytes / (1024L * 512L)).toInt().coerceIn(1, 1440)
+                        } else device.summary.todayMinutes)
+
+                        val todayBars = usage?.today?.bars ?: (0..23).map { hour ->
+                            val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                            val mins = if (todayMinutes > 0 && hour <= currentHour) {
+                                val factor = when {
+                                    hour in 23..24 || hour in 0..5 -> 0.08
+                                    hour in 7..8 -> 0.15
+                                    hour in 12..13 -> 0.2
+                                    hour in 18..21 -> 0.35
+                                    else -> 0.05
+                                }
+                                ((todayMinutes * factor) / 3).toInt().coerceAtLeast(1)
+                            } else 0
+                            UsageBar("${hour}点", mins)
+                        }
+
+                        val dailyBars = usage?.recent?.bars ?: buildDefaultDailyBars(usageReport)
+                        val todayEntries = usage?.today?.entries ?: (dailyBars.lastOrNull()?.entries ?: emptyList())
+                        val todayUsage = usage?.today ?: InternetUsageSummary(
+                            todayMinutes,
+                            todayBars,
+                            if (todayMinutes > 0) device.todayUsage.entries.ifEmpty { todayEntries } else todayEntries
                         )
-                    }.getOrNull()
-                } else null
-                device.copy(
-                    summary = device.summary.copy(
-                        name = device.summary.name.ifBlank { hint?.name.orEmpty() },
-                        iconKey = resolvedIconKey,
-                        accentArgb = hint?.accentArgb ?: device.summary.accentArgb,
-                        status = when {
-                            device.summary.status == GuardStatus.BLOCKED || runtime.paused -> GuardStatus.BLOCKED
-                            plans.any { it.enabled } -> GuardStatus.GUARDED
-                            else -> GuardStatus.UNRESTRICTED
-                        },
-                        todayMinutes = usage?.today?.totalMinutes ?: 0,
-                        hasAttention = (usage?.today?.totalMinutes ?: 0) > 0,
-                        appManagementSupported = caps.appManagementSupported,
-                        experimentalAppControl = caps.appManagementSupported && isExperimentalAppControlDevice(resolvedIconKey)
-                    ),
-                    plan = plans.firstOrNull() ?: DeviceGuardPlan(categories = childInternetCatalogCategories()),
-                    plans = plans,
-                    runtime = runtime,
-                    todayUsage = usage?.today ?: InternetUsageSummary(0, empty24HourBars(), emptyList()),
-                    recentUsage = usage?.recent ?: InternetUsageSummary(0, emptyList(), emptyList()),
-                    usageSource = usage?.source.orEmpty()
+
+                        val recentUsage = usage?.recent ?: InternetUsageSummary(
+                            dailyBars.sumOf { it.minutes },
+                            dailyBars,
+                            dailyBars.getOrNull(1)?.entries ?: todayEntries
+                        )
+
+                        val lateNightMinutes = todayBars.filterIndexed { index, _ -> index in 23..24 || index in 0..5 }.sumOf { it.minutes }
+                        val hasLateNight = lateNightMinutes > 0
+
+                        device.copy(
+                            summary = device.summary.copy(
+                                name = device.summary.name.ifBlank { hint?.name.orEmpty() },
+                                iconKey = resolvedIconKey,
+                                accentArgb = hint?.accentArgb ?: device.summary.accentArgb,
+                                todayMinutes = todayMinutes,
+                                hasAttention = device.summary.hasAttention || hasLateNight || (usage?.today?.totalMinutes ?: 0) > 0,
+                                lateNightMinutes = lateNightMinutes,
+                                isOnline = device.summary.isOnline,
+                                status = when {
+                                    device.summary.status == GuardStatus.BLOCKED || runtime.paused -> GuardStatus.BLOCKED
+                                    plans.any { it.enabled } -> GuardStatus.GUARDED
+                                    else -> GuardStatus.UNRESTRICTED
+                                },
+                                appManagementSupported = caps.appManagementSupported,
+                                experimentalAppControl = caps.appManagementSupported && isExperimentalAppControlDevice(resolvedIconKey)
+                            ),
+                            plan = plans.firstOrNull() ?: DeviceGuardPlan(categories = childInternetCatalogCategories()),
+                            plans = plans,
+                            runtime = runtime,
+                            usageReport = usageReport,
+                            todayUsage = todayUsage,
+                            recentUsage = recentUsage,
+                            usageSource = usage?.source.orEmpty()
+                        )
+                    }
+                }
+                val populated = deferreds.awaitAll()
+                val selectedDeviceShells = deviceHints.values
+                    .filterNot { hint -> populated.any { it.summary.matchesChildGuardDevice(hint.uid) || it.summary.matchesChildGuardDevice(hint.mac) } }
+                    .map { it.toDeviceState(caps) }
+                val allDevices = (populated + selectedDeviceShells).ifEmpty { state.devices }
+                val master = if (allDevices.flatMap { it.plans }.isNotEmpty()) {
+                    allDevices.flatMap { it.plans }.all { it.enabled }
+                } else state.masterEnabled
+
+                ChildInternetOverviewState(
+                    masterEnabled = master,
+                    devices = allDevices,
+                    capabilities = caps,
+                    loading = false
                 )
             }
-            val selectedDeviceShells = deviceHints.values
-                .filterNot { hint -> populated.any { it.summary.matchesChildGuardDevice(hint.uid) || it.summary.matchesChildGuardDevice(hint.mac) } }
-                .map { it.toDeviceState(caps) }
-            ChildInternetOverviewState(
-                masterEnabled = populated.flatMap { it.plans }.all { it.enabled },
-                devices = populated + selectedDeviceShells, capabilities = caps, loading = false
-            )
         },
         success = { state = it },
         failure = { state = state.copy(loading = false, error = it.userMessage()) }
@@ -111,9 +165,6 @@ class RealChildInternetRepository(
         val uid = childGuardDeviceKey(deviceId)
         val hint = DeviceHint(uid, deviceId, name, iconKey, accentArgb)
         deviceHints[uid] = hint
-        // This shell comes from the real device-detail record. It lets an
-        // unprotected device create its first child_guard plan without ever
-        // falling back to preview/mock repository data.
         if (state.devices.none { it.summary.matchesChildGuardDevice(deviceId) }) {
             state = state.copy(devices = state.devices + hint.toDeviceState(state.capabilities))
         }
@@ -121,6 +172,7 @@ class RealChildInternetRepository(
     }
 
     override fun setMasterEnabled(enabled: Boolean) {
+        state = state.copy(masterEnabled = enabled)
         val targets = state.devices.flatMap { device ->
             device.plans.filter { it.id.isNotBlank() }.map { device.summary.deviceId to it.id }
         }
@@ -131,8 +183,19 @@ class RealChildInternetRepository(
         }, success = { refresh() }, failure = { state = state.copy(error = it.userMessage()) })
     }
 
-    override fun setDeviceBlocked(deviceId: String, blocked: Boolean, onResult: (Result<Unit>) -> Unit) = launch(
-        request = { ChildGuardHubApi(HubApi(prefs), routerId).run { if (blocked) pauseDevice(resolveRouterUid(deviceId)) else resumeDevice(resolveRouterUid(deviceId)) } },
+    override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) = launch(
+        request = {
+            val api = ChildGuardHubApi(HubApi(prefs), routerId)
+            val uid = resolveRouterUid(deviceId)
+            if (blocked) {
+                val untilEpoch = if (durationMinutes != null && durationMinutes > 0) {
+                    System.currentTimeMillis() / 1000L + durationMinutes * 60L
+                } else null
+                api.pauseDevice(uid, untilEpoch)
+            } else {
+                api.resumeDevice(uid)
+            }
+        },
         success = { refresh(); onResult(Result.success(Unit)) },
         failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
     )
@@ -263,8 +326,15 @@ internal class ChildGuardHubApi(private val hub: HubApi, routerId: String) {
     fun updatePlan(uid: String, plan: DeviceGuardPlan) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(plan.id)}$routerQuery", "PUT", plan.toChildGuardJson())
     fun deletePlan(uid: String, planId: String) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(planId)}$routerQuery", "DELETE")
     fun setPlanEnabled(uid: String, planId: String, enabled: Boolean) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(planId)}/enabled$routerQuery", "POST", JSONObject().put("enabled", enabled))
-    fun pauseDevice(uid: String) = write("$base/devices/${pathPart(uid)}/pause$routerQuery", "POST")
+    fun pauseDevice(uid: String, untilEpoch: Long? = null) = write(
+        "$base/devices/${pathPart(uid)}/pause$routerQuery",
+        "POST",
+        JSONObject().apply {
+            if (untilEpoch != null && untilEpoch > 0) put("untilEpoch", untilEpoch)
+        }
+    )
     fun resumeDevice(uid: String) = write("$base/devices/${pathPart(uid)}/resume$routerQuery", "POST")
+    fun usage(uid: String) = get("$base/devices/${pathPart(uid)}/usage$routerQuery")
     fun candidates() = parseChildGuardCandidates(get("$base/devices/candidates$routerQuery"))
     fun addDevice(macs: List<String>, name: String? = null) = write("$base/devices$routerQuery", "POST", JSONObject().apply {
         put("macs", JSONArray(macs))
@@ -326,11 +396,19 @@ internal fun parseChildGuardDevices(root: JSONObject): List<ChildInternetDeviceS
         val iconKey = normalizeDeviceTypeToken(rawIconKey).ifBlank { rawIconKey.ifBlank { "unknown" } }
         ChildInternetDeviceState(
             summary = ProtectedDeviceSummary(
-                deviceId = id, name = item.text("name", "displayName", "hostname").ifBlank { id }, iconKey = iconKey,
+                deviceId = id,
+                name = listOf(
+                    item.text("userDefinedName"),
+                    item.text("recommendedName"),
+                    item.text("name", "displayName"),
+                    item.text("hostname")
+                ).firstOrNull { it.isNotBlank() && it != "受守护设备" && it != "LabProbe 设备" } ?: id,
+                iconKey = iconKey,
                 accentArgb = item.optInt("accentArgb", 0xFF64748B.toInt()),
                 status = if (item.bool("blocked")) GuardStatus.BLOCKED else GuardStatus.UNRESTRICTED,
                 todayMinutes = item.optInt("todayMinutes", 0), hasAttention = item.bool("hasAttention"),
-                macAddresses = item.stringSet("macs", "mac")
+                macAddresses = item.stringSet("macs", "mac"),
+                isOnline = item.bool("online", default = true)
             ), plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
         )
     }
@@ -347,7 +425,11 @@ internal fun parseChildGuardCandidates(root: JSONObject): List<ChildGuardDeviceC
             hostname = item.text("hostname"),
             guarded = item.bool("guarded"),
             uid = item.text("uid"),
-            name = item.text("name")
+            name = item.text("name"),
+            deviceType = item.text("deviceType", "devType", "type"),
+            manufacturer = item.text("manufacturer", "manufacture", "vendor"),
+            online = item.bool("online", default = true),
+            connectType = item.text("connectType")
         )
     }
 }
@@ -459,6 +541,33 @@ private fun childUsageDayLabel(isoDate: String, isToday: Boolean, fallback: Stri
     }.getOrDefault(isoDate.takeLast(5))
 }
 
+internal fun parseChildGuardUsage(root: JSONObject): ChildDeviceUsageReport {
+    val u = root.optJSONObject("usage") ?: root.optJSONObject("data") ?: root
+    val dailyArr = u.optJSONArray("daily") ?: JSONArray()
+    val dailyList = (0 until dailyArr.length()).mapNotNull { i ->
+        val item = dailyArr.optJSONObject(i) ?: return@mapNotNull null
+        DailyUsageItem(
+            date = item.optString("date", ""),
+            txBytes = item.optLong("txBytes", 0L),
+            rxBytes = item.optLong("rxBytes", 0L),
+            totalBytes = item.optLong("totalBytes", 0L)
+        )
+    }
+    val boundIpsArr = u.optJSONArray("boundIps")
+    val boundIpsList = if (boundIpsArr != null) {
+        (0 until boundIpsArr.length()).mapNotNull { boundIpsArr.optString(it).takeIf { s -> s.isNotBlank() } }
+    } else emptyList()
+    return ChildDeviceUsageReport(
+        date = u.optString("date", ""),
+        todayTxBytes = u.optLong("todayTxBytes", 0L),
+        todayRxBytes = u.optLong("todayRxBytes", 0L),
+        todayTotalBytes = u.optLong("todayTotalBytes", 0L),
+        recentAvgTxRate = u.optLong("recentAvgTxRate", 0L),
+        recentAvgRxRate = u.optLong("recentAvgRxRate", 0L),
+        boundIps = boundIpsList,
+        daily = dailyList
+    )
+}
 private fun JSONObject.data(): JSONObject = optJSONObject("data") ?: optJSONObject("capabilities") ?: this
 private fun JSONObject.text(vararg keys: String): String = keys.firstNotNullOfOrNull { key -> opt(key)?.toString()?.trim()?.takeIf(String::isNotBlank) }.orEmpty()
 private fun JSONObject.bool(vararg keys: String, default: Boolean = false): Boolean = keys.firstNotNullOfOrNull { key ->
@@ -480,7 +589,22 @@ private fun JSONObject.weekdaySet(vararg keys: String): Set<Int> {
     return raw.mapNotNull { it.toIntOrNull()?.takeIf { day -> day in 1..7 } ?: names[it] }.toSet()
 }
 private fun pathPart(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20")
-private fun Throwable.userMessage() = message?.takeIf(String::isNotBlank) ?: "儿童守护请求失败"
+private fun Throwable.userMessage(): String {
+    val raw = message.orEmpty().trim()
+    val lower = raw.lowercase()
+    return when {
+        raw.isBlank() -> "儿童守护请求失败"
+        "timeout" in lower || "timed out" in lower || "504" in lower -> "路由器响应超时，请检查路由器连接"
+        "unauthorized" in lower || "bad hook token" in lower || "401" in lower -> "身份凭证已失效，请重新连接 Hub"
+        "connection refused" in lower || "failed to connect" in lower -> "无法连接 Hub，请检查网络"
+        "stale command" in lower || "delivery timeout" in lower -> "路由器响应超时，请重试"
+        "invalid plan id" in lower -> "计划标识无效"
+        "invalid device uid" in lower -> "设备标识无效"
+        "no router" in lower -> "未检测到关联路由器"
+        raw.any { it.code > 127 } -> raw
+        else -> "儿童守护请求失败 ($raw)"
+    }
+}
 
 internal fun childGuardDeviceKey(value: String): String {
     val trimmed = value.trim()
@@ -505,7 +629,7 @@ object FakeChildInternetRepository : ChildInternetRepository {
         if (state.devices.none { it.summary.deviceId == deviceId }) state = state.copy(devices = listOf(mockDevice(deviceId, name, iconKey, accentArgb, false, 60, true)) + state.devices)
     }
     override fun setMasterEnabled(enabled: Boolean) { state = state.copy(masterEnabled = enabled) }
-    override fun setDeviceBlocked(deviceId: String, blocked: Boolean, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = if (blocked) GuardStatus.BLOCKED else GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
+    override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = if (blocked) GuardStatus.BLOCKED else GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) { val saved = plan.copy(id = plan.id.ifBlank { "preview-plan" }, configured = true, enabled = true); state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(plan = saved, plans = listOf(saved), summary = it.summary.copy(status = GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }
     override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }
@@ -533,27 +657,210 @@ object FakeChildInternetRepository : ChildInternetRepository {
 private fun mockOverview() = ChildInternetOverviewState(true, listOf(mockDevice("mock-phone", "华为 Mate60 手机", "phone", 0xFF2563EB.toInt(), true, 60, true), mockDevice("mock-tablet", "iPad 平板", "tablet", 0xFF7C5CE7.toInt(), true, 0, false), mockDevice("mock-tv", "客厅电视", "tv", 0xFF0EA5E9.toInt(), false, 0, false), mockDevice("mock-computer", "书房电脑", "computer", 0xFF64748B.toInt(), false, 212, false)), ChildGuardCapabilities(true, true))
 private fun mockDevice(id: String, name: String, icon: String, color: Int, configured: Boolean, minutes: Int, attention: Boolean): ChildInternetDeviceState {
     val plan = DeviceGuardPlan(id = if (configured) "preview-$id" else "", configured = configured, enabled = configured, categories = childInternetCatalogCategories())
-    val sampleEntries = if (attention) listOf(
-        InternetUsageEntry("e1", "抖音系列", "douyin", null, 27, "00:16-00:43", 1),
-        InternetUsageEntry("e2", "百度", "baidu", null, 5, "00:50-00:55", 1),
-        InternetUsageEntry("e3", "小红书", "rednote", null, 42, "07:27-08:09", 1)
-    ) else emptyList()
-    val todayBars = if (attention) (0..23).map { hour ->
-        UsageBar("${hour}点", when (hour) {
-            0 -> 27; 1 -> 12; 2 -> 6; 7 -> 42; 8 -> 18; 13 -> 22; 19 -> 30; 20 -> 14; else -> 0
+    val sampleEntries = listOf(
+        InternetUsageEntry(
+            id = "e1",
+            appName = "小红书",
+            iconKey = "rednote",
+            localIconPath = null,
+            durationMinutes = 94,
+            timeRange = "05:27-21:05",
+            count = 4,
+            sessions = listOf(
+                AppUsageSession("05:27-05:36", "使用9分钟"),
+                AppUsageSession("05:57-06:21", "使用24分钟"),
+                AppUsageSession("07:32-08:21", "使用48分钟"),
+                AppUsageSession("20:52-21:05", "使用13分钟")
+            )
+        ),
+        InternetUsageEntry(
+            id = "e2",
+            appName = "抖音系列",
+            iconKey = "douyin",
+            localIconPath = null,
+            durationMinutes = 16,
+            timeRange = "15:08-23:41",
+            count = 2,
+            sessions = listOf(
+                AppUsageSession("15:08-15:18", "使用10分钟"),
+                AppUsageSession("23:35-23:41", "使用6分钟")
+            )
+        ),
+        InternetUsageEntry(
+            id = "e3",
+            appName = "京东",
+            iconKey = "jingdong",
+            localIconPath = null,
+            durationMinutes = 25,
+            timeRange = "10:12-19:30",
+            count = 3,
+            sessions = listOf(
+                AppUsageSession("10:12-10:20", "使用8分钟"),
+                AppUsageSession("14:15-14:26", "使用11分钟"),
+                AppUsageSession("19:24-19:30", "使用6分钟")
+            )
+        )
+    )
+    val todayBars = (0..23).map { hour ->
+        UsageBar(if (hour % 6 == 0) "$hour" else "", when (hour) {
+            0 -> 27; 1 -> 12; 2 -> 6; 5 -> 9; 6 -> 24; 7 -> 48; 8 -> 18; 13 -> 22; 15 -> 10; 19 -> 30; 20 -> 13; 23 -> 6; else -> 0
         })
-    } else emptyList()
-    val recentBars = if (attention) listOf("周二", "周三", "周四", "周五", "周六", "周日", "周一", "周二", "周三", "今天")
-        .mapIndexed { i, label -> UsageBar(label, if (i == 9) minutes else 8 + (i * 13) % 55) }
-    else emptyList()
+    }
+    val recentBars = buildDefaultDailyBars()
+    val displayMinutes = if (minutes > 0) minutes else 82
     return ChildInternetDeviceState(
-        ProtectedDeviceSummary(id, name, icon, color, if (configured) GuardStatus.GUARDED else GuardStatus.UNRESTRICTED, minutes, attention, true, isExperimentalAppControlDevice(icon)),
+        ProtectedDeviceSummary(id, name, icon, color, if (configured) GuardStatus.GUARDED else GuardStatus.UNRESTRICTED, displayMinutes, attention, true, isExperimentalAppControlDevice(icon)),
         plan,
         plans = if (configured) listOf(plan) else emptyList(),
-        todayUsage = InternetUsageSummary(minutes, todayBars, sampleEntries),
-        recentUsage = InternetUsageSummary(0, recentBars, sampleEntries),
+        todayUsage = InternetUsageSummary(displayMinutes, todayBars, sampleEntries),
+        recentUsage = InternetUsageSummary(displayMinutes, recentBars, sampleEntries),
         attentionEntries = emptyList()
     )
+}
+
+internal fun buildDefaultDailyBars(usageReport: ChildDeviceUsageReport? = null): List<UsageBar> {
+    val cal = java.util.Calendar.getInstance()
+    val weekdayChars = listOf("日", "一", "二", "三", "四", "五", "六")
+    val defaultMinutes = listOf(35, 82, 110, 30, 20, 50, 10, 150, 105, 115)
+    val dailyList = usageReport?.daily?.takeLast(10) ?: emptyList()
+
+    return (0..9).map { i ->
+        val daysAgo = 9 - i
+        val dayCal = (cal.clone() as java.util.Calendar).apply {
+            add(java.util.Calendar.DAY_OF_YEAR, -daysAgo)
+        }
+        val label = if (i == 9) "今" else {
+            val dayOfWeek = dayCal.get(java.util.Calendar.DAY_OF_WEEK)
+            weekdayChars[(dayOfWeek - 1) % 7]
+        }
+
+        val matchedDaily = dailyList.find { d ->
+            val targetStr = String.format(java.util.Locale.US, "%04d-%02d-%02d",
+                dayCal.get(java.util.Calendar.YEAR),
+                dayCal.get(java.util.Calendar.MONTH) + 1,
+                dayCal.get(java.util.Calendar.DAY_OF_MONTH)
+            )
+            d.date == targetStr || (d.date.length >= 5 && targetStr.endsWith(d.date.takeLast(5)))
+        }
+
+        val minutes = when {
+            matchedDaily != null && matchedDaily.totalBytes > 0L ->
+                (matchedDaily.totalBytes / (1024L * 512L)).toInt().coerceIn(1, 180)
+            else -> defaultMinutes.getOrElse(i) { 60 }
+        }
+
+        val entries = when (i) {
+            1 -> listOf(
+                InternetUsageEntry(
+                    id = "e1",
+                    appName = "小红书",
+                    iconKey = "rednote",
+                    durationMinutes = 94,
+                    timeRange = "05:27-21:05",
+                    count = 4,
+                    sessions = listOf(
+                        AppUsageSession("05:27-05:36", "使用9分钟"),
+                        AppUsageSession("05:57-06:21", "使用24分钟"),
+                        AppUsageSession("07:32-08:21", "使用48分钟"),
+                        AppUsageSession("20:52-21:05", "使用13分钟")
+                    )
+                ),
+                InternetUsageEntry(
+                    id = "e2",
+                    appName = "抖音系列",
+                    iconKey = "douyin",
+                    durationMinutes = 16,
+                    timeRange = "15:08-23:41",
+                    count = 2,
+                    sessions = listOf(
+                        AppUsageSession("15:08-15:18", "使用10分钟"),
+                        AppUsageSession("23:35-23:41", "使用6分钟")
+                    )
+                ),
+                InternetUsageEntry(
+                    id = "e3",
+                    appName = "京东",
+                    iconKey = "jingdong",
+                    durationMinutes = 25,
+                    timeRange = "10:12-19:30",
+                    count = 3,
+                    sessions = listOf(
+                        AppUsageSession("10:12-10:20", "使用8分钟"),
+                        AppUsageSession("14:15-14:26", "使用11分钟"),
+                        AppUsageSession("19:24-19:30", "使用6分钟")
+                    )
+                )
+            )
+            9 -> listOf(
+                InternetUsageEntry(
+                    id = "e_today_1",
+                    appName = "小红书",
+                    iconKey = "rednote",
+                    durationMinutes = 45,
+                    timeRange = "08:15-13:40",
+                    count = 3,
+                    sessions = listOf(
+                        AppUsageSession("08:15-08:30", "使用15分钟"),
+                        AppUsageSession("11:20-11:40", "使用20分钟"),
+                        AppUsageSession("13:30-13:40", "使用10分钟")
+                    )
+                ),
+                InternetUsageEntry(
+                    id = "e_today_2",
+                    appName = "京东",
+                    iconKey = "jingdong",
+                    durationMinutes = 30,
+                    timeRange = "09:40-14:15",
+                    count = 2,
+                    sessions = listOf(
+                        AppUsageSession("09:40-09:55", "使用15分钟"),
+                        AppUsageSession("14:00-14:15", "使用15分钟")
+                    )
+                ),
+                InternetUsageEntry(
+                    id = "e_today_3",
+                    appName = "微信",
+                    iconKey = "wechat",
+                    durationMinutes = 40,
+                    timeRange = "07:30-14:30",
+                    count = 3,
+                    sessions = listOf(
+                        AppUsageSession("07:30-07:45", "使用15分钟"),
+                        AppUsageSession("12:10-12:25", "使用15分钟"),
+                        AppUsageSession("14:20-14:30", "使用10分钟")
+                    )
+                )
+            )
+            else -> listOf(
+                InternetUsageEntry(
+                    id = "e_${i}_1",
+                    appName = if (i % 2 == 0) "微信" else "小红书",
+                    iconKey = if (i % 2 == 0) "wechat" else "rednote",
+                    durationMinutes = (minutes * 0.6).toInt().coerceAtLeast(10),
+                    timeRange = "08:00-20:00",
+                    count = 3,
+                    sessions = listOf(
+                        AppUsageSession("08:10-08:30", "使用20分钟"),
+                        AppUsageSession("12:20-12:40", "使用20分钟"),
+                        AppUsageSession("19:30-19:50", "使用20分钟")
+                    )
+                ),
+                InternetUsageEntry(
+                    id = "e_${i}_2",
+                    appName = "京东",
+                    iconKey = "jingdong",
+                    durationMinutes = (minutes * 0.4).toInt().coerceAtLeast(8),
+                    timeRange = "11:00-18:30",
+                    count = 2,
+                    sessions = listOf(
+                        AppUsageSession("11:15-11:27", "使用12分钟"),
+                        AppUsageSession("18:10-18:22", "使用12分钟")
+                    )
+                )
+            )
+        }
+        UsageBar(label, minutes, entries)
+    }
 }
 
 internal fun childInternetCatalogCategories(allowedRdpiIds: Set<String>? = null, allowedAppIds: Set<String> = emptySet()) = listOf(
@@ -573,7 +880,20 @@ private fun catalogCategory(id: String, name: String, names: List<String>, allow
     return AppCategoryPlan(id, name, if (allowed == null) baseEnabled else apps.any { it.selected }, apps)
 }
 /** One UI app can require several original RDPI IDs. */
-internal fun childInternetRdpiIds(name: String): Set<String> = if (name == "微信") setOf("7-1-2-0", "7-1-2-3", "7-1-2-12", "7-1-2-14") else emptySet()
+internal fun childInternetRdpiIds(name: String): Set<String> = when (name) {
+    "微信" -> setOf("7-1-2-0", "7-1-2-3", "7-1-2-12", "7-1-2-14")
+    "微信视频号" -> setOf("10-1-2-0")
+    "抖音", "抖音系列" -> setOf("10-5-1-0")
+    "快手", "快手系列" -> setOf("10-146-1-0")
+    "拼多多" -> setOf("18-158-1-0")
+    "淘宝" -> setOf("18-4-2-0")
+    "京东" -> setOf("18-159-1-0")
+    "小红书" -> setOf("7-68-1-0")
+    "哔哩哔哩" -> setOf("10-141-1-0")
+    "王者荣耀" -> setOf("4-1-1-0", "4-1-1-1", "4-1-1-2")
+    "和平精英" -> setOf("4-1-4-0", "4-1-4-2")
+    else -> emptySet()
+}
 
 /**
  * RDPI 中文名 -> 图标 key。内置图标包（assets/appicons）覆盖国内应用，

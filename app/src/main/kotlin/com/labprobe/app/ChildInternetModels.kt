@@ -82,12 +82,20 @@ data class ProtectedDeviceSummary(
     val appManagementSupported: Boolean = false,
     val experimentalAppControl: Boolean = false,
     /** Router UID and station MAC are not guaranteed to be the same value. */
-    val macAddresses: Set<String> = emptySet()
+    val macAddresses: Set<String> = emptySet(),
+    val isOnline: Boolean = true,
+    val lateNightMinutes: Int = 0
 )
 
 data class UsageBar(
     val label: String,
-    val minutes: Int
+    val minutes: Int,
+    val entries: List<InternetUsageEntry> = emptyList()
+)
+
+data class AppUsageSession(
+    val timeRange: String,
+    val durationText: String
 )
 
 data class InternetUsageEntry(
@@ -97,7 +105,8 @@ data class InternetUsageEntry(
     val localIconPath: String? = null,
     val durationMinutes: Int,
     val timeRange: String,
-    val count: Int
+    val count: Int,
+    val sessions: List<AppUsageSession> = emptyList()
 )
 
 data class InternetUsageSummary(
@@ -113,6 +122,24 @@ data class ParentAttentionEntry(
     val normal: Boolean
 )
 
+data class ChildDeviceUsageReport(
+    val date: String = "",
+    val todayTxBytes: Long = 0L,
+    val todayRxBytes: Long = 0L,
+    val todayTotalBytes: Long = 0L,
+    val recentAvgTxRate: Long = 0L,
+    val recentAvgRxRate: Long = 0L,
+    val boundIps: List<String> = emptyList(),
+    val daily: List<DailyUsageItem> = emptyList()
+)
+
+data class DailyUsageItem(
+    val date: String,
+    val txBytes: Long,
+    val rxBytes: Long,
+    val totalBytes: Long
+)
+
 data class ChildInternetDeviceState(
     val summary: ProtectedDeviceSummary,
     val plan: DeviceGuardPlan,
@@ -120,12 +147,8 @@ data class ChildInternetDeviceState(
     val runtime: ChildGuardRuntimeState = ChildGuardRuntimeState(deviceId = summary.deviceId),
     val todayUsage: InternetUsageSummary = InternetUsageSummary(0, emptyList(), emptyList()),
     val recentUsage: InternetUsageSummary = InternetUsageSummary(0, emptyList(), emptyList()),
+    val usageReport: ChildDeviceUsageReport? = null,
     val attentionEntries: List<ParentAttentionEntry> = emptyList(),
-    /**
-     * Where [todayUsage]/[recentUsage] came from: `hub` (the router pushed
-     * aggregates), `relay` (read live off the router) or `empty`. Diagnostic
-     * only — the report page renders the same way for all three.
-     */
     val usageSource: String = ""
 )
 
@@ -148,9 +171,15 @@ data class ChildGuardDeviceCandidate(
     val hostname: String,
     val guarded: Boolean,
     val uid: String = "",
-    val name: String = ""
+    val name: String = "",
+    val deviceType: String = "",
+    val manufacturer: String = "",
+    val online: Boolean = true,
+    val connectType: String = ""
 ) {
-    val displayName: String get() = name.ifBlank { hostname.ifBlank { mac } }
+    val displayName: String
+        get() = name.takeIf { it.isNotBlank() && it != "受守护设备" && it != "LabProbe 设备" }
+            ?: hostname.ifBlank { mac }
 }
 
 /**

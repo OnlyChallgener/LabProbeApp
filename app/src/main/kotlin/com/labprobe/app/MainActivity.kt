@@ -2367,7 +2367,7 @@ fun LabProbeApp(prefs: AppPrefs) {
     MaterialTheme(colorScheme = light, typography = LabMaterialTypography) {
         val mainRoutes = listOf("home", "devices", "tools", "router_tools", "events", "favorites")
         val navTitles = listOf("首页", "设备", "工具", "路由", "记录", "收藏")
-        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.Build, RouterToolsIcon.vector, Icons.Rounded.History, Icons.Rounded.Star)
+        val navIcons = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Devices, Icons.Rounded.Build, Icons.Rounded.Router, Icons.Rounded.History, Icons.Rounded.Star)
         val normalized = when {
             route.startsWith("tool_") -> toolReturnRoute?.takeIf { it in mainRoutes } ?: "tools"
             route == "daily" -> dailyReturnRoute.takeIf { it in mainRoutes } ?: "events"
@@ -2548,22 +2548,35 @@ fun LabProbeApp(prefs: AppPrefs) {
                             onBack = { route = "devices" },
                             onOpenChildInternet = { childInternetReturnRoute = "device_detail"; route = "child_internet_device" },
                             onOpenPortMap = { toolReturnRoute = "device_detail"; route = "tool_portmap" },
-                            onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" }
+                            onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" },
+                            childInternetRepository = childInternetRepository
                         )
-                        "child_internet_overview" -> ChildInternetOverviewScreen(
-                            onBack = { route = childInternetReturnRoute },
-                            repository = childInternetRepository,
-                            onAddDevice = { route = "child_internet_picker" },
-                            onOpenDevice = { deviceId ->
-                                selectedDeviceMac = deviceId
-                                childInternetReturnRoute = "child_internet_overview"
-                                route = "child_internet_device"
+                        "child_internet_overview" -> {
+                            val allDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+                                mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
                             }
-                        )
-                        "child_internet_picker" -> ChildInternetDevicePickerScreen(
-                            repository = childInternetRepository,
-                            onBack = { route = "child_internet_overview" }
-                        )
+                            ChildInternetOverviewScreen(
+                                onBack = { route = childInternetReturnRoute },
+                                repository = childInternetRepository,
+                                devices = allDevices,
+                                onAddDevice = { route = "child_internet_picker" },
+                                onOpenDevice = { deviceId ->
+                                    selectedDeviceMac = deviceId
+                                    childInternetReturnRoute = "child_internet_overview"
+                                    route = "child_internet_device"
+                                }
+                            )
+                        }
+                        "child_internet_picker" -> {
+                            val allDevices = remember(state.devices, state.onlineDevices, state.offlineDevices) {
+                                mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
+                            }
+                            ChildInternetDevicePickerScreen(
+                                repository = childInternetRepository,
+                                devices = allDevices,
+                                onBack = { route = "child_internet_overview" }
+                            )
+                        }
                         "child_internet_device" -> ChildInternetDeviceScreen(
                             state = state,
                             deviceId = selectedDeviceMac,
@@ -2686,6 +2699,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         "tool_router_diag" -> RouterDiagnosticScreen(prefs, backFromTool)
                         "tool_router_nat" -> RouterNatDiagnosticScreen(prefs, backFromTool)
                         "tool_router_beta" -> RouterBetaUpgradeScreen(prefs, backFromTool)
+                        "tool_rdpi" -> RdpiSignatureStudioScreen(prefs, backFromTool)
                         "tool_router_ipv6" -> Ipv6Screen(prefs, backFromTool)
                         "tool_router_webhook" -> RouterWebhookScreen(
                             prefs = prefs,
@@ -4323,7 +4337,7 @@ fun OneUiSegmentBar() {
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
-            val items = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Router, Icons.Rounded.VpnKey, Icons.Rounded.Devices, Icons.Rounded.History)
+            val items = listOf(Icons.Rounded.Dashboard, Icons.Rounded.Devices, Icons.Rounded.Build, Icons.Rounded.Router, Icons.Rounded.History)
             items.forEachIndexed { idx, icon ->
                 val selected = idx == 0
                 Box(

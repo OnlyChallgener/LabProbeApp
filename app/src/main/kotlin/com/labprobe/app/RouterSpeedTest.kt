@@ -7,8 +7,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.Speed
@@ -18,6 +21,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Brush
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -243,6 +248,7 @@ fun RouterToolsScreen(
 ) {
     ScreenShell("路由工具", "路由器原生能力 · 与官方网页端同源接口", topNav = topNav) {
         SpeedTestCard(prefs)
+        RdpiSignatureCard(prefs)
         RouterToolsQuickSection(onOpen)
     }
 }
@@ -256,7 +262,8 @@ private data class RouterToolEntry(
 @Composable
 private fun RouterToolsQuickSection(onOpen: (String) -> Unit) {
     val guardSection = listOf(
-        RouterToolEntry("儿童上网", "上网计划 · 应用管控 · 停网时段", "child_internet_overview")
+        RouterToolEntry("儿童上网", "上网计划 · 应用管控 · 停网时段", "child_internet_overview"),
+        RouterToolEntry("应用特征库 (RDPI 识别)", "内核七层流量审计 · 抓包特征扩展与热重载", "tool_rdpi")
     )
     val settingSection = listOf(
         RouterToolEntry("映射与 UPnP", "IPv6 映射 · 原生端口映射 · UPnP", "tool_portmap"),
@@ -271,7 +278,8 @@ private fun RouterToolsQuickSection(onOpen: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text("儿童上网", style = LabTypography.SectionTitle.copy(color = SpeedInk))
         guardSection.forEach { entry ->
-            RouterToolTile(title = entry.title, subtitle = entry.subtitle, icon = Icons.Rounded.ChildCare) { onOpen(entry.route) }
+            val icon = if (entry.route == "tool_rdpi") Icons.Rounded.Fingerprint else Icons.Rounded.ChildCare
+            RouterToolTile(title = entry.title, subtitle = entry.subtitle, icon = icon) { onOpen(entry.route) }
         }
         Text("路由设置与诊断", style = LabTypography.SectionTitle.copy(color = SpeedInk))
         settingSection.forEach { entry ->
@@ -444,48 +452,245 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 
 @Composable
 private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
-    val accent = if (running) SpeedBlue else LabV2.Green
     val displayed = (down ?: 0.0).toFloat().coerceAtLeast(0f)
-    Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = Stroke(width = size.minDimension * .055f, cap = StrokeCap.Round)
-            val radius = size.minDimension / 2f - stroke.width
-            val center = Offset(size.width / 2f, size.height * .76f)
-            val topLeft = Offset(center.x - radius, center.y - radius)
-            val arcSize = Size(radius * 2f, radius * 2f)
-            // 240° sweep, 120° open at the bottom, like the official dial.
-            drawArc(
-                color = LabV2.Field,
-                startAngle = -210f,
-                sweepAngle = 240f,
-                useCenter = false,
-                topLeft = topLeft,
-                size = arcSize,
-                style = stroke
+    val position = gaugePosition(displayed).coerceIn(0f, 1f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFF8FAFD),
+                        Color(0xFFF1F5F9).copy(alpha = 0.6f)
+                    )
+                )
             )
-            drawArc(
-                color = accent,
-                startAngle = -210f,
-                sweepAngle = 240f * gaugePosition(displayed),
-                useCenter = false,
-                topLeft = topLeft,
-                size = arcSize,
-                style = stroke
-            )
+            .padding(top = 16.dp, bottom = 14.dp, start = 12.dp, end = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Dial Box with well-proportioned arc and centered clearance
+        Box(
+            modifier = Modifier
+                .width(260.dp)
+                .height(170.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val strokeWidth = 11.dp.toPx()
+                val radius = (size.width / 2f) - strokeWidth - 6.dp.toPx()
+                val center = Offset(size.width / 2f, size.height * 0.72f)
+                val topLeft = Offset(center.x - radius, center.y - radius)
+                val arcSize = Size(radius * 2f, radius * 2f)
+                val startAngle = -215f
+                val totalSweep = 250f
+
+                // Outer decorative tick dots
+                val tickCount = 25
+                val tickRadius = radius + 8.dp.toPx()
+                for (i in 0..tickCount) {
+                    val angleDeg = startAngle + (totalSweep * (i.toFloat() / tickCount))
+                    val angleRad = Math.toRadians(angleDeg.toDouble())
+                    val tickX = center.x + (tickRadius * Math.cos(angleRad)).toFloat()
+                    val tickY = center.y + (tickRadius * Math.sin(angleRad)).toFloat()
+                    val isMajor = i % 5 == 0
+                    drawCircle(
+                        color = if (isMajor) Color(0xFFCBD5E1) else Color(0xFFE2E8F0),
+                        radius = if (isMajor) 2.2.dp.toPx() else 1.2.dp.toPx(),
+                        center = Offset(tickX, tickY)
+                    )
+                }
+
+                // Background Track
+                drawArc(
+                    color = Color(0xFFE2E8F0),
+                    startAngle = startAngle,
+                    sweepAngle = totalSweep,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+
+                // Active Gradient Track
+                if (position > 0.005f) {
+                    val activeSweep = totalSweep * position
+                    drawArc(
+                        brush = Brush.sweepGradient(
+                            listOf(
+                                Color(0xFF0095D8),
+                                Color(0xFF38BDF8),
+                                Color(0xFF0284C7)
+                            ),
+                            center = center
+                        ),
+                        startAngle = startAngle,
+                        sweepAngle = activeSweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                    )
+
+                    // Glowing endpoint indicator
+                    val endAngleRad = Math.toRadians((startAngle + activeSweep).toDouble())
+                    val endX = center.x + (radius * Math.cos(endAngleRad)).toFloat()
+                    val endY = center.y + (radius * Math.sin(endAngleRad)).toFloat()
+                    drawCircle(
+                        color = Color.White,
+                        radius = strokeWidth * 0.38f,
+                        center = Offset(endX, endY)
+                    )
+                }
+            }
+
+            // Numbers and labels inside dial - completely framed without arc intersection
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                // Status pill
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (running) Color(0xFF0095D8).copy(alpha = 0.12f) else Color(0xFFE2E8F0).copy(alpha = 0.7f),
+                    border = BorderStroke(0.8.dp, if (running) Color(0xFF0095D8).copy(alpha = 0.25f) else Color(0xFFCBD5E1))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (running) Color(0xFF0095D8) else Color(0xFF94A3B8))
+                        )
+                        Text(
+                            text = if (running) "测速进行中" else "测速就绪",
+                            style = LabTypography.Caption.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (running) Color(0xFF0284C7) else Color(0xFF64748B)
+                            )
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(2.dp))
+
+                // Main Speed Value
+                Text(
+                    text = formatSpeed(down),
+                    style = LabTypography.AppTitle.copy(
+                        fontSize = 42.sp,
+                        lineHeight = 46.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF0F172A),
+                        letterSpacing = (-0.5).sp
+                    )
+                )
+
+                Text(
+                    text = "下行速率 · Mbps",
+                    style = LabTypography.Caption.copy(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF64748B)
+                    )
+                )
+            }
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(
-                formatSpeed(down),
-                style = LabTypography.AppTitle.copy(fontSize = 34.sp, lineHeight = 38.sp, color = SpeedInk)
-            )
-            Text(
-                if (running) "下行测速中 · Mbps" else "下行速率 · Mbps",
-                style = LabTypography.Supporting.copy(color = SpeedMuted)
-            )
-            Text(
-                "上行 ${formatSpeed(up)} Mbps",
-                style = LabTypography.Supporting.copy(color = SpeedUpColor)
-            )
+
+        // Live Rate Dual Card Row
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Downlink Card
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFFEFF6FF),
+                border = BorderStroke(1.dp, Color(0xFFDBEAFE))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF0095D8).copy(alpha = 0.15f),
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Rounded.ArrowDownward,
+                                null,
+                                tint = Color(0xFF0095D8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text("实时下行", style = LabTypography.Caption.copy(color = Color(0xFF64748B), fontSize = 11.sp))
+                        Text(
+                            "${formatSpeed(down)} Mbps",
+                            style = LabTypography.CardTitle.copy(
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0284C7)
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            // Uplink Card
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFFF0FDF4),
+                border = BorderStroke(1.dp, Color(0xFFDCFCE7))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF16A34A).copy(alpha = 0.15f),
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Rounded.ArrowUpward,
+                                null,
+                                tint = Color(0xFF16A34A),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text("实时上行", style = LabTypography.Caption.copy(color = Color(0xFF64748B), fontSize = 11.sp))
+                        Text(
+                            "${formatSpeed(up)} Mbps",
+                            style = LabTypography.CardTitle.copy(
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF16A34A)
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -505,20 +710,20 @@ private fun SpeedMetricTile(label: String, value: Double?, unit: String, modifie
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(13.dp),
-        color = LabV2.FieldSoft,
-        border = BorderStroke(1.dp, SpeedBorder)
+        color = Color(0xFFF8FAFC),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 9.dp),
+            Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(1.dp)
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
                 "${formatSpeed(value)} $unit",
-                style = LabTypography.ValueStrong.copy(color = SpeedInk),
+                style = LabTypography.ValueStrong.copy(fontSize = 15.sp, color = SpeedInk, fontWeight = FontWeight.Bold),
                 maxLines = 1
             )
-            Text(label, style = LabTypography.Caption.copy(color = SpeedMuted))
+            Text(label, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.sp))
         }
     }
 }
@@ -528,16 +733,23 @@ private fun SpeedChart(sample: SpeedSampleSet) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = LabV2.FieldSoft,
-        border = BorderStroke(1.dp, SpeedBorder)
+        color = Color(0xFFF8FAFC),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
     ) {
         Column(
-            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                SpeedLegend(SpeedDownColor, "下行")
-                SpeedLegend(SpeedUpColor, "上行")
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("速率波动曲线", style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = SpeedInk))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SpeedLegend(SpeedDownColor, "下行")
+                    SpeedLegend(SpeedUpColor, "上行")
+                }
             }
             Canvas(Modifier.fillMaxWidth().height(96.dp)) {
                 val padding = 4.dp.toPx()
@@ -559,6 +771,32 @@ private fun SpeedChart(sample: SpeedSampleSet) {
                     }
                     return path
                 }
+
+                // Draw area gradient under down curve
+                if (sample.down.isNotEmpty()) {
+                    val fillPath = Path()
+                    val lastIndex = sample.down.size - 1
+                    sample.down.forEachIndexed { index, value ->
+                        val x = padding + width * (if (lastIndex == 0) 0f else index.toFloat() / lastIndex)
+                        val y = padding + height * (1f - (value.toFloat() / peak).coerceIn(0f, 1f))
+                        if (index == 0) fillPath.moveTo(x, y) else fillPath.lineTo(x, y)
+                    }
+                    fillPath.lineTo(padding + width, padding + height)
+                    fillPath.lineTo(padding, padding + height)
+                    fillPath.close()
+                    drawPath(
+                        fillPath,
+                        brush = Brush.verticalGradient(
+                            listOf(
+                                SpeedDownColor.copy(alpha = 0.22f),
+                                SpeedDownColor.copy(alpha = 0.02f)
+                            ),
+                            startY = padding,
+                            endY = padding + height
+                        )
+                    )
+                }
+
                 val strokeWidth = 2.dp.toPx()
                 drawPath(
                     seriesPath(sample.down), SpeedDownColor,
@@ -572,6 +810,7 @@ private fun SpeedChart(sample: SpeedSampleSet) {
         }
     }
 }
+
 
 @Composable
 private fun SpeedLegend(color: Color, label: String) {
@@ -618,16 +857,31 @@ private fun SpeedHistoryRow(record: SpeedHistoryRecord) {
     val stamp = if (record.epoch > 0) {
         java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(record.epoch * 1000L))
     } else "--"
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(stamp, style = LabTypography.Caption.copy(color = SpeedMuted), modifier = Modifier.width(78.dp))
-        Text(
-            "↓ ${formatSpeed(record.downMbps)}  ↑ ${formatSpeed(record.upMbps)} Mbps",
-            style = LabTypography.Value.copy(color = SpeedInk),
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text("${formatSpeed(record.latency)} ms", style = LabTypography.Caption.copy(color = SpeedMuted))
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFFF8FAFC),
+        border = BorderStroke(0.8.dp, Color(0xFFF1F5F9))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(stamp, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.5.sp), modifier = Modifier.width(76.dp))
+            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "↓ ${formatSpeed(record.downMbps)}",
+                    style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0284C7)),
+                    maxLines = 1
+                )
+                Text(
+                    "↑ ${formatSpeed(record.upMbps)} Mbps",
+                    style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = Color(0xFF16A34A)),
+                    maxLines = 1
+                )
+            }
+            Text("${formatSpeed(record.latency)} ms", style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.sp))
+        }
     }
 }
 
