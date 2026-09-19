@@ -83,8 +83,9 @@ data class ProtectedDeviceSummary(
     val experimentalAppControl: Boolean = false,
     /** Router UID and station MAC are not guaranteed to be the same value. */
     val macAddresses: Set<String> = emptySet(),
-    val isOnline: Boolean = true,
-    val lateNightMinutes: Int = 0
+    val isOnline: Boolean = false,
+    val lateNightMinutes: Int = 0,
+    val blockedUntilEpoch: Long = 0L
 )
 
 data class UsageBar(
@@ -197,3 +198,10 @@ internal fun mapRuntimeEffectPolicy(effectPolicyId: String?, boundPolicyIds: Set
 
 internal fun isExperimentalAppControlDevice(iconKey: String): Boolean =
     iconKey.lowercase() in setOf("computer", "desktop", "laptop", "mini_pc", "mac_mini", "all_in_one")
+
+sealed class OperationHudState {
+    object Hidden : OperationHudState()
+    data class Loading(val message: String) : OperationHudState()
+    data class Success(val message: String) : OperationHudState()
+    data class Error(val message: String) : OperationHudState()
+}

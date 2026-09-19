@@ -201,7 +201,7 @@ fun DeviceDetailScreen(
         }
 
         val childState = childInternetRepository?.state?.devices?.firstOrNull {
-            it.summary.matchesChildGuardDevice(device.mac) || it.summary.matchesChildGuardDevice(device.name)
+            it.summary.matchesChildGuardDevice(device.mac)
         }
 
         Surface(

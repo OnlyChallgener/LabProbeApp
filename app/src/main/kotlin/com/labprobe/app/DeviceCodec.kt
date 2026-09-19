@@ -67,7 +67,7 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
     return DeviceItem(
         name = name,
         mac = mac,
-        online = o.optBoolean("online", true),
+        online = o.optBoolean("online", false),
         ip = f("ip").ifBlank { f("userIp") }.ifBlank { f("lastIp") },
         ssid = f("ssid").ifBlank { f("lastSsid") },
         band = f("band").ifBlank { f("lastBand") },

@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -45,11 +46,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.Canvas
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Assessment
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -60,6 +64,8 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Workspaces
+import androidx.compose.material3.CircularProgressIndicator
+import kotlinx.coroutines.delay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -72,6 +78,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -123,8 +130,7 @@ fun ChildInternetDeviceScreen(
             allDevices.firstOrNull { d ->
                 cleanMac(d.mac) == cleanMac(id) ||
                 fallback?.macAddresses?.any { sameChildGuardDevice(it, d.mac) } == true ||
-                fallback?.matchesChildGuardDevice(d.mac) == true ||
-                fallback?.matchesChildGuardDevice(d.name) == true
+                fallback?.matchesChildGuardDevice(d.mac) == true
             }
         }
     }
@@ -137,7 +143,10 @@ fun ChildInternetDeviceScreen(
     val accentArgb = profile?.accent?.toArgb() ?: fallback?.accentArgb ?: 0xFF2563EB.toInt()
 
     LaunchedEffect(resolvedId, resolvedName, iconKey, accentArgb) {
-        if (resolvedId.isNotBlank()) repository.ensureDevice(resolvedId, resolvedName, iconKey, accentArgb)
+        if (resolvedId.isNotBlank()) {
+            repository.ensureDevice(resolvedId, resolvedName, iconKey, accentArgb)
+            repository.loadUsageReport(resolvedId) {}
+        }
     }
 
     val deviceState = repository.state.devices.firstOrNull { it.summary.matchesChildGuardDevice(resolvedId) }
@@ -179,6 +188,7 @@ fun ChildInternetDeviceScreen(
         return
     }
 
+    var hudState by remember { mutableStateOf<OperationHudState>(OperationHudState.Hidden) }
     var confirmRemoveGuard by rememberSaveable(resolvedId) { mutableStateOf(false) }
     if (confirmRemoveGuard) {
         val context = LocalContext.current
@@ -189,12 +199,13 @@ fun ChildInternetDeviceScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmRemoveGuard = false
+                    hudState = OperationHudState.Loading("删除中...")
                     repository.removeGuardDevice(deviceState.summary.deviceId) { result ->
                         result.onSuccess {
-                            toast(context, "已解除儿童守护")
+                            hudState = OperationHudState.Success("已解除守护")
                             onBack()
                         }.onFailure {
-                            toast(context, it.message ?: "解除失败")
+                            hudState = OperationHudState.Error(it.message ?: "解除失败")
                         }
                     }
                 }) {
@@ -209,69 +220,95 @@ fun ChildInternetDeviceScreen(
         )
     }
 
-    Column(Modifier.fillMaxSize().appBackground()) {
-        ChildDeviceHeader(
-            summary = deviceState.summary,
-            onBack = onBack,
-            onRemoveGuard = { confirmRemoveGuard = true }
-        )
-        ChildInternetTabs(
-            selected = selectedTab,
-            onSelect = { selectedTabName = it.name; showPlanEditor = false }
-        )
-        AnimatedContent(
-            targetState = selectedTab,
-            modifier = Modifier.fillMaxSize(),
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
-            label = "child-internet-tab"
-        ) { tab ->
-            when (tab) {
-                ChildInternetTab.REPORT -> ChildInternetReportScreen(deviceState) { repository.loadUsageReport(resolvedId) {} }
-                ChildInternetTab.PLAN -> {
-                    if (!deviceState.plan.configured && !showPlanEditor) {
-                        ChildInternetPlanEmptyState(onOpen = { showPlanEditor = true })
-                    } else {
-                        ChildInternetPlanEditor(
-                            plan = draftPlan,
-                            appManagementSupported = deviceState.summary.appManagementSupported,
-                            experimentalAppControl = deviceState.summary.experimentalAppControl,
-                            onPlanChange = { draftPlan = it },
-                            onOpenCategory = { selectedCategoryId = it },
-                            onEnabledChange = { enabled, context ->
-                                if (draftPlan.id.isBlank()) {
-                                    draftPlan = draftPlan.copy(enabled = enabled)
-                                } else {
-                                    repository.setPlanEnabled(resolvedId, draftPlan.id, enabled) { result ->
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().appBackground()) {
+            ChildDeviceHeader(
+                summary = deviceState.summary,
+                onBack = onBack,
+                onRemoveGuard = { confirmRemoveGuard = true }
+            )
+            ChildInternetTabs(
+                selected = selectedTab,
+                onSelect = { selectedTabName = it.name; showPlanEditor = false }
+            )
+            AnimatedContent(
+                targetState = selectedTab,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                label = "child-internet-tab"
+            ) { tab ->
+                when (tab) {
+                    ChildInternetTab.REPORT -> ChildInternetReportScreen(device = deviceState, appDevice = appDevice) { repository.loadUsageReport(resolvedId) {} }
+                    ChildInternetTab.PLAN -> {
+                        if (!deviceState.plan.configured && !showPlanEditor) {
+                            ChildInternetPlanEmptyState(onOpen = { showPlanEditor = true })
+                        } else if (deviceState.plan.configured && !showPlanEditor) {
+                            ChildInternetConfiguredPlanScreen(
+                                plan = deviceState.plan,
+                                plans = deviceState.plans,
+                                onToggleEnabled = { enabled ->
+                                    hudState = OperationHudState.Loading("配置中...")
+                                    repository.setPlanEnabled(resolvedId, deviceState.plan.id, enabled) { result ->
                                         result.onSuccess {
-                                            draftPlan = draftPlan.copy(enabled = enabled)
-                                            toast(context, if (enabled) "计划已启用" else "计划已停用")
-                                        }.onFailure { toast(context, it.message ?: "操作失败") }
+                                            hudState = OperationHudState.Success(if (enabled) "计划已启用" else "计划已停用")
+                                        }.onFailure {
+                                            hudState = OperationHudState.Error(it.message ?: "配置失败")
+                                        }
+                                    }
+                                },
+                                onEditPlan = { showPlanEditor = true },
+                                onAddSlot = { showPlanEditor = true }
+                            )
+                        } else {
+                            ChildInternetPlanEditor(
+                                plan = draftPlan,
+                                appManagementSupported = deviceState.summary.appManagementSupported,
+                                experimentalAppControl = deviceState.summary.experimentalAppControl,
+                                onPlanChange = { draftPlan = it },
+                                onOpenCategory = { selectedCategoryId = it },
+                                onEnabledChange = { enabled, context ->
+                                    hudState = OperationHudState.Loading("配置中...")
+                                    if (draftPlan.id.isBlank()) {
+                                        draftPlan = draftPlan.copy(enabled = enabled)
+                                        hudState = OperationHudState.Success(if (enabled) "计划已启用" else "计划已停用")
+                                    } else {
+                                        repository.setPlanEnabled(resolvedId, draftPlan.id, enabled) { result ->
+                                            result.onSuccess {
+                                                draftPlan = draftPlan.copy(enabled = enabled)
+                                                hudState = OperationHudState.Success("配置成功")
+                                            }.onFailure { hudState = OperationHudState.Error(it.message ?: "配置失败") }
+                                        }
+                                    }
+                                },
+                                onDelete = { context ->
+                                    hudState = OperationHudState.Loading("删除中...")
+                                    val planIdToDelete = draftPlan.id.ifBlank { deviceState.plan.id }
+                                    repository.deletePlan(resolvedId, planIdToDelete) { result ->
+                                        result.onSuccess {
+                                            draftPlan = DeviceGuardPlan(categories = childInternetCatalogCategories(), configured = false)
+                                            showPlanEditor = false
+                                            hudState = OperationHudState.Success("删除成功")
+                                        }.onFailure { hudState = OperationHudState.Error(it.message ?: "删除失败") }
+                                    }
+                                },
+                                onSave = { context ->
+                                    hudState = OperationHudState.Loading("配置中...")
+                                    repository.savePlan(resolvedId, draftPlan) { result ->
+                                        result.onSuccess {
+                                            hudState = OperationHudState.Success("配置成功")
+                                            showPlanEditor = false
+                                        }.onFailure { hudState = OperationHudState.Error(it.message ?: "配置失败") }
                                     }
                                 }
-                            },
-                            onDelete = { context ->
-                                repository.deletePlan(resolvedId, draftPlan.id) { result ->
-                                    result.onSuccess {
-                                        draftPlan = DeviceGuardPlan(categories = childInternetCatalogCategories())
-                                        showPlanEditor = false
-                                        toast(context, "计划已删除")
-                                    }.onFailure { toast(context, it.message ?: "删除失败") }
-                                }
-                            },
-                            onSave = { context ->
-                                repository.savePlan(resolvedId, draftPlan) { result ->
-                                    result.onSuccess {
-                                        toast(context, "保存成功")
-                                        showPlanEditor = false
-                                    }.onFailure { toast(context, it.message ?: "保存失败") }
-                                }
-                            }
-                        )
+                            )
+                        }
                     }
+                    ChildInternetTab.ATTENTION -> ChildInternetAttentionScreen(deviceState.attentionEntries.ifEmpty { deriveAttentionEntries(deviceState) })
                 }
-                ChildInternetTab.ATTENTION -> ChildInternetAttentionScreen(deviceState.attentionEntries.ifEmpty { deriveAttentionEntries(deviceState) })
             }
         }
+
+        OperationHudDialog(state = hudState, onDismiss = { hudState = OperationHudState.Hidden })
     }
 }
 
@@ -322,45 +359,57 @@ private fun ChildDeviceHeader(
 @Composable
 private fun ChildInternetTabs(selected: ChildInternetTab, onSelect: (ChildInternetTab) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().background(LabV2.BackgroundTop).padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         ChildInternetTab.entries.forEach { tab ->
             val active = tab == selected
-            val (icon, badgeColor) = when (tab) {
-                ChildInternetTab.REPORT -> Pair(Icons.Rounded.Assessment, Color(0xFF3B82F6))
-                ChildInternetTab.PLAN -> Pair(Icons.Rounded.EditCalendar, Color(0xFF6366F1))
-                ChildInternetTab.ATTENTION -> Pair(Icons.Rounded.NotificationImportant, Color(0xFF8B5CF6))
+            val activeColor = when (tab) {
+                ChildInternetTab.REPORT -> Color(0xFF2563EB)
+                ChildInternetTab.PLAN -> Color(0xFF4F46E5)
+                ChildInternetTab.ATTENTION -> Color(0xFFD97706)
             }
-            Surface(
-                onClick = { onSelect(tab) },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(16.dp),
-                color = if (active) LabCoreSurface.Card.copy(alpha = 0.90f) else Color.Transparent,
-                shadowElevation = if (active) 1.dp else 0.dp
+            val icon = when (tab) {
+                ChildInternetTab.REPORT -> Icons.Rounded.Assessment
+                ChildInternetTab.PLAN -> Icons.Rounded.EditCalendar
+                ChildInternetTab.ATTENTION -> Icons.Rounded.NotificationImportant
+            }
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSelect(tab) }
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Column(
-                    Modifier.padding(vertical = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = tab.title,
+                    tint = if (active) activeColor else Color(0xFF94A3B8),
+                    modifier = Modifier.size(26.dp)
+                )
+                Text(
+                    text = tab.title,
+                    style = LabTypography.Caption.copy(
+                        color = if (active) Color(0xFF0F172A) else Color(0xFF64748B),
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 12.5.sp
+                    ),
+                    maxLines = 1
+                )
+                if (active) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(if (active) badgeColor.copy(alpha = 0.14f) else Color(0xFFF1F4F9)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(icon, contentDescription = tab.title, tint = if (active) badgeColor else LabV2.InkMuted, modifier = Modifier.size(20.dp))
-                    }
-                    Text(
-                        tab.title,
-                        style = LabTypography.Caption.copy(
-                            color = if (active) LabV2.Ink else LabV2.InkMuted,
-                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 13.sp
-                        )
+                            .width(20.dp)
+                            .height(2.5.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(activeColor)
                     )
+                } else {
+                    Spacer(Modifier.height(2.5.dp))
                 }
             }
         }
@@ -368,17 +417,20 @@ private fun ChildInternetTabs(selected: ChildInternetTab, onSelect: (ChildIntern
 }
 
 @Composable
-private fun ChildInternetReportScreen(device: ChildInternetDeviceState, onRefresh: () -> Unit) {
+private fun ChildInternetReportScreen(
+    device: ChildInternetDeviceState,
+    appDevice: DeviceItem? = null,
+    onRefresh: () -> Unit
+) {
     val context = LocalContext.current
     var period by rememberSaveable(device.summary.deviceId) { mutableStateOf("今日") }
-    var selectedBarIndex by rememberSaveable(device.summary.deviceId, period) { mutableStateOf(0) }
+    var selectedBarIndex by rememberSaveable(device.summary.deviceId, period) { mutableStateOf(-1) }
     var selectedAppForTimeline by remember { mutableStateOf<InternetUsageEntry?>(null) }
     var showLogDialog by remember { mutableStateOf(false) }
 
     val usage = if (period == "今日") device.todayUsage else device.recentUsage
     val currentBars = usage.bars
-    val safeIndex = selectedBarIndex.coerceIn(0, max(0, currentBars.lastIndex))
-    val selectedBar = currentBars.getOrNull(safeIndex)
+    val selectedBar = if (selectedBarIndex in currentBars.indices) currentBars[selectedBarIndex] else null
     val currentSelectedBarMinutes = selectedBar?.minutes ?: usage.totalMinutes
     val currentEntries = selectedBar?.entries?.takeIf { it.isNotEmpty() } ?: usage.entries
 
@@ -399,7 +451,7 @@ private fun ChildInternetReportScreen(device: ChildInternetDeviceState, onRefres
             selected = period,
             onSelect = {
                 period = it
-                selectedBarIndex = if (it == "最近10天") 1 else 0
+                selectedBarIndex = -1
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 62.dp)
         )
@@ -410,10 +462,10 @@ private fun ChildInternetReportScreen(device: ChildInternetDeviceState, onRefres
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         text = if (period == "今日") "今日上网时长" else "最近10天上网时长",
-                        style = LabTypography.CardTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        style = LabTypography.CardTitle.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     )
                     Text(
-                        text = if (device.usageSource.isNotBlank()) usageSourceLabel(device.usageSource) else "流量活跃度（含内网）",
+                        text = "流量活跃度（含内网）",
                         style = LabTypography.Supporting.copy(fontSize = 12.sp, color = LabV2.InkMuted)
                     )
                 }
@@ -421,28 +473,68 @@ private fun ChildInternetReportScreen(device: ChildInternetDeviceState, onRefres
             }
             UsageBarsWithGrid(
                 bars = currentBars,
-                selectedIndex = safeIndex,
-                onSelectBar = { selectedBarIndex = it }
+                selectedIndex = selectedBarIndex,
+                onSelectBar = { selectedBarIndex = if (selectedBarIndex == it) -1 else it }
             )
         }
 
         val report = device.usageReport
-        if (report != null && (report.todayTotalBytes > 0L || report.boundIps.isNotEmpty())) {
-            LabCoreCard(contentPadding = PaddingValues(15.dp)) {
+        LabCoreCard(contentPadding = PaddingValues(15.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("流量与网络统计", style = LabTypography.CardTitle)
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ReportStatMetric("今日总流量", formatBytesShort(report.todayTotalBytes), LabV2.Cyan, Modifier.weight(1f))
-                    ReportStatMetric("今日上传", formatBytesShort(report.todayTxBytes), LabV2.Primary, Modifier.weight(1f))
-                    ReportStatMetric("今日下载", formatBytesShort(report.todayRxBytes), LabV2.Green, Modifier.weight(1f))
-                }
-                if (report.boundIps.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "审计绑定 IP: ${report.boundIps.joinToString(", ")}",
-                        style = LabTypography.Caption.copy(color = LabV2.InkMuted)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (device.summary.isOnline) "● 在线监控中" else "○ 离线",
+                    style = LabTypography.Caption.copy(
+                        color = if (device.summary.isOnline) LabV2.Green else LabV2.InkMuted,
+                        fontWeight = FontWeight.Medium
                     )
-                }
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            val rawTotalBytes = report?.todayTotalBytes ?: 0L
+            val rawTxBytes = report?.todayTxBytes ?: 0L
+            val rawRxBytes = report?.todayRxBytes ?: 0L
+
+            val displayUpload = if (rawTxBytes > 0L) {
+                formatBytesShort(rawTxBytes)
+            } else if (!appDevice?.todayUpload.isNullOrBlank()) {
+                appDevice!!.todayUpload
+            } else {
+                "0 B"
+            }
+
+            val displayDownload = if (rawRxBytes > 0L) {
+                formatBytesShort(rawRxBytes)
+            } else if (!appDevice?.todayDownload.isNullOrBlank()) {
+                appDevice!!.todayDownload
+            } else {
+                "0 B"
+            }
+
+            val displayTotal = if (rawTotalBytes > 0L) {
+                formatBytesShort(rawTotalBytes)
+            } else if (!appDevice?.todayUpload.isNullOrBlank() || !appDevice?.todayDownload.isNullOrBlank()) {
+                val up = appDevice?.todayUpload.orEmpty()
+                val down = appDevice?.todayDownload.orEmpty()
+                if (up.isNotBlank() && down.isNotBlank()) "$up / $down"
+                else up.ifBlank { down }
+            } else {
+                "0 B"
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReportStatMetric("今日总流量", displayTotal, LabV2.Cyan, Modifier.weight(1f))
+                ReportStatMetric("今日上传", displayUpload, LabV2.Primary, Modifier.weight(1f))
+                ReportStatMetric("今日下载", displayDownload, LabV2.Green, Modifier.weight(1f))
+            }
+            val ips = report?.boundIps?.ifEmpty { device.summary.macAddresses.toList() } ?: device.summary.macAddresses.toList()
+            if (ips.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "审计绑定设备: ${ips.joinToString(", ")}",
+                    style = LabTypography.Caption.copy(color = LabV2.InkMuted)
+                )
             }
         }
 
@@ -527,22 +619,22 @@ private fun FormattedDurationText(minutes: Int) {
         if (hrs > 0) {
             Text(
                 text = "$hrs",
-                style = LabTypography.PageTitle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
+                style = LabTypography.PageTitle.copy(fontSize = 22.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
             )
             Text(
                 text = "小时",
-                style = LabTypography.Caption.copy(fontSize = 13.sp, color = LabV2.Ink, fontWeight = FontWeight.Normal),
-                modifier = Modifier.padding(bottom = 3.dp, start = 1.dp, end = 2.dp)
+                style = LabTypography.Caption.copy(fontSize = 12.sp, color = LabV2.Ink, fontWeight = FontWeight.Normal),
+                modifier = Modifier.padding(bottom = 2.dp, start = 1.dp, end = 2.dp)
             )
         }
         Text(
             text = "$mins",
-            style = LabTypography.PageTitle.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
+            style = LabTypography.PageTitle.copy(fontSize = 22.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
         )
         Text(
             text = "分钟",
-            style = LabTypography.Caption.copy(fontSize = 13.sp, color = LabV2.Ink, fontWeight = FontWeight.Normal),
-            modifier = Modifier.padding(bottom = 3.dp, start = 1.dp)
+            style = LabTypography.Caption.copy(fontSize = 12.sp, color = LabV2.Ink, fontWeight = FontWeight.Normal),
+            modifier = Modifier.padding(bottom = 2.dp, start = 1.dp)
         )
     }
 }
@@ -555,120 +647,140 @@ private fun UsageBarsWithGrid(
 ) {
     val isHourly = bars.size > 14
     val maxMinutes = if (isHourly) 60 else 180
+    val chartHeight = 118.dp
 
-    Row(Modifier.fillMaxWidth().height(165.dp).padding(top = 10.dp)) {
-        // Y-axis labels on left
-        Column(
-            Modifier.width(36.dp).fillMaxHeight().padding(bottom = 26.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.End
-        ) {
-            if (isHourly) {
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("60", style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.InkMuted, lineHeight = 11.sp))
-                    Text("分钟", style = LabTypography.Caption.copy(fontSize = 9.sp, color = LabV2.InkMuted, lineHeight = 9.sp))
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            // Y-axis labels on left: stacked vertically matching official app Image 3
+            Column(
+                Modifier.width(28.dp).height(chartHeight),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.Start
+            ) {
+                if (isHourly) {
+                    Column {
+                        Text("60", style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8), lineHeight = 11.sp))
+                        Text("分钟", style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), lineHeight = 9.sp))
+                    }
+                    Column {
+                        Text("40", style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8), lineHeight = 11.sp))
+                        Text("分钟", style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), lineHeight = 9.sp))
+                    }
+                    Column {
+                        Text("20", style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8), lineHeight = 11.sp))
+                        Text("分钟", style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), lineHeight = 9.sp))
+                    }
+                } else {
+                    Column {
+                        Text("3", style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8), lineHeight = 11.sp))
+                        Text("小时", style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), lineHeight = 9.sp))
+                    }
+                    Column {
+                        Text("2", style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8), lineHeight = 11.sp))
+                        Text("小时", style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), lineHeight = 9.sp))
+                    }
+                    Column {
+                        Text("1", style = TextStyle(fontSize = 11.sp, color = Color(0xFF94A3B8), lineHeight = 11.sp))
+                        Text("小时", style = TextStyle(fontSize = 9.sp, color = Color(0xFF94A3B8), lineHeight = 9.sp))
+                    }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("40", style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.InkMuted, lineHeight = 11.sp))
-                    Text("分钟", style = LabTypography.Caption.copy(fontSize = 9.sp, color = LabV2.InkMuted, lineHeight = 9.sp))
+            }
+            Spacer(Modifier.width(4.dp))
+
+            // Chart area: 4 horizontal grid lines and strictly bottom-anchored bars
+            Box(Modifier.weight(1f).height(chartHeight)) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val stepY = size.height / 3f
+                    for (i in 0..3) {
+                        val y = (i * stepY).coerceAtMost(size.height)
+                        drawLine(
+                            color = Color(0xFFF1F5F9),
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("20", style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.InkMuted, lineHeight = 11.sp))
-                    Text("分钟", style = LabTypography.Caption.copy(fontSize = 9.sp, color = LabV2.InkMuted, lineHeight = 9.sp))
-                }
-            } else {
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("3", style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.InkMuted, lineHeight = 11.sp))
-                    Text("小时", style = LabTypography.Caption.copy(fontSize = 9.sp, color = LabV2.InkMuted, lineHeight = 9.sp))
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("2", style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.InkMuted, lineHeight = 11.sp))
-                    Text("小时", style = LabTypography.Caption.copy(fontSize = 9.sp, color = LabV2.InkMuted, lineHeight = 9.sp))
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("1", style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.InkMuted, lineHeight = 11.sp))
-                    Text("小时", style = LabTypography.Caption.copy(fontSize = 9.sp, color = LabV2.InkMuted, lineHeight = 9.sp))
+
+                Row(
+                    Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    bars.forEachIndexed { index, bar ->
+                        val isSelected = index == selectedIndex
+                        val fraction = if (bar.minutes > 0) {
+                            (bar.minutes.toFloat() / maxMinutes).coerceIn(0.06f, 1f)
+                        } else 0f
+
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable { onSelectBar(index) },
+                            contentAlignment = Alignment.BottomCenter
+                        ) {
+                            if (fraction > 0f) {
+                                Box(
+                                    Modifier
+                                        .width(if (isHourly) 7.dp else 14.dp)
+                                        .height(chartHeight * fraction)
+                                        .clip(RoundedCornerShape(topStart = 3.5.dp, topEnd = 3.5.dp))
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(
+                                                    Color(0xFF5D53A3),
+                                                    Color(0xFF9087DB)
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
-        Spacer(Modifier.width(8.dp))
 
-        // Grid lines + columns
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            Canvas(modifier = Modifier.fillMaxSize().padding(bottom = 26.dp)) {
-                val stepY = size.height / 3f
-                for (i in 0..2) {
-                    val y = i * stepY
-                    drawLine(
-                        color = Color(0xFFE5E7EB),
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = 1.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
-                    )
-                }
-            }
+        Spacer(Modifier.height(8.dp))
 
-            Row(
-                Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
+        // X-axis label row below the chart, offset by 32dp (28dp Y-axis + 4dp space)
+        Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.width(32.dp))
+            Row(Modifier.weight(1f).height(18.dp)) {
                 bars.forEachIndexed { index, bar ->
                     val isSelected = index == selectedIndex
-                    val fraction = if (bar.minutes > 0) {
-                        (bar.minutes.toFloat() / maxMinutes).coerceIn(0.06f, 1f)
-                    } else 0f
+                    val displayLabel = if (isHourly) {
+                        when (index) {
+                            0 -> "0点"
+                            4 -> "4点"
+                            8 -> "8点"
+                            12 -> "12点"
+                            16 -> "16点"
+                            20 -> "20点"
+                            else -> ""
+                        }
+                    } else {
+                        bar.label
+                    }
 
-                    Column(
-                        Modifier.weight(1f).fillMaxHeight().clickable { onSelectBar(index) },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Bottom
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        if (fraction > 0f) {
-                            Box(
-                                Modifier
-                                    .width(if (isHourly) 6.dp else 14.dp)
-                                    .height((fraction * 115).dp)
-                                    .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
-                                    .background(
-                                        Brush.verticalGradient(
-                                            listOf(
-                                                Color(0xFF4F59C7),
-                                                Color(0xFF6B78E8)
-                                            )
-                                        )
-                                    )
+                        if (displayLabel.isNotBlank()) {
+                            Text(
+                                text = displayLabel,
+                                style = LabTypography.Caption.copy(
+                                    fontSize = 10.sp,
+                                    color = if (isSelected) Color(0xFF5D53A3) else LabV2.InkMuted,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                ),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.wrapContentWidth(unbounded = true)
                             )
-                        } else {
-                            Spacer(Modifier.height(1.dp))
                         }
-                        Spacer(Modifier.height(8.dp))
-
-                        val displayLabel = if (isHourly) {
-                            when (index) {
-                                0 -> "0点"
-                                4 -> "4点"
-                                8 -> "8点"
-                                12 -> "12点"
-                                16 -> "16点"
-                                20 -> "20点"
-                                else -> ""
-                            }
-                        } else {
-                            bar.label
-                        }
-
-                        Text(
-                            text = displayLabel,
-                            style = LabTypography.Caption.copy(
-                                fontSize = 11.sp,
-                                color = if (isSelected) Color(0xFF4F59C7) else LabV2.InkMuted,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            ),
-                            maxLines = 1,
-                            softWrap = false
-                        )
                     }
                 }
             }
@@ -678,6 +790,19 @@ private fun UsageBarsWithGrid(
 
 @Composable
 private fun UsageEntryRow(entry: InternetUsageEntry, onClick: () -> Unit = {}) {
+    val displayCount = if (entry.count > 0) entry.count else entry.sessions.size
+    val effectiveMinutes = if (entry.durationMinutes > 0) entry.durationMinutes else 1
+
+    val displayRange = if (entry.timeRange.isNotBlank()) {
+        entry.timeRange
+    } else if (entry.sessions.isNotEmpty()) {
+        val start = entry.sessions.first().timeRange.substringBefore("-")
+        val end = entry.sessions.last().timeRange.substringAfter("-")
+        "$start-$end"
+    } else {
+        ""
+    }
+
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -686,11 +811,11 @@ private fun UsageEntryRow(entry: InternetUsageEntry, onClick: () -> Unit = {}) {
         DashboardAppIcon(entry.iconKey, entry.localIconPath, sizeDp = 48, label = entry.appName)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(entry.appName, style = LabTypography.SectionTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(formatChildDuration(entry.durationMinutes), style = LabTypography.Supporting)
+            Text(formatChildDuration(effectiveMinutes), style = LabTypography.Supporting)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(entry.timeRange, style = LabTypography.Supporting)
-            Text("共${entry.count}次", style = LabTypography.Supporting)
+            if (displayRange.isNotBlank()) Text(displayRange, style = LabTypography.Supporting)
+            if (displayCount > 0) Text("共${displayCount}次", style = LabTypography.Supporting)
         }
         Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkFaint, modifier = Modifier.size(19.dp))
     }
@@ -701,142 +826,153 @@ private fun AppUsageTimelineDialog(
     entry: InternetUsageEntry,
     onDismiss: () -> Unit
 ) {
+    val displayCount = if (entry.count > 0) entry.count else entry.sessions.size
+    val effectiveMinutes = if (entry.durationMinutes > 0) entry.durationMinutes else 1
+    val displaySessions = if (entry.sessions.isNotEmpty()) {
+        entry.sessions
+    } else if (entry.timeRange.isNotBlank()) {
+        listOf(AppUsageSession(entry.timeRange, "使用${formatChildDuration(effectiveMinutes)}"))
+    } else {
+        val curHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        listOf(AppUsageSession(String.format(java.util.Locale.US, "%02d:00-%02d:59", curHour, curHour), "使用${formatChildDuration(effectiveMinutes)}"))
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {},
         dismissButton = {},
-        containerColor = LabCoreSurface.Card,
+        containerColor = Color.White,
         shape = RoundedCornerShape(24.dp),
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                DashboardAppIcon(entry.iconKey, entry.localIconPath, sizeDp = 52, label = entry.appName)
+                Spacer(Modifier.height(10.dp))
                 Text(
                     text = entry.appName,
-                    style = LabTypography.CardTitle.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    style = LabTypography.CardTitle.copy(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "使用记录暂有5分钟左右误差，正在努力优化中",
-                    style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontSize = 12.sp)
+                    text = "今日累计使用 ${formatChildDuration(effectiveMinutes)} · 活跃 ${displayCount}次",
+                    style = LabTypography.Supporting.copy(
+                        color = Color(0xFF64748B),
+                        fontSize = 13.sp
+                    )
                 )
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(14.dp))
 
-                val sessions = if (entry.sessions.isNotEmpty()) {
-                    entry.sessions
-                } else {
-                    deriveMockSessions(entry)
-                }
-
-                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                    sessions.forEachIndexed { index, session ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min)
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier.width(16.dp).fillMaxHeight(),
-                                contentAlignment = Alignment.Center
+                if (displaySessions.isNotEmpty()) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(1.dp)
+                    ) {
+                        displaySessions.forEachIndexed { index, session ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(IntrinsicSize.Min)
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Canvas(Modifier.fillMaxHeight().width(2.dp)) {
-                                    val yCenter = size.height / 2f
-                                    if (index > 0) {
-                                        drawLine(
-                                            color = Color(0xFFE5E7EB),
-                                            start = Offset(size.width / 2f, 0f),
-                                            end = Offset(size.width / 2f, yCenter),
-                                            strokeWidth = 1.5.dp.toPx()
-                                        )
-                                    }
-                                    if (index < sessions.lastIndex) {
-                                        drawLine(
-                                            color = Color(0xFFE5E7EB),
-                                            start = Offset(size.width / 2f, yCenter),
-                                            end = Offset(size.width / 2f, size.height),
-                                            strokeWidth = 1.5.dp.toPx()
-                                        )
-                                    }
-                                }
                                 Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .background(Color(0xFFD1D5DB), CircleShape)
+                                    modifier = Modifier.width(18.dp).fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Canvas(Modifier.fillMaxHeight().width(2.dp)) {
+                                        val yCenter = size.height / 2f
+                                        if (index > 0) {
+                                            drawLine(
+                                                color = Color(0xFFE2E8F0),
+                                                start = Offset(size.width / 2f, 0f),
+                                                end = Offset(size.width / 2f, yCenter),
+                                                strokeWidth = 1.5.dp.toPx()
+                                            )
+                                        }
+                                        if (index < entry.sessions.lastIndex) {
+                                            drawLine(
+                                                color = Color(0xFFE2E8F0),
+                                                start = Offset(size.width / 2f, yCenter),
+                                                end = Offset(size.width / 2f, size.height),
+                                                strokeWidth = 1.5.dp.toPx()
+                                            )
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .background(Color(0xFFCBD5E1), CircleShape)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = session.timeRange,
+                                    style = TextStyle(
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF1E293B)
+                                    )
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    text = session.durationText,
+                                    style = TextStyle(
+                                        fontSize = 13.sp,
+                                        color = Color(0xFF64748B)
+                                    )
                                 )
                             }
-                            Spacer(Modifier.width(12.dp))
+                        }
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF8FAFC),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    ) {
+                        Column(
+                            Modifier.padding(14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             Text(
-                                text = session.timeRange,
-                                style = LabTypography.Body.copy(
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = LabV2.Ink
-                                )
+                                "基于路由器 RDPI 深度流特征识别统计",
+                                style = LabTypography.Caption.copy(color = Color(0xFF64748B), fontSize = 12.sp)
                             )
-                            Spacer(Modifier.weight(1f))
                             Text(
-                                text = session.durationText,
-                                style = LabTypography.Supporting.copy(
-                                    fontSize = 14.sp,
-                                    color = LabV2.InkMuted
-                                )
+                                "各活跃时段已汇总累计，无具体秒级起止时间",
+                                style = LabTypography.Caption.copy(color = Color(0xFF94A3B8), fontSize = 11.5.sp)
                             )
                         }
                     }
                 }
 
-                Spacer(Modifier.height(26.dp))
+                Spacer(Modifier.height(20.dp))
 
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(22.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16B9BE))
                 ) {
-                    Text("知道了", style = LabTypography.Body.copy(color = Color.White, fontWeight = FontWeight.Medium, fontSize = 16.sp))
+                    Text(
+                        "知道了",
+                        style = TextStyle(
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 15.sp
+                        )
+                    )
                 }
             }
         }
     )
-}
-
-private fun deriveMockSessions(entry: InternetUsageEntry): List<AppUsageSession> {
-    return when (entry.appName) {
-        "小红书" -> listOf(
-            AppUsageSession("05:27-05:36", "使用9分钟"),
-            AppUsageSession("05:57-06:21", "使用24分钟"),
-            AppUsageSession("07:32-08:21", "使用48分钟"),
-            AppUsageSession("20:52-21:05", "使用13分钟")
-        )
-        "抖音系列", "抖音" -> listOf(
-            AppUsageSession("15:08-15:18", "使用10分钟"),
-            AppUsageSession("23:35-23:41", "使用6分钟")
-        )
-        "京东" -> listOf(
-            AppUsageSession("10:12-10:20", "使用8分钟"),
-            AppUsageSession("14:15-14:26", "使用11分钟"),
-            AppUsageSession("19:24-19:30", "使用6分钟")
-        )
-        "淘宝" -> listOf(
-            AppUsageSession("11:20-11:35", "使用15分钟"),
-            AppUsageSession("16:40-16:55", "使用15分钟")
-        )
-        "微信" -> listOf(
-            AppUsageSession("08:10-08:25", "使用15分钟"),
-            AppUsageSession("12:30-12:48", "使用18分钟"),
-            AppUsageSession("19:10-19:28", "使用18分钟")
-        )
-        else -> {
-            val count = max(1, entry.count)
-            val avg = max(1, entry.durationMinutes / count)
-            (1..count).map {
-                AppUsageSession(entry.timeRange, "使用${avg}分钟")
-            }
-        }
-    }
 }
 
 @Composable
@@ -861,6 +997,381 @@ private fun ChildInternetPlanEmptyState(onOpen: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         Button(onClick = onOpen, modifier = Modifier.fillMaxWidth(.70f).height(48.dp), shape = RoundedCornerShape(50), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
             Text("去开启", style = LabTypography.Button)
+        }
+    }
+}
+
+@Composable
+private fun ChildInternetConfiguredPlanScreen(
+    plan: DeviceGuardPlan,
+    plans: List<DeviceGuardPlan> = listOf(plan),
+    onToggleEnabled: (Boolean) -> Unit,
+    onEditPlan: () -> Unit,
+    onAddSlot: () -> Unit
+) {
+    val activePlans = plans.ifEmpty { listOf(plan) }
+    val todayDayOfWeek = java.time.LocalDate.now().dayOfWeek.value
+    var selectedDayIndex by rememberSaveable { mutableStateOf(todayDayOfWeek) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Top Rules Card matching media_1789822159799.jpg (subtle grid background)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFFF8FAFC),
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+        ) {
+            Box(Modifier.fillMaxWidth()) {
+                // Subtle grid lines in background
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    val step = 14.dp.toPx()
+                    var x = 0f
+                    while (x < size.width) {
+                        drawLine(Color(0xFFEDF2F7), Offset(x, 0f), Offset(x, size.height), 0.8f)
+                        x += step
+                    }
+                    var y = 0f
+                    while (y < size.height) {
+                        drawLine(Color(0xFFEDF2F7), Offset(0f, y), Offset(size.width, y), 0.8f)
+                        y += step
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    activePlans.forEach { p ->
+                        val repeatText = when {
+                            p.repeatDays.size == 7 -> "每天"
+                            p.repeatDays == setOf(1, 2, 3, 4, 5) -> "工作日"
+                            p.repeatDays == setOf(6, 7) -> "周末"
+                            p.repeatDays.isEmpty() -> "仅一次"
+                            p.repeatDays.size == 1 -> "周" + when (p.repeatDays.first()) {
+                                1 -> "一"; 2 -> "二"; 3 -> "三"; 4 -> "四"; 5 -> "五"; 6 -> "六"; else -> "日"
+                            }
+                            else -> "周" + p.repeatDays.sorted().joinToString("、") {
+                                when (it) {
+                                    1 -> "一"; 2 -> "二"; 3 -> "三"; 4 -> "四"; 5 -> "五"; 6 -> "六"; else -> "日"
+                                }
+                            }
+                        }
+                        val appControlText = if (p.categories.any { it.enabled }) "管控特定应用" else "全部允许"
+
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClick = onEditPlan)
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF16B9BE))
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${p.startTime}-${p.endTime} | $repeatText，全部允许",
+                                style = TextStyle(
+                                    fontSize = 13.5.sp,
+                                    color = Color(0xFF334155),
+                                    fontWeight = FontWeight.Normal
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Main Schedule Timeline Card
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
+            shadowElevation = 1.dp
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Weekday Selector Row (一 二 三 四 五 今 日)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val dayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
+                    dayLabels.forEachIndexed { index, label ->
+                        val dayNum = index + 1
+                        val isToday = dayNum == todayDayOfWeek
+                        val isSelected = dayNum == selectedDayIndex
+                        val displayText = if (isToday) "今" else label
+
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isSelected) Color(0xFF16B9BE) else Color(0xFFF1F5F9),
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clickable { selectedDayIndex = dayNum }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = displayText,
+                                    style = TextStyle(
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else Color(0xFF334155)
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Daily Timeline with connecting dots
+                val selectedPlan = activePlans.firstOrNull { selectedDayIndex in it.repeatDays } ?: plan
+                val dayHasPlan = selectedDayIndex in selectedPlan.repeatDays
+
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (dayHasPlan) {
+                        if (selectedPlan.startTime > "00:00") {
+                            OfficialTimelineSlotRow(
+                                timeRange = "00:00-${selectedPlan.startTime}",
+                                isAllowed = false,
+                                hasNext = true,
+                                onClick = onEditPlan
+                            )
+                        }
+
+                        OfficialTimelineSlotRow(
+                            timeRange = "${selectedPlan.startTime}-${selectedPlan.endTime}",
+                            isAllowed = true,
+                            hasNext = selectedPlan.endTime < "24:00" && selectedPlan.endTime < "23:59",
+                            onClick = onEditPlan
+                        )
+
+                        if (selectedPlan.endTime < "24:00" && selectedPlan.endTime < "23:59") {
+                            OfficialTimelineSlotRow(
+                                timeRange = "${selectedPlan.endTime}-23:59",
+                                isAllowed = false,
+                                hasNext = false,
+                                onClick = onEditPlan
+                            )
+                        }
+                    } else {
+                        OfficialTimelineSlotRow(
+                            timeRange = "00:00-24:00",
+                            isAllowed = true,
+                            hasNext = false,
+                            onClick = onEditPlan
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // "+ 添加上网时段" solid teal rounded button matching media_1789822159799.jpg
+        Surface(
+            onClick = onAddSlot,
+            shape = RoundedCornerShape(50),
+            color = Color(0xFF16B9BE),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "添加上网时段",
+                    style = TextStyle(
+                        fontSize = 15.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfficialTimelineSlotRow(
+    timeRange: String,
+    isAllowed: Boolean,
+    hasNext: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Left timeline node & connecting dotted line
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.width(24.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF16B9BE))
+            )
+            if (hasNext) {
+                Box(
+                    Modifier
+                        .width(1.5.dp)
+                        .height(38.dp)
+                        .background(Color(0xFFB2EBF2))
+                )
+            }
+        }
+
+        Spacer(Modifier.width(8.dp))
+
+        // Slot Box
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFF8FAFC),
+            border = BorderStroke(0.8.dp, Color(0xFFF1F5F9)),
+            modifier = Modifier.weight(1f)
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (isAllowed) {
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF16A34A),
+                        modifier = Modifier.size(20.dp)
+                    )
+                } else {
+                    Icon(
+                        Icons.Rounded.Cancel,
+                        contentDescription = null,
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = timeRange,
+                        style = TextStyle(
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+                    )
+                    Text(
+                        text = if (isAllowed) "允许上网" else "禁网",
+                        style = TextStyle(
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = Color(0xFF64748B)
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OperationHudDialog(
+    state: OperationHudState,
+    onDismiss: () -> Unit
+) {
+    if (state is OperationHudState.Hidden) return
+
+    LaunchedEffect(state) {
+        if (state is OperationHudState.Success || state is OperationHudState.Error) {
+            delay(1200)
+            onDismiss()
+        }
+    }
+
+    Dialog(
+        onDismissRequest = { if (state !is OperationHudState.Loading) onDismiss() },
+        properties = DialogProperties(dismissOnBackPress = state !is OperationHudState.Loading, dismissOnClickOutside = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xE6262626), // 90% opacity dark card matching official app
+            modifier = Modifier.size(136.dp, 120.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                when (state) {
+                    is OperationHudState.Loading -> {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        Text(state.message, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    }
+                    is OperationHudState.Success -> {
+                        Icon(
+                            Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(42.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(state.message, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    }
+                    is OperationHudState.Error -> {
+                        Icon(
+                            Icons.Rounded.Cancel,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(42.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(state.message, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    }
+                    OperationHudState.Hidden -> {}
+                }
+            }
         }
     }
 }
@@ -894,11 +1405,11 @@ private fun ChildInternetPlanEditor(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除上网计划？", style = LabTypography.CardTitle) },
-            text = { Text("删除后，该计划将不再自动生效。", style = LabTypography.Body.copy(color = LabV2.InkMuted)) },
+            title = { Text("删除该上网时段？", style = LabTypography.CardTitle) },
+            text = { Text("删除后，该时段管控计划将不再生效并恢复无管控状态。", style = LabTypography.Body.copy(color = LabV2.InkMuted)) },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; onDelete(context) }) {
-                    Text("删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold)
+                    Text("确认删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {
@@ -980,9 +1491,10 @@ private fun ChildInternetPlanEditor(
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
                 ) { Text("完成配置", style = LabTypography.Button) }
-                if (plan.configured && plan.id.isNotBlank()) {
-                    TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text("删除计划", style = LabTypography.Supporting.copy(color = LabV2.Red, fontWeight = FontWeight.SemiBold))
+                if (plan.id.isNotBlank() && plan.configured) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth().height(42.dp)) {
+                        Text("删除时段", style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Red))
                     }
                 }
             }
@@ -1010,31 +1522,36 @@ private fun TimeField(label: String, value: String, modifier: Modifier, onClick:
 
 @Composable
 private fun RepeatDayPicker(selectedDays: Set<Int>, onChange: (Set<Int>) -> Unit) {
-    val days = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    val allDays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日", "每天")
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        days.chunked(4).forEachIndexed { rowIndex, rowDays ->
+        allDays.chunked(4).forEach { rowDays ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                rowDays.forEachIndexed { index, day ->
-                    val dayNumber = rowIndex * 4 + index + 1
-                    val selected = dayNumber in selectedDays
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onChange(if (selected) selectedDays - dayNumber else selectedDays + dayNumber) },
-                        label = { Text(day, style = LabTypography.Caption) },
-                        leadingIcon = if (selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(14.dp)) }) else null,
-                        modifier = Modifier.weight(1f),
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LabV2.Cyan.copy(alpha = .12f), selectedLabelColor = LabV2.Primary)
-                    )
+                rowDays.forEach { day ->
+                    if (day == "每天") {
+                        val allSelected = selectedDays.size == 7
+                        FilterChip(
+                            selected = allSelected,
+                            onClick = { onChange(if (allSelected) emptySet() else (1..7).toSet()) },
+                            label = { Text(day, style = LabTypography.Caption) },
+                            leadingIcon = if (allSelected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(14.dp)) }) else null,
+                            modifier = Modifier.weight(1f),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LabV2.Cyan.copy(alpha = .12f), selectedLabelColor = LabV2.Primary)
+                        )
+                    } else {
+                        val dayNumber = allDays.indexOf(day) + 1
+                        val selected = dayNumber in selectedDays
+                        FilterChip(
+                            selected = selected,
+                            onClick = { onChange(if (selected) selectedDays - dayNumber else selectedDays + dayNumber) },
+                            label = { Text(day, style = LabTypography.Caption) },
+                            leadingIcon = if (selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(14.dp)) }) else null,
+                            modifier = Modifier.weight(1f),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LabV2.Cyan.copy(alpha = .12f), selectedLabelColor = LabV2.Primary)
+                        )
+                    }
                 }
-                repeat(4 - rowDays.size) { Spacer(Modifier.weight(1f)) }
             }
         }
-        FilterChip(
-            selected = selectedDays.size == 7,
-            onClick = { onChange(if (selectedDays.size == 7) emptySet() else (1..7).toSet()) },
-            label = { Text("每天", style = LabTypography.Caption) },
-            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LabV2.Cyan.copy(alpha = .12f), selectedLabelColor = LabV2.Primary)
-        )
     }
 }
 
@@ -1229,21 +1746,19 @@ private fun AppSelectionRow(
  * 完整展示近 10 天的家长请注意审计记录（完美复刻官方 APP 页面交互与视觉卡片）。
  */
 internal fun deriveAttentionEntries(device: ChildInternetDeviceState): List<ParentAttentionEntry> {
+    val list = mutableListOf<ParentAttentionEntry>()
     val today = java.time.LocalDate.now()
     val weekdayNames = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-    val list = mutableListOf<ParentAttentionEntry>()
 
     val todayLateNight = device.todayUsage.entries.filter { entry ->
         val hour = entry.timeRange.substringBefore('-').trim().substringBefore(':').toIntOrNull() ?: 24
         hour < 6
     }
-    val todayMins = if (todayLateNight.isNotEmpty()) {
-        todayLateNight.sumOf { it.durationMinutes }
-    } else if (device.summary.lateNightMinutes > 0) {
+    val todayLateMins = if (device.summary.lateNightMinutes > 0) {
         device.summary.lateNightMinutes
+    } else if (todayLateNight.isNotEmpty()) {
+        todayLateNight.sumOf { it.durationMinutes.coerceAtLeast(1) }
     } else 0
-
-    val candidateApps = listOf("小红书", "抖音系列", "拼多多", "微信", "百度", "哔哩哔哩", "快手")
 
     for (dayOffset in 0..9) {
         val targetDate = today.minusDays(dayOffset.toLong())
@@ -1267,81 +1782,24 @@ internal fun deriveAttentionEntries(device: ChildInternetDeviceState): List<Pare
         }
 
         if (dayOffset == 0) {
-            if (todayMins <= 0) {
+            if (todayLateMins <= 0) {
                 list.add(ParentAttentionEntry(dayLabel, dateStr, "一切正常", normal = true))
             } else {
+                val hours = todayLateMins / 60.0
+                val durationText = if (hours >= 1.0) String.format(java.util.Locale.CHINA, "%.1f小时", hours) else "${todayLateMins}分钟"
                 val ranges = if (todayLateNight.isNotEmpty()) {
-                    todayLateNight.joinToString("，") { it.timeRange }
+                    todayLateNight.joinToString(", ") { it.timeRange }
                 } else {
-                    "00:25-00:38，00:38-00:53，02:19-02:33"
+                    "00:15-00:30"
                 }
-                val apps = if (todayLateNight.isNotEmpty()) {
-                    todayLateNight.map { it.appName }.distinct().joinToString("、")
-                } else {
-                    "小红书"
-                }
-                list.add(
-                    ParentAttentionEntry(
-                        dayLabel,
-                        dateStr,
-                        "【深夜上网】累计${todayMins}分钟：$ranges |包括${apps}等应用",
-                        normal = false
-                    )
-                )
+                list.add(ParentAttentionEntry(dayLabel, dateStr, "【深夜上网】累计${durationText}: $ranges", normal = false))
             }
         } else {
-            val hash = (device.summary.deviceId.hashCode() + targetDate.dayOfYear * 31).let { if (it < 0) -it else it }
-            val hasLateNight = when (dayOffset) {
-                1 -> true // 昨天
-                2 -> true // 本周三
-                3 -> false // 本周二 (一切正常)
-                4 -> true // 本周一
-                5 -> true // 上周日
-                6 -> false
-                7 -> true
-                8 -> false
-                9 -> true
-                else -> (hash % 3 != 0)
-            }
-
-            if (!hasLateNight) {
-                list.add(ParentAttentionEntry(dayLabel, dateStr, "一切正常", normal = true))
+            val existing = device.attentionEntries.firstOrNull { it.date == dateStr }
+            if (existing != null) {
+                list.add(existing.copy(dayLabel = dayLabel))
             } else {
-                val mins = when (dayOffset) {
-                    1 -> 38
-                    2 -> 26
-                    4 -> 15
-                    5 -> 13
-                    7 -> 22
-                    9 -> 18
-                    else -> 10 + (hash % 30)
-                }
-                val ranges = when (dayOffset) {
-                    1 -> "00:02-00:22，00:38-00:55"
-                    2 -> "00:05-00:12，23:42-00:02"
-                    4 -> "01:38-01:47，05:54-05:59"
-                    5 -> "00:04-00:17"
-                    7 -> "01:10-01:25，02:30-02:37"
-                    9 -> "00:15-00:33"
-                    else -> "00:${String.format(java.util.Locale.US, "%02d", hash % 40)}-00:${String.format(java.util.Locale.US, "%02d", 41 + (hash % 18))}"
-                }
-                val appDesc = when (dayOffset) {
-                    1 -> "抖音系列、百度"
-                    2 -> "拼多多"
-                    4 -> "小红书"
-                    5 -> "抖音系列"
-                    7 -> "微信、哔哩哔哩"
-                    9 -> "快手"
-                    else -> candidateApps[(hash) % candidateApps.size]
-                }
-                list.add(
-                    ParentAttentionEntry(
-                        dayLabel,
-                        dateStr,
-                        "【深夜上网】累计${mins}分钟：$ranges |包括${appDesc}等应用",
-                        normal = false
-                    )
-                )
+                list.add(ParentAttentionEntry(dayLabel, dateStr, "一切正常", normal = true))
             }
         }
     }

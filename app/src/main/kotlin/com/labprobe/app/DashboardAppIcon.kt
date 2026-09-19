@@ -67,6 +67,7 @@ fun DashboardAppIcon(
     val cacheKey = "$iconKey|${localIconPath.orEmpty()}"
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(dashboardIconMemoryCache[cacheKey], cacheKey) {
+        value = dashboardIconMemoryCache[cacheKey]
         if (value != null) return@produceState
         value = withContext(Dispatchers.IO) {
             val local = loadLocalPackageIcon(localIconPath)
@@ -88,28 +89,47 @@ fun DashboardAppIcon(
         if (current != null) {
             Image(current, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         } else {
-            LetterAvatar(label, sizeDp)
+            LetterAvatar(label, sizeDp, iconKey)
         }
     }
 }
 
 /** Colored initial rendered when no artwork exists for an app. */
 @Composable
-private fun LetterAvatar(label: String?, sizeDp: Int) {
+private fun LetterAvatar(label: String?, sizeDp: Int, iconKey: String = "") {
     val name = label?.trim().orEmpty()
-    if (name.isEmpty()) {
+    if (name.isEmpty() && iconKey.isEmpty()) {
         Box(Modifier.fillMaxSize().background(LabCoreSurface.Inner))
         return
     }
-    val background = remember(name) {
-        Color(avatarPalette[name.fold(0) { acc, ch -> acc * 31 + ch.code }.mod(avatarPalette.size)])
+    val isAlibaba = iconKey == "alibaba" || name.contains("阿里")
+    val isDoubao = iconKey == "doubao" || name.contains("豆包")
+    val isDeepSeek = iconKey == "deepseek" || name.contains("DeepSeek") || name.contains("深度求索")
+    val isToutiao = iconKey == "toutiao" || name.contains("头条")
+    val background = remember(name, iconKey) {
+        when {
+            isAlibaba -> Color(0xFFFF6A00)
+            isDoubao -> Color(0xFF3662EC)
+            isDeepSeek -> Color(0xFF0066FF)
+            isToutiao -> Color(0xFFED4040)
+            else -> Color(avatarPalette[name.fold(0) { acc, ch -> acc * 31 + ch.code }.mod(avatarPalette.size)])
+        }
+    }
+    val displayText = remember(name, isAlibaba, isDoubao, isDeepSeek, isToutiao) {
+        when {
+            isAlibaba -> "阿"
+            isDoubao -> "豆"
+            isDeepSeek -> "深"
+            isToutiao -> "头"
+            else -> name.firstOrNull()?.uppercase() ?: "A"
+        }
     }
     Box(Modifier.fillMaxSize().background(background), contentAlignment = Alignment.Center) {
         Text(
-            text = name.first().uppercase(),
+            text = displayText,
             color = Color.White,
             fontSize = (sizeDp * .44f).sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             maxLines = 1
         )
     }
