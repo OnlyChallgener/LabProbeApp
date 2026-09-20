@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -747,7 +748,12 @@ private fun UsageBarsWithGrid(
         bubbleShown = false
     }
 
-    BoxWithConstraints(Modifier.fillMaxWidth().height(165.dp).padding(top = 10.dp)) {
+    BoxWithConstraints(
+        // 顶上留一条 32dp 的带子专门放气泡：官方那句「15点:上网45分钟」是贴在最高
+        // 那根网格线**上方**，用一小段竖线连到柱子；我们之前浮在绘图区里面，压住了
+        // 柱头和 60 分钟那条线。
+        Modifier.fillMaxWidth().height(192.dp).padding(top = 32.dp)
+    ) {
         val chartWidth = maxWidth
         Row(Modifier.fillMaxSize()) {
             Column(
@@ -856,21 +862,30 @@ private fun UsageBarsWithGrid(
 
         if (bubbleShown && selectedIndex in bars.indices) {
             val bar = bars[selectedIndex]
-            val bubbleWidth = 96.dp
-            val anchor = chartWidth * ((selectedIndex + 0.5f) / bars.size)
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFFF2F3F7),
+            val bubbleWidth = 100.dp
+            // 柱子是从 Y 轴右边开始的，锚点要按绘图区算，不然气泡会整体偏左。
+            val plotLeft = 24.dp
+            val anchor = plotLeft + (chartWidth - plotLeft) * ((selectedIndex + 0.5f) / bars.size)
+            Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = (anchor - bubbleWidth / 2).coerceAtLeast(0.dp))
+                    .offset(x = (anchor - bubbleWidth / 2).coerceAtLeast(0.dp)),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    "${bar.label}:上网${formatChildDuration(bar.minutes)}",
-                    Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                    style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.Ink),
-                    maxLines = 1
-                )
+                Surface(
+                    modifier = Modifier.widthIn(max = 140.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF2F3F7)
+                ) {
+                    Text(
+                        "${bar.label}:上网${formatChildDuration(bar.minutes)}",
+                        Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.Ink),
+                        maxLines = 1
+                    )
+                }
+                // 官方那截把气泡连到柱子上的细竖线。
+                Box(Modifier.width(1.5.dp).height(9.dp).background(Color(0xFFCBD5E1)))
             }
         }
     }
