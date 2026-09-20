@@ -483,4 +483,22 @@ class ChildInternetRepositoryTest {
             hits.isEmpty()
         )
     }
+
+    /** 缓存写入必须能跑过非空 store：`names()` 非 null 那条路曾经直接抛异常。 */
+    @Test
+    fun cachePruneKeepsTheWindowAndDropsExpiredDays() {
+        val store = JSONObject()
+            .put("router|aabbccddeeff|2026-09-01", "{}")
+            .put("router|aabbccddeeff|2026-09-19", "{}")
+            .put("router|aabbccddeeff|2026-09-20", "{}")
+        val pruned = pruneChildGuardCache(store, "2026-09-20", 10)
+        assertFalse(pruned.has("router|aabbccddeeff|2026-09-01"))
+        assertTrue(pruned.has("router|aabbccddeeff|2026-09-19"))
+        assertTrue(pruned.has("router|aabbccddeeff|2026-09-20"))
+    }
+
+    @Test
+    fun cachePruneOnAnEmptyStoreIsANoOp() {
+        assertEquals(0, pruneChildGuardCache(JSONObject(), "2026-09-20", 10).length())
+    }
 }

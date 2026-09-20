@@ -93,18 +93,27 @@ private class SharedChildGuardCache(private val prefs: AppPrefs) : ChildGuardCac
         val today = childGuardStatisticsDate()
         val store = runCatching { JSONObject(prefs.childGuardUsageCacheJson) }.getOrElse { JSONObject() }
         store.put(key, value)
-        JSONArray(store.names() ?: JSONArray()).let { names ->
-            (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
-        }.forEach { stored ->
-            if (childGuardCacheKeyIsExpired(stored, today, USAGE_REPORT_WINDOW_DAYS)) store.remove(stored)
-        }
-        prefs.childGuardUsageCacheJson = store.toString()
+        prefs.childGuardUsageCacheJson = pruneChildGuardCache(store, today, USAGE_REPORT_WINDOW_DAYS).toString()
     }
 
     override fun keys(): List<String> = runCatching {
         val names = JSONObject(prefs.childGuardUsageCacheJson).names() ?: JSONArray()
         (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
     }.getOrDefault(emptyList())
+}
+
+/**
+ * 丢掉超出统计窗口的日期键。`names()` 返回值本身就是 JSONArray，
+ * 绝不能再套一层 `JSONArray(...)`——那会命中原始数组构造器直接抛异常，
+ * 把整次上网报告写入变成「更新失败」。
+ */
+internal fun pruneChildGuardCache(store: JSONObject, today: String, keepDays: Int): JSONObject {
+    val names = store.names() ?: return store
+    (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
+        .forEach { stored ->
+            if (childGuardCacheKeyIsExpired(stored, today, keepDays)) store.remove(stored)
+        }
+    return store
 }
 
 /** Production repository: only confirmed router members and measured usage are shown. */
