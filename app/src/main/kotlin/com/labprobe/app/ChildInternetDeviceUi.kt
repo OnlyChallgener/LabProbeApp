@@ -157,7 +157,10 @@ fun ChildInternetDeviceScreen(
         return
     }
 
-    var selectedTabName by rememberSaveable(resolvedId) { mutableStateOf(ChildInternetTab.REPORT.name) }
+    // 用 remember 而不是 rememberSaveable：存过状态的话，从总览再进同一台设备会回到
+    // 上次停留的那个标签，看起来就像「随机跳到上网计划/家长请注意」。进设备页固定是
+    // 上网报告。
+    var selectedTabName by remember(resolvedId) { mutableStateOf(ChildInternetTab.REPORT.name) }
     var planDay by rememberSaveable(resolvedId) { mutableStateOf(currentBeijingWeekday()) }
     /** null = 时段总览；"" = 新建时段；其他 = 正在编辑的规则 id。 */
     var editingPlanId by rememberSaveable(resolvedId) { mutableStateOf<String?>(null) }
@@ -468,7 +471,10 @@ private fun ChildInternetReportScreen(
     onSelectDay: (String) -> Unit
 ) {
     var period by rememberSaveable(device.summary.deviceId) { mutableStateOf("今日") }
-    var selectedBarIndex by rememberSaveable(device.summary.deviceId, period) { mutableStateOf(0) }
+    // -1 = 还没手动选过。「最近10天」默认点亮最后一根（今天）。以前固定 0，而切过去
+    // 那一刻柱子常常还没回来，lastIndex 就是 0，于是选中最老的那天 —— 图上一片空、
+    // 应用详情写着「暂无应用使用记录」。
+    var selectedBarIndex by rememberSaveable(device.summary.deviceId, period) { mutableStateOf(-1) }
     var selectedAppForTimeline by remember { mutableStateOf<InternetUsageEntry?>(null) }
     var showExplanation by remember { mutableStateOf(false) }
     if (showExplanation) {
@@ -480,7 +486,12 @@ private fun ChildInternetReportScreen(
 
     val usage = if (period == "今日") device.todayUsage else device.recentUsage
     val currentBars = usage.bars
-    val safeIndex = selectedBarIndex.coerceIn(0, max(0, currentBars.lastIndex))
+    val safeIndex = when {
+        selectedBarIndex >= 0 -> selectedBarIndex.coerceIn(0, max(0, currentBars.lastIndex))
+        // 没手动选过：逐日看今天，小时图从 0 点起。
+        period == "最近10天" -> max(0, currentBars.lastIndex)
+        else -> 0
+    }
     val selectedBar = currentBars.getOrNull(safeIndex)
     // 「最近10天」看的是选中那一天的详情，不是把 10 天混成一堆看不出顺序的数字。
     val selectedDate = if (period == "今日") "" else selectedBar?.date.orEmpty()
@@ -510,13 +521,12 @@ private fun ChildInternetReportScreen(
         CompactSegmentedControl(
             options = listOf("今日", "最近10天"),
             selected = period,
-            onSelect = {
-                period = it
-                selectedBarIndex = if (it == "最近10天") max(0, device.recentUsage.bars.lastIndex) else 0
-            },
+            onSelect = { period = it },
             accent = Color.White,
             activeContentColor = LabV2.Ink,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 84.dp)
+            barHeight = 34.dp,
+            cornerRadius = 20.dp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 88.dp)
         )
 
         // 当日上网时长 Card
@@ -804,7 +814,7 @@ private fun UsageBarsWithGrid(
                                             .width(if (isHourly) 8.dp else 16.dp)
                                             .fillMaxHeight(fraction)
                                             .heightIn(min = 2.dp)
-                                            .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                            .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
                                             .background(
                                                 // 逐日图只有选中那根是紫渐变，其余浅灰；
                                                 // 小时图整排都是紫渐变（官方 14:15 那样）。

@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -456,8 +457,10 @@ fun CompactSegmentedControl(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = LabV2.Primary,
-    activeContentColor: Color = Color.White
-) = LabV2SegmentedControl(options, selected, onSelect, modifier, accent, activeContentColor)
+    activeContentColor: Color = Color.White,
+    barHeight: Dp = 40.dp,
+    cornerRadius: Dp = 17.dp
+) = LabV2SegmentedControl(options, selected, onSelect, modifier, accent, activeContentColor, barHeight, cornerRadius)
 
 @Composable
 fun CompactListCard(
@@ -599,13 +602,15 @@ fun LabV2SegmentedControl(
     modifier: Modifier = Modifier,
     accent: Color = LabV2.Primary,
     activeContentColor: Color = Color.White,
+    barHeight: Dp = 40.dp,
+    cornerRadius: Dp = 17.dp,
     textStyle: TextStyle? = null
 ) {
     val resolvedTextStyle = textStyle
         ?: TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(17.dp),
+        shape = RoundedCornerShape(cornerRadius),
         color = LabV2.FieldSoft,
         border = BorderStroke(1.dp, LabV2.Border),
         tonalElevation = 0.dp
@@ -616,12 +621,12 @@ fun LabV2SegmentedControl(
                 Surface(
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(option) },
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(cornerRadius - 3.dp),
                     color = if (active) accent else Color.Transparent,
                     tonalElevation = 0.dp,
                     shadowElevation = if (active) 1.dp else 0.dp
                 ) {
-                    Box(Modifier.height(40.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.height(barHeight), contentAlignment = Alignment.Center) {
                         Text(
                             option,
                             style = resolvedTextStyle.copy(color = if (active) activeContentColor else LabV2.InkMuted),
