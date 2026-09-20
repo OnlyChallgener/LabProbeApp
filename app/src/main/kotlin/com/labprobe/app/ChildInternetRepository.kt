@@ -1252,7 +1252,8 @@ private fun childGuardAttentionEntry(label: String, day: UsageBar): ParentAttent
  */
 private fun parseUsageEntries(rows: JSONArray?, zone: ZoneId): List<InternetUsageEntry> {
     if (rows == null) return emptyList()
-    val formatter = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(zone)
+    // 一天之内的连续段，日期在标题上已经给过了；行内和弹窗都只留 HH:mm–HH:mm。
+    val formatter = DateTimeFormatter.ofPattern("HH:mm").withZone(zone)
     return (0 until rows.length()).mapNotNull { index ->
         val row = rows.optJSONObject(index) ?: return@mapNotNull null
         val app = row.text("app", "name").ifBlank { return@mapNotNull null }
@@ -1445,11 +1446,19 @@ internal fun Throwable.userMessage(): String {
         status == 401 || "unauthorized" in lower || "bad hook token" in lower -> "身份凭证已失效，请重新连接 Hub"
         "connection refused" in lower || "failed to connect" in lower -> "无法连接 Hub，请检查网络"
         "stale command" in lower || "delivery timeout" in lower -> "路由器响应超时，请重试"
+        // OkHttp 在连接被中途掐断时给的是这些英文（真机 2026-09-20 截图里就是
+        // 「Software caused connection abort」「connection closed」原样糊在横幅上）。
+        // 这类中断绝大多数发生在路由器还在写配置的窗口里，稍后自己会好。
+        "software caused connection abort" in lower || "connection closed" in lower ||
+            "connection reset" in lower || "broken pipe" in lower || "socket closed" in lower ||
+            "stream was reset" in lower || "canceled" in lower ->
+            "和 Hub 的连接中断，路由器可能还在处理，稍后自动重试"
         "invalid plan id" in lower -> "计划标识无效"
         "invalid device uid" in lower -> "设备标识无效"
         "no router" in lower -> "未检测到关联路由器"
         raw.isBlank() -> "儿童守护请求失败"
-        else -> if (raw.any { it.code > 127 }) raw.take(80) else "儿童守护请求失败 (${raw.take(80)})"
+        // 兜底也只说人话：英文异常原文对家长没有信息量，还会把横幅撑成一行代码。
+        else -> if (raw.any { it.code > 127 }) raw.take(80) else "儿童守护请求失败，请稍后重试"
     }
 }
 

@@ -454,8 +454,10 @@ fun CompactSegmentedControl(
     options: List<String>,
     selected: String,
     onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier
-) = LabV2SegmentedControl(options, selected, onSelect, modifier)
+    modifier: Modifier = Modifier,
+    accent: Color = LabV2.Primary,
+    activeContentColor: Color = Color.White
+) = LabV2SegmentedControl(options, selected, onSelect, modifier, accent, activeContentColor)
 
 @Composable
 fun CompactListCard(
@@ -596,6 +598,7 @@ fun LabV2SegmentedControl(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = LabV2.Primary,
+    activeContentColor: Color = Color.White,
     textStyle: TextStyle? = null
 ) {
     val resolvedTextStyle = textStyle
@@ -621,7 +624,7 @@ fun LabV2SegmentedControl(
                     Box(Modifier.height(40.dp), contentAlignment = Alignment.Center) {
                         Text(
                             option,
-                            style = resolvedTextStyle.copy(color = if (active) Color.White else LabV2.InkMuted),
+                            style = resolvedTextStyle.copy(color = if (active) activeContentColor else LabV2.InkMuted),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )

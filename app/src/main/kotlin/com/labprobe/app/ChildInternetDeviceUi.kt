@@ -480,7 +480,7 @@ private fun ChildInternetReportScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LabV2.PageHorizontal, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Pill capsule toggle: 今日 vs 最近10天
+        // 官方是浅灰轨道上的一枚白色小胶囊，不是实心蓝块 —— 蓝块在这个页面上太抢。
         CompactSegmentedControl(
             options = listOf("今日", "最近10天"),
             selected = period,
@@ -488,7 +488,9 @@ private fun ChildInternetReportScreen(
                 period = it
                 selectedBarIndex = if (it == "最近10天") max(0, device.recentUsage.bars.lastIndex) else 0
             },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 62.dp)
+            accent = Color.White,
+            activeContentColor = LabV2.Ink,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 84.dp)
         )
 
         // 当日上网时长 Card
@@ -528,14 +530,13 @@ private fun ChildInternetReportScreen(
         }
 
         // 当日应用详情 Card
-        LabCoreCard(contentPadding = PaddingValues(horizontal = 15.dp, vertical = 14.dp)) {
-            // 日期只出现在标题旁边；行内和弹窗一律不再重复标日期。
+        LabCoreCard(contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp)) {
+            // 官方标题不带日期；日期只在选中那根柱子的气泡上出现。
             Text(
-                text = if (period == "今日") "今日应用详情"
-                    else "当日应用详情" + (if (selectedDate.isBlank()) "" else " · ${selectedDate.substring(5)}"),
+                text = if (period == "今日") "今日应用详情" else "当日应用详情",
                 style = LabTypography.CardTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             if (currentEntries.isEmpty()) {
                 Column(
                     Modifier.fillMaxWidth().padding(vertical = 20.dp),
@@ -562,28 +563,30 @@ private fun ChildInternetReportScreen(
         // 官方这里就是一行居中的小字，不是一个空心的大按钮；同步时只多一枚和文字
         // 等高的细环，不额外占一块地方。
         Row(
-            Modifier.fillMaxWidth().height(44.dp)
-                .then(if (device.usageLoading) Modifier else Modifier.clickable(onClick = onRefresh))
-                .padding(top = 10.dp),
+            Modifier.fillMaxWidth().height(36.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (device.usageLoading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(13.dp),
                     strokeWidth = 1.5.dp,
                     color = LabV2.InkMuted
                 )
             }
             Text(
                 if (device.usageLoading) "正在同步统计…" else "刷新统计",
+                modifier = if (device.usageLoading) Modifier else Modifier.clickable(onClick = onRefresh),
+                style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
+            )
+            // 两个动作并成一行，中间一个间隔点；原来上下两行各占一块，显得空。
+            Text("·", style = LabTypography.Supporting.copy(color = LabV2.InkFaint))
+            Text(
+                USAGE_REPORT_EXPLAINER_TITLE,
+                modifier = Modifier.clickable { showExplanation = true },
                 style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
             )
         }
-        TextButton(onClick = { showExplanation = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            Text(USAGE_REPORT_EXPLAINER_TITLE, style = LabTypography.Supporting.copy(color = LabV2.InkMuted, fontSize = 13.sp))
-        }
-        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -712,7 +715,7 @@ private fun UsageBarsWithGrid(
         val chartWidth = maxWidth
         Row(Modifier.fillMaxSize()) {
             Column(
-                Modifier.width(26.dp).fillMaxHeight().padding(bottom = 26.dp),
+                Modifier.width(21.dp).fillMaxHeight().padding(bottom = 26.dp),
                 verticalArrangement = Arrangement.SpaceBetween,
                 horizontalAlignment = Alignment.End
             ) {
@@ -730,7 +733,7 @@ private fun UsageBarsWithGrid(
                     }
                 }
             }
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(3.dp))
 
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 Canvas(modifier = Modifier.fillMaxSize().padding(bottom = 26.dp)) {
@@ -868,7 +871,17 @@ private fun AppUsageTimelineDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = {},
+        confirmButton = {
+            // 放进气泡自己的按钮栏，正文底部就不会再留一整条空白；官方那里是紧贴的。
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).height(42.dp),
+                shape = RoundedCornerShape(21.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
+            ) {
+                Text("知道了", style = LabTypography.Body.copy(color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp))
+            }
+        },
         dismissButton = {},
         containerColor = LabCoreSurface.Card,
         shape = RoundedCornerShape(20.dp),
@@ -897,7 +910,7 @@ private fun AppUsageTimelineDialog(
                     // 之前那根连起来的竖线时间轴把弹窗撑得很开。
                     entry.sessions.forEach { session ->
                         Row(
-                            Modifier.fillMaxWidth().height(40.dp),
+                            Modifier.fillMaxWidth().height(34.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
@@ -924,17 +937,6 @@ private fun AppUsageTimelineDialog(
                         ),
                         modifier = Modifier.padding(horizontal = 4.dp)
                     )
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth().height(42.dp),
-                    shape = RoundedCornerShape(21.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
-                ) {
-                    Text("知道了", style = LabTypography.Body.copy(color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp))
                 }
             }
         }
@@ -1266,17 +1268,39 @@ private fun ChildInternetPlanEditor(
             Spacer(Modifier.height(4.dp))
         }
         Surface(color = LabCoreSurface.Card, border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Button(
                     onClick = { onSave(context) },
+                    // 忙时照样禁双击，但不许变灰：官方点「完成配置」是按钮保持原样、
+                    // 由页面级「配置中…」报状态；变灰会让人以为没点上而反复点。
                     enabled = !saving && plan.repeatDays.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
-                ) { Text(if (saving) "正在保存…" else "完成配置", style = LabTypography.Button) }
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LabV2.Cyan,
+                        contentColor = Color.White,
+                        disabledContainerColor = LabV2.Cyan,
+                        disabledContentColor = Color.White
+                    )
+                ) { Text("完成配置", style = LabTypography.Button.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold)) }
                 if (plan.configured && plan.id.isNotBlank()) {
-                    TextButton(onClick = { confirmDelete = true }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
-                        Text("删除时段", style = LabTypography.Supporting.copy(color = LabV2.Red, fontWeight = FontWeight.SemiBold))
+                    Surface(
+                        onClick = { if (!saving) confirmDelete = true },
+                        enabled = true,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(50),
+                        color = LabCoreSurface.Card,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                "删除时段",
+                                style = LabTypography.Button.copy(color = LabV2.Red, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            )
+                        }
                     }
                 }
             }

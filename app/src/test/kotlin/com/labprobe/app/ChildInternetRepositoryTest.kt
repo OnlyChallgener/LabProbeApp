@@ -59,7 +59,7 @@ class ChildInternetRepositoryTest {
                 .put("activeSeconds", 120)))))
         val entry = parseChildGuardUsageReport(root).today.entries.single()
         // endEpoch 已是最后一个活跃分钟 +60，所以 08:15/16/17 显示 08:15–08:18。
-        assertEquals("09-18 08:15 – 09-18 08:18", entry.sessions.single().timeRange)
+        assertEquals("08:15 – 08:18", entry.sessions.single().timeRange)
         // 时长只认服务器的 minutes，不用 end-start，也不用 activeSeconds。
         assertEquals("3分钟", entry.sessions.single().durationText)
         assertEquals(3, entry.durationMinutes)
@@ -77,7 +77,7 @@ class ChildInternetRepositoryTest {
             .put("app", "微信").put("minutes", 3).put("sessions", 3).put("sessionRanges", ranges)))
         val entry = parseChildGuardUsageReport(root).today.entries.single()
         assertEquals(
-            listOf("09-18 08:15 – 09-18 08:16", "09-18 08:25 – 09-18 08:26", "09-18 08:35 – 09-18 08:36"),
+            listOf("08:15 – 08:16", "08:25 – 08:26", "08:35 – 08:36"),
             entry.sessions.map { it.timeRange }
         )
         // 多段区间绝不塌成一条 08:15–08:36。

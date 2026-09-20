@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -683,22 +684,33 @@ private fun ProtectedDeviceCard(
                             }
                         }
                     }
-                    // 官方是一张贴着按钮的紧凑小卡：四行短文，没有标题也没有解释。
+                    // 官方是一张贴着按钮的大圆角小卡：四行居中文，没有标题、说明和分割线。
                     DropdownMenu(
                         expanded = showBlockMenu,
                         onDismissRequest = { showBlockMenu = false },
-                        modifier = Modifier.width(150.dp),
-                        containerColor = LabCoreSurface.Card
+                        modifier = Modifier.width(168.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        containerColor = LabCoreSurface.Card,
+                        tonalElevation = 0.dp,
+                        shadowElevation = 10.dp
                     ) {
                         listOf(
-                            "立即禁网（手动恢复）" to null,
+                            "立即禁网" to null,
                             "禁网 10 分钟" to 10,
                             "禁网 30 分钟" to 30,
                             "禁网 1 小时" to 60
                         ).forEach { (label, minutes) ->
                             DropdownMenuItem(
                                 text = {
-                                    Text(label, style = LabTypography.Body.copy(fontSize = 13.sp))
+                                    Text(
+                                        label,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        textAlign = TextAlign.Center,
+                                        style = LabTypography.Body.copy(
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    )
                                 },
                                 onClick = {
                                     showBlockMenu = false
@@ -706,7 +718,7 @@ private fun ProtectedDeviceCard(
                                         summary.deviceId, true, durationMinutes = minutes
                                     )
                                 },
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                             )
                         }
                     }
