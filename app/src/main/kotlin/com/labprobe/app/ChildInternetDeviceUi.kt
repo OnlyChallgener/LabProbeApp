@@ -232,7 +232,7 @@ fun ChildInternetDeviceScreen(
                             toast(context, "已解除儿童守护")
                             onBack()
                         }.onFailure {
-                            toast(context, it.message ?: "解除失败")
+                            toast(context, it.userMessage())
                         }
                     }
                 }) {
@@ -260,8 +260,33 @@ fun ChildInternetDeviceScreen(
             onSelect = { selectedTabName = it.name; editingPlanId = null }
         )
         if (repository.state.error.isNotBlank()) {
-            Text(repository.state.error, Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                style = LabTypography.Supporting.copy(color = LabV2.Red))
+            // 之前是一行裸红字飘在背景上，和页面没有任何关系；做成和总览
+            // 「更新失败」那颗一样调子的软色条。
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFFFF5F5),
+                border = BorderStroke(1.dp, Color(0xFFFEE2E2))
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("❗", style = LabTypography.Caption.copy(color = Color(0xFFEF4444), fontSize = 12.sp))
+                    Text(
+                        repository.state.error,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = LabTypography.Caption.copy(
+                            color = Color(0xFFEF4444),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
+                }
+            }
         }
         AnimatedContent(
             targetState = selectedTab,
@@ -302,7 +327,7 @@ fun ChildInternetDeviceScreen(
                                         result.onSuccess {
                                             draftPlan = draftPlan.copy(enabled = enabled)
                                             toast(context, if (enabled) "计划已启用" else "计划已停用")
-                                        }.onFailure { toast(context, it.message ?: "操作失败") }
+                                        }.onFailure { toast(context, it.userMessage()) }
                                     }
                                 }
                             },
@@ -311,7 +336,7 @@ fun ChildInternetDeviceScreen(
                                     result.onSuccess {
                                         editingPlanId = null
                                         toast(context, "时段已删除")
-                                    }.onFailure { toast(context, it.message ?: "删除失败") }
+                                    }.onFailure { toast(context, it.userMessage()) }
                                 }
                             },
                             onSave = { context ->
@@ -320,7 +345,7 @@ fun ChildInternetDeviceScreen(
                                         draftPlan.repeatDays.minOrNull()?.let { planDay = it }
                                         editingPlanId = null
                                         toast(context, "保存成功")
-                                    }.onFailure { toast(context, it.message ?: "保存失败") }
+                                    }.onFailure { toast(context, it.userMessage()) }
                                 }
                             }
                         )
