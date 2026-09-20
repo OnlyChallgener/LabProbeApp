@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.QueryStats
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.window.Popup
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,6 +115,7 @@ fun ChildInternetOverviewScreen(
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        ChildGuardOperationHud(overview.pendingHud)
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -421,6 +424,41 @@ internal fun childGuardScheduleText(schedule: ChildGuardSchedule, nowEpoch: Long
 private val childGuardWeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 private val childGuardClockFormat = DateTimeFormatter.ofPattern("HH:mm")
 
+/**
+ * 写操作期间的页面级状态。
+ *
+ * 官方点「完成配置」是整页报「配置中…」，而不是只把那颗按钮变灰显示「正在同步」——
+ * 用户需要确认路由器真的在处理，而不是以为自己没点上。文案由仓库按动作给
+ * （配置中…/删除中…/解除中…），没有写操作时什么都不画。用 Popup 浮在中间，
+ * 两个页面就不必为了盖一层遮罩去改各自的根布局。
+ */
+@Composable
+fun ChildGuardOperationHud(text: String) {
+    if (text.isBlank()) return
+    Popup(alignment = Alignment.Center) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = LabCoreSurface.Card,
+            border = BorderStroke(1.dp, Color(0xFFEEF2F7)),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp
+        ) {
+            Row(
+                Modifier.padding(horizontal = 18.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = LabV2.Cyan
+                )
+                Text(text, style = LabTypography.Body)
+            }
+        }
+    }
+}
+
 private fun childGuardChangeIn(schedule: ChildGuardSchedule, nowEpoch: Long): String {
     val at = schedule.nextChangeAtEpoch
     val minutes = at?.let { (it - nowEpoch + 59) / 60 } ?: schedule.minutesToChange?.toLong()
@@ -487,62 +525,7 @@ private fun ProtectedDeviceCard(
         }
     }
 
-    var showDelayDialog by remember { mutableStateOf(false) }
-
-    fun handleBlockToggle() {
-        if (summary.status == GuardStatus.BLOCKED) {
-            repository.setDeviceBlocked(summary.deviceId, false)
-        } else {
-            showDelayDialog = true
-        }
-    }
-
-    if (showDelayDialog) {
-        AlertDialog(
-            onDismissRequest = { showDelayDialog = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Rounded.Block, null, tint = LabV2.Red, modifier = Modifier.size(22.dp))
-                    Text("一键禁网", style = LabTypography.CardTitle)
-                }
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("选择对「$displayName」禁网的时长：", style = LabTypography.Body.copy(color = LabV2.InkMuted))
-                    listOf(
-                        "立即禁网 (手动恢复)" to null,
-                        "禁网 10 分钟后自动解除" to 10,
-                        "禁网 30 分钟后自动解除" to 30,
-                        "禁网 1 小时后自动解除" to 60
-                    ).forEach { (label, duration) ->
-                        Surface(
-                            onClick = {
-                                showDelayDialog = false
-                                repository.setDeviceBlocked(summary.deviceId, true, durationMinutes = duration)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            color = LabCoreSurface.Inner
-                        ) {
-                            Text(
-                                label,
-                                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                style = LabTypography.Body.copy(fontWeight = FontWeight.Medium)
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showDelayDialog = false }) {
-                    Text("取消", style = LabTypography.Supporting)
-                }
-            },
-            shape = RoundedCornerShape(22.dp),
-            containerColor = LabCoreSurface.Card
-        )
-    }
+    var showBlockMenu by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
@@ -660,38 +643,70 @@ private fun ProtectedDeviceCard(
                 val btnTextColor = if (isBlocked) Color(0xFF16A34A) else Color(0xFF16B9BE)
                 val btnBgColor = if (isBlocked) Color(0xFFEAF8EF) else Color.Transparent
 
-                Surface(
-                    onClick = { handleBlockToggle() },
-                    enabled = !busy,
-                    shape = RoundedCornerShape(50),
-                    color = btnBgColor,
-                    border = BorderStroke(1.dp, btnBorderColor)
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                Box {
+                    Surface(
+                        onClick = {
+                            if (isBlocked) repository.setDeviceBlocked(summary.deviceId, false)
+                            else showBlockMenu = true
+                        },
+                        enabled = !busy,
+                        shape = RoundedCornerShape(50),
+                        color = btnBgColor,
+                        border = BorderStroke(1.dp, btnBorderColor)
                     ) {
-                        Icon(
-                            if (isBlocked) Icons.Rounded.CheckCircleOutline else Icons.Rounded.Block,
-                            null,
-                            tint = btnTextColor,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            if (busy) "正在同步…" else if (isBlocked) "恢复上网" else "一键禁网",
-                            style = LabTypography.CompactButton.copy(
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            ),
-                            color = btnTextColor
-                        )
-                        if (!isBlocked) {
+                        Row(
+                            Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
                             Icon(
-                                Icons.Rounded.MoreVert,
+                                if (isBlocked) Icons.Rounded.CheckCircleOutline else Icons.Rounded.Block,
                                 null,
                                 tint = btnTextColor,
                                 modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                if (busy) "正在同步…" else if (isBlocked) "恢复上网" else "一键禁网",
+                                style = LabTypography.CompactButton.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = btnTextColor
+                            )
+                            if (!isBlocked) {
+                                Icon(
+                                    Icons.Rounded.MoreVert,
+                                    null,
+                                    tint = btnTextColor,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+                    }
+                    // 官方是一张贴着按钮的紧凑小卡：四行短文，没有标题也没有解释。
+                    DropdownMenu(
+                        expanded = showBlockMenu,
+                        onDismissRequest = { showBlockMenu = false },
+                        modifier = Modifier.width(150.dp),
+                        containerColor = LabCoreSurface.Card
+                    ) {
+                        listOf(
+                            "立即禁网（手动恢复）" to null,
+                            "禁网 10 分钟" to 10,
+                            "禁网 30 分钟" to 30,
+                            "禁网 1 小时" to 60
+                        ).forEach { (label, minutes) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(label, style = LabTypography.Body.copy(fontSize = 13.sp))
+                                },
+                                onClick = {
+                                    showBlockMenu = false
+                                    repository.setDeviceBlocked(
+                                        summary.deviceId, true, durationMinutes = minutes
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                             )
                         }
                     }

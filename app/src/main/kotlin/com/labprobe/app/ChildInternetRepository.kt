@@ -40,6 +40,8 @@ interface ChildInternetRepository {
     fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit)
     /** 单台设备的官方式上网报告：先回放缓存，再后台抓取。 */
     fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit)
+    /** 「最近10天」点中某天时只要那一天的详情；缓存命中就不碰网络。 */
+    fun loadUsageForDate(deviceId: String, date: String, onResult: (Result<Unit>) -> Unit = {})
 }
 
 /** 唯一的 Hub 传输出口；注入它才能在没有 Context 的单元测试里驱动整个仓库。 */
@@ -351,7 +353,7 @@ class RealChildInternetRepository internal constructor(
             targets.forEach { (uid, id) -> api.setPlanEnabled(uid, id, enabled) }
             // 逐条各发一次写，`accepted` 不看响应，所以这里只交回「都发完了」。
             JSONObject()
-        }, accepted = {
+        }, hudText = "配置中…", accepted = {
             state = state.copy(devices = state.devices.map { d ->
                 withPlans(d, d.plans.map { it.copy(enabled = enabled) })
             })
@@ -364,7 +366,7 @@ class RealChildInternetRepository internal constructor(
         mutate(deviceId, onResult, request = {
             if (blocked) api.pauseDevice(resolveRouterUid(deviceId), until)
             else api.resumeDevice(resolveRouterUid(deviceId))
-        }, accepted = {
+        }, hudText = if (blocked) "禁网中…" else "恢复中…", accepted = {
             updateDevice(deviceId) { d ->
                 d.copy(
                     runtime = d.runtime.copy(paused = blocked, blockedUntilEpoch = until),
@@ -385,7 +387,7 @@ class RealChildInternetRepository internal constructor(
             if (plan.id.isBlank()) api.createPlan(resolveRouterUid(deviceId), plan,
                 device?.summary?.macAddresses?.firstOrNull(), device?.summary?.name)
             else api.updatePlan(resolveRouterUid(deviceId), plan)
-        }, accepted = { response ->
+        }, hudText = "配置中…", accepted = { response ->
             val body = response.data().optJSONObject("plan") ?: response.data()
             val id = body.text("id", "planId", "policyId").ifBlank { plan.id }
             if (id.isNotBlank()) updateDevice(deviceId) { d ->
@@ -397,10 +399,12 @@ class RealChildInternetRepository internal constructor(
 
     override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) =
         mutate(deviceId, onResult, request = { api.deletePlan(resolveRouterUid(deviceId), planId) },
+            hudText = "删除中…",
             accepted = { updateDevice(deviceId) { withPlans(it, it.plans.filterNot { p -> p.id == planId }) } })
 
     override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) =
         mutate(deviceId, onResult, request = { api.setPlanEnabled(resolveRouterUid(deviceId), planId, enabled) },
+            hudText = "配置中…",
             accepted = { updateDevice(deviceId) { withPlans(it, it.plans.map { p -> if (p.id == planId) p.copy(enabled = enabled) else p }) } })
 
     override fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit) {
@@ -412,10 +416,12 @@ class RealChildInternetRepository internal constructor(
     }
 
     override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) =
-        mutate(mac, onResult, request = { api.addDevice(listOf(mac), name) }, accepted = {})
+        mutate(mac, onResult, request = { api.addDevice(listOf(mac), name) },
+            hudText = "加入中…", accepted = {})
 
     override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) =
-        mutate(uid, onResult, request = { api.removeDevice(resolveRouterUid(uid)) }, accepted = {
+        mutate(uid, onResult, request = { api.removeDevice(resolveRouterUid(uid)) },
+            hudText = "解除中…", accepted = {
             state = state.copy(devices = state.devices.filterNot { it.summary.matchesChildGuardDevice(uid) })
         })
 
@@ -445,6 +451,57 @@ class RealChildInternetRepository internal constructor(
             } finally {
                 setUsageLoading(uid, false)
             }
+        }
+    }
+
+    /**
+     * 「最近10天」点中某一天只要那一天的详情 —— 官方就是逐日详情，不是 10 天汇总，
+     * 汇总会把「周三看了 2 小时抖音」摊成看不出顺序的一堆数字。缓存键本来就含日期，
+     * 所以看过的天再点开零网络流量。
+     */
+    override fun loadUsageForDate(deviceId: String, date: String, onResult: (Result<Unit>) -> Unit) {
+        val uid = resolveRouterUid(deviceId)
+        if (date.isBlank()) return
+        val cached = runCatching { cache.read(usageCacheKey(uid, date)) }.getOrNull()
+        val cachedPayload = cached?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (cachedPayload != null) {
+            setDayUsage(uid, date, parseChildGuardUsageReport(cachedPayload).today)
+            onResult(Result.success(Unit))
+            return
+        }
+        updateDevice(uid) { current ->
+            current.copy(dayUsage = ChildGuardDayUsage(
+                date, InternetUsageSummary(null, emptyList(), emptyList()), loading = true))
+        }
+        scope.launch {
+            try {
+                val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) }
+                val payload = withContext(Dispatchers.IO) {
+                    api.usageReportPayload(uid, device?.summary?.macAddresses ?: emptySet(), date = date, days = 1)
+                }
+                cache.write(usageCacheKey(uid, date), payload.toString())
+                cacheKeys = cacheKeyList()
+                setDayUsage(uid, date, parseChildGuardUsageReport(payload).today)
+                onResult(Result.success(Unit))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                // 抓不到就把那一格留空、停掉转圈：列表页还在，用户没做错什么，
+                // 不值得为一次逐日补读弹红色横幅。
+                updateDevice(uid) { current ->
+                    val slot = current.dayUsage
+                    if (slot != null && slot.date == date) current.copy(dayUsage = slot.copy(loading = false))
+                    else current
+                }
+                onResult(Result.failure(error))
+            }
+        }
+    }
+
+    private fun setDayUsage(uid: String, date: String, usage: InternetUsageSummary) {
+        updateDevice(uid) { current ->
+            val slot = current.dayUsage
+            if (slot != null && slot.date == date && !slot.loading) current
+            else current.copy(dayUsage = ChildGuardDayUsage(date, usage))
         }
     }
 
@@ -528,7 +585,7 @@ class RealChildInternetRepository internal constructor(
         updateDevice(uid) { d -> if (d.usageLoading == loading) d else d.copy(usageLoading = loading) }
 
     private fun mutate(deviceId: String, onResult: (Result<Unit>) -> Unit,
-        request: () -> JSONObject, accepted: (JSONObject) -> Unit) {
+        request: () -> JSONObject, accepted: (JSONObject) -> Unit, hudText: String = "正在同步…") {
         val uid = resolveRouterUid(deviceId)
         if (pending.isNotEmpty()) {
             onResult(Result.failure(IllegalStateException("正在同步上一项操作，请稍候")))
@@ -537,7 +594,7 @@ class RealChildInternetRepository internal constructor(
         revision++
         refreshJob?.cancel()
         pending.add(uid)
-        state = state.copy(error = "", pendingDeviceIds = pending.toSet())
+        state = state.copy(error = "", pendingHud = hudText, pendingDeviceIds = pending.toSet())
         scope.launch {
             try {
                 val response = withContext(Dispatchers.IO) { request() }
@@ -607,7 +664,10 @@ class RealChildInternetRepository internal constructor(
 
     private fun clearPending(uid: String) {
         pending.remove(uid)
-        state = state.copy(pendingDeviceIds = pending.toSet())
+        state = state.copy(
+            pendingHud = if (pending.isEmpty()) "" else state.pendingHud,
+            pendingDeviceIds = pending.toSet()
+        )
     }
 
     /**
@@ -1470,6 +1530,8 @@ object FakeChildInternetRepository : ChildInternetRepository {
         onResult(Result.success(Unit))
     }
     override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) = onResult(Result.success(Unit))
+    override fun loadUsageForDate(deviceId: String, date: String, onResult: (Result<Unit>) -> Unit) =
+        onResult(Result.success(Unit))
 }
 
 /** 乐观插入的设备只有身份字段：时长、深夜分钟、流量、提醒一律留空，等 Hub 的真实统计覆盖。 */

@@ -120,6 +120,13 @@ data class ChildGuardSchedule(
     val known: Boolean get() = state.isNotBlank() && state != "unknown"
 }
 
+/** 「最近10天」逐日详情：那一天的报告，和它是不是还在抓。 */
+data class ChildGuardDayUsage(
+    val date: String,
+    val usage: InternetUsageSummary,
+    val loading: Boolean = false
+)
+
 data class UsageBar(
     val label: String,
     val minutes: Int,
@@ -222,6 +229,8 @@ data class ChildInternetDeviceState(
     val presence: ChildGuardPresence? = null,
     /** 此刻的计划生效态，同样只由总览聚合写入（Hub 本地算，不碰路由器）。 */
     val schedule: ChildGuardSchedule = ChildGuardSchedule(),
+    /** 「最近10天」里选中那一天的逐日详情；日期不符就是还没抓到。 */
+    val dayUsage: ChildGuardDayUsage? = null,
     /** A usage refresh is in flight; the page keeps showing cached data meanwhile. */
     val usageLoading: Boolean = false
 ) {
@@ -237,6 +246,8 @@ data class ChildInternetOverviewState(
     val loading: Boolean = false,
     val error: String = "",
     val pendingDeviceIds: Set<String> = emptySet(),
+    /** 进行中的写操作该显示成哪句状态（配置中…/删除中…）；没有写操作时为空。 */
+    val pendingHud: String = "",
     /** 后台静默刷新中：页面保留原内容，只多一个「同步中」。 */
     val refreshing: Boolean = false,
     val generatedAtEpoch: Long? = null,

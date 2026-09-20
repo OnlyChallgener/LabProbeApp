@@ -589,6 +589,16 @@ class ChildInternetRepositoryTest {
             childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 172_800L), 0L))
     }
 
+    /** 规则列表里「重复时间」那一列：全选说「每天」，其余按周一到周日列，不掺排序。 */
+    @Test
+    fun repeatLabelCoversEverydayAndPartialWeeks() {
+        fun label(days: Set<Int>) = planRepeatLabel(DeviceGuardPlan(repeatDays = days))
+        assertEquals("每天", label(setOf(1, 2, 3, 4, 5, 6, 7)))
+        assertEquals("周一、周五", label(setOf(5, 1)))
+        assertEquals("周日", label(setOf(7)))
+        assertEquals("", label(emptySet()))
+    }
+
     /** 真机 17:03 的那条：OkHttp 的自定义 DNS 一时解析不出 Hub 域名。 */
     @Test
     fun dnsBlipBecomesASentenceAndNotAnExceptionDump() {
