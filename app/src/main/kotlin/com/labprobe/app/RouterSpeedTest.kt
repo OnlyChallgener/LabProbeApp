@@ -1,5 +1,8 @@
 package com.labprobe.app
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -14,6 +17,8 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ChildCare
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Settings
@@ -52,6 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -221,17 +227,20 @@ class SpeedTestApi(private val prefs: AppPrefs) {
     }
 }
 
-/** Official gauge mapping: 8 linear segments of 312.5 Mbps each, dial max 2500. */
+/** Official eWeb mapping: speed thresholds map to 8 dial segments, max 2500. */
 private val GaugeScale = floatArrayOf(0f, 10f, 50f, 100f, 500f, 1000f, 1500f, 2000f, 2500f)
 private const val GaugeSegment = 312.5f
 
 internal fun gaugePosition(mbps: Float): Float {
     if (mbps <= 0f) return 0f
-    for (index in 0 until GaugeScale.size - 1) {
-        if (mbps <= GaugeSegment * (index + 1)) {
-            val base = GaugeScale[index]
-            val step = (mbps - GaugeSegment * index) * (GaugeScale[index + 1] - base) / GaugeSegment
-            return (base + step) / GaugeScale.last()
+    for (index in 1 until GaugeScale.size) {
+        if (mbps <= GaugeScale[index]) {
+            // eWeb's getGaugeData maps each speed threshold to one uniform
+            // dial segment; its formatter performs the inverse conversion.
+            val fraction = (mbps - GaugeScale[index - 1]) /
+                (GaugeScale[index] - GaugeScale[index - 1])
+            val dialValue = GaugeSegment * (index - 1) + fraction * GaugeSegment
+            return dialValue.roundToInt() / (GaugeSegment * (GaugeScale.size - 1))
         }
     }
     return 1f
@@ -239,6 +248,18 @@ internal fun gaugePosition(mbps: Float): Float {
 
 internal fun formatSpeed(mbps: Double?): String =
     mbps?.let { String.format(java.util.Locale.US, "%.2f", it) } ?: "--"
+
+internal fun formatSpeedWithUnit(mbps: Double?): String = "${formatSpeed(mbps)} Mbps"
+
+internal fun isSpeedTestUploadPhase(running: Boolean, progress: SpeedProgress?): Boolean {
+    val current = progress ?: return false
+    return running && current.stat == "running" && !current.finished && current.primary?.up?.isNotEmpty() == true
+}
+
+internal fun visibleSpeedHistory(
+    history: List<SpeedHistoryRecord>,
+    expanded: Boolean
+): List<SpeedHistoryRecord> = if (expanded) history.take(10) else emptyList()
 
 /** 6th top-level page: router tool board — speed test up front, then child guard and native settings. */
 @Composable
@@ -339,6 +360,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
     var ports by remember { mutableStateOf<List<SpeedTestPort>>(emptyList()) }
     var nodes by remember { mutableStateOf<List<SpeedTestNode>>(emptyList()) }
     var history by remember { mutableStateOf<List<SpeedHistoryRecord>>(emptyList()) }
+    var historyExpanded by remember { mutableStateOf(false) }
     var selectedNode by remember { mutableStateOf("0") }
     var selectedPort by remember { mutableStateOf("wan") }
     var running by remember { mutableStateOf(false) }
@@ -399,7 +421,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                 }
             }
 
-            SpeedGauge(running = running, down = progress?.primary?.currentDown, up = progress?.primary?.currentUp)
+            SpeedGauge(running = running, progress = progress)
             SpeedMetricRow(progress)
             progress?.primary?.takeIf { it.down.isNotEmpty() || it.up.isNotEmpty() }?.let { SpeedChart(it) }
 
@@ -436,6 +458,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                         preparing -> "正在读取路由器"
                         else -> "开始测速"
                     },
+                    color = if (running || preparing) LabV2.InkMuted else Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -443,8 +466,27 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 
             if (history.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("历史测速记录", style = LabTypography.SectionTitle.copy(color = SpeedInk))
-                    history.take(5).forEach { record -> SpeedHistoryRow(record) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { historyExpanded = !historyExpanded }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "历史测速记录 (${history.size})",
+                            style = LabTypography.SectionTitle.copy(color = SpeedInk)
+                        )
+                        Icon(
+                            imageVector = if (historyExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            contentDescription = if (historyExpanded) "收起" else "展开",
+                            tint = SpeedMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    visibleSpeedHistory(history, historyExpanded).forEach { record -> SpeedHistoryRow(record) }
                 }
             }
         }
@@ -452,9 +494,26 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 }
 
 @Composable
-private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
-    val displayed = (down ?: 0.0).toFloat().coerceAtLeast(0f)
-    val position = gaugePosition(displayed).coerceIn(0f, 1f)
+private fun SpeedGauge(running: Boolean, progress: SpeedProgress?) {
+    val sample = progress?.primary
+    val down = sample?.currentDown
+    val up = sample?.currentUp
+    // During upload the firmware keeps the completed downlink samples while
+    // adding uplink samples, so scalar values alone cannot identify the phase.
+    val isTestingUp = isSpeedTestUploadPhase(running, progress)
+    val activeSpeed = if (isTestingUp) up ?: 0.0 else down ?: 0.0
+    val displayed = activeSpeed.toFloat().coerceAtLeast(0f)
+    val targetPosition = gaugePosition(displayed).coerceIn(0f, 1f)
+    val position by animateFloatAsState(
+        targetValue = targetPosition,
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+        label = "speed_gauge_progress"
+    )
+    val activeGradients = if (isTestingUp) {
+        listOf(SpeedUpColor, Color(0xFF4ADE80), Color(0xFF16A34A))
+    } else {
+        listOf(Color(0xFF0095D8), Color(0xFF38BDF8), Color(0xFF0284C7))
+    }
 
     Column(
         modifier = Modifier
@@ -519,14 +578,7 @@ private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
                 if (position > 0.005f) {
                     val activeSweep = totalSweep * position
                     drawArc(
-                        brush = Brush.sweepGradient(
-                            listOf(
-                                Color(0xFF0095D8),
-                                Color(0xFF38BDF8),
-                                Color(0xFF0284C7)
-                            ),
-                            center = center
-                        ),
+                        brush = Brush.sweepGradient(activeGradients, center = center),
                         startAngle = startAngle,
                         sweepAngle = activeSweep,
                         useCenter = false,
@@ -585,18 +637,23 @@ private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
 
                 // Main Speed Value
                 Text(
-                    text = formatSpeed(down),
+                    text = formatSpeed(activeSpeed.takeIf { it > 0.0 } ?: if (running) 0.0 else down),
                     style = LabTypography.AppTitle.copy(
                         fontSize = 42.sp,
                         lineHeight = 46.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF0F172A),
+                        color = if (isTestingUp) SpeedUpColor else Color(0xFF0F172A),
                         letterSpacing = (-0.5).sp
                     )
                 )
 
                 Text(
-                    text = "下行速率 · Mbps",
+                    text = when {
+                        isTestingUp -> "上行速率 · Mbps"
+                        down != null && down > 0.0 -> "下行速率 · Mbps"
+                        running -> "实时测速 · Mbps"
+                        else -> "下行速率 · Mbps"
+                    },
                     style = LabTypography.Caption.copy(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
@@ -640,7 +697,7 @@ private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
                     Column {
                         Text("实时下行", style = LabTypography.Caption.copy(color = Color(0xFF64748B), fontSize = 11.sp))
                         Text(
-                            "${formatSpeed(down)} Mbps",
+                            formatSpeedWithUnit(down),
                             style = LabTypography.CardTitle.copy(
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold,
@@ -681,7 +738,7 @@ private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
                     Column {
                         Text("实时上行", style = LabTypography.Caption.copy(color = Color(0xFF64748B), fontSize = 11.sp))
                         Text(
-                            "${formatSpeed(up)} Mbps",
+                            formatSpeedWithUnit(up),
                             style = LabTypography.CardTitle.copy(
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold,
@@ -699,33 +756,38 @@ private fun SpeedGauge(running: Boolean, down: Double?, up: Double?) {
 @Composable
 private fun SpeedMetricRow(progress: SpeedProgress?) {
     val primary = progress?.primary
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SpeedMetricTile("时延", primary?.latency, "ms", Modifier.weight(1f))
-        SpeedMetricTile("抖动", primary?.jitter, "ms", Modifier.weight(1f))
-        SpeedMetricTile("丢包", primary?.loss, "%", Modifier.weight(1f))
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFFF8FAFC),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SpeedMetricInlineItem("时延", primary?.latency, "ms", Modifier.weight(1f))
+            Box(Modifier.width(1.dp).height(18.dp).background(Color(0xFFE2E8F0)))
+            SpeedMetricInlineItem("抖动", primary?.jitter, "ms", Modifier.weight(1f))
+            Box(Modifier.width(1.dp).height(18.dp).background(Color(0xFFE2E8F0)))
+            SpeedMetricInlineItem("丢包", primary?.loss, "%", Modifier.weight(1f))
+        }
     }
 }
 
 @Composable
-private fun SpeedMetricTile(label: String, value: Double?, unit: String, modifier: Modifier = Modifier) {
-    Surface(
+private fun SpeedMetricInlineItem(label: String, value: Double?, unit: String, modifier: Modifier = Modifier) {
+    Column(
         modifier = modifier,
-        shape = RoundedCornerShape(13.dp),
-        color = Color(0xFFF8FAFC),
-        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        Column(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                "${formatSpeed(value)} $unit",
-                style = LabTypography.ValueStrong.copy(fontSize = 15.sp, color = SpeedInk, fontWeight = FontWeight.Bold),
-                maxLines = 1
-            )
-            Text(label, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.sp))
-        }
+        Text(
+            text = "${formatSpeed(value)} $unit",
+            style = LabTypography.ValueStrong.copy(fontSize = 13.5.sp, color = SpeedInk),
+            maxLines = 1
+        )
+        Text(label, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 10.5.sp))
     }
 }
 
@@ -871,12 +933,12 @@ private fun SpeedHistoryRow(record: SpeedHistoryRecord) {
             Text(stamp, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.5.sp), modifier = Modifier.width(76.dp))
             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "↓ ${formatSpeed(record.downMbps)}",
+                    "↓ ${formatSpeedWithUnit(record.downMbps)}",
                     style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0284C7)),
                     maxLines = 1
                 )
                 Text(
-                    "↑ ${formatSpeed(record.upMbps)} Mbps",
+                    "↑ ${formatSpeedWithUnit(record.upMbps)}",
                     style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = Color(0xFF16A34A)),
                     maxLines = 1
                 )

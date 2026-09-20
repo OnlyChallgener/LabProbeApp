@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.LaptopMac
@@ -34,6 +35,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,10 +46,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+
+private const val CHILD_GUARD_OVERVIEW_POLL_MS = 20_000L
 
 @Composable
 fun ChildInternetOverviewScreen(
@@ -58,37 +68,36 @@ fun ChildInternetOverviewScreen(
     devices: List<DeviceItem> = emptyList()
 ) {
     val overview = repository.state
-    LaunchedEffect(repository) { repository.refresh() }
+    // 进入页面只铺缓存 + 读一次聚合；重量级扇出留给用户主动动作。
+    LaunchedEffect(repository) { repository.hydrateFromCache() }
+    var screenVisible by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    DisposableEffect(context) {
+        val lifecycle = (context.findActivity() as? ComponentActivity)?.lifecycle
+            ?: return@DisposableEffect onDispose { }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> screenVisible = true
+                Lifecycle.Event.ON_STOP -> screenVisible = false
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(repository, screenVisible) {
+        while (isActive && screenVisible) {
+            repository.refreshOverview()
+            delay(CHILD_GUARD_OVERVIEW_POLL_MS)
+        }
+    }
 
-    val effectiveDevices = remember(overview.devices, devices) {
-        if (overview.devices.isNotEmpty()) {
-            overview.devices
-        } else {
-            val knownGuardedMacPrefixes = setOf(
-                "6c:1f:f7", "1a:9c:c5", "92:b9:91", "da:1f:85", "64:2c:0f", "28:7e:80", "24:1a:e6"
-            )
-            val matchedList = devices.filter { d ->
-                val clean = cleanMac(d.mac).lowercase()
-                knownGuardedMacPrefixes.any { clean.startsWith(cleanMac(it).lowercase()) }
-            }
-            matchedList.map { d ->
-                val profile = inferDeviceProfile(d)
-                ChildInternetDeviceState(
-                    summary = ProtectedDeviceSummary(
-                        deviceId = childGuardDeviceKey(d.mac),
-                        name = deviceDisplayName(d),
-                        iconKey = profile.iconKey,
-                        accentArgb = profile.accent.toArgb(),
-                        status = GuardStatus.UNRESTRICTED,
-                        todayMinutes = if (d.online) 167 else 0,
-                        hasAttention = true,
-                        lateNightMinutes = 43,
-                        isOnline = d.online,
-                        macAddresses = setOf(d.mac)
-                    ),
-                    plan = DeviceGuardPlan(configured = true, categories = childInternetCatalogCategories())
-                )
-            }
+    val effectiveDevices = remember(overview.devices) {
+        val seen = mutableSetOf<String>()
+        overview.devices.filter { dev ->
+            val mac = dev.summary.macAddresses.firstOrNull()?.let(::cleanMac)?.lowercase()
+            val key = mac?.takeIf { it.isNotBlank() } ?: dev.summary.deviceId.lowercase()
+            seen.add(key)
         }
     }
 
@@ -97,8 +106,8 @@ fun ChildInternetOverviewScreen(
             .fillMaxSize()
             .appBackground()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 2.dp),
@@ -113,20 +122,40 @@ fun ChildInternetOverviewScreen(
             }
         }
 
-        ChildInternetOfficialHero(guardedCount = effectiveDevices.size)
+        ChildInternetOfficialHero(
+            guardedCount = effectiveDevices.size,
+            freshness = childGuardFreshnessLabel(
+                generatedAtEpoch = overview.generatedAtEpoch,
+                refreshing = overview.refreshing,
+                failed = overview.error.isNotBlank()
+            )
+        )
 
         MasterGuardCard(
             enabled = overview.masterEnabled,
+            busy = overview.pendingDeviceIds.isNotEmpty(),
+            hasPlans = overview.devices.any { it.plans.isNotEmpty() },
             onEnabledChange = repository::setMasterEnabled
         )
 
-        if (overview.error.isNotBlank() && effectiveDevices.isEmpty()) {
+        if (overview.error.isNotBlank()) {
+            // 失败只加一条横幅，下面那一屏缓存内容原样留着。
             LabCoreCard(contentPadding = PaddingValues(14.dp)) {
-                Text(overview.error, style = LabTypography.Supporting.copy(color = LabV2.Red))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        overview.error,
+                        style = LabTypography.Supporting.copy(color = LabV2.Red),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = repository::refreshOverview) { Text("重试") }
+                }
             }
         }
 
-        if (effectiveDevices.isEmpty()) {
+        if (overview.loading && effectiveDevices.isEmpty()) {
+            Text("正在读取路由器守护列表…", style = LabTypography.Supporting,
+                modifier = Modifier.padding(vertical = 16.dp))
+        } else if (effectiveDevices.isEmpty()) {
             LabCoreCard(contentPadding = PaddingValues(vertical = 32.dp)) {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(shape = CircleShape, color = LabV2.Field, modifier = Modifier.size(60.dp)) {
@@ -153,7 +182,8 @@ fun ChildInternetOverviewScreen(
             effectiveDevices.forEach { device ->
                 val matched = remember(device.summary.deviceId, devices) {
                     devices.firstOrNull { d ->
-                        device.summary.matchesChildGuardDevice(d.mac) || device.summary.matchesChildGuardDevice(d.name)
+                        cleanMac(d.mac).equals(cleanMac(device.summary.deviceId), ignoreCase = true) ||
+                            device.summary.macAddresses.any { cleanMac(it).equals(cleanMac(d.mac), ignoreCase = true) }
                     }
                 }
                 ProtectedDeviceCard(
@@ -169,10 +199,16 @@ fun ChildInternetOverviewScreen(
 }
 
 @Composable
-private fun ChildInternetOfficialHero(guardedCount: Int) {
+private fun ChildInternetOfficialHero(guardedCount: Int, freshness: String) {
+    // 时效标签的底色跟着状态走：失败才是红，同步中是灰蓝，正常是绿。
+    val tone = when {
+        freshness.startsWith("更新失败") -> Color(0xFFDC2626)
+        freshness.startsWith("等待") || freshness.contains("同步中") -> Color(0xFF64748B)
+        else -> Color(0xFF059669)
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         color = Color(0xFFEAF3FE),
         border = BorderStroke(1.dp, Color(0xFFDDEBFC))
     ) {
@@ -188,7 +224,7 @@ private fun ChildInternetOfficialHero(guardedCount: Int) {
                         )
                     )
                 )
-                .padding(horizontal = 18.dp, vertical = 18.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -197,82 +233,81 @@ private fun ChildInternetOfficialHero(guardedCount: Int) {
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        "儿童健康上网",
+                        "儿童上网守护",
                         style = LabTypography.PageTitle.copy(
-                            fontSize = 22.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF0F172A)
                         )
                     )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
                             Icons.Rounded.Face,
                             null,
                             tint = Color(0xFF64748B),
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(14.dp)
                         )
                         Text(
-                            "${guardedCount}台设备加入守护",
+                            "已守护 ${guardedCount} 台设备 · 保护健康上网",
                             style = LabTypography.Supporting.copy(
                                 color = Color(0xFF64748B),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal
                             )
                         )
                     }
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFF10B981).copy(alpha = 0.12f),
-                        border = BorderStroke(0.8.dp, Color(0xFF10B981).copy(alpha = 0.3f))
+                        shape = RoundedCornerShape(4.dp),
+                        color = tone.copy(alpha = 0.12f),
+                        border = BorderStroke(0.6.dp, tone.copy(alpha = 0.3f))
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            Box(Modifier.size(5.dp).clip(CircleShape).background(Color(0xFF10B981)))
+                            Box(Modifier.size(4.dp).clip(CircleShape).background(tone))
                             Text(
-                                "双栈 IPv6 降级审计已开启",
+                                freshness,
                                 style = LabTypography.Caption.copy(
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF047857),
-                                    fontWeight = FontWeight.SemiBold
+                                    fontSize = 10.5.sp,
+                                    color = tone,
+                                    fontWeight = FontWeight.Medium
                                 )
                             )
                         }
                     }
                 }
 
-
                 Box(
-                    modifier = Modifier.size(80.dp),
+                    modifier = Modifier.size(54.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Surface(
                         shape = CircleShape,
                         color = Color(0xFFD3E7FE).copy(alpha = 0.7f),
-                        modifier = Modifier.size(72.dp)
+                        modifier = Modifier.size(50.dp)
                     ) {}
                     Icon(
                         Icons.Rounded.LaptopMac,
                         null,
                         tint = Color(0xFF3B82F6),
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                     Surface(
                         shape = CircleShape,
                         color = Color(0xFFFFEDD5),
                         border = BorderStroke(1.5.dp, Color.White),
-                        modifier = Modifier.size(30.dp).align(Alignment.TopEnd)
+                        modifier = Modifier.size(22.dp).align(Alignment.TopEnd)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.ChildCare, null, tint = Color(0xFFEA580C), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.ChildCare, null, tint = Color(0xFFEA580C), modifier = Modifier.size(13.dp))
                         }
                     }
                 }
@@ -282,8 +317,7 @@ private fun ChildInternetOfficialHero(guardedCount: Int) {
 }
 
 @Composable
-private fun MasterGuardCard(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
-    var localChecked by remember(enabled) { mutableStateOf(enabled) }
+private fun MasterGuardCard(enabled: Boolean, busy: Boolean, hasPlans: Boolean, onEnabledChange: (Boolean) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -312,7 +346,7 @@ private fun MasterGuardCard(enabled: Boolean, onEnabledChange: (Boolean) -> Unit
                             color = Color(0xFF1E293B)
                         )
                     )
-                    if (localChecked) {
+                    if (enabled) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = Color(0xFF5B67EA)
@@ -336,11 +370,9 @@ private fun MasterGuardCard(enabled: Boolean, onEnabledChange: (Boolean) -> Unit
                     }
                 }
                 Switch(
-                    checked = localChecked,
-                    onCheckedChange = {
-                        localChecked = it
-                        onEnabledChange(it)
-                    },
+                    checked = enabled,
+                    enabled = !busy && hasPlans,
+                    onCheckedChange = onEnabledChange,
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = Color(0xFF16B9BE),
@@ -352,7 +384,7 @@ private fun MasterGuardCard(enabled: Boolean, onEnabledChange: (Boolean) -> Unit
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "关闭时，互联网使用将无限制，上网报告仍有统计",
+                if (hasPlans) "控制全部上网计划；一键禁网需单独恢复，统计不受影响" else "请先为设备创建上网计划，统计不受影响",
                 style = LabTypography.Supporting.copy(
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8)
@@ -374,7 +406,23 @@ private fun ProtectedDeviceCard(
     val displayName = matchedDevice?.let { deviceDisplayName(it) } ?: summary.name
     val iconKey = profile?.iconKey ?: summary.iconKey
     val accent = profile?.accent ?: Color(summary.accentArgb)
-    val isOnline = matchedDevice?.online ?: summary.isOnline
+    val presence = device.presence
+    // 在离线只认总览聚合那一份，聚合没回来才退回局域网列表的已知值。
+    val onlineKnown = presence != null || matchedDevice != null
+    val isOnline = presence?.online ?: matchedDevice?.online ?: false
+    val isBlocked = summary.status == GuardStatus.BLOCKED
+    val busy = repository.state.pendingDeviceIds.isNotEmpty()
+    var nowEpoch by remember { mutableStateOf(System.currentTimeMillis() / 1000L) }
+    LaunchedEffect(summary.blockedUntilEpoch, isBlocked) {
+        nowEpoch = System.currentTimeMillis() / 1000L
+        if (isBlocked && summary.blockedUntilEpoch > 1L) {
+            while (nowEpoch < summary.blockedUntilEpoch) {
+                kotlinx.coroutines.delay(15_000)
+                nowEpoch = System.currentTimeMillis() / 1000L
+            }
+            repository.refreshOverview()
+        }
+    }
 
     var showDelayDialog by remember { mutableStateOf(false) }
 
@@ -444,54 +492,73 @@ private fun ProtectedDeviceCard(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(11.dp)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = accent.copy(alpha = .08f),
                     border = BorderStroke(1.dp, Color(0xFFF1F5F9))
                 ) {
-                    Box(Modifier.padding(6.dp)) {
-                        LabMiniDeviceIcon(iconKey, accent, sizeDp = 46)
+                    Box(Modifier.padding(5.dp)) {
+                        LabMiniDeviceIcon(iconKey, accent, sizeDp = 40)
                     }
                 }
-                Spacer(Modifier.size(12.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         displayName,
                         style = LabTypography.CardTitle.copy(
-                            fontSize = 16.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E293B)
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val isTemporaryBlock = isBlocked && summary.blockedUntilEpoch > nowEpoch
+                    val remainingMins = if (isTemporaryBlock) {
+                        ((summary.blockedUntilEpoch - nowEpoch + 59) / 60).toInt().coerceAtLeast(1)
+                    } else 0
+
+                    val statusText = when {
+                        isTemporaryBlock -> "已禁网 · 剩余 $remainingMins 分钟"
+                        isBlocked && summary.blockedUntilEpoch > 1L -> "禁网已到期 · 正在确认状态"
+                        isBlocked -> "已一键禁网 · 手动恢复后可用"
+                        summary.status == GuardStatus.GUARDED -> "上网计划守护中"
+                        else -> "当前网络无限制"
+                    }
+                    val statusColor = when {
+                        isBlocked -> LabV2.Red
+                        summary.status == GuardStatus.GUARDED -> LabV2.Primary
+                        else -> Color(0xFF94A3B8)
+                    }
                     Text(
-                        "当前网络无限制",
+                        statusText,
                         style = LabTypography.Supporting.copy(
-                            fontSize = 13.sp,
-                            color = Color(0xFF94A3B8)
+                            fontSize = 12.sp,
+                            color = statusColor,
+                            fontWeight = if (isBlocked) FontWeight.SemiBold else FontWeight.Normal
                         )
                     )
                 }
-                if (isOnline) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFFEAF8EF)
-                    ) {
-                        Text(
-                            "正在上网",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            style = LabTypography.Caption.copy(
-                                color = Color(0xFF16A34A),
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 12.sp
-                            )
-                        )
-                    }
+                if (isBlocked) {
+                    val isTemporaryBlock = summary.blockedUntilEpoch > System.currentTimeMillis() / 1000L
+                    val remainingMins = if (isTemporaryBlock) {
+                        ((summary.blockedUntilEpoch - System.currentTimeMillis() / 1000L + 59) / 60).toInt().coerceAtLeast(1)
+                    } else 0
+                    PresenceBadge(
+                        if (isTemporaryBlock) "已禁网 ($remainingMins 分钟)" else "已禁网",
+                        Color(0xFFFEE2E2), Color(0xFFDC2626), bold = true
+                    )
+                } else if (presence?.activeNow == true) {
+                    // 「正在上网」只认当前/上一个自然分钟的真实业务流量。
+                    PresenceBadge("正在上网", Color(0xFFEAF8EF), Color(0xFF16A34A))
+                } else if (isOnline) {
+                    PresenceBadge("在线", Color(0xFFEFF6FF), Color(0xFF2563EB))
+                } else if (onlineKnown) {
+                    PresenceBadge("离线", Color(0xFFF1F5F9), Color(0xFF94A3B8))
                 }
             }
 
@@ -502,85 +569,100 @@ private fun ProtectedDeviceCard(
                 Surface(
                     shape = RoundedCornerShape(4.dp),
                     color = Color(0xFFEEF2FF),
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             Icons.Rounded.BarChart,
                             null,
                             tint = Color(0xFF6366F1),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                 }
-                Spacer(Modifier.size(7.dp))
+                Spacer(Modifier.size(6.dp))
+                // 今日数字归上网报告所有：null 是「还没统计」，0 才是「无上网记录」。
                 Text(
-                    "今日上网${formatChildDuration(summary.todayMinutes)}",
+                    childGuardTodayLine(device),
                     style = LabTypography.Body.copy(
-                        color = Color(0xFF64748B),
-                        fontSize = 13.sp
+                        color = if (device.usage?.onlineMinutes == null) Color(0xFF94A3B8) else Color(0xFF64748B),
+                        fontSize = 12.5.sp
                     ),
                     modifier = Modifier.weight(1f)
                 )
 
+                val btnBorderColor = if (isBlocked) Color(0xFF16A34A) else Color(0xFF16B9BE)
+                val btnTextColor = if (isBlocked) Color(0xFF16A34A) else Color(0xFF16B9BE)
+                val btnBgColor = if (isBlocked) Color(0xFFEAF8EF) else Color.Transparent
+
                 Surface(
                     onClick = { handleBlockToggle() },
+                    enabled = !busy,
                     shape = RoundedCornerShape(50),
-                    color = Color.Transparent,
-                    border = BorderStroke(1.dp, if (summary.status == GuardStatus.BLOCKED) Color(0xFF16A34A) else Color(0xFF16B9BE))
+                    color = btnBgColor,
+                    border = BorderStroke(1.dp, btnBorderColor)
                 ) {
                     Row(
-                        Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+                        Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
+                        Icon(
+                            if (isBlocked) Icons.Rounded.CheckCircleOutline else Icons.Rounded.Block,
+                            null,
+                            tint = btnTextColor,
+                            modifier = Modifier.size(13.dp)
+                        )
                         Text(
-                            if (summary.status == GuardStatus.BLOCKED) "恢复上网" else "一键禁网",
+                            if (busy) "正在同步…" else if (isBlocked) "恢复上网" else "一键禁网",
                             style = LabTypography.CompactButton.copy(
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
                             ),
-                            color = if (summary.status == GuardStatus.BLOCKED) Color(0xFF16A34A) else Color(0xFF16B9BE)
+                            color = btnTextColor
                         )
-                        if (summary.status != GuardStatus.BLOCKED) {
+                        if (!isBlocked) {
                             Icon(
                                 Icons.Rounded.MoreVert,
                                 null,
-                                tint = Color(0xFF16B9BE),
-                                modifier = Modifier.size(14.dp)
+                                tint = btnTextColor,
+                                modifier = Modifier.size(13.dp)
                             )
                         }
                     }
                 }
             }
 
-            if (summary.hasAttention || summary.lateNightMinutes > 0 || device.attentionEntries.any { !it.normal }) {
-                val durationText = formatLateNightDuration(summary.lateNightMinutes)
+            // 深夜提醒只认报告写出的 ALERT；未知/无记录都不是「一切正常」，也就都不报喜。
+            val lateNightMinutes = device.usage?.lateNightMinutes
+            if (device.usage?.attention == ChildAttentionState.ALERT && (lateNightMinutes ?: 0) > 0) {
+                val durationText = formatLateNightDuration(lateNightMinutes)
+                val attentionMessage = "【深夜上网】${childGuardUsageScopeLabel(device)}已累计$durationText"
                 Surface(
                     onClick = onOpen,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = Color(0xFFFFF5F5)
                 ) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Text(
                             "❗ 家长请注意",
                             style = LabTypography.Caption.copy(
                                 color = Color(0xFFEF4444),
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
+                                fontSize = 12.sp
                             )
                         )
                         Text(
-                            "今日【深夜上网】时长已累计$durationText",
+                            attentionMessage,
                             style = LabTypography.Caption.copy(
                                 color = Color(0xFF64748B),
-                                fontSize = 13.sp
+                                fontSize = 12.sp
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -592,14 +674,16 @@ private fun ProtectedDeviceCard(
     }
 }
 
-internal fun formatChildDuration(minutes: Int): String {
+/** 时长格式化一律接受 null：没统计过就是 `--`，绝不塌成 0分钟。 */
+internal fun formatChildDuration(minutes: Int?): String {
+    if (minutes == null) return "--"
     val hours = minutes / 60
     val remain = minutes % 60
     return if (hours > 0) "${hours}小时${remain}分钟" else "${remain}分钟"
 }
 
-internal fun formatLateNightDuration(minutes: Int): String {
-    if (minutes <= 0) return "43分钟"
+internal fun formatLateNightDuration(minutes: Int?): String {
+    if (minutes == null || minutes <= 0) return "0分钟"
     val hours = minutes / 60.0
     return if (hours >= 1.0) {
         if (minutes % 60 == 0) "${minutes / 60}小时"
@@ -608,3 +692,51 @@ internal fun formatLateNightDuration(minutes: Int): String {
         "${minutes}分钟"
     }
 }
+
+@Composable
+private fun PresenceBadge(label: String, container: Color, content: Color, bold: Boolean = false) {
+    Surface(shape = RoundedCornerShape(6.dp), color = container) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
+            style = LabTypography.Caption.copy(
+                color = content,
+                fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium,
+                fontSize = 11.5.sp
+            )
+        )
+    }
+}
+
+/** 报告覆盖的不是今天时，界面上必须写清是哪一天，不能拿旧数字当今日。 */
+internal fun childGuardUsageScopeLabel(device: ChildInternetDeviceState): String {
+    val date = device.usage?.date.orEmpty()
+    return if (date.isBlank() || date == childGuardStatisticsDate()) "今日" else date.takeLast(5)
+}
+
+/** 总览的今日行：未统计 → `--` + 数据同步中；0 分钟 → 无上网记录。 */
+internal fun childGuardTodayLine(device: ChildInternetDeviceState): String {
+    val scope = childGuardUsageScopeLabel(device)
+    val minutes = device.usage?.onlineMinutes
+    return when {
+        minutes == null -> "${scope}上网 -- · 数据同步中"
+        minutes == 0 -> "${scope}无上网记录"
+        else -> "${scope}上网 ${formatChildDuration(minutes)}"
+    }
+}
+
+/** 时效标签只讲 Hub 的 `generatedAt`，从不声称「实时」。 */
+internal fun childGuardFreshnessLabel(generatedAtEpoch: Long?, refreshing: Boolean, failed: Boolean): String {
+    val stamp = generatedAtEpoch?.takeIf { it > 0L }?.let(::formatChildGuardClock)
+    return when {
+        failed && stamp != null -> "更新失败 · 最后更新 $stamp"
+        failed -> "更新失败"
+        stamp == null -> if (refreshing) "数据同步中…" else "等待首次同步"
+        refreshing -> "更新于 $stamp · 同步中"
+        else -> "更新于 $stamp"
+    }
+}
+
+private fun formatChildGuardClock(epochSeconds: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(epochSeconds * 1000L))

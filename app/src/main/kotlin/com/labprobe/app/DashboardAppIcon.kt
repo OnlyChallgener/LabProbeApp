@@ -36,6 +36,9 @@ import java.util.concurrent.TimeUnit
 // Homarr Labs Dashboard Icons: Apache-2.0 collection, resolved by kebab-case key.
 private const val DASHBOARD_ICON_BASE = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png"
 
+/** Bundled artwork for apps no icon source covers (未识别应用图标). */
+private const val UNKNOWN_APP_ICON_KEY = "unknown"
+
 private val dashboardIconClient = OkHttpClient.Builder()
     .connectTimeout(3, TimeUnit.SECONDS)
     .readTimeout(4, TimeUnit.SECONDS)
@@ -54,7 +57,8 @@ private val avatarPalette = listOf(
  * Resolves app artwork without making the page depend on the network. Priority:
  * a verified feature-package PNG/WebP, then the icon pack bundled in APK assets
  * (Chinese apps missing from public icon CDNs), then the Dashboard Icons CDN,
- * and finally a synchronous letter avatar so no placeholder squares appear.
+ * then the bundled 未识别应用 artwork, and finally a letter avatar so no
+ * placeholder squares appear.
  */
 @Composable
 fun DashboardAppIcon(
@@ -71,8 +75,14 @@ fun DashboardAppIcon(
         value = withContext(Dispatchers.IO) {
             val local = loadLocalPackageIcon(localIconPath)
             val bundled = if (local == null) loadBundledIcon(context, iconKey) else null
-            val remote = if (local == null && bundled == null) loadDashboardIcon(iconKey) else null
-            (local ?: bundled ?: remote)?.also { dashboardIconMemoryCache[cacheKey] = it }
+            (local ?: bundled)?.also { dashboardIconMemoryCache[cacheKey] = it }
+                ?: run {
+                    // CDN 最长要等数秒，先把未识别图标显示出来，这期间不出现首字母。
+                    val unknown = loadBundledIcon(context, UNKNOWN_APP_ICON_KEY)
+                    value = unknown
+                    val remote = loadDashboardIcon(iconKey)
+                    remote?.also { dashboardIconMemoryCache[cacheKey] = it } ?: unknown
+                }
         }
     }
     val shape = RoundedCornerShape((sizeDp * .24f).dp)

@@ -68,29 +68,56 @@ data class ChildGuardRuntimeState(
     val boundPolicyIds: Set<String> = emptySet(),
     val effectPolicyId: String? = null,
     val effectPolicy: RuntimeEffectPolicy = RuntimeEffectPolicy.NONE,
-    val paused: Boolean = false
+    val paused: Boolean = false,
+    val blockedUntilEpoch: Long = 0L
 )
 
+/**
+ * 身份、守护状态与在线状态。统计数字一律不在这里：
+ * 今日分钟数、深夜分钟数、提醒只由上网报告写入（见 `ChildUsageStats`），
+ * 总览聚合只写 `presence`，两个写入者不会互相覆盖。
+ */
 data class ProtectedDeviceSummary(
     val deviceId: String,
     val name: String,
     val iconKey: String,
     val accentArgb: Int,
     val status: GuardStatus,
-    val todayMinutes: Int,
-    val hasAttention: Boolean,
     val appManagementSupported: Boolean = false,
     val experimentalAppControl: Boolean = false,
     /** Router UID and station MAC are not guaranteed to be the same value. */
     val macAddresses: Set<String> = emptySet(),
-    val isOnline: Boolean = true,
-    val lateNightMinutes: Int = 0
+    /** 在线 = 设备连着路由器；与「正在上网」是两回事。 */
+    val isOnline: Boolean = false,
+    val blockedUntilEpoch: Long = 0L
+)
+
+/** `/child-guard/overview` 独有的存在性字段，唯一写入者是总览聚合。 */
+data class ChildGuardPresence(
+    val online: Boolean,
+    /** 正在上网 = 当前或上一个自然分钟有真实业务流量；null = 服务器没说。 */
+    val activeNow: Boolean? = null,
+    val lastSeenAtEpoch: Long? = null,
+    val updatedAtEpoch: Long? = null
 )
 
 data class UsageBar(
     val label: String,
     val minutes: Int,
-    val entries: List<InternetUsageEntry> = emptyList()
+    val entries: List<InternetUsageEntry> = emptyList(),
+    val date: String = "",
+    val lateNightMinutes: Int? = null,
+    val lateNightWindows: List<LateNightWindow> = emptyList(),
+    val hasData: Boolean = false,
+    /** 小时桶才有值（-1 = 自然日柱），界面按它标注「N点」，不再自己补 24 格。 */
+    val hour: Int = -1
+)
+
+/** One concrete 00:00–06:00 usage window, for the 家长请注意 red ranges. */
+data class LateNightWindow(
+    val app: String,
+    val rangeText: String,
+    val minutes: Int
 )
 
 data class AppUsageSession(
@@ -106,30 +133,49 @@ data class InternetUsageEntry(
     val durationMinutes: Int,
     val timeRange: String,
     val count: Int,
-    val sessions: List<AppUsageSession> = emptyList()
+    val sessions: List<AppUsageSession> = emptyList(),
+    /** 该应用自己的小时分布（Hub `apps[].hourlyMinutes`）；缺字段就是空，不补零。 */
+    val hourlyMinutes: Map<Int, Int> = emptyMap()
 )
 
+/** 一台设备某一天的真实统计。唯一写入者是上网报告（`applyUsage`），总览只读不写。 */
+data class ChildUsageStats(
+    val date: String = "",
+    /** null = Hub 还没有这一天的统计（渲染 `--`）；0 = 真的 0 分钟（无上网记录）。 */
+    val onlineMinutes: Int? = null,
+    val lateNightMinutes: Int? = null,
+    val attention: ChildAttentionState = ChildAttentionState.UNKNOWN,
+    val hasData: Boolean = false,
+    val generatedAtEpoch: Long? = null,
+    val lastSampleAtEpoch: Long? = null,
+    val stale: Boolean = false
+)
+
+/** `totalMinutes` 为 null 表示 Hub 这一天没有统计，界面显示 `--`，不是 0分钟。 */
 data class InternetUsageSummary(
-    val totalMinutes: Int,
+    val totalMinutes: Int?,
     val bars: List<UsageBar>,
     val entries: List<InternetUsageEntry>
 )
+
+/** Hub 的 attention.state：`unknown` 与 `none` 绝不混同，前者只能显示数据同步中。 */
+enum class ChildAttentionState { NONE, NOTICE, ALERT, UNKNOWN }
 
 data class ParentAttentionEntry(
     val dayLabel: String,
     val date: String,
     val message: String,
-    val normal: Boolean
+    val normal: Boolean,
+    val hasData: Boolean = true,
+    val windows: List<LateNightWindow> = emptyList(),
+    val state: ChildAttentionState = ChildAttentionState.NONE
 )
 
+/** 设备总流量取自固件计数器，不是应用分类流量之和；Hub 不发 traffic 块时为 null。 */
 data class ChildDeviceUsageReport(
-    val date: String = "",
     val todayTxBytes: Long = 0L,
     val todayRxBytes: Long = 0L,
     val todayTotalBytes: Long = 0L,
-    val recentAvgTxRate: Long = 0L,
-    val recentAvgRxRate: Long = 0L,
-    val boundIps: List<String> = emptyList(),
     val daily: List<DailyUsageItem> = emptyList()
 )
 
@@ -145,19 +191,36 @@ data class ChildInternetDeviceState(
     val plan: DeviceGuardPlan,
     val plans: List<DeviceGuardPlan> = plan.takeIf { it.configured }?.let(::listOf) ?: emptyList(),
     val runtime: ChildGuardRuntimeState = ChildGuardRuntimeState(deviceId = summary.deviceId),
-    val todayUsage: InternetUsageSummary = InternetUsageSummary(0, emptyList(), emptyList()),
-    val recentUsage: InternetUsageSummary = InternetUsageSummary(0, emptyList(), emptyList()),
+    val todayUsage: InternetUsageSummary = InternetUsageSummary(null, emptyList(), emptyList()),
+    val recentUsage: InternetUsageSummary = InternetUsageSummary(null, emptyList(), emptyList()),
     val usageReport: ChildDeviceUsageReport? = null,
+    val usageSource: String = "",
+    /** 报告口径的今日统计；null = 本机这一天从没被统计过。 */
+    val usage: ChildUsageStats? = null,
+    /** 家长请注意：只有服务器逐日返回的记录，缺就是空列表。 */
     val attentionEntries: List<ParentAttentionEntry> = emptyList(),
-    val usageSource: String = ""
-)
+    /** 总览聚合写入的存在性快照，唯一写入者是 `/child-guard/overview`。 */
+    val presence: ChildGuardPresence? = null,
+    /** A usage refresh is in flight; the page keeps showing cached data meanwhile. */
+    val usageLoading: Boolean = false
+) {
+    /** 报告覆盖的那一天；没有报告就没有日期可谈。 */
+    val usageDate: String get() = usage?.date.orEmpty()
+    val usageHasData: Boolean get() = usage?.hasData == true
+}
 
 data class ChildInternetOverviewState(
     val masterEnabled: Boolean,
     val devices: List<ChildInternetDeviceState>,
     val capabilities: ChildGuardCapabilities = ChildGuardCapabilities(),
     val loading: Boolean = false,
-    val error: String = ""
+    val error: String = "",
+    val pendingDeviceIds: Set<String> = emptySet(),
+    /** 后台静默刷新中：页面保留原内容，只多一个「同步中」。 */
+    val refreshing: Boolean = false,
+    val generatedAtEpoch: Long? = null,
+    val lastSampleAtEpoch: Long? = null,
+    val stale: Boolean = false
 )
 
 /**
@@ -174,7 +237,7 @@ data class ChildGuardDeviceCandidate(
     val name: String = "",
     val deviceType: String = "",
     val manufacturer: String = "",
-    val online: Boolean = true,
+    val online: Boolean = false,
     val connectType: String = ""
 ) {
     val displayName: String

@@ -36,7 +36,8 @@ fun DeviceDetailScreen(
     onOpenChildInternet: () -> Unit,
     onOpenPortMap: () -> Unit,
     onOpenSsh: () -> Unit,
-    childInternetRepository: ChildInternetRepository? = null
+    childInternetRepository: ChildInternetRepository? = null,
+    onOpenChildInternetOverview: () -> Unit = onOpenChildInternet
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -201,23 +202,12 @@ fun DeviceDetailScreen(
         }
 
         val childState = childInternetRepository?.state?.devices?.firstOrNull {
-            it.summary.matchesChildGuardDevice(device.mac) || it.summary.matchesChildGuardDevice(device.name)
+            it.summary.matchesChildGuardDevice(device.mac)
         }
 
         Surface(
             onClick = {
-                if (childState == null && childInternetRepository != null) {
-                    childInternetRepository.addGuardDevice(device.mac, device.name) { result ->
-                        result.onSuccess {
-                            toast(context, "已加入儿童守护")
-                            onOpenChildInternet()
-                        }.onFailure {
-                            toast(context, it.message ?: "添加失败")
-                        }
-                    }
-                } else {
-                    onOpenChildInternet()
-                }
+                if (childState == null) onOpenChildInternetOverview() else onOpenChildInternet()
             },
             modifier = Modifier.fillMaxWidth(),
             shape = LabCoreSurface.CompactShape,
@@ -262,11 +252,9 @@ fun DeviceDetailScreen(
                         }
                     }
                     Text(
-                        if (childState != null) {
-                            "今日上网 ${formatChildDuration(childState.summary.todayMinutes)} · 点击管理计划与报告"
-                        } else {
-                            "设置允许上网时段、应用限制与活跃报告"
-                        },
+                        // 今日分钟数只有上网报告才有；措辞与总览同一套口径（-- / 无上网记录 / 时长）。
+                        if (childState != null) childGuardTodayLine(childState) + " · 点击管理计划与报告"
+                        else "设置允许上网时段、应用限制与活跃报告",
                         style = LabTypography.Supporting,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -274,6 +262,15 @@ fun DeviceDetailScreen(
                 }
                 if (childState == null) {
                     Surface(
+                        onClick = {
+                            childInternetRepository?.addGuardDevice(device.mac, device.name) { result ->
+                                result.onSuccess {
+                                    toast(context, "已加入儿童守护")
+                                    onOpenChildInternet()
+                                }.onFailure { toast(context, it.message ?: "添加失败") }
+                            }
+                        },
+                        enabled = childInternetRepository != null && childInternetRepository.state.pendingDeviceIds.isEmpty(),
                         shape = RoundedCornerShape(50),
                         color = LabV2.Cyan.copy(alpha = .12f)
                     ) {

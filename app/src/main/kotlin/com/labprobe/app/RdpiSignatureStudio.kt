@@ -57,39 +57,19 @@ data class RdpiCustomRule(
     val payloads: List<String>
 )
 
-private val DEFAULT_FALLBACK_TEMPLATE = """
+internal val DEFAULT_FALLBACK_TEMPLATE = """
 {
   "${'$'}schema": "labprobe-rdpi-v1",
-  "comment": "锐捷/Reyee RDPI 自定义应用特征包标准格式，适用于儿童上网与流量审计",
+  "comment": "安全示例：请替换为已验证的真实域名/特征。本地格式检查与模板不保证路由器加载或识别。",
   "app": {
     "index": "999-1-1-0",
-    "name": "自定义网游/新APP",
-    "category": "game",
-    "description": "基于 Wireshark/tcpdump 抓包提取的域名和握手特征",
+    "name": "自定义应用示例（请替换）",
+    "note": "仅保留域名占位符；请以路由器确认的真实特征替换后导入",
     "rules": [
       {
-        "protocol": "tcp",
+        "protocol": "host",
         "hosts": [
-          "*.customgame.com",
-          "login.customgame.cn"
-        ],
-        "payloads": [
-          {
-            "pos": 0,
-            "length": 4,
-            "payload": "47 41 4d 45"
-          }
-        ]
-      },
-      {
-        "protocol": "udp",
-        "hosts": [],
-        "payloads": [
-          {
-            "pos": 0,
-            "length": 2,
-            "payload": "ff ff"
-          }
+          "game.example.invalid"
         ]
       }
     ]
@@ -118,7 +98,7 @@ internal suspend fun fetchRdpiSummary(prefs: AppPrefs, routerId: String = "defau
             val rules = mutableListOf<RdpiCustomRule>()
             for (j in 0 until rulesArr.length()) {
                 val r = rulesArr.optJSONObject(j) ?: continue
-                val proto = r.optString("protocol", "any")
+                val proto = r.optString("protocol").ifBlank { "自动/未指定" }
                 val hosts = mutableListOf<String>()
                 val hArr = r.optJSONArray("hosts") ?: JSONArray()
                 for (k in 0 until hArr.length()) hosts.add(hArr.optString(k))
@@ -532,31 +512,14 @@ private fun RdpiImportDialog(
     var parsedIndex by remember { mutableStateOf<String?>(null) }
     var parsedRulesCount by remember { mutableStateOf(0) }
 
-    // Live validation
     LaunchedEffect(inputJson) {
-        try {
-            val root = JSONObject(inputJson.trim())
-            val app = if (root.has("app") && root.optJSONObject("app") != null) root.getJSONObject("app") else root
-            val idx = app.optString("index")
-            val name = app.optString("name")
-            val rules = app.optJSONArray("rules")
-            if (idx.isBlank() || !idx.matches(Regex("""^\d+-\d+-\d+-\d+$"""))) {
-                parseError = "索引格式错误，必须为 X-X-X-X (如 999-1-1-0)"
-                parsedName = null
-            } else if (name.isBlank()) {
-                parseError = "应用名称 (name) 不能为空"
-                parsedName = null
-            } else if (rules == null || rules.length() == 0) {
-                parseError = "rules 必须至少包含一条规则"
-                parsedName = null
-            } else {
-                parseError = null
-                parsedName = name
-                parsedIndex = idx
-                parsedRulesCount = rules.length()
-            }
-        } catch (e: Exception) {
-            parseError = "JSON 语法解析错误: ${e.localizedMessage}"
+        validateRdpiSignature(inputJson).onSuccess { validated ->
+            parseError = null
+            parsedName = validated.name
+            parsedIndex = validated.index
+            parsedRulesCount = validated.ruleCount
+        }.onFailure { error ->
+            parseError = "本地格式检查未通过: ${error.message}"
             parsedName = null
         }
     }
@@ -572,7 +535,7 @@ private fun RdpiImportDialog(
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 450.dp).verticalScroll(rememberScrollState())) {
                 Text(
-                    "粘贴抓包解包生成的标准 JSON，系统将自动校验并备份注入路由器：",
+                    "粘贴标准 JSON。这里只做格式检查；是否加载及实际识别结果仍须由路由器确认。",
                     style = LabTypography.Caption.copy(color = LabV2.InkMuted)
                 )
                 Spacer(Modifier.height(8.dp))
@@ -611,7 +574,7 @@ private fun RdpiImportDialog(
                         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.CheckCircle, null, tint = LabV2.Green, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("校验通过: [$parsedIndex] $parsedName (包含 $parsedRulesCount 条匹配规则)", style = LabTypography.Caption.copy(color = LabV2.Green, fontWeight = FontWeight.SemiBold))
+                            Text("本地格式检查通过: [$parsedIndex] $parsedName（$parsedRulesCount 条规则；路由器尚待确认）", style = LabTypography.Caption.copy(color = LabV2.Green, fontWeight = FontWeight.SemiBold))
                         }
                     }
                 }

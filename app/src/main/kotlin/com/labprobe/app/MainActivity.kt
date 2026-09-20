@@ -374,8 +374,8 @@ class AppPrefs(context: Context) {
         }
         if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply()
     }
-    var hub: String get() = normalizeHubAddressForDisplay(sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
-        set(v) = sp.edit().putString("hub", normalizeHubAddressForDisplay(v)).apply()
+    var hub: String get() = normalizeHubBaseUrl(sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+        set(v) = sp.edit().putString("hub", normalizeHubBaseUrl(v)).apply()
     var token: String get() = secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
         set(v) = secureTokenStore.set(v)
     var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
@@ -420,6 +420,9 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("webhook_port_overrides_v1", v).apply()
     var webhookRemarkOverridesJson: String get() = sp.getString("webhook_remark_overrides_v1", "{}") ?: "{}"
         set(v) = sp.edit().putString("webhook_remark_overrides_v1", v).apply()
+    /** Last good 儿童上网 usage payload per device uid, so the page opens with data instead of blank. */
+    var childGuardUsageCacheJson: String get() = sp.getString("child_guard_usage_cache_v1", "{}") ?: "{}"
+        set(v) = sp.edit().putString("child_guard_usage_cache_v1", v).apply()
 
     fun getWebhookPortOverride(key: String): String {
         return try {
@@ -479,25 +482,25 @@ class AppPrefs(context: Context) {
     private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(historyLimit(key)).joinToString("\n")).apply() }
     fun history(key: String): List<String> {
         val values = getHistory("history_" + key)
-        return if (key.equals("hub", true)) values.map(::normalizeHubAddressForDisplay).filter(String::isNotBlank).distinct() else values
+        return if (key.equals("hub", true)) values.map(::normalizeHubBaseUrl).filter(String::isNotBlank).distinct() else values
     }
     fun addHistory(key: String, value: String) {
-        val v = if (key.equals("hub", true)) normalizeHubAddressForDisplay(value) else value.trim()
+        val v = if (key.equals("hub", true)) normalizeHubBaseUrl(value) else value.trim()
         if (v.isBlank()) return
         val old = getHistory("history_" + key)
         val filtered = if (key.equals("hub", true)) {
-            old.filter { normalizeHubAddressForDisplay(it) != v }
+            old.filter { normalizeHubBaseUrl(it) != v }
         } else {
             old.filter { it != v }
         }
         putHistory("history_" + key, listOf(v) + filtered)
     }
     fun removeHistory(key: String, value: String) {
-        val target = if (key.equals("hub", true)) normalizeHubAddressForDisplay(value) else value
+        val target = if (key.equals("hub", true)) normalizeHubBaseUrl(value) else value
         putHistory(
             "history_" + key,
             getHistory("history_" + key).filter {
-                if (key.equals("hub", true)) normalizeHubAddressForDisplay(it) != target else it != target
+                if (key.equals("hub", true)) normalizeHubBaseUrl(it) != target else it != target
             }
         )
     }
@@ -575,8 +578,8 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putLong("sync_revision_v1", v.coerceAtLeast(0L)).apply()
     var lastFullSyncAt: Long get() = sp.getLong("last_full_sync_at_v1", 0L)
         set(v) = sp.edit().putLong("last_full_sync_at_v1", v.coerceAtLeast(0L)).apply()
-    var syncHub: String get() = normalizeHubAddressForDisplay(sp.getString("sync_hub_v1", "") ?: "")
-        set(v) = sp.edit().putString("sync_hub_v1", normalizeHubAddressForDisplay(v)).apply()
+    var syncHub: String get() = normalizeHubBaseUrl(sp.getString("sync_hub_v1", "") ?: "")
+        set(v) = sp.edit().putString("sync_hub_v1", normalizeHubBaseUrl(v)).apply()
 
     var pingHost: String get() = sp.getString("ping_host", "223.5.5.5") ?: "223.5.5.5"
         set(v) = sp.edit().putString("ping_host", v).apply()
@@ -2098,6 +2101,8 @@ fun LabProbeApp(prefs: AppPrefs) {
     var route by rememberSaveable { mutableStateOf("home") }
     var selectedDeviceMac by rememberSaveable { mutableStateOf<String?>(null) }
     var childInternetReturnRoute by rememberSaveable { mutableStateOf("device_detail") }
+    var childInternetOverviewReturnRoute by rememberSaveable { mutableStateOf("devices") }
+    var childInternetOverviewOriginMac by rememberSaveable { mutableStateOf<String?>(null) }
     var toolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var nestedToolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var settingsReturnRoute by rememberSaveable { mutableStateOf("favorites") }
@@ -2390,6 +2395,8 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
             if (target == "child_internet_overview" && route != "device_detail") {
                 childInternetReturnRoute = if (route in mainRoutes) route else "devices"
+                childInternetOverviewReturnRoute = childInternetReturnRoute
+                childInternetOverviewOriginMac = null
             }
             if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
@@ -2429,7 +2436,10 @@ fun LabProbeApp(prefs: AppPrefs) {
                     "devices" -> "home"
                     "device_traffic" -> "devices"
                     "device_detail" -> "devices"
-                    "child_internet_overview" -> "devices"
+                    "child_internet_overview" -> {
+                        childInternetOverviewOriginMac?.let { selectedDeviceMac = it }
+                        childInternetOverviewReturnRoute
+                    }
                     "child_internet_device" -> childInternetReturnRoute
                     "child_internet_picker" -> "child_internet_overview"
                     "settings" -> settingsReturnRoute
@@ -2547,6 +2557,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                             deviceMac = selectedDeviceMac,
                             onBack = { route = "devices" },
                             onOpenChildInternet = { childInternetReturnRoute = "device_detail"; route = "child_internet_device" },
+                            onOpenChildInternetOverview = {
+                                childInternetOverviewOriginMac = selectedDeviceMac
+                                childInternetOverviewReturnRoute = "device_detail"
+                                route = "child_internet_overview"
+                            },
                             onOpenPortMap = { toolReturnRoute = "device_detail"; route = "tool_portmap" },
                             onOpenSsh = { toolReturnRoute = "device_detail"; route = "tool_ssh" },
                             childInternetRepository = childInternetRepository
@@ -2556,7 +2571,10 @@ fun LabProbeApp(prefs: AppPrefs) {
                                 mergeSharedDeviceState(state.offlineDevices + state.devices, state.onlineDevices)
                             }
                             ChildInternetOverviewScreen(
-                                onBack = { route = childInternetReturnRoute },
+                                onBack = {
+                                    childInternetOverviewOriginMac?.let { selectedDeviceMac = it }
+                                    route = childInternetOverviewReturnRoute
+                                },
                                 repository = childInternetRepository,
                                 devices = allDevices,
                                 onAddDevice = { route = "child_internet_picker" },
@@ -11396,10 +11414,11 @@ fun SettingsScreen(
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                val cleanHub = normalizeHubAddressForDisplay(hub)
+                val cleanHub = normalizeHubBaseUrl(hub)
+                val displayHub = normalizeHubAddressForDisplay(cleanHub)
                 val cleanAppToken = appToken.trim()
                 val connectionChanged = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
-                hub = cleanHub
+                hub = displayHub
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
@@ -11425,10 +11444,11 @@ fun SettingsScreen(
                 Icon(Icons.Rounded.Save, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text(if (routerConfigSaving) "保存中" else "保存设置", fontSize = 11.5.sp, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Button(onClick = {
-                val cleanHub = normalizeHubAddressForDisplay(hub)
+                val cleanHub = normalizeHubBaseUrl(hub)
+                val displayHub = normalizeHubAddressForDisplay(cleanHub)
                 val cleanAppToken = appToken.trim()
                 val changed = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
-                hub = cleanHub
+                hub = displayHub
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
@@ -11690,12 +11710,17 @@ class HubApi(private val prefs: AppPrefs) {
             }
             if (!response.isSuccessful) {
                 val serverMsg = runCatching {
-                    JSONObject(text).let { root -> root.optString("message").ifBlank { root.optString("error") } }
+                    JSONObject(text).let { root ->
+                        root.optString("error").ifBlank { root.optString("message") }.ifBlank { root.optString("errorCode") }
+                    }
                 }.getOrNull()?.takeIf { it.isNotBlank() }
                 if (serverMsg != null) {
                     throw HubHttpException(response.code, serverMsg)
                 }
-                if (request.url.encodedPath.contains("/api/router/") && !request.url.encodedPath.contains("/config")) {
+                if (request.url.encodedPath.contains("/api/router/") &&
+                    !request.url.encodedPath.contains("/config") &&
+                    !request.url.encodedPath.contains("/child-guard")
+                ) {
                     throw RouterStatusUnavailableException()
                 }
                 throw HubHttpException(response.code, "HTTP ${response.code}: $text")
@@ -11714,6 +11739,7 @@ class HubApi(private val prefs: AppPrefs) {
 
     private fun routerApiException(path: String, text: String): RuntimeException? {
         if (!path.contains("/api/router")) return null
+        if (path.contains("/api/router/child-guard")) return null
         val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
         if (root.optBoolean("ok", false)) return null
         val code = root.optString("error").ifBlank { root.optString("errorCode") }.uppercase(Locale.ROOT)

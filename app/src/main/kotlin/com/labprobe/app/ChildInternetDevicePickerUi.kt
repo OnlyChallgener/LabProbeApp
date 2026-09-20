@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * "选择要管理的设备"页面 —— 对应官方 APP 加入/移除守护设备的入口。
@@ -62,23 +63,63 @@ fun ChildInternetDevicePickerScreen(
 ) {
     val context = LocalContext.current
     val initialCandidates = remember(devices, repository.state.devices) {
-        val guardedMacs = repository.state.devices.flatMap { it.summary.macAddresses }.map(::cleanMac).toSet()
-        devices.map { d ->
-            val isGuarded = guardedMacs.contains(cleanMac(d.mac)) || repository.state.devices.any { it.summary.matchesChildGuardDevice(d.mac) || it.summary.matchesChildGuardDevice(d.name) }
-            val matchedGuarded = repository.state.devices.firstOrNull { it.summary.matchesChildGuardDevice(d.mac) || it.summary.matchesChildGuardDevice(d.name) }
-            ChildGuardDeviceCandidate(
-                mac = d.mac,
-                ip = d.ip,
-                hostname = d.hostName,
-                guarded = isGuarded,
-                uid = matchedGuarded?.summary?.deviceId.orEmpty(),
-                name = deviceDisplayName(d),
-                deviceType = d.devType,
-                manufacturer = d.manufacture,
-                online = d.online,
-                connectType = d.connectType
+        val guardedList = repository.state.devices
+        val guardedMacs = guardedList.flatMap { it.summary.macAddresses }.map { cleanMac(it).lowercase() }.toSet()
+        val guardedUids = guardedList.map { childGuardDeviceKey(it.summary.deviceId) }.toSet()
+
+        val dedupedDevices = devices.filter { it.mac.isNotBlank() }.distinctBy { cleanMac(it.mac).lowercase() }
+        val result = mutableListOf<ChildGuardDeviceCandidate>()
+        val seenMacs = mutableSetOf<String>()
+
+        dedupedDevices.forEach { d ->
+            val clean = cleanMac(d.mac).lowercase()
+            if (clean.isBlank() || seenMacs.contains(clean)) return@forEach
+            seenMacs.add(clean)
+
+            val matchedGuarded = guardedList.firstOrNull { dev ->
+                dev.summary.macAddresses.any { cleanMac(it).equals(clean, ignoreCase = true) } ||
+                    cleanMac(dev.summary.deviceId).equals(clean, ignoreCase = true)
+            }
+            val isGuarded = guardedMacs.contains(clean) || matchedGuarded != null
+            val uid = matchedGuarded?.summary?.deviceId.orEmpty()
+            result.add(
+                ChildGuardDeviceCandidate(
+                    mac = d.mac,
+                    ip = d.ip,
+                    hostname = d.hostName,
+                    guarded = isGuarded,
+                    uid = uid,
+                    name = deviceDisplayName(d),
+                    deviceType = d.devType,
+                    manufacturer = d.manufacture,
+                    online = d.online,
+                    connectType = d.connectType
+                )
             )
         }
+
+        guardedList.forEach { dev ->
+            val mac = dev.summary.macAddresses.firstOrNull() ?: dev.summary.deviceId
+            val clean = cleanMac(mac).lowercase()
+            if (clean.isNotBlank() && !seenMacs.contains(clean)) {
+                seenMacs.add(clean)
+                result.add(
+                    ChildGuardDeviceCandidate(
+                        mac = mac,
+                        ip = "",
+                        hostname = dev.summary.name,
+                        guarded = true,
+                        uid = dev.summary.deviceId,
+                        name = dev.summary.name,
+                        deviceType = dev.summary.iconKey,
+                        manufacturer = "",
+                        online = dev.summary.isOnline,
+                        connectType = ""
+                    )
+                )
+            }
+        }
+        result
     }
     var candidates by remember(initialCandidates) { mutableStateOf(initialCandidates) }
     var loading by remember { mutableStateOf(initialCandidates.isEmpty()) }
@@ -93,17 +134,92 @@ fun ChildInternetDevicePickerScreen(
         repository.loadCandidates { result ->
             loading = false
             result.onSuccess { remoteCandidates ->
-                val merged = remoteCandidates.map { rc ->
-                    val matched = devices.firstOrNull { cleanMac(it.mac) == cleanMac(rc.mac) }
+                val guardedList = repository.state.devices
+                val guardedMacs = guardedList.flatMap { it.summary.macAddresses }.map { cleanMac(it).lowercase() }.toSet()
+                val guardedUids = guardedList.map { childGuardDeviceKey(it.summary.deviceId) }.toSet()
+                val dedupedDevices = devices.filter { it.mac.isNotBlank() }.distinctBy { cleanMac(it.mac).lowercase() }
+
+                val seenMacs = mutableSetOf<String>()
+                val merged = mutableListOf<ChildGuardDeviceCandidate>()
+
+                remoteCandidates.forEach { rc ->
+                    val clean = cleanMac(rc.mac).lowercase()
+                    if (clean.isBlank() || seenMacs.contains(clean)) return@forEach
+                    seenMacs.add(clean)
+
+                    val matched = dedupedDevices.firstOrNull { cleanMac(it.mac).equals(clean, ignoreCase = true) }
+                    val matchedGuarded = guardedList.firstOrNull { dev ->
+                        dev.summary.macAddresses.any { cleanMac(it).equals(clean, ignoreCase = true) } ||
+                            sameChildGuardDevice(dev.summary.deviceId, rc.uid)
+                    }
+                    val isGuarded = rc.guarded || guardedMacs.contains(clean) || (rc.uid.isNotBlank() && guardedUids.contains(childGuardDeviceKey(rc.uid))) || matchedGuarded != null
+                    val resolvedUid = matchedGuarded?.summary?.deviceId?.takeIf { it.isNotBlank() } ?: rc.uid
+
                     if (matched != null) {
-                        rc.copy(
-                            name = deviceDisplayName(matched).ifBlank { rc.name },
-                            manufacturer = matched.manufacture.ifBlank { rc.manufacturer },
-                            deviceType = matched.devType.ifBlank { rc.deviceType },
-                            online = matched.online
+                        merged.add(
+                            rc.copy(
+                                guarded = isGuarded,
+                                uid = resolvedUid,
+                                name = deviceDisplayName(matched).ifBlank { rc.name },
+                                manufacturer = matched.manufacture.ifBlank { rc.manufacturer },
+                                deviceType = matched.devType.ifBlank { rc.deviceType },
+                                online = matched.online
+                            )
                         )
-                    } else rc
+                    } else {
+                        merged.add(rc.copy(guarded = isGuarded, uid = resolvedUid))
+                    }
                 }
+
+                dedupedDevices.forEach { d ->
+                    val clean = cleanMac(d.mac).lowercase()
+                    if (clean.isBlank() || seenMacs.contains(clean)) return@forEach
+                    seenMacs.add(clean)
+
+                    val matchedGuarded = guardedList.firstOrNull { dev ->
+                        dev.summary.macAddresses.any { cleanMac(it).equals(clean, ignoreCase = true) } ||
+                            cleanMac(dev.summary.deviceId).equals(clean, ignoreCase = true)
+                    }
+                    val isGuarded = guardedMacs.contains(clean) || matchedGuarded != null
+                    val uid = matchedGuarded?.summary?.deviceId.orEmpty()
+                    merged.add(
+                        ChildGuardDeviceCandidate(
+                            mac = d.mac,
+                            ip = d.ip,
+                            hostname = d.hostName,
+                            guarded = isGuarded,
+                            uid = uid,
+                            name = deviceDisplayName(d),
+                            deviceType = d.devType,
+                            manufacturer = d.manufacture,
+                            online = d.online,
+                            connectType = d.connectType
+                        )
+                    )
+                }
+
+                guardedList.forEach { dev ->
+                    val mac = dev.summary.macAddresses.firstOrNull() ?: dev.summary.deviceId
+                    val clean = cleanMac(mac).lowercase()
+                    if (clean.isNotBlank() && !seenMacs.contains(clean)) {
+                        seenMacs.add(clean)
+                        merged.add(
+                            ChildGuardDeviceCandidate(
+                                mac = mac,
+                                ip = "",
+                                hostname = dev.summary.name,
+                                guarded = true,
+                                uid = dev.summary.deviceId,
+                                name = dev.summary.name,
+                                deviceType = dev.summary.iconKey,
+                                manufacturer = "",
+                                online = dev.summary.isOnline,
+                                connectType = ""
+                            )
+                        )
+                    }
+                }
+
                 candidates = merged
             }.onFailure { if (candidates.isEmpty()) error = it.message ?: "加载设备失败" }
         }
@@ -126,23 +242,27 @@ fun ChildInternetDevicePickerScreen(
     }
 
     fun commitSelection() {
-        if (busy || selectable.isEmpty()) return
+        if (busy || repository.state.pendingDeviceIds.isNotEmpty() || selectable.isEmpty()) return
         busy = true
-        var remaining = selectable.size
-        var failures = 0
-        selectable.forEach { candidate ->
+        val selected = selectable.toList()
+        val failed = arrayListOf<String>()
+        fun addNext(index: Int) {
+            if (index >= selected.size) {
+                busy = false
+                selectedMacs = failed
+                toast(context, if (failed.isEmpty()) "已加入 ${selected.size} 台设备" else "${failed.size} 台设备加入失败，请重试")
+                reload()
+                return
+            }
+            val candidate = selected[index]
             val matched = devices.firstOrNull { cleanMac(it.mac) == cleanMac(candidate.mac) }
             val name = matched?.let { deviceDisplayName(it) } ?: candidate.displayName
             repository.addGuardDevice(candidate.mac, name) { result ->
-                if (result.isFailure) failures++
-                if (--remaining == 0) {
-                    busy = false
-                    selectedMacs = arrayListOf()
-                    toast(context, if (failures == 0) "已加入 ${selectable.size} 台设备" else "部分设备加入失败，请重试")
-                    reload()
-                }
+                if (result.isFailure) failed.add(candidate.mac)
+                addNext(index + 1)
             }
         }
+        addNext(0)
     }
 
     fun removeDevice(candidate: ChildGuardDeviceCandidate) {
@@ -344,7 +464,12 @@ private fun CandidateDeviceRow(
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(displayName, style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(displayName, style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (candidate.mac.length >= 5) {
+                        Text("(${candidate.mac.takeLast(5).uppercase()})", style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontSize = 11.sp))
+                    }
+                }
                 if (candidate.guarded) {
                     Surface(shape = RoundedCornerShape(20.dp), color = LabV2.Green.copy(alpha = .10f)) {
                         Row(

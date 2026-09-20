@@ -3,12 +3,10 @@ package com.labprobe.app
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -16,10 +14,19 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 interface ChildInternetRepository {
     val state: ChildInternetOverviewState
+    /** 进入页面 / 20 秒轮询：只读 Hub 已经算好的聚合，绝不要求路由器重扫。 */
+    fun refreshOverview()
+    /** 把上次成功抓取的持久缓存立刻铺回界面，网络回来后就地替换。 */
+    fun hydrateFromCache()
+    /** 重量级：逐设备 plans/runtime/usage 扇出，只留给用户主动要求细节的动作。 */
     fun refresh()
     fun ensureDevice(deviceId: String, name: String, iconKey: String, accentArgb: Int)
     fun setMasterEnabled(enabled: Boolean)
@@ -30,291 +37,555 @@ interface ChildInternetRepository {
     fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit)
     fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit)
     fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit)
-    /** Fetch the official-style 上网统计 for one device (today + the 10-day window). */
+    /** 单台设备的官方式上网报告：先回放缓存，再后台抓取。 */
     fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit)
 }
 
-/** Production repository. Failure stays visible; it never substitutes preview data. */
-class RealChildInternetRepository(
-    private val prefs: AppPrefs,
-    private val routerId: String = "default",
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-) : ChildInternetRepository {
-    private data class DeviceHint(
-        val uid: String,
-        val mac: String,
-        val name: String,
-        val iconKey: String,
-        val accentArgb: Int
-    )
+/** 唯一的 Hub 传输出口；注入它才能在没有 Context 的单元测试里驱动整个仓库。 */
+internal fun interface ChildGuardTransport {
+    fun request(path: String, method: String, body: JSONObject?): JSONObject
+}
 
-    private val deviceHints = mutableMapOf<String, DeviceHint>()
-    override var state by mutableStateOf(ChildInternetOverviewState(masterEnabled = true, devices = emptyList(), loading = true))
+private class HubChildGuardTransport(private val prefs: AppPrefs) : ChildGuardTransport {
+    /** 与旧实现一致：每次请求新建 HubApi，Hub 地址与 DNS 改动即时生效。 */
+    override fun request(path: String, method: String, body: JSONObject?): JSONObject =
+        HubApi(prefs).requestJson(path, method, body)
+}
+
+/**
+ * 儿童守护聚合缓存。键一律是 `routerId|设备|统计日`，日期进键就保证
+ * 新的一天不会把昨天的数字当成今天的实况；值是 Hub 原样返回的 JSON。
+ */
+internal interface ChildGuardCache {
+    fun read(key: String): String?
+    fun write(key: String, value: String)
+    fun keys(): List<String>
+}
+
+internal fun childGuardUsageCacheKey(routerId: String, deviceKey: String, date: String): String =
+    "$routerId|$deviceKey|$date"
+
+internal fun childGuardOverviewCacheKey(routerId: String, date: String): String =
+    "$routerId|${CHILD_GUARD_OVERVIEW_SEGMENT}|$date"
+
+internal const val CHILD_GUARD_OVERVIEW_SEGMENT = "overview"
+
+/** 缓存只保留统计窗口内的日期，超出的整条丢掉，防止 SharedPreferences 无限膨胀。 */
+internal fun childGuardCacheKeyIsExpired(key: String, today: String, keepDays: Int): Boolean {
+    val date = key.lastDatePart() ?: return false
+    if (date == today) return false
+    val day = runCatching { LocalDate.parse(date) }.getOrNull() ?: return false
+    val limit = runCatching { LocalDate.parse(today) }.getOrNull() ?: return false
+    return day.isBefore(limit.minusDays((keepDays + 1).coerceAtLeast(1).toLong()))
+}
+
+/** 键的末段必须是 `YYYY-MM-DD`；否则这条不是「某一天」的报告缓存。 */
+private val CHILD_GUARD_DATE_SEGMENT = Regex("""\d{4}-\d{2}-\d{2}""")
+
+internal fun String.lastDatePart(): String? = substringAfterLast('|').takeIf { CHILD_GUARD_DATE_SEGMENT.matches(it) }
+
+private class SharedChildGuardCache(private val prefs: AppPrefs) : ChildGuardCache {
+    override fun read(key: String): String? = runCatching {
+        JSONObject(prefs.childGuardUsageCacheJson).optString(key).takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    override fun write(key: String, value: String) {
+        val today = childGuardStatisticsDate()
+        val store = runCatching { JSONObject(prefs.childGuardUsageCacheJson) }.getOrElse { JSONObject() }
+        store.put(key, value)
+        JSONArray(store.names() ?: JSONArray()).let { names ->
+            (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
+        }.forEach { stored ->
+            if (childGuardCacheKeyIsExpired(stored, today, USAGE_REPORT_WINDOW_DAYS)) store.remove(stored)
+        }
+        prefs.childGuardUsageCacheJson = store.toString()
+    }
+
+    override fun keys(): List<String> = runCatching {
+        val names = JSONObject(prefs.childGuardUsageCacheJson).names() ?: JSONArray()
+        (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
+    }.getOrDefault(emptyList())
+}
+
+/** Production repository: only confirmed router members and measured usage are shown. */
+class RealChildInternetRepository internal constructor(
+    private val routerId: String,
+    private val transport: ChildGuardTransport,
+    private val cache: ChildGuardCache,
+    private val scope: CoroutineScope
+) : ChildInternetRepository {
+    constructor(
+        prefs: AppPrefs,
+        routerId: String = "default",
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    ) : this(routerId, HubChildGuardTransport(prefs), SharedChildGuardCache(prefs), scope)
+
+    private val api get() = ChildGuardHubApi(transport, routerId)
+    private var refreshJob: kotlinx.coroutines.Job? = null
+    private var overviewJob: kotlinx.coroutines.Job? = null
+    private var revision = 0L
+    private val pending = mutableSetOf<String>()
+
+    /** 缓存键快照，用来判断某天是否已经抓过报告，省掉一次磁盘扫。 */
+    private var cacheKeys: List<String> = emptyList()
+
+    /** 补抓只发生一次/设备/统计日，轮询不会把它变成隐性轮播。 */
+    private val usageBackfilled = mutableSetOf<String>()
+
+    override var state by mutableStateOf(ChildInternetOverviewState(false, emptyList(), loading = true))
         private set
 
-    override fun refresh() = launch(
-        before = { state = state.copy(loading = state.devices.isEmpty(), error = "") },
-        request = {
-            val api = ChildGuardHubApi(HubApi(prefs), routerId)
-            val caps = runCatching { api.capabilities() }.getOrDefault(state.capabilities)
-            val rawDevices = runCatching { api.devices() }.getOrDefault(emptyList())
-
-            coroutineScope {
-                val deferreds = rawDevices.map { device ->
-                    async(Dispatchers.IO) {
-                        val plans = runCatching { api.plans(device.summary.deviceId) }.getOrDefault(emptyList())
-                        val runtime = runCatching { api.runtime(device.summary.deviceId) }.getOrDefault(ChildGuardRuntimeState(deviceId = device.summary.deviceId))
-                        val usage = if (caps.childGuard) {
-                            runCatching {
-                                api.usageReport(
-                                    uid = device.summary.deviceId,
-                                    macs = device.summary.macAddresses,
-                                    days = USAGE_REPORT_WINDOW_DAYS
-                                )
-                            }.getOrNull()
-                        } else null
-                        val usageReport = runCatching { parseChildGuardUsage(api.usage(device.summary.deviceId)) }.getOrNull()
-                        val hint = deviceHints.values.firstOrNull { device.summary.matchesChildGuardDevice(it.uid) || device.summary.matchesChildGuardDevice(it.mac) }
-                        val resolvedIconKey = hint?.iconKey ?: device.summary.iconKey
-                        val todayMinutes = usage?.today?.totalMinutes ?: (if (usageReport != null && usageReport.todayTotalBytes > 0L) {
-                            (usageReport.todayTotalBytes / (1024L * 512L)).toInt().coerceIn(1, 1440)
-                        } else device.summary.todayMinutes)
-
-                        val todayBars = usage?.today?.bars ?: (0..23).map { hour ->
-                            val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-                            val mins = if (todayMinutes > 0 && hour <= currentHour) {
-                                val factor = when {
-                                    hour in 23..24 || hour in 0..5 -> 0.08
-                                    hour in 7..8 -> 0.15
-                                    hour in 12..13 -> 0.2
-                                    hour in 18..21 -> 0.35
-                                    else -> 0.05
-                                }
-                                ((todayMinutes * factor) / 3).toInt().coerceAtLeast(1)
-                            } else 0
-                            UsageBar("${hour}点", mins)
-                        }
-
-                        val dailyBars = usage?.recent?.bars ?: buildDefaultDailyBars(usageReport)
-                        val todayEntries = usage?.today?.entries ?: (dailyBars.lastOrNull()?.entries ?: emptyList())
-                        val todayUsage = usage?.today ?: InternetUsageSummary(
-                            todayMinutes,
-                            todayBars,
-                            if (todayMinutes > 0) device.todayUsage.entries.ifEmpty { todayEntries } else todayEntries
-                        )
-
-                        val recentUsage = usage?.recent ?: InternetUsageSummary(
-                            dailyBars.sumOf { it.minutes },
-                            dailyBars,
-                            dailyBars.getOrNull(1)?.entries ?: todayEntries
-                        )
-
-                        val lateNightMinutes = todayBars.filterIndexed { index, _ -> index in 23..24 || index in 0..5 }.sumOf { it.minutes }
-                        val hasLateNight = lateNightMinutes > 0
-
-                        device.copy(
-                            summary = device.summary.copy(
-                                name = device.summary.name.ifBlank { hint?.name.orEmpty() },
-                                iconKey = resolvedIconKey,
-                                accentArgb = hint?.accentArgb ?: device.summary.accentArgb,
-                                todayMinutes = todayMinutes,
-                                hasAttention = device.summary.hasAttention || hasLateNight || (usage?.today?.totalMinutes ?: 0) > 0,
-                                lateNightMinutes = lateNightMinutes,
-                                isOnline = device.summary.isOnline,
-                                status = when {
-                                    device.summary.status == GuardStatus.BLOCKED || runtime.paused -> GuardStatus.BLOCKED
-                                    plans.any { it.enabled } -> GuardStatus.GUARDED
-                                    else -> GuardStatus.UNRESTRICTED
-                                },
-                                appManagementSupported = caps.appManagementSupported,
-                                experimentalAppControl = caps.appManagementSupported && isExperimentalAppControlDevice(resolvedIconKey)
-                            ),
-                            plan = plans.firstOrNull() ?: DeviceGuardPlan(categories = childInternetCatalogCategories()),
-                            plans = plans,
-                            runtime = runtime,
-                            usageReport = usageReport,
-                            todayUsage = todayUsage,
-                            recentUsage = recentUsage,
-                            usageSource = usage?.source.orEmpty()
-                        )
-                    }
-                }
-                val populated = deferreds.awaitAll()
-                val selectedDeviceShells = deviceHints.values
-                    .filterNot { hint -> populated.any { it.summary.matchesChildGuardDevice(hint.uid) || it.summary.matchesChildGuardDevice(hint.mac) } }
-                    .map { it.toDeviceState(caps) }
-                val allDevices = (populated + selectedDeviceShells).ifEmpty { state.devices }
-                val master = if (allDevices.flatMap { it.plans }.isNotEmpty()) {
-                    allDevices.flatMap { it.plans }.all { it.enabled }
-                } else state.masterEnabled
-
-                ChildInternetOverviewState(
-                    masterEnabled = master,
-                    devices = allDevices,
-                    capabilities = caps,
-                    loading = false
-                )
-            }
-        },
-        success = { state = it },
-        failure = { state = state.copy(loading = false, error = it.userMessage()) }
-    )
-
-    override fun ensureDevice(deviceId: String, name: String, iconKey: String, accentArgb: Int) {
-        if (deviceId.isBlank()) return
-        val uid = childGuardDeviceKey(deviceId)
-        val hint = DeviceHint(uid, deviceId, name, iconKey, accentArgb)
-        deviceHints[uid] = hint
-        if (state.devices.none { it.summary.matchesChildGuardDevice(deviceId) }) {
-            state = state.copy(devices = state.devices + hint.toDeviceState(state.capabilities))
-        }
-        refresh()
+    init {
+        // App 启动即铺缓存：页面第一帧就有内容，不依赖网络是否已经回来。
+        hydrateFromCache()
     }
 
-    override fun setMasterEnabled(enabled: Boolean) {
-        state = state.copy(masterEnabled = enabled)
-        val targets = state.devices.flatMap { device ->
-            device.plans.filter { it.id.isNotBlank() }.map { device.summary.deviceId to it.id }
-        }
-        if (targets.isEmpty()) return
-        launch(request = {
-            val api = ChildGuardHubApi(HubApi(prefs), routerId)
-            targets.forEach { (uid, planId) -> api.setPlanEnabled(uid, planId, enabled) }
-        }, success = { refresh() }, failure = { state = state.copy(error = it.userMessage()) })
+    override fun hydrateFromCache() {
+        cacheKeys = runCatching { cache.keys() }.getOrDefault(emptyList())
+        val today = childGuardStatisticsDate()
+        val cached = readCachedOverview(today) ?: run { state = state.copy(loading = true); return }
+        // 只有今天的聚合才带着「现在」的在离线；昨天的那份只留身份。
+        val snapshot = if (cached.first == today) cached.second else cached.second.withoutPresence()
+        applyOverview(snapshot, cacheRead = true)
+        state.devices.forEach { device -> applyCachedUsage(device.summary.deviceId) }
+        state = state.copy(loading = state.devices.isEmpty())
     }
 
-    override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) = launch(
-        request = {
-            val api = ChildGuardHubApi(HubApi(prefs), routerId)
-            val uid = resolveRouterUid(deviceId)
-            if (blocked) {
-                val untilEpoch = if (durationMinutes != null && durationMinutes > 0) {
-                    System.currentTimeMillis() / 1000L + durationMinutes * 60L
-                } else null
-                api.pauseDevice(uid, untilEpoch)
-            } else {
-                api.resumeDevice(uid)
-            }
-        },
-        success = { refresh(); onResult(Result.success(Unit)) },
-        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
-    )
+    /** 今天的聚合优先；换天了才退回最近一份，至少设备名单不用等网络。 */
+    private fun readCachedOverview(today: String): Pair<String, ChildGuardOverviewSnapshot>? {
+        val prefix = "$routerId|$CHILD_GUARD_OVERVIEW_SEGMENT|"
+        val keys = cacheKeys.filter { it.startsWith(prefix) }.sortedBy { it.substringAfterLast('|') }
+            .takeIf { it.isNotEmpty() } ?: return null
+        val chosen = if (keys.last() == today) keys.last() else keys.lastOrNull { it != today } ?: keys.last()
+        val raw = runCatching { cache.read(chosen) }.getOrNull() ?: return null
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        return runCatching { chosen.substringAfterLast('|') to parseChildGuardOverview(root) }.getOrNull()
+    }
 
-    override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) {
-        val uid = resolveRouterUid(deviceId)
-        val createHint = deviceHints.values.firstOrNull { sameChildGuardDevice(it.uid, deviceId) || sameChildGuardDevice(it.mac, deviceId) }
-        launch(
-        request = {
-            val api = ChildGuardHubApi(HubApi(prefs), routerId)
-            if (plan.id.isBlank()) {
-                api.createPlan(uid, plan, createHint?.mac ?: deviceId, createHint?.name)
-            } else api.updatePlan(uid, plan)
-        },
-        success = { refresh(); onResult(Result.success(Unit)) },
-        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
+    override fun refreshOverview() {
+        overviewJob?.cancel()
+        val expected = revision
+        state = state.copy(refreshing = true, loading = state.devices.isEmpty(), error = "")
+        overviewJob = scope.launch { updateOverviewFromAggregate(expected) }
+    }
+
+    /**
+     * 总览聚合的唯一抓取路径：GET 读的是 Hub 已经算好的行，不要求路由器重扫，
+     * 失败时保留上一屏内容，只把「更新失败 · 最后更新 …」显示出来。
+     */
+    internal suspend fun updateOverviewFromAggregate(expected: Long = revision) {
+        try {
+            val root = withContext(Dispatchers.IO) { api.overview() }
+            if (expected != revision) return
+            val snapshot = parseChildGuardOverview(root)
+            cache.write(childGuardOverviewCacheKey(routerId, snapshot.date.ifBlank { childGuardStatisticsDate() }), root.toString())
+            applyOverview(snapshot)
+            state.devices.forEach { device -> applyCachedUsage(device.summary.deviceId) }
+            state = state.copy(error = "")
+            backfillMissingUsage(expected)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (expected == revision) state = state.copy(error = error.userMessage())
+        } finally {
+            if (expected == revision) state = state.copy(refreshing = false, loading = false)
+        }
+    }
+
+    /**
+     * 总览卡片上的数字归上网报告所有。缓存里没有这一天的设备才补抓一次，
+     * 每台每统计日最多一次，串行进行——绝不在 20 秒轮询里重演全量扇出。
+     */
+    private suspend fun backfillMissingUsage(expected: Long) {
+        val today = childGuardStatisticsDate()
+        val missing = state.devices.filter { device ->
+            device.usage?.date != today && usageCacheKey(device.summary.deviceId, today) !in cacheKeys
+        }
+        for (device in missing) {
+            if (expected != revision) return
+            val uid = device.summary.deviceId
+            val gate = usageCacheKey(uid, today)
+            if (!usageBackfilled.add(gate)) continue
+            try {
+                updateUsageFromReport(uid)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                usageBackfilled.remove(gate)
+                // 一台补抓失败不能擦掉整屏：数字留在 `--`，错误只在总状态上示一次。
+                if (expected == revision && state.error.isBlank()) state = state.copy(error = error.userMessage())
+            }
+        }
+    }
+
+    /** 总览只写成员、身份、守护状态与在离线；统计数字一个都不碰。 */
+    private fun applyOverview(snapshot: ChildGuardOverviewSnapshot, cacheRead: Boolean = false) {
+        val previous = state.devices
+        val available = previous.toMutableList()
+        val matched = snapshot.devices.map { row ->
+            val cached = available.firstOrNull { device ->
+                device.summary.matchesChildGuardDevice(row.uid) ||
+                    row.macs.any { mac -> device.summary.matchesChildGuardDevice(mac) }
+            }
+            cached?.let { available.remove(it) }
+            (cached ?: newChildGuardDevice(row.uid, row.name, row.iconKey)).copy(
+                summary = (cached?.summary ?: row.summary).copy(
+                    name = row.name.ifBlank { cached?.summary?.name.orEmpty() }.ifBlank { row.uid },
+                    iconKey = row.iconKey.ifBlank { cached?.summary?.iconKey.orEmpty() },
+                    macAddresses = row.macs.ifEmpty { cached?.summary?.macAddresses ?: setOf(row.uid) },
+                    isOnline = snapshot.presenceKnown && row.online,
+                    status = if (row.blocked) GuardStatus.BLOCKED else cached?.summary?.status ?: GuardStatus.UNRESTRICTED,
+                    blockedUntilEpoch = row.blockedUntilEpoch
+                ),
+                presence = if (snapshot.presenceKnown) row.presence else null
+            )
+        }
+        // 聚合里消失的设备是 Hub 确认过的离队成员才掉出列表；整个 devices
+        // 字段缺失（旧 Hub / 降级 payload）时保留上一屏，绝不因为读不到就清空。
+        val kept = if (snapshot.hasDeviceRows) matched else previous.ifEmpty { matched }
+        state = state.copy(
+            devices = kept,
+            generatedAtEpoch = snapshot.generatedAtEpoch ?: state.generatedAtEpoch,
+            lastSampleAtEpoch = snapshot.lastSampleAtEpoch ?: state.lastSampleAtEpoch,
+            stale = snapshot.stale,
+            refreshing = if (cacheRead) state.refreshing else false,
+            loading = false
         )
     }
 
-    override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) = launch(
-        request = { ChildGuardHubApi(HubApi(prefs), routerId).deletePlan(resolveRouterUid(deviceId), planId) },
-        success = { refresh(); onResult(Result.success(Unit)) },
-        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
-    )
+    private fun usageCacheKey(deviceId: String, date: String): String =
+        childGuardUsageCacheKey(routerId, childGuardDeviceKey(deviceId), date)
 
-    override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) = launch(
-        request = { ChildGuardHubApi(HubApi(prefs), routerId).setPlanEnabled(resolveRouterUid(deviceId), planId, enabled) },
-        success = { refresh(); onResult(Result.success(Unit)) },
-        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
-    )
+    override fun refresh() {
+        refreshJob?.cancel()
+        val expected = revision
+        state = state.copy(loading = state.devices.isEmpty(), error = "")
+        refreshJob = scope.launch {
+            try {
+                val client = api
+                val devices = withContext(Dispatchers.IO) { client.devices() }
+                val caps = withContext(Dispatchers.IO) {
+                    runCatching { client.capabilities() }.getOrDefault(state.capabilities)
+                }
+                if (expected != revision) return@launch
+                state = state.copy(
+                    devices = mergeChildGuardDeviceList(state.devices, devices, caps),
+                    capabilities = caps, loading = false
+                )
+                // A single sequence avoids flooding the router with three calls per device at once.
+                for (device in devices) {
+                    if (expected != revision) break
+                    try { readDetails(device.summary.deviceId, expected) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        if (expected == revision) state = state.copy(error = error.userMessage())
+                    }
+                }
+                updateMasterState()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (expected == revision) state = state.copy(loading = false, error = error.userMessage())
+            }
+        }
+    }
 
-    override fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit) = launch(
-        request = { ChildGuardHubApi(HubApi(prefs), routerId).candidates() },
-        success = { onResult(Result.success(it)) },
-        failure = { onResult(Result.failure(it)) }
-    )
+    override fun ensureDevice(deviceId: String, name: String, iconKey: String, accentArgb: Int) {
+        updateDevice(deviceId) { device ->
+            device.copy(summary = device.summary.copy(
+                name = name.ifBlank { device.summary.name },
+                iconKey = iconKey.ifBlank { device.summary.iconKey },
+                accentArgb = accentArgb
+            ))
+        }
+    }
 
-    override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) = launch(
-        request = { ChildGuardHubApi(HubApi(prefs), routerId).addDevice(listOf(mac), name) },
-        success = { refresh(); onResult(Result.success(Unit)) },
-        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
-    )
-
-    override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) = launch(
-        request = { ChildGuardHubApi(HubApi(prefs), routerId).removeDevice(uid) },
-        success = { refresh(); onResult(Result.success(Unit)) },
-        failure = { state = state.copy(error = it.userMessage()); onResult(Result.failure(it)) }
-    )
-
-    /**
-     * Re-reads just the usage report for one device (the report page's own
-     * refresh), leaving the rest of the overview untouched.
-     */
-    override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) = launch(
-        request = {
-            val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(deviceId) }
-            val api = ChildGuardHubApi(HubApi(prefs), routerId)
-            api.usageReport(
-                uid = resolveRouterUid(deviceId),
-                macs = device?.summary?.macAddresses.orEmpty(),
-                days = USAGE_REPORT_WINDOW_DAYS
-            )
-        },
-        success = { report -> applyUsageReport(deviceId, report); onResult(Result.success(Unit)) },
-        failure = { onResult(Result.failure(it)) }
-    )
-
-    private fun applyUsageReport(deviceId: String, report: ChildGuardUsageReport) {
-        state = state.copy(devices = state.devices.map { device ->
-            if (!device.summary.matchesChildGuardDevice(deviceId)) return@map device
-            device.copy(
-                summary = device.summary.copy(
-                    todayMinutes = report.today.totalMinutes,
-                    hasAttention = report.today.totalMinutes > 0
-                ),
-                todayUsage = report.today,
-                recentUsage = report.recent,
-                usageSource = report.source
-            )
+    override fun setMasterEnabled(enabled: Boolean) {
+        val targets = state.devices.flatMap { d -> d.plans.map { d.summary.deviceId to it.id } }
+        if (targets.isEmpty()) return
+        mutate("*", {}, request = {
+            targets.forEach { (uid, id) -> api.setPlanEnabled(uid, id, enabled) }
+            Unit
+        }, accepted = {
+            state = state.copy(devices = state.devices.map { d ->
+                withPlans(d, d.plans.map { it.copy(enabled = enabled) })
+            })
         })
     }
 
-    private fun <T> launch(before: (() -> Unit)? = null, request: suspend () -> T, success: (T) -> Unit = {}, failure: (Throwable) -> Unit = {}) {
-        before?.invoke()
-        scope.launch { runCatching { withContext(Dispatchers.IO) { request() } }.onSuccess(success).onFailure(failure) }
+    override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) {
+        val until = if (!blocked) 0L else durationMinutes?.takeIf { it > 0 }
+            ?.let { System.currentTimeMillis() / 1000 + it * 60L } ?: 1L
+        mutate(deviceId, onResult, request = {
+            if (blocked) api.pauseDevice(resolveRouterUid(deviceId), until)
+            else api.resumeDevice(resolveRouterUid(deviceId))
+        }, accepted = {
+            updateDevice(deviceId) { d ->
+                d.copy(
+                    runtime = d.runtime.copy(paused = blocked, blockedUntilEpoch = until),
+                    summary = d.summary.copy(blockedUntilEpoch = until,
+                        status = if (blocked) GuardStatus.BLOCKED else guardStatus(false, d.plans))
+                )
+            }
+        })
     }
 
-    private fun DeviceHint.toDeviceState(capabilities: ChildGuardCapabilities) = ChildInternetDeviceState(
+    override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) {
+        if (plan.repeatDays.isEmpty()) {
+            onResult(Result.failure(IllegalArgumentException("请至少选择一个重复日期")))
+            return
+        }
+        val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(deviceId) }
+        mutate(deviceId, onResult, request = {
+            if (plan.id.isBlank()) api.createPlan(resolveRouterUid(deviceId), plan,
+                device?.summary?.macAddresses?.firstOrNull(), device?.summary?.name)
+            else api.updatePlan(resolveRouterUid(deviceId), plan)
+        }, accepted = { response ->
+            val body = response.data().optJSONObject("plan") ?: response.data()
+            val id = body.text("id", "planId", "policyId").ifBlank { plan.id }
+            if (id.isNotBlank()) updateDevice(deviceId) { d ->
+                val saved = plan.copy(id = id, configured = true)
+                withPlans(d, d.plans.filterNot { it.id == saved.id } + saved)
+            }
+        })
+    }
+
+    override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) =
+        mutate(deviceId, onResult, request = { api.deletePlan(resolveRouterUid(deviceId), planId) },
+            accepted = { updateDevice(deviceId) { withPlans(it, it.plans.filterNot { p -> p.id == planId }) } })
+
+    override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) =
+        mutate(deviceId, onResult, request = { api.setPlanEnabled(resolveRouterUid(deviceId), planId, enabled) },
+            accepted = { updateDevice(deviceId) { withPlans(it, it.plans.map { p -> if (p.id == planId) p.copy(enabled = enabled) else p }) } })
+
+    override fun loadCandidates(onResult: (Result<List<ChildGuardDeviceCandidate>>) -> Unit) {
+        scope.launch {
+            try { onResult(Result.success(withContext(Dispatchers.IO) { api.candidates() })) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { onResult(Result.failure(error)) }
+        }
+    }
+
+    override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) =
+        mutate(mac, onResult, request = { api.addDevice(listOf(mac), name) }, accepted = {})
+
+    override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) =
+        mutate(uid, onResult, request = { api.removeDevice(resolveRouterUid(uid)) }, accepted = {
+            state = state.copy(devices = state.devices.filterNot { it.summary.matchesChildGuardDevice(uid) })
+        })
+
+    override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) {
+        val expected = revision
+        val uid = resolveRouterUid(deviceId)
+        applyCachedUsage(uid)
+        scope.launch {
+            setUsageLoading(uid, true)
+            try {
+                readDetails(uid, expected)
+                onResult(Result.success(Unit))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                // 抓不到就继续显示缓存那一屏，只把失败状态显示出来。
+                if (expected == revision) state = state.copy(error = error.userMessage())
+                onResult(Result.failure(error))
+            } finally {
+                setUsageLoading(uid, false)
+            }
+        }
+    }
+
+    private suspend fun readDetails(uid: String, expected: Long) {
+        val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return
+        val client = api
+        val plans = withContext(Dispatchers.IO) { client.plans(uid) }
+        val runtime = withContext(Dispatchers.IO) { client.runtime(uid) }
+        if (expected != revision || uid in pending) return
+        updateDevice(uid) { d ->
+            withPlans(d, plans).copy(runtime = runtime, summary = d.summary.copy(
+                status = guardStatus(runtime.paused, plans),
+                blockedUntilEpoch = runtime.blockedUntilEpoch
+            ))
+        }
+        updateUsageFromReport(uid)
+    }
+
+    /** 上网报告 payload 的唯一抓取入口；写入状态的一律是 `applyUsage`。 */
+    internal suspend fun updateUsageFromReport(uid: String) {
+        val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return
+        val payload = withContext(Dispatchers.IO) {
+            api.usageReportPayload(uid, device.summary.macAddresses, days = USAGE_REPORT_WINDOW_DAYS)
+        }
+        if (uid in pending) return
+        applyUsage(uid, payload)
+    }
+
+    /**
+     * 报告 → 设备状态：全场唯一写统计数字的地方（实时抓取、缓存回放、显式刷新
+     * 三条路都汇到这里），所以缓存回放和实况永远不会长成两副样子。
+     */
+    private fun applyUsage(uid: String, payload: JSONObject) {
+        val report = parseChildGuardUsageReport(payload)
+        val date = report.stats.date.ifBlank { childGuardStatisticsDate() }
+        cache.write(usageCacheKey(uid, date), payload.toString())
+        cacheKeys = cacheKeyList()
+        updateDevice(uid) { it.withUsage(report) }
+    }
+
+    /**
+     * 打开页面前先把这台设备最近一份报告铺回去。缓存按 `routerId|设备|日期`
+     * 分键，所以昨天那份只会以昨天的日期出现，不会冒充今天的实况。
+     */
+    private fun applyCachedUsage(uid: String) {
+        val prefix = usageCacheKey(uid, "").dropLast(1)
+        val latestKey = cacheKeys.filter { it.startsWith(prefix) && it.lastDatePart() != null }
+            .maxByOrNull { it.lastDatePart().orEmpty() } ?: return
+        val raw = runCatching { cache.read(latestKey) }.getOrNull() ?: return
+        val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        updateDevice(uid) { current ->
+            if (current.usage != null) current else current.withUsage(parseChildGuardUsageReport(payload))
+        }
+    }
+
+    private fun cacheKeyList(): List<String> = runCatching { cache.keys() }.getOrDefault(emptyList())
+
+    private fun setUsageLoading(uid: String, loading: Boolean) =
+        updateDevice(uid) { d -> if (d.usageLoading == loading) d else d.copy(usageLoading = loading) }
+
+    private fun <T> mutate(deviceId: String, onResult: (Result<Unit>) -> Unit,
+        request: () -> T, accepted: (T) -> Unit) {
+        val uid = resolveRouterUid(deviceId)
+        if (pending.isNotEmpty()) {
+            onResult(Result.failure(IllegalStateException("正在同步上一项操作，请稍候")))
+            return
+        }
+        revision++
+        refreshJob?.cancel()
+        pending.add(uid)
+        state = state.copy(error = "", pendingDeviceIds = pending.toSet())
+        scope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) { request() }
+                accepted(response)
+                updateMasterState()
+                pending.remove(uid)
+                state = state.copy(pendingDeviceIds = pending.toSet())
+                // Acknowledgement is independent of the slower background read-back.
+                refreshAfterMutation(uid)
+                onResult(Result.success(Unit))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                pending.remove(uid)
+                state = state.copy(pendingDeviceIds = pending.toSet())
+                // A timeout or a multi-device partial failure may still have changed router state.
+                refreshAfterMutation(uid)
+                state = state.copy(error = error.userMessage())
+                onResult(Result.failure(error))
+            }
+        }
+    }
+
+    /**
+     * 写操作后要读回真实状态：单机只补这一台的细节，全设备开关才付得起整轮扇出。
+     * `resolveRouterUid` 把 `*` 原样带回，所以这里只会用一次重刷。
+     */
+    private fun refreshAfterMutation(uid: String) {
+        if (uid == "*") {
+            refresh()
+            return
+        }
+        refreshOverview()
+        scope.launch {
+            try { readDetails(uid, revision) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { state = state.copy(error = error.userMessage()) }
+        }
+    }
+
+    private fun updateDevice(id: String, transform: (ChildInternetDeviceState) -> ChildInternetDeviceState) {
+        state = state.copy(devices = state.devices.map {
+            if (it.summary.matchesChildGuardDevice(id)) transform(it) else it
+        })
+    }
+
+    private fun updateMasterState() {
+        val plans = state.devices.flatMap { it.plans }
+        state = state.copy(masterEnabled = plans.any { it.enabled })
+    }
+
+    private fun withPlans(device: ChildInternetDeviceState, plans: List<DeviceGuardPlan>) =
+        device.copy(plans = plans,
+            plan = plans.firstOrNull() ?: DeviceGuardPlan(categories = childInternetCatalogCategories()),
+            summary = device.summary.copy(status = guardStatus(device.runtime.paused, plans)))
+
+    private fun resolveRouterUid(id: String): String =
+        state.devices.firstOrNull { it.summary.matchesChildGuardDevice(id) }?.summary?.deviceId
+            ?.let(::childGuardDeviceKey) ?: childGuardDeviceKey(id)
+}
+
+internal fun guardStatus(blocked: Boolean, plans: List<DeviceGuardPlan>): GuardStatus = when {
+    blocked -> GuardStatus.BLOCKED
+    plans.any { it.enabled } -> GuardStatus.GUARDED
+    else -> GuardStatus.UNRESTRICTED
+}
+
+/**
+ * 上网报告写入设备状态的唯一入口：缓存回放与实时抓取都走这里，
+ * 所以同一份 payload 无论来自磁盘还是网络，界面长成一个样。
+ */
+internal fun ChildInternetDeviceState.withUsage(report: ChildGuardUsageReport): ChildInternetDeviceState = copy(
+    todayUsage = report.today, recentUsage = report.recent, usage = report.stats,
+    attentionEntries = report.attention, usageReport = report.traffic, usageSource = report.source
+)
+
+/** 总览/成员表里新出现的设备：只带身份，统计一律留空等上网报告来写。 */
+internal fun newChildGuardDevice(uid: String, name: String, iconKey: String): ChildInternetDeviceState =
+    ChildInternetDeviceState(
         summary = ProtectedDeviceSummary(
-            deviceId = uid,
-            name = name,
-            iconKey = iconKey,
-            accentArgb = accentArgb,
-            status = GuardStatus.UNRESTRICTED,
-            todayMinutes = 0,
-            hasAttention = false,
-            appManagementSupported = capabilities.appManagementSupported,
-            experimentalAppControl = capabilities.appManagementSupported && isExperimentalAppControlDevice(iconKey),
-            macAddresses = setOf(mac)
+            deviceId = childGuardDeviceKey(uid),
+            name = name.ifBlank { uid },
+            iconKey = iconKey.ifBlank { "unknown" },
+            accentArgb = 0xFF64748B.toInt(),
+            status = GuardStatus.UNRESTRICTED
         ),
-        plan = DeviceGuardPlan(categories = childInternetCatalogCategories()),
-        // A stable 24-bar frame, so the chart renders an empty day rather than
-        // collapsing to nothing before the first report arrives.
-        todayUsage = InternetUsageSummary(0, empty24HourBars(), emptyList())
+        plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
     )
 
-    private fun resolveRouterUid(deviceId: String): String = state.devices
-        .firstOrNull { it.summary.matchesChildGuardDevice(deviceId) }
-        ?.summary?.deviceId
-        ?.let(::childGuardDeviceKey)
-        ?: childGuardDeviceKey(deviceId)
+/** Empty successful responses remove members; transport failures never call this merger. */
+internal fun mergeChildGuardDeviceList(
+    previous: List<ChildInternetDeviceState>, incoming: List<ChildInternetDeviceState>, caps: ChildGuardCapabilities
+): List<ChildInternetDeviceState> = incoming.distinctBy { childGuardDeviceKey(it.summary.deviceId) }.map { raw ->
+    val cached = previous.firstOrNull { it.summary.matchesChildGuardDevice(raw.summary.deviceId) }
+    (cached ?: raw).copy(
+        summary = raw.summary.copy(
+            appManagementSupported = caps.appManagementSupported,
+            experimentalAppControl = caps.appManagementSupported && isExperimentalAppControlDevice(raw.summary.iconKey),
+            status = guardStatus(raw.summary.status == GuardStatus.BLOCKED, cached?.plans.orEmpty())
+        ),
+        // 统计数字、提醒与在离线都归原写入者，成员刷新只是不改它们。
+        usage = cached?.usage,
+        todayUsage = cached?.todayUsage ?: raw.todayUsage,
+        recentUsage = cached?.recentUsage ?: raw.recentUsage,
+        attentionEntries = cached?.attentionEntries ?: raw.attentionEntries,
+        usageReport = cached?.usageReport ?: raw.usageReport,
+        usageSource = cached?.usageSource ?: raw.usageSource,
+        presence = cached?.presence ?: raw.presence,
+        runtime = (cached?.runtime ?: raw.runtime).copy(paused = raw.summary.status == GuardStatus.BLOCKED,
+            blockedUntilEpoch = raw.summary.blockedUntilEpoch)
+    )
 }
 
 /** The sole Android location that knows the stable Hub paths, never raw UCI/sniffer fields. */
-internal class ChildGuardHubApi(private val hub: HubApi, routerId: String) {
+internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: String) {
     private val base = "/api/router/child-guard"
     private val routerQuery = "?router=${pathPart(routerId)}"
     fun capabilities() = parseChildGuardCapabilities(get("$base/capabilities$routerQuery"))
     fun devices() = parseChildGuardDevices(get("$base/devices$routerQuery"))
+
+    /**
+     * 总览聚合。Hub 读的是 router_usage_minute 里已经算好的行，
+     * 所以这个 GET 本身不会要求路由器重扫，可以放心 20 秒轮一次。
+     */
+    fun overview() = get("$base/overview$routerQuery")
     fun plans(uid: String) = parseChildGuardPlans(get("$base/devices/${pathPart(uid)}/plans$routerQuery"))
     fun runtime(uid: String) = parseChildGuardRuntime(get("$base/devices/${pathPart(uid)}/runtime$routerQuery"), uid)
     fun createPlan(uid: String, plan: DeviceGuardPlan, deviceMac: String? = null, deviceName: String? = null) = write(
@@ -347,7 +618,11 @@ internal class ChildGuardHubApi(private val hub: HubApi, routerId: String) {
      * answer from its own aggregate table without a router round-trip; the uid
      * is still sent so the Hub can resolve the device itself if it ever needs to.
      */
-    fun usageReport(uid: String, macs: Set<String>, date: String? = null, days: Int = 1): ChildGuardUsageReport {
+    fun usageReport(uid: String, macs: Set<String>, date: String? = null, days: Int = 1): ChildGuardUsageReport =
+        parseChildGuardUsageReport(usageReportPayload(uid, macs, date, days))
+
+    /** Raw payload, kept separate so the caller can cache it verbatim and re-parse on replay. */
+    fun usageReportPayload(uid: String, macs: Set<String>, date: String? = null, days: Int = 1): JSONObject {
         val query = buildString {
             append(routerQuery)
             append("&days=").append(days.coerceAtLeast(1))
@@ -355,11 +630,11 @@ internal class ChildGuardHubApi(private val hub: HubApi, routerId: String) {
             val macList = macs.filter { it.isNotBlank() }
             if (macList.isNotEmpty()) append("&macs=").append(pathPart(macList.joinToString(",")))
         }
-        return parseChildGuardUsageReport(get("$base/devices/${pathPart(uid)}/usage-report$query"))
+        return get("$base/devices/${pathPart(uid)}/usage-report$query")
     }
 
-    private fun get(path: String) = checked(hub.requestJson(path))
-    private fun write(path: String, method: String, body: JSONObject = JSONObject()) = checked(hub.requestJson(path, method, body))
+    private fun get(path: String) = checked(hub.request(path, "GET", null))
+    private fun write(path: String, method: String, body: JSONObject = JSONObject()) = checked(hub.request(path, method, body))
     private fun checked(root: JSONObject): JSONObject {
         if (root.has("ok") && !root.optBoolean("ok")) throw IllegalStateException(root.optString("message").ifBlank { root.optString("error") }.ifBlank { "儿童守护请求失败" })
         return root
@@ -373,11 +648,50 @@ internal fun DeviceGuardPlan.toChildGuardJson(): JSONObject = JSONObject().apply
     put("startTime", startTime)
     put("endTime", endTime)
     put("weekdays", JSONArray(repeatDays.sorted()))
+    // Per-weekday windows, the shape the relay hands to the firmware timerange
+    // list — this is what makes several rules on one weekday actually enforce.
+    put("times", JSONObject().apply {
+        repeatDays.sorted().forEach { day ->
+            weekdayKey(day).takeIf { it.isNotBlank() }?.let { key ->
+                put(key, JSONArray(listOf(JSONArray(listOf(startTime, endTime)))))
+            }
+        }
+    })
     val applications = categories.filter { it.enabled }.flatMap { it.apps }.filter { it.selected && it.rdpiIds.isNotEmpty() }.map { app ->
         JSONObject().put("id", app.id).put("name", app.name).put("rdpiIds", JSONArray(app.rdpiIds.sorted()))
     }
     put("mode", if (applications.isEmpty()) "internet_window" else "app_allowlist")
     put("applications", JSONArray(applications))
+}
+
+private val WEEKDAY_KEYS = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+internal fun weekdayKey(day: Int): String = WEEKDAY_KEYS.getOrElse(day - 1) { "" }
+
+internal fun weekdayNumber(key: String): Int = WEEKDAY_KEYS.indexOf(key.trim().lowercase(Locale.US)) + 1
+
+/**
+ * Reads the per-weekday `times` map back into the rule's repeat days and window.
+ * Rules created by this app always carry exactly one window, so the first range
+ * is the whole rule; anything richer still shows up as correct repeat days.
+ */
+internal fun parsePlanTimes(times: JSONObject?): Pair<Set<Int>, Pair<String, String>?>? {
+    if (times == null) return null
+    val days = mutableSetOf<Int>()
+    var firstRange: Pair<String, String>? = null
+    times.keys().forEach { key ->
+        val day = weekdayNumber(key)
+        if (day !in 1..7) return@forEach
+        val ranges = times.optJSONArray(key) ?: return@forEach
+        if (ranges.length() == 0) return@forEach
+        days.add(day)
+        val range = ranges.optJSONArray(0)
+        val start = range?.optString(0).orEmpty()
+        val end = range?.optString(1).orEmpty()
+        if (firstRange == null && start.isNotBlank() && end.isNotBlank()) firstRange = start to end
+    }
+    if (days.isEmpty()) return null
+    return days to firstRange
 }
 
 internal fun parseChildGuardCapabilities(root: JSONObject): ChildGuardCapabilities {
@@ -387,29 +701,101 @@ internal fun parseChildGuardCapabilities(root: JSONObject): ChildGuardCapabiliti
     return ChildGuardCapabilities(childGuard, rdpi, d.text("version"), d.bool("appControlSupported", default = childGuard && rdpi))
 }
 
-internal fun parseChildGuardDevices(root: JSONObject): List<ChildInternetDeviceState> {
+internal fun parseChildGuardDevices(root: JSONObject): List<ChildInternetDeviceState> =
+    childGuardDeviceRows(root).map { row ->
+        ChildInternetDeviceState(
+            summary = row.summary,
+            presence = row.presence,
+            plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
+        )
+    }
+
+/**
+ * `/child-guard/overview` 的一行。这里只承认成员、身份、禁网状态与在离线；
+ * 今日分钟数、深夜分钟数、提醒都不写入共享状态——那是上网报告的数字，
+ * 总览卡片从 `routerId|设备|日期` 的报告缓存里读它们。
+ */
+internal data class ChildGuardOverviewDevice(
+    val uid: String,
+    val macs: Set<String>,
+    val name: String,
+    val iconKey: String,
+    val online: Boolean,
+    val activeNow: Boolean?,
+    val lastSeenAtEpoch: Long?,
+    val blocked: Boolean,
+    val blockedUntilEpoch: Long,
+    val updatedAtEpoch: Long?,
+    val accentArgb: Int
+) {
+    val summary: ProtectedDeviceSummary
+        get() = ProtectedDeviceSummary(
+            deviceId = childGuardDeviceKey(uid),
+            name = name,
+            iconKey = iconKey,
+            accentArgb = accentArgb,
+            status = if (blocked) GuardStatus.BLOCKED else GuardStatus.UNRESTRICTED,
+            macAddresses = macs,
+            isOnline = online,
+            blockedUntilEpoch = blockedUntilEpoch
+        )
+    val presence: ChildGuardPresence
+        get() = ChildGuardPresence(online, activeNow, lastSeenAtEpoch, updatedAtEpoch)
+}
+
+internal data class ChildGuardOverviewSnapshot(
+    val devices: List<ChildGuardOverviewDevice>,
+    val date: String = "",
+    val generatedAtEpoch: Long? = null,
+    val lastSampleAtEpoch: Long? = null,
+    val stale: Boolean = false,
+    /** payload 里根本没有 devices 数组 ≠ 一台都没守护；前者不许清空上一屏。 */
+    val hasDeviceRows: Boolean = false,
+    /** 换天后回放的聚合只剩名单：在离线一律不写，界面宁可不画徽章。 */
+    val presenceKnown: Boolean = true
+) {
+    fun withoutPresence(): ChildGuardOverviewSnapshot = copy(presenceKnown = false)
+}
+
+internal fun parseChildGuardOverview(root: JSONObject): ChildGuardOverviewSnapshot {
+    val d = root.data()
+    return ChildGuardOverviewSnapshot(
+        devices = childGuardDeviceRows(root),
+        date = d.text("date").ifBlank { d.text("statisticsDate") },
+        generatedAtEpoch = d.longOrNull("generatedAt"),
+        lastSampleAtEpoch = d.longOrNull("lastSampleAt"),
+        stale = d.bool("stale", default = false),
+        hasDeviceRows = d.optJSONArray("devices") != null
+    )
+}
+
+private fun childGuardDeviceRows(root: JSONObject): List<ChildGuardOverviewDevice> {
     val devices = root.data().optJSONArray("devices") ?: JSONArray()
     return (0 until devices.length()).mapNotNull { i ->
         val item = devices.optJSONObject(i) ?: return@mapNotNull null
         val id = item.text("uid", "id", "deviceId", "mac").ifBlank { return@mapNotNull null }
         val rawIconKey = item.text("iconKey", "deviceType", "type")
-        val iconKey = normalizeDeviceTypeToken(rawIconKey).ifBlank { rawIconKey.ifBlank { "unknown" } }
-        ChildInternetDeviceState(
-            summary = ProtectedDeviceSummary(
-                deviceId = id,
-                name = listOf(
-                    item.text("userDefinedName"),
-                    item.text("recommendedName"),
-                    item.text("name", "displayName"),
-                    item.text("hostname")
-                ).firstOrNull { it.isNotBlank() && it != "受守护设备" && it != "LabProbe 设备" } ?: id,
-                iconKey = iconKey,
-                accentArgb = item.optInt("accentArgb", 0xFF64748B.toInt()),
-                status = if (item.bool("blocked")) GuardStatus.BLOCKED else GuardStatus.UNRESTRICTED,
-                todayMinutes = item.optInt("todayMinutes", 0), hasAttention = item.bool("hasAttention"),
-                macAddresses = item.stringSet("macs", "mac"),
-                isOnline = item.bool("online", default = true)
-            ), plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
+        val iconKey = normalizeDeviceTypeToken(rawIconKey).ifBlank { rawIconKey }
+        val macs = item.stringSet("macs", "mac")
+        val online = item.bool("online", default = false)
+        ChildGuardOverviewDevice(
+            uid = id,
+            macs = macs,
+            name = listOf(
+                item.text("userDefinedName"),
+                item.text("recommendedName"),
+                item.text("name", "displayName"),
+                item.text("hostname")
+            ).firstOrNull { it.isNotBlank() && it != "受守护设备" && it != "LabProbe 设备" } ?: id,
+            iconKey = iconKey,
+            online = online,
+            // 缺 activeNow 就是不知道，绝不能拿在线顶替「正在上网」。
+            activeNow = item.boolOrNull("activeNow"),
+            lastSeenAtEpoch = item.longOrNull("lastSeenAt"),
+            blocked = item.bool("blocked", "paused"),
+            blockedUntilEpoch = item.longOrNull("blockedUntilEpoch") ?: 0L,
+            updatedAtEpoch = item.longOrNull("updatedAt"),
+            accentArgb = item.optInt("accentArgb", 0xFF64748B.toInt())
         )
     }
 }
@@ -428,7 +814,7 @@ internal fun parseChildGuardCandidates(root: JSONObject): List<ChildGuardDeviceC
             name = item.text("name"),
             deviceType = item.text("deviceType", "devType", "type"),
             manufacturer = item.text("manufacturer", "manufacture", "vendor"),
-            online = item.bool("online", default = true),
+            online = item.bool("online", default = false),
             connectType = item.text("connectType")
         )
     }
@@ -442,10 +828,12 @@ internal fun parseChildGuardPlans(root: JSONObject): List<DeviceGuardPlan> {
         val applications = item.optJSONArray("applications") ?: JSONArray()
         val allowedApps = (0 until applications.length()).mapNotNull { applications.optJSONObject(it)?.text("id", "appId")?.takeIf(String::isNotBlank) }.toSet()
         val rdpiIds = (0 until applications.length()).flatMap { applications.optJSONObject(it)?.stringSet("rdpiIds") ?: emptySet() }.toSet()
+        val times = parsePlanTimes(item.optJSONObject("times"))
         DeviceGuardPlan(
             id = id, configured = id.isNotBlank(), enabled = item.bool("enabled", "enable"),
-            startTime = item.text("startTime").ifBlank { "17:00" }, endTime = item.text("endTime").ifBlank { "21:30" },
-            repeatDays = item.weekdaySet("weekdays", "repeatDays"),
+            startTime = times?.second?.first ?: item.text("startTime").ifBlank { "17:00" },
+            endTime = times?.second?.second ?: item.text("endTime").ifBlank { "21:30" },
+            repeatDays = times?.first ?: item.weekdaySet("weekdays", "repeatDays"),
             categories = childInternetCatalogCategories(rdpiIds, allowedApps)
         )
     }
@@ -455,83 +843,281 @@ internal fun parseChildGuardRuntime(root: JSONObject, fallbackUid: String = ""):
     val d = root.data().optJSONObject("runtime") ?: root.data()
     val bound = d.stringSet("policyIds")
     val effect = d.text("effectPolicyId").takeUnless { it.equals("none", true) }
-    return ChildGuardRuntimeState(d.text("uid").ifBlank { fallbackUid }, bound, effect, mapRuntimeEffectPolicy(effect, bound), paused = d.bool("blocked", "paused"))
+    return ChildGuardRuntimeState(d.text("uid").ifBlank { fallbackUid }, bound, effect, mapRuntimeEffectPolicy(effect, bound),
+        paused = d.bool("blocked", "paused"), blockedUntilEpoch = d.optLong("blockedUntilEpoch", 0L))
 }
 
 /** The 上网统计 window. Matches the Hub's relay/Hub retention (10 days). */
 internal const val USAGE_REPORT_WINDOW_DAYS = 10
 
+/** 报告缓存的统计日：与 Hub 的 `date` 同为「路由器本地那一天」，换天自然读到新键。 */
+internal fun childGuardStatisticsDate(zoneId: ZoneId = childGuardDefaultZone()): String =
+    LocalDate.now(zoneId).toString()
+
+internal fun childGuardDefaultZone(): ZoneId = ZoneId.systemDefault()
+
+/**
+ * 时段窗口按路由器本地时区切：`00:00–06:00` 是路由器那一侧的自然小时，
+ * 手机在国内而路由器在海外时硬编码北京会把整条时间线搬走。Hub 带上
+ * `timezone` 时以它为准，缺字段才退回设备本地时区。
+ */
+internal fun childGuardZone(payloadTimezone: String?): ZoneId =
+    payloadTimezone?.takeIf { it.isNotBlank() }?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+        ?: childGuardDefaultZone()
+
 internal data class ChildGuardUsageReport(
     val today: InternetUsageSummary,
     val recent: InternetUsageSummary,
+    val stats: ChildUsageStats,
+    val attention: List<ParentAttentionEntry> = emptyList(),
     val source: String = "",
-    val date: String = ""
+    /** 固件设备计数器口径的流量，Hub 未返回 traffic 块时为 null。 */
+    val traffic: ChildDeviceUsageReport? = null
 )
-
-internal fun empty24HourBars(): List<UsageBar> = (0 until 24).map { hour -> UsageBar("${hour}点", 0) }
 
 /**
  * Parses the Hub's usage report into the two summaries the report page renders.
  *
- * * 今日 — 24 hourly bars from `hourly[]`, plus per-app rows from `apps[]`.
- * * 最近10天 — one bar per day from `range.days[]` (the Hub gap-fills the
- *   window, so the bar count is stable), plus `range.apps[]` for the summary.
+ * * 今日 — hour bars straight from `hourly[]` (no invented 24-slot frame), plus
+ *   per-app rows from `apps[]`.
+ * * 最近10天 — one bar per date the Hub actually returned in `range.days[]`.
+ * * traffic — device counters (固件总数口径), independent of the app classification.
  *
  * Apps that earned no active time are dropped: a backgrounded app that only sent
  * heartbeats is not "used", and listing thirty of them as 0 分钟 would be noise.
+ *
+ * 这是全场唯一解析上网报告的地方：`onlineMinutes`、`lateNightMinutes`、提醒状态
+ * 只从这里写出去，总览聚合永远只读，所以不会出现两个写入者互相覆盖。
  */
 internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "今天"): ChildGuardUsageReport {
     val d = root.data()
-    val todayMinutes = d.optInt("onlineMinutes", 0).coerceAtLeast(0)
-    val hourly = d.optJSONArray("hourly") ?: JSONArray()
-    val minutesByHour = HashMap<Int, Int>()
-    (0 until hourly.length()).forEach { i ->
-        val row = hourly.optJSONObject(i) ?: return@forEach
-        minutesByHour[row.optInt("hour", -1)] = row.optInt("minutes", 0).coerceAtLeast(0)
-    }
-    val todayBars = (0 until 24).map { hour -> UsageBar("${hour}点", minutesByHour[hour] ?: 0) }
-    val todayEntries = parseUsageEntries(d.optJSONArray("apps"))
+    val zone = childGuardZone(d.text("timezone", "tz").takeIf { it.isNotBlank() })
+    val date = d.text("date").ifBlank { childGuardStatisticsDate(zone) }
+    val hasRecords = childGuardHasRecords(d)
+    // 没有记录就没有「零分钟」可言：整块退回未知，界面显示 `--` 而不是 0分钟。
+    val todayBars = if (hasRecords) parseHourBars(d.optJSONArray("hourly")) else emptyList()
+    val todayEntries = if (hasRecords) parseUsageEntries(d.optJSONArray("apps"), zone) else emptyList()
+    val todayMinutes = if (hasRecords) d.intOrNull("onlineMinutes")?.coerceAtLeast(0) ?: 0 else null
+    val lateNightMinutes = if (hasRecords) childGuardLateNightMinutes(d, todayBars) else null
+    val attentionState = childGuardAttentionState(d, hasRecords, lateNightMinutes)
 
     val range = d.optJSONObject("range")
     val rangeDays = range?.optJSONArray("days") ?: JSONArray()
     val dayCount = rangeDays.length()
-    val recentBars = (0 until dayCount).map { index ->
-        val row = rangeDays.optJSONObject(index)
-        UsageBar(
-            label = childUsageDayLabel(row?.text("date").orEmpty(), isToday = index == dayCount - 1, fallback = todayLabel),
-            minutes = row?.optInt("onlineMinutes", 0)?.coerceAtLeast(0) ?: 0
-        )
+    val recentBars = (0 until dayCount).mapNotNull { index ->
+        rangeDays.optJSONObject(index)?.let { childGuardDayBar(it, isToday = index == dayCount - 1, todayLabel = todayLabel, zone = zone) }
     }
-    val recentEntries = parseUsageEntries(range?.optJSONArray("apps"))
+    val recentEntries = parseUsageEntries(range?.optJSONArray("apps"), zone)
+    val recentTotal = recentBars.filter { it.hasData }.sumOf { it.minutes }.takeIf { recentBars.isNotEmpty() }
+    val stats = ChildUsageStats(
+        date = date,
+        onlineMinutes = todayMinutes,
+        lateNightMinutes = lateNightMinutes,
+        attention = attentionState,
+        hasData = hasRecords,
+        generatedAtEpoch = d.longOrNull("generatedAt"),
+        lastSampleAtEpoch = d.longOrNull("lastSampleAt"),
+        stale = d.bool("stale", default = false)
+    )
     return ChildGuardUsageReport(
         today = InternetUsageSummary(todayMinutes, todayBars, todayEntries),
-        recent = InternetUsageSummary(recentBars.sumOf { it.minutes }, recentBars, recentEntries),
+        recent = InternetUsageSummary(recentTotal, recentBars, recentEntries),
+        stats = stats,
+        attention = childGuardAttentionEntries(stats, recentBars, parseLateNightWindows(d.optJSONArray("lateNightRanges"), zone)),
         source = d.text("source"),
-        date = d.text("date")
+        traffic = parseChildGuardTraffic(d.optJSONObject("traffic"))
     )
 }
 
-private fun parseUsageEntries(rows: JSONArray?): List<InternetUsageEntry> {
+/** `coverage.status` 是 Hub 的官方口径：no_record/unavailable 就是没有记录，不是 0 分钟。 */
+private fun childGuardHasRecords(d: JSONObject): Boolean {
+    if (d.has("hasData") && !d.isNull("hasData")) return d.bool("hasData")
+    val coverage = d.optJSONObject("coverage") ?: return d.intOrNull("onlineMinutes")?.let { it > 0 } ?: false
+    if (coverage.has("hasRecords") && !coverage.isNull("hasRecords")) return coverage.bool("hasRecords")
+    return coverage.text("status").let { it == "recorded" || it == "partial" }
+}
+
+/** 00:00–06:00 只认 Hub 的 `lateNightMinutes`；老 payload 才从 Hub 自己的小时桶求和。 */
+private fun childGuardLateNightMinutes(d: JSONObject, todayBars: List<UsageBar>): Int? {
+    d.intOrNull("lateNightMinutes")?.let { return it.coerceAtLeast(0) }
+    val hours = d.optJSONArray("hourly") ?: return null
+    if (hours.length() == 0) return null
+    return todayBars.filter { it.hour in 0..5 }.sumOf { it.minutes }
+}
+
+private fun childGuardAttentionState(d: JSONObject, hasRecords: Boolean, lateNightMinutes: Int?): ChildAttentionState {
+    val server = d.optJSONObject("attention")?.text("state")
+        ?.takeIf { it.equals("none", true) || it.equals("notice", true) || it.equals("alert", true) || it.equals("unknown", true) }
+    server?.let { return childGuardAttentionStateOf(it) }
+    // 没记录 = 未知，绝不是「一切正常」。
+    if (!hasRecords) return ChildAttentionState.UNKNOWN
+    return if ((lateNightMinutes ?: 0) > 0) ChildAttentionState.ALERT else ChildAttentionState.NONE
+}
+
+internal fun childGuardAttentionStateOf(raw: String?): ChildAttentionState = when {
+    raw.isNullOrBlank() -> ChildAttentionState.UNKNOWN
+    raw.equals("none", true) -> ChildAttentionState.NONE
+    raw.equals("notice", true) -> ChildAttentionState.NOTICE
+    raw.equals("alert", true) -> ChildAttentionState.ALERT
+    else -> ChildAttentionState.UNKNOWN
+}
+
+private fun parseHourBars(hourly: JSONArray?): List<UsageBar> {
+    if (hourly == null || hourly.length() == 0) return emptyList()
+    return (0 until hourly.length()).mapNotNull { i ->
+        val row = hourly.optJSONObject(i) ?: return@mapNotNull null
+        val hour = row.optInt("hour", -1)
+        if (hour !in 0..23) return@mapNotNull null
+        UsageBar(label = "${hour}点", minutes = row.optInt("minutes", 0).coerceAtLeast(0), hour = hour)
+    }.sortedBy { it.hour }
+}
+
+private fun childGuardDayBar(day: JSONObject, isToday: Boolean, todayLabel: String, zone: ZoneId): UsageBar {
+    val date = day.text("date")
+    // `coverage: "no_record"` 的那天没有分钟数这回事；recorded 且 0 分钟才是真的「无上网记录」。
+    val hasData = if (day.has("hasData") && !day.isNull("hasData")) day.bool("hasData")
+    else day.text("coverage").isBlank() || day.text("coverage") == "recorded"
+    return UsageBar(
+        label = childUsageDayLabel(date, isToday = isToday, fallback = todayLabel),
+        // 未记录的那天柱子画 0 高，明细行必须显示 `--`。
+        minutes = if (hasData) day.intOrNull("onlineMinutes")?.coerceAtLeast(0) ?: 0 else 0,
+        date = date,
+        lateNightMinutes = if (hasData) day.intOrNull("lateNightMinutes")?.coerceAtLeast(0) else null,
+        lateNightWindows = parseLateNightWindows(day.optJSONArray("lateNightRanges"), zone),
+        hasData = hasData
+    )
+}
+
+/**
+ * 家长请注意只列服务器逐日返回的那几天：有记录才谈健康与否，
+ * 没记录就是「暂无使用记录」，未知状态永远是 `--` / 数据同步中，不会写成「一切正常」。
+ */
+private fun childGuardAttentionEntries(
+    stats: ChildUsageStats,
+    days: List<UsageBar>,
+    todayWindows: List<LateNightWindow>
+): List<ParentAttentionEntry> {
+    val history = days.filter { it.date.isNotBlank() && it.date != stats.date }
+    val today = UsageBar(
+        label = "今天",
+        minutes = stats.onlineMinutes ?: 0,
+        date = stats.date,
+        lateNightMinutes = stats.lateNightMinutes,
+        lateNightWindows = todayWindows.ifEmpty {
+            history.firstOrNull { it.date == stats.date }?.lateNightWindows.orEmpty()
+        },
+        hasData = stats.hasData
+    )
+    return (listOf(today) + history).sortedByDescending { it.date }
+        .map { day -> childGuardAttentionEntry(day.label, day) }
+}
+
+private fun childGuardAttentionEntry(label: String, day: UsageBar): ParentAttentionEntry {
+    val minutes = day.lateNightMinutes
+    val state = when {
+        !day.hasData || minutes == null -> ChildAttentionState.UNKNOWN
+        minutes > 0 -> ChildAttentionState.ALERT
+        else -> ChildAttentionState.NONE
+    }
+    return ParentAttentionEntry(
+        dayLabel = label,
+        date = day.date,
+        message = when (state) {
+            ChildAttentionState.ALERT -> "【深夜上网】累计${formatLateNightDuration(minutes ?: 0)}"
+            ChildAttentionState.NONE -> if (day.date == childGuardStatisticsDate()) "今日上网健康" else "未发现深夜上网"
+            else -> "暂无使用记录"
+        },
+        normal = state == ChildAttentionState.NONE,
+        hasData = day.hasData,
+        windows = if (state == ChildAttentionState.ALERT) day.lateNightWindows else emptyList(),
+        state = state
+    )
+}
+
+/**
+ * 分钟桶口径下每条 sessionRanges 就是一段连续活跃分钟：`endEpoch` 已是
+ * 最后一个活跃分钟 +60（右开），所以区间直接照抄，时长只认 `minutes`，
+ * 绝不用 end-start 或 activeSeconds 反推。不连续的分钟由 Hub 拆成多条。
+ */
+private fun parseUsageEntries(rows: JSONArray?, zone: ZoneId): List<InternetUsageEntry> {
     if (rows == null) return emptyList()
+    val formatter = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(zone)
     return (0 until rows.length()).mapNotNull { index ->
         val row = rows.optJSONObject(index) ?: return@mapNotNull null
         val app = row.text("app", "name").ifBlank { return@mapNotNull null }
         val minutes = row.optInt("minutes", 0).coerceAtLeast(0)
         if (minutes <= 0) return@mapNotNull null
+        val ranges = row.optJSONArray("sessionRanges") ?: row.optJSONArray("ranges") ?: JSONArray()
+        val sessions = (0 until ranges.length()).mapNotNull { i ->
+            val range = ranges.optJSONObject(i) ?: return@mapNotNull null
+            val start = range.optLong("startEpoch", 0L)
+            val end = range.optLong("endEpoch", 0L)
+            val runMinutes = range.optInt("minutes", 0).coerceAtLeast(0)
+            if (start <= 0 || end <= start || runMinutes <= 0) return@mapNotNull null
+            runCatching { AppUsageSession(
+                formatter.format(Instant.ofEpochSecond(start)) + " – " +
+                    formatter.format(Instant.ofEpochSecond(end)),
+                formatChildDuration(runMinutes)
+            ) }.getOrNull()
+        }
         InternetUsageEntry(
             id = app,
             appName = app,
             iconKey = dashboardIconKey(app),
             durationMinutes = minutes,
-            // The aggregates carry no per-session timestamps, so there is no
-            // honest time range to show; 次数 from `sessions` still is.
-            timeRange = "",
-            count = row.optInt("sessions", 0).coerceAtLeast(0)
+            timeRange = if (sessions.size == 1) sessions.first().timeRange else "",
+            count = row.optInt("sessions", 0).coerceAtLeast(0),
+            sessions = sessions,
+            hourlyMinutes = parseAppHourMinutes(row)
         )
     }
 }
 
-/** 今天 / 昨天 / 周四 … for the 最近N天 bars, without needing java.time. */
+/**
+ * 应用小时分布只能照抄 Hub 的 `apps[].hourlyMinutes`——那份是按分钟桶分摊出来的
+ * 估算，不是逐应用测量，缺字段就没有这一列，绝不用总时长自己造。
+ */
+private fun parseAppHourMinutes(row: JSONObject): Map<Int, Int> {
+    val minutes = LinkedHashMap<Int, Int>()
+    when (val raw = row.opt("hourlyMinutes")) {
+        is JSONArray -> (0 until raw.length()).forEach { i ->
+            val item = raw.optJSONObject(i) ?: return@forEach
+            val hour = item.optInt("hour", -1)
+            if (hour in 0..23) minutes[hour] = item.optInt("minutes", 0).coerceAtLeast(0)
+        }
+        is JSONObject -> raw.keys().forEach { key ->
+            val hour = key.toIntOrNull() ?: return@forEach
+            if (hour in 0..23) minutes[hour] = raw.optInt(key, 0).coerceAtLeast(0)
+        }
+        else -> Unit
+    }
+    return minutes
+}
+
+/** 00:00–06:00 sessions, which 家长请注意 renders as concrete red time ranges. */
+private fun parseLateNightWindows(rows: JSONArray?, zone: ZoneId): List<LateNightWindow> {
+    if (rows == null) return emptyList()
+    val formatter = DateTimeFormatter.ofPattern("HH:mm").withZone(zone)
+    return (0 until rows.length()).mapNotNull { index ->
+        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+        val app = row.text("app", "name")
+        val start = row.optLong("startEpoch", 0L)
+        val end = row.optLong("endEpoch", 0L)
+        val minutes = row.optInt("minutes", 0).coerceAtLeast(0)
+        if (start <= 0L || end <= start || minutes <= 0) return@mapNotNull null
+        runCatching {
+            LateNightWindow(
+                app = app,
+                rangeText = formatter.format(Instant.ofEpochSecond(start)) + "–" +
+                    formatter.format(Instant.ofEpochSecond(end)),
+                minutes = minutes
+            )
+        }.getOrNull()
+    }
+}
+
+/** 今天 / 昨天 / 周四 … for the 最近N天 bars. */
+
 private fun childUsageDayLabel(isoDate: String, isToday: Boolean, fallback: String = "今天"): String {
     if (isToday) return fallback
     if (isoDate.isBlank()) return ""
@@ -541,38 +1127,60 @@ private fun childUsageDayLabel(isoDate: String, isToday: Boolean, fallback: Stri
     }.getOrDefault(isoDate.takeLast(5))
 }
 
-internal fun parseChildGuardUsage(root: JSONObject): ChildDeviceUsageReport {
-    val u = root.optJSONObject("usage") ?: root.optJSONObject("data") ?: root
-    val dailyArr = u.optJSONArray("daily") ?: JSONArray()
-    val dailyList = (0 until dailyArr.length()).mapNotNull { i ->
+/** 设备总流量块；Hub 没发或全为零就不成立，返回 null 让卡片整体隐藏。 */
+internal fun parseChildGuardTraffic(traffic: JSONObject?): ChildDeviceUsageReport? {
+    if (traffic == null) return null
+    val dailyArr = traffic.optJSONArray("daily") ?: JSONArray()
+    val daily = (0 until dailyArr.length()).mapNotNull { i ->
         val item = dailyArr.optJSONObject(i) ?: return@mapNotNull null
+        val date = item.optString("date", "")
+        if (date.isBlank()) return@mapNotNull null
         DailyUsageItem(
-            date = item.optString("date", ""),
+            date = date,
             txBytes = item.optLong("txBytes", 0L),
             rxBytes = item.optLong("rxBytes", 0L),
             totalBytes = item.optLong("totalBytes", 0L)
         )
     }
-    val boundIpsArr = u.optJSONArray("boundIps")
-    val boundIpsList = if (boundIpsArr != null) {
-        (0 until boundIpsArr.length()).mapNotNull { boundIpsArr.optString(it).takeIf { s -> s.isNotBlank() } }
-    } else emptyList()
-    return ChildDeviceUsageReport(
-        date = u.optString("date", ""),
-        todayTxBytes = u.optLong("todayTxBytes", 0L),
-        todayRxBytes = u.optLong("todayRxBytes", 0L),
-        todayTotalBytes = u.optLong("todayTotalBytes", 0L),
-        recentAvgTxRate = u.optLong("recentAvgTxRate", 0L),
-        recentAvgRxRate = u.optLong("recentAvgRxRate", 0L),
-        boundIps = boundIpsList,
-        daily = dailyList
+    val report = ChildDeviceUsageReport(
+        todayTxBytes = traffic.longOrNull("todayTxBytes") ?: traffic.optLong("txBytes", 0L),
+        todayRxBytes = traffic.longOrNull("todayRxBytes") ?: traffic.optLong("rxBytes", 0L),
+        todayTotalBytes = traffic.longOrNull("todayTotalBytes") ?: traffic.optLong("totalBytes", 0L),
+        daily = daily
     )
+    return report.takeIf { it.todayTotalBytes > 0L || it.todayTxBytes > 0L || it.todayRxBytes > 0L }
 }
 private fun JSONObject.data(): JSONObject = optJSONObject("data") ?: optJSONObject("capabilities") ?: this
-private fun JSONObject.text(vararg keys: String): String = keys.firstNotNullOfOrNull { key -> opt(key)?.toString()?.trim()?.takeIf(String::isNotBlank) }.orEmpty()
-private fun JSONObject.bool(vararg keys: String, default: Boolean = false): Boolean = keys.firstNotNullOfOrNull { key ->
-    if (!has(key) || isNull(key)) null else when (val v = opt(key)) { is Boolean -> v; is Number -> v.toInt() != 0; else -> v.toString() == "1" || v.toString().equals("true", true) }
-} ?: default
+/** 键不存在与值为 null 都算「服务器没说」，交给下面的 `*At` 返回 null。 */
+private fun JSONObject.flag(key: String): Any? = if (!has(key) || isNull(key)) null else opt(key)
+private fun boolAt(value: Any?): Boolean? = when (value) {
+    is Boolean -> value
+    is Number -> value.toInt() != 0
+    is String -> value.trim().let { token ->
+        if (token == "1" || token.equals("true", true)) true
+        else if (token == "0" || token.equals("false", true)) false
+        else null
+    }
+    else -> null
+}
+private fun intAt(value: Any?): Int? = when (value) {
+    is Number -> value.toInt()
+    is Boolean -> if (value) 1 else 0
+    is String -> value.trim().toDoubleOrNull()?.toInt()
+    else -> null
+}
+private fun longAt(value: Any?): Long? = when (value) {
+    is Number -> value.toLong()
+    is Boolean -> if (value) 1L else 0L
+    is String -> value.trim().toDoubleOrNull()?.toLong()
+    else -> null
+}
+private fun JSONObject.text(vararg keys: String): String = keys.firstNotNullOfOrNull { key -> flag(key)?.toString()?.trim()?.takeIf(String::isNotBlank) }.orEmpty()
+private fun JSONObject.bool(vararg keys: String, default: Boolean = false): Boolean = keys.firstNotNullOfOrNull { boolAt(flag(it)) } ?: default
+/** 缺字段与 0 是两回事：这三个 `*OrNull` 就是 §4 那条口径的落地点。 */
+private fun JSONObject.boolOrNull(vararg keys: String): Boolean? = keys.firstNotNullOfOrNull { boolAt(flag(it)) }
+private fun JSONObject.intOrNull(vararg keys: String): Int? = keys.firstNotNullOfOrNull { intAt(flag(it)) }
+private fun JSONObject.longOrNull(vararg keys: String): Long? = keys.firstNotNullOfOrNull { longAt(flag(it)) }
 private fun JSONObject.stringSet(vararg keys: String): Set<String> = keys.flatMap { key ->
     when (val v = opt(key)) { is JSONArray -> (0 until v.length()).mapNotNull { v.opt(it)?.toString()?.trim()?.takeIf(String::isNotBlank) }; is String -> v.split(',', ' ').map(String::trim).filter(String::isNotBlank); else -> emptyList() }
 }.toSet()
@@ -580,13 +1188,12 @@ private fun JSONObject.intSet(vararg keys: String): Set<Int> = keys.flatMap { ke
     when (val v = opt(key)) { is JSONArray -> (0 until v.length()).mapNotNull { v.opt(it)?.toString()?.toIntOrNull() }; is String -> v.split(',', ' ').mapNotNull(String::toIntOrNull); else -> emptyList() }
 }.toSet()
 private fun JSONObject.weekdaySet(vararg keys: String): Set<Int> {
-    val names = mapOf("mon" to 1, "tue" to 2, "wed" to 3, "thu" to 4, "fri" to 5, "sat" to 6, "sun" to 7)
     val raw = keys.flatMap { key -> when (val value = opt(key)) {
         is JSONArray -> (0 until value.length()).mapNotNull { value.opt(it)?.toString()?.trim()?.lowercase() }
         is String -> value.split(',', ' ').map(String::trim).filter(String::isNotBlank).map { it.lowercase() }
         else -> emptyList()
     } }
-    return raw.mapNotNull { it.toIntOrNull()?.takeIf { day -> day in 1..7 } ?: names[it] }.toSet()
+    return raw.mapNotNull { it.toIntOrNull()?.takeIf { day -> day in 1..7 } ?: weekdayNumber(it).takeIf { day -> day in 1..7 } }.toSet()
 }
 private fun pathPart(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20")
 private fun Throwable.userMessage(): String {
@@ -610,7 +1217,7 @@ internal fun childGuardDeviceKey(value: String): String {
     val trimmed = value.trim()
     val compact = trimmed.replace(Regex("[:.\\-\\s]"), "")
     return if (compact.length in setOf(12, 32) && compact.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) {
-        compact.lowercase()
+        if (compact.length == 32) compact.uppercase() else compact.lowercase()
     } else {
         trimmed
     }
@@ -622,11 +1229,16 @@ internal fun sameChildGuardDevice(left: String, right: String): Boolean =
 internal fun ProtectedDeviceSummary.matchesChildGuardDevice(value: String): Boolean =
     sameChildGuardDevice(deviceId, value) || macAddresses.any { sameChildGuardDevice(it, value) }
 
+/** Preview-only repository: it starts empty and only ever carries what the caller typed in. */
 object FakeChildInternetRepository : ChildInternetRepository {
-    override var state by mutableStateOf(mockOverview()); private set
+    override var state by mutableStateOf(
+        ChildInternetOverviewState(false, emptyList(), ChildGuardCapabilities(true, true), loading = true)
+    ); private set
     override fun refresh() = Unit
+    override fun refreshOverview() = Unit
+    override fun hydrateFromCache() = Unit
     override fun ensureDevice(deviceId: String, name: String, iconKey: String, accentArgb: Int) {
-        if (state.devices.none { it.summary.deviceId == deviceId }) state = state.copy(devices = listOf(mockDevice(deviceId, name, iconKey, accentArgb, false, 60, true)) + state.devices)
+        if (state.devices.none { it.summary.deviceId == deviceId }) state = state.copy(devices = listOf(mockDevice(deviceId, name, iconKey, accentArgb)) + state.devices)
     }
     override fun setMasterEnabled(enabled: Boolean) { state = state.copy(masterEnabled = enabled) }
     override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = if (blocked) GuardStatus.BLOCKED else GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
@@ -643,7 +1255,7 @@ object FakeChildInternetRepository : ChildInternetRepository {
     }
     override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) {
         if (state.devices.none { it.summary.matchesChildGuardDevice(mac) }) {
-            state = state.copy(devices = state.devices + mockDevice("candidate-$mac", name.ifBlank { "新设备" }, "phone", 0xFF2563EB.toInt(), false, 0, false))
+            state = state.copy(devices = state.devices + mockDevice("candidate-$mac", name.ifBlank { "新设备" }, "phone", 0xFF2563EB.toInt()))
         }
         onResult(Result.success(Unit))
     }
@@ -654,223 +1266,25 @@ object FakeChildInternetRepository : ChildInternetRepository {
     override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) = onResult(Result.success(Unit))
 }
 
-private fun mockOverview() = ChildInternetOverviewState(true, listOf(mockDevice("mock-phone", "华为 Mate60 手机", "phone", 0xFF2563EB.toInt(), true, 60, true), mockDevice("mock-tablet", "iPad 平板", "tablet", 0xFF7C5CE7.toInt(), true, 0, false), mockDevice("mock-tv", "客厅电视", "tv", 0xFF0EA5E9.toInt(), false, 0, false), mockDevice("mock-computer", "书房电脑", "computer", 0xFF64748B.toInt(), false, 212, false)), ChildGuardCapabilities(true, true))
-private fun mockDevice(id: String, name: String, icon: String, color: Int, configured: Boolean, minutes: Int, attention: Boolean): ChildInternetDeviceState {
-    val plan = DeviceGuardPlan(id = if (configured) "preview-$id" else "", configured = configured, enabled = configured, categories = childInternetCatalogCategories())
-    val sampleEntries = listOf(
-        InternetUsageEntry(
-            id = "e1",
-            appName = "小红书",
-            iconKey = "rednote",
-            localIconPath = null,
-            durationMinutes = 94,
-            timeRange = "05:27-21:05",
-            count = 4,
-            sessions = listOf(
-                AppUsageSession("05:27-05:36", "使用9分钟"),
-                AppUsageSession("05:57-06:21", "使用24分钟"),
-                AppUsageSession("07:32-08:21", "使用48分钟"),
-                AppUsageSession("20:52-21:05", "使用13分钟")
-            )
-        ),
-        InternetUsageEntry(
-            id = "e2",
-            appName = "抖音系列",
-            iconKey = "douyin",
-            localIconPath = null,
-            durationMinutes = 16,
-            timeRange = "15:08-23:41",
-            count = 2,
-            sessions = listOf(
-                AppUsageSession("15:08-15:18", "使用10分钟"),
-                AppUsageSession("23:35-23:41", "使用6分钟")
-            )
-        ),
-        InternetUsageEntry(
-            id = "e3",
-            appName = "京东",
-            iconKey = "jingdong",
-            localIconPath = null,
-            durationMinutes = 25,
-            timeRange = "10:12-19:30",
-            count = 3,
-            sessions = listOf(
-                AppUsageSession("10:12-10:20", "使用8分钟"),
-                AppUsageSession("14:15-14:26", "使用11分钟"),
-                AppUsageSession("19:24-19:30", "使用6分钟")
-            )
-        )
+/** 乐观插入的设备只有身份字段：时长、深夜分钟、流量、提醒一律留空，等 Hub 的真实统计覆盖。 */
+private fun mockDevice(id: String, name: String, icon: String, color: Int): ChildInternetDeviceState =
+    ChildInternetDeviceState(
+        summary = ProtectedDeviceSummary(id, name, icon, color, GuardStatus.UNRESTRICTED,
+            appManagementSupported = true, experimentalAppControl = isExperimentalAppControlDevice(icon)),
+        plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
     )
-    val todayBars = (0..23).map { hour ->
-        UsageBar(if (hour % 6 == 0) "$hour" else "", when (hour) {
-            0 -> 27; 1 -> 12; 2 -> 6; 5 -> 9; 6 -> 24; 7 -> 48; 8 -> 18; 13 -> 22; 15 -> 10; 19 -> 30; 20 -> 13; 23 -> 6; else -> 0
-        })
-    }
-    val recentBars = buildDefaultDailyBars()
-    val displayMinutes = if (minutes > 0) minutes else 82
-    return ChildInternetDeviceState(
-        ProtectedDeviceSummary(id, name, icon, color, if (configured) GuardStatus.GUARDED else GuardStatus.UNRESTRICTED, displayMinutes, attention, true, isExperimentalAppControlDevice(icon)),
-        plan,
-        plans = if (configured) listOf(plan) else emptyList(),
-        todayUsage = InternetUsageSummary(displayMinutes, todayBars, sampleEntries),
-        recentUsage = InternetUsageSummary(displayMinutes, recentBars, sampleEntries),
-        attentionEntries = emptyList()
-    )
-}
-
-internal fun buildDefaultDailyBars(usageReport: ChildDeviceUsageReport? = null): List<UsageBar> {
-    val cal = java.util.Calendar.getInstance()
-    val weekdayChars = listOf("日", "一", "二", "三", "四", "五", "六")
-    val defaultMinutes = listOf(35, 82, 110, 30, 20, 50, 10, 150, 105, 115)
-    val dailyList = usageReport?.daily?.takeLast(10) ?: emptyList()
-
-    return (0..9).map { i ->
-        val daysAgo = 9 - i
-        val dayCal = (cal.clone() as java.util.Calendar).apply {
-            add(java.util.Calendar.DAY_OF_YEAR, -daysAgo)
-        }
-        val label = if (i == 9) "今" else {
-            val dayOfWeek = dayCal.get(java.util.Calendar.DAY_OF_WEEK)
-            weekdayChars[(dayOfWeek - 1) % 7]
-        }
-
-        val matchedDaily = dailyList.find { d ->
-            val targetStr = String.format(java.util.Locale.US, "%04d-%02d-%02d",
-                dayCal.get(java.util.Calendar.YEAR),
-                dayCal.get(java.util.Calendar.MONTH) + 1,
-                dayCal.get(java.util.Calendar.DAY_OF_MONTH)
-            )
-            d.date == targetStr || (d.date.length >= 5 && targetStr.endsWith(d.date.takeLast(5)))
-        }
-
-        val minutes = when {
-            matchedDaily != null && matchedDaily.totalBytes > 0L ->
-                (matchedDaily.totalBytes / (1024L * 512L)).toInt().coerceIn(1, 180)
-            else -> defaultMinutes.getOrElse(i) { 60 }
-        }
-
-        val entries = when (i) {
-            1 -> listOf(
-                InternetUsageEntry(
-                    id = "e1",
-                    appName = "小红书",
-                    iconKey = "rednote",
-                    durationMinutes = 94,
-                    timeRange = "05:27-21:05",
-                    count = 4,
-                    sessions = listOf(
-                        AppUsageSession("05:27-05:36", "使用9分钟"),
-                        AppUsageSession("05:57-06:21", "使用24分钟"),
-                        AppUsageSession("07:32-08:21", "使用48分钟"),
-                        AppUsageSession("20:52-21:05", "使用13分钟")
-                    )
-                ),
-                InternetUsageEntry(
-                    id = "e2",
-                    appName = "抖音系列",
-                    iconKey = "douyin",
-                    durationMinutes = 16,
-                    timeRange = "15:08-23:41",
-                    count = 2,
-                    sessions = listOf(
-                        AppUsageSession("15:08-15:18", "使用10分钟"),
-                        AppUsageSession("23:35-23:41", "使用6分钟")
-                    )
-                ),
-                InternetUsageEntry(
-                    id = "e3",
-                    appName = "京东",
-                    iconKey = "jingdong",
-                    durationMinutes = 25,
-                    timeRange = "10:12-19:30",
-                    count = 3,
-                    sessions = listOf(
-                        AppUsageSession("10:12-10:20", "使用8分钟"),
-                        AppUsageSession("14:15-14:26", "使用11分钟"),
-                        AppUsageSession("19:24-19:30", "使用6分钟")
-                    )
-                )
-            )
-            9 -> listOf(
-                InternetUsageEntry(
-                    id = "e_today_1",
-                    appName = "小红书",
-                    iconKey = "rednote",
-                    durationMinutes = 45,
-                    timeRange = "08:15-13:40",
-                    count = 3,
-                    sessions = listOf(
-                        AppUsageSession("08:15-08:30", "使用15分钟"),
-                        AppUsageSession("11:20-11:40", "使用20分钟"),
-                        AppUsageSession("13:30-13:40", "使用10分钟")
-                    )
-                ),
-                InternetUsageEntry(
-                    id = "e_today_2",
-                    appName = "京东",
-                    iconKey = "jingdong",
-                    durationMinutes = 30,
-                    timeRange = "09:40-14:15",
-                    count = 2,
-                    sessions = listOf(
-                        AppUsageSession("09:40-09:55", "使用15分钟"),
-                        AppUsageSession("14:00-14:15", "使用15分钟")
-                    )
-                ),
-                InternetUsageEntry(
-                    id = "e_today_3",
-                    appName = "微信",
-                    iconKey = "wechat",
-                    durationMinutes = 40,
-                    timeRange = "07:30-14:30",
-                    count = 3,
-                    sessions = listOf(
-                        AppUsageSession("07:30-07:45", "使用15分钟"),
-                        AppUsageSession("12:10-12:25", "使用15分钟"),
-                        AppUsageSession("14:20-14:30", "使用10分钟")
-                    )
-                )
-            )
-            else -> listOf(
-                InternetUsageEntry(
-                    id = "e_${i}_1",
-                    appName = if (i % 2 == 0) "微信" else "小红书",
-                    iconKey = if (i % 2 == 0) "wechat" else "rednote",
-                    durationMinutes = (minutes * 0.6).toInt().coerceAtLeast(10),
-                    timeRange = "08:00-20:00",
-                    count = 3,
-                    sessions = listOf(
-                        AppUsageSession("08:10-08:30", "使用20分钟"),
-                        AppUsageSession("12:20-12:40", "使用20分钟"),
-                        AppUsageSession("19:30-19:50", "使用20分钟")
-                    )
-                ),
-                InternetUsageEntry(
-                    id = "e_${i}_2",
-                    appName = "京东",
-                    iconKey = "jingdong",
-                    durationMinutes = (minutes * 0.4).toInt().coerceAtLeast(8),
-                    timeRange = "11:00-18:30",
-                    count = 2,
-                    sessions = listOf(
-                        AppUsageSession("11:15-11:27", "使用12分钟"),
-                        AppUsageSession("18:10-18:22", "使用12分钟")
-                    )
-                )
-            )
-        }
-        UsageBar(label, minutes, entries)
-    }
-}
 
 internal fun childInternetCatalogCategories(allowedRdpiIds: Set<String>? = null, allowedAppIds: Set<String> = emptySet()) = listOf(
     catalogCategory("education", "学习/教育", listOf("腾讯课堂", "瓜瓜龙启蒙", "凯叔讲故事", "叽里呱啦", "出口成章", "拍照搜题", "伴鱼绘本"), allowedRdpiIds, allowedAppIds),
     catalogCategory("media", "视频/音频", listOf("腾讯视频", "爱奇艺", "哔哩哔哩", "喜马拉雅", "网易云音乐"), allowedRdpiIds, allowedAppIds),
     catalogCategory("games", "游戏", listOf("王者荣耀", "和平精英", "蛋仔派对", "元梦之星", "迷你世界"), allowedRdpiIds, allowedAppIds),
     catalogCategory("tools", "工具", listOf("百度", "夸克", "计算器", "天气", "地图"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("social", "社交", listOf("QQ", "微信", "贴吧", "微博", "小红书"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("shopping", "支付/购物", listOf("支付宝", "云闪付", "京东", "淘宝", "拼多多"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("stores", "应用商店", listOf("华为应用市场", "小米应用商店", "应用宝", "酷安"), allowedRdpiIds, allowedAppIds)
+    catalogCategory("social", "社交", listOf("QQ", "微信", "百度贴吧", "微博", "小红书"), allowedRdpiIds, allowedAppIds),
+    catalogCategory("ainews", "AI/资讯", listOf("豆包", "DeepSeek", "今日头条"), allowedRdpiIds, allowedAppIds),
+    catalogCategory("shopping", "支付/购物", listOf("支付宝", "云闪付", "京东", "淘宝", "拼多多", "唯品会"), allowedRdpiIds, allowedAppIds),
+    // 应用商店的名字一律照抄官方特征库（华为应用商店 / 小米应用商店 / 酷安应用市场 /
+    // 应用宝），界面名与 rdpi 上报名一致，规则与图标才不会对不上号。
+    catalogCategory("stores", "应用商店", listOf("华为应用商店", "小米应用商店", "OPPO应用商店", "VIVO应用商店", "应用宝", "酷安应用市场"), allowedRdpiIds, allowedAppIds)
 )
 private fun catalogCategory(id: String, name: String, names: List<String>, allowed: Set<String>?, appIds: Set<String>): AppCategoryPlan {
     val baseEnabled = id in setOf("education", "media", "tools")
@@ -887,39 +1301,86 @@ internal fun childInternetRdpiIds(name: String): Set<String> = when (name) {
     "快手", "快手系列" -> setOf("10-146-1-0")
     "拼多多" -> setOf("18-158-1-0")
     "淘宝" -> setOf("18-4-2-0")
+    // 自建特征：官方特征库没有"阿里CDN"条目，按阿里系编号占 18-4-3-0。
+    "阿里CDN" -> setOf("18-4-3-0")
     "京东" -> setOf("18-159-1-0")
     "小红书" -> setOf("7-68-1-0")
     "哔哩哔哩" -> setOf("10-141-1-0")
     "王者荣耀" -> setOf("4-1-1-0", "4-1-1-1", "4-1-1-2")
     "和平精英" -> setOf("4-1-4-0", "4-1-4-2")
+    // 自建特征：官方库无条目，占用 9-* 自定义编号段（官方库未使用）。
+    "豆包" -> setOf("9-201-1-0")
+    "DeepSeek" -> setOf("9-202-1-0")
+    "今日头条" -> setOf("9-203-1-0")
+    "唯品会" -> setOf("9-204-1-0")
+    "夸克" -> setOf("9-206-1-0")
+    // 以下为官方特征库原生 ID（rdpi -t 实测），_weak_relation/_null_relation
+    // 变体一并纳入，否则只封主域名时应用换个入口就绕过规则。
+    "QQ" -> setOf("7-1-1-0", "7-1-1-1", "7-1-1-2", "7-1-1-4", "7-1-1-5", "7-1-1-7", "7-1-1-8", "7-1-1-9", "7-1-1-14")
+    "贴吧", "百度贴吧" -> setOf("7-3-1-0", "7-3-1-2", "7-3-1-14")
+    "百度" -> setOf("7-3-2-0")
+    "微博" -> setOf("7-73-1-0")
+    "网易云音乐" -> setOf("7-2-1-0")
+    "腾讯课堂" -> setOf("8-1-2-0", "8-1-2-14")
+    "瓜瓜龙启蒙" -> setOf("8-100-1-0")
+    "凯叔讲故事" -> setOf("8-101-1-0")
+    "叽里呱啦" -> setOf("8-102-1-0")
+    "出口成章" -> setOf("8-103-1-0")
+    "拍照搜题" -> setOf("8-105-1-0")
+    "伴鱼绘本" -> setOf("8-106-1-0")
+    "喜马拉雅" -> setOf("8-91-1-0", "8-90-1-0")
+    "腾讯视频" -> setOf("10-1-3-0", "10-1-3-14")
+    "爱奇艺" -> setOf("10-142-1-0", "10-142-1-15")
+    "迷你世界" -> setOf("4-9-1-0")
+    "支付宝" -> setOf("18-4-1-0", "18-4-1-14")
+    "云闪付" -> setOf("18-156-1-0")
+    "应用宝" -> setOf("19-1-1-0", "19-1-1-15")
+    "华为应用商店" -> setOf("19-154-1-0", "19-154-1-14")
+    "小米应用商店" -> setOf("19-165-1-0", "19-165-1-14")
+    "OPPO应用商店" -> setOf("19-166-1-0", "19-166-1-14")
+    "VIVO应用商店" -> setOf("19-167-1-0", "19-167-1-14")
+    "酷安应用市场" -> setOf("19-169-1-0")
     else -> emptySet()
 }
 
 /**
  * RDPI 中文名 -> 图标 key。内置图标包（assets/appicons）覆盖国内应用，
- * 其余回落 Homarr Dashboard Icons CDN（kebab-case 命名），最后由
- * 首字头像兜底，保证任何应用都不会出现灰色占位方块。
+ * 其余回落 Homarr Dashboard Icons CDN（kebab-case 命名），两者都没有时用
+ * 内置的"未识别应用图标"兜底，不再出现首字母色块。
  */
-private fun dashboardIconKey(name: String) = when (name) {
-    "微信" -> "wechat"; "企业微信" -> "wecom"; "微信读书" -> "weread"; "微信视频号" -> "wechat"
+private fun dashboardIconKey(rawName: String): String {
+    // 特征库的派生名（王者荣耀_login、优酷视频_weak_relation …）与主应用共用图标。
+    val name = rawName.replace(Regex("_(login|gaming|weak_relation|null_relation)$"), "")
+    return when (name) {
+    "微信" -> "wechat"; "企业微信" -> "wecom"; "微信读书" -> "weread"; "微信视频号" -> "wechat-channels"
     "QQ" -> "qq"; "QQ音乐" -> "qq-music"; "QQ浏览器" -> "qq-browser"; "腾讯课堂" -> "tencent-classroom"; "腾讯会议" -> "tencent-meeting"
     "腾讯视频" -> "tencent-video"; "哔哩哔哩" -> "bilibili"; "微视" -> "weishi"
     "抖音" -> "douyin"; "抖音系列" -> "douyin"; "快手" -> "kuaishou"; "小红书" -> "rednote"
-    "爱奇艺" -> "iqiyi"; "优酷" -> "youku"; "芒果TV" -> "mango-tv"; "咪咕视频" -> "migu-video"
+    "爱奇艺" -> "iqiyi"; "优酷" -> "youku"; "优酷视频" -> "youku"; "芒果TV" -> "mango-tv"; "咪咕视频" -> "migu-video"
     "网易云音乐" -> "netease-music"; "酷狗音乐" -> "kugou-music"; "酷我音乐" -> "kuwo-music"
     "喜马拉雅" -> "himalaya"; "喜马拉雅儿童" -> "himalaya"
-    "百度" -> "baidu"; "百度贴吧" -> "baidu-tieba"; "百度网盘" -> "baidu-netdisk"; "百度地图" -> "baidu-map"; "百度翻译" -> "baidu-fanyi"
+    "百度" -> "baidu"; "百度贴吧" -> "baidu-tieba"; "贴吧" -> "baidu-tieba"; "百度网盘" -> "baidu-netdisk"; "百度地图" -> "baidu-map"; "百度翻译" -> "baidu-fanyi"
     "高德地图" -> "amap"; "腾讯地图" -> "tencent-map"; "夸克" -> "quark"; "UC浏览器" -> "uc-browser"
-    "阿里云盘" -> "aliyunpan"; "迅雷" -> "xunlei"; "菜鸟" -> "cainiao"; "顺丰速运" -> "sf-express"
+    "阿里云盘" -> "aliyunpan"; "迅雷" -> "xunlei"; "菜鸟" -> "cainiao"; "顺丰速运" -> "sf-express"; "顺丰速递" -> "sf-express"
+    // 自建特征（rdpi 18-4-3-0）：官方库未明确归属的阿里基础设施流量。
+    "阿里CDN" -> "alibaba"
     "微博" -> "weibo"; "知乎" -> "zhihu"; "豆瓣" -> "douban"; "Soul" -> "soul"; "陌陌" -> "momo"; "探探" -> "tantan"
     "钉钉" -> "dingtalk"; "飞书" -> "feishu"; "WPS Office" -> "wps-office"
-    "淘宝" -> "taobao"; "京东" -> "jingdong"; "拼多多" -> "pinduoduo"; "支付宝" -> "alipay"
+    "淘宝" -> "taobao"; "京东" -> "jingdong"; "拼多多" -> "pinduoduo"; "支付宝" -> "alipay"; "唯品会" -> "vipshop"
+    "云闪付" -> "unionpay"
     "美团" -> "meituan"; "饿了么" -> "eleme"; "滴滴出行" -> "didi"
     "闲鱼" -> "goofish"; "得物" -> "dewu"; "转转" -> "zhuanzhun"
     "携程旅行" -> "ctrip"; "去哪儿旅行" -> "qunar"; "同程旅行" -> "tongcheng"; "马蜂窝" -> "mafengwo"
     "淘票票" -> "taopiaopiao"; "铁路12306" -> "railway-12306"; "大众点评" -> "dianping"
-    "华为应用市场" -> "huawei"; "小米应用商店" -> "xiaomi-global"; "应用宝" -> "yyb"; "酷安" -> "coolapk"; "App Store" -> "appstore"
+    // 应用商店走内置图标（用户提供的官方 logo），不依赖 CDN；
+    // key 与官方特征库名一一对应。
+    "华为应用商店" -> "huawei-app-store"; "小米应用商店" -> "xiaomi-app-store"
+    "OPPO应用商店" -> "oppo-store"; "VIVO应用商店" -> "vivo-app-store"; "应用宝" -> "yyb"
+    "酷安应用市场" -> "coolapk"; "酷安" -> "coolapk"; "App Store" -> "appstore"
     "Steam" -> "steam"; "Keep" -> "keep"; "虎扑" -> "hupu"; "IT之家" -> "ithome"; "雪球" -> "xueqiu"
     "番茄小说" -> "fanqie-novel"; "米游社" -> "mihoyo-bbs"; "瑞幸咖啡" -> "luckin"
+    "王者荣耀" -> "honor-of-kings"; "中国建设银行" -> "ccb"; "今日头条" -> "toutiao"
+    "豆包" -> "doubao"; "DeepSeek" -> "deepseek"
     else -> name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "missing" }
+    }
 }
