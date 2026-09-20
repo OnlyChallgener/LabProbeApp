@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -45,6 +46,16 @@ interface ChildInternetRepository {
 internal fun interface ChildGuardTransport {
     fun request(path: String, method: String, body: JSONObject?): JSONObject
 }
+
+/**
+ * Hub 收了命令但路由器还没 ack（HTTP 202 + ``commandId``）。
+ *
+ * 这既不是失败也不是数据：把它当数据解析会得到一份空计划，把屏幕上真实的那一屏
+ * 擦掉；当失败报又会弹一个「请求失败」的红色横幅。所以单独一个类型，读的时候留着
+ * 缓存再查一次，写的时候留着「同步中」轮询 ``commandId``。
+ */
+internal class ChildGuardPendingException(val commandId: String) :
+    Exception("路由器仍在处理这条命令")
 
 private class HubChildGuardTransport(private val prefs: AppPrefs) : ChildGuardTransport {
     /** 与旧实现一致：每次请求新建 HubApi，Hub 地址与 DNS 改动即时生效。 */
@@ -115,6 +126,12 @@ internal fun pruneChildGuardCache(store: JSONObject, today: String, keepDays: In
         }
     return store
 }
+
+// 202 之后多久再看一次 —— 见 ``retryDetails`` / ``awaitCommand``。
+private const val PENDING_READ_RETRY_MS = 3_000L
+private const val PENDING_READ_ATTEMPTS = 5
+private const val COMMAND_POLL_MS = 2_000L
+private const val COMMAND_POLL_ATTEMPTS = 15
 
 /** Production repository: only confirmed router members and measured usage are shown. */
 class RealChildInternetRepository internal constructor(
@@ -265,7 +282,9 @@ class RealChildInternetRepository internal constructor(
     private fun usageCacheKey(deviceId: String, date: String): String =
         childGuardUsageCacheKey(routerId, childGuardDeviceKey(deviceId), date)
 
-    override fun refresh() {
+    override fun refresh() = refreshFrom(0)
+
+    private fun refreshFrom(attempt: Int) {
         refreshJob?.cancel()
         val expected = revision
         state = state.copy(loading = state.devices.isEmpty(), error = "")
@@ -286,6 +305,9 @@ class RealChildInternetRepository internal constructor(
                     if (expected != revision) break
                     try { readDetails(device.summary.deviceId, expected) }
                     catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (stillRunning: ChildGuardPendingException) {
+                        retryDetails(device.summary.deviceId, expected, 0)
+                    }
                     catch (error: Exception) {
                         if (expected == revision) state = state.copy(error = error.userMessage())
                     }
@@ -293,6 +315,13 @@ class RealChildInternetRepository internal constructor(
                 updateMasterState()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
+            } catch (stillRunning: ChildGuardPendingException) {
+                // 路由器还在上一轮里忙：留着当前这一屏，几秒后自己再来一次。
+                state = state.copy(loading = false)
+                if (expected == revision && attempt < PENDING_READ_ATTEMPTS) {
+                    delay(PENDING_READ_RETRY_MS)
+                    refreshFrom(attempt + 1)
+                }
             } catch (error: Exception) {
                 if (expected == revision) state = state.copy(loading = false, error = error.userMessage())
             }
@@ -391,8 +420,15 @@ class RealChildInternetRepository internal constructor(
             setUsageLoading(uid, true)
             try {
                 readDetails(uid, expected)
+                // 一次成功的读取就是这一屏的「新」，之前那条红色横幅该退了。
+                if (expected == revision) state = state.copy(error = "")
                 onResult(Result.success(Unit))
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (stillRunning: ChildGuardPendingException) {
+                // 路由器还在处理：留着缓存那一屏，几秒后自己再看一次，不报错误。
+                retryDetails(uid, expected, 0)
+                onResult(Result.success(Unit))
+            }
             catch (error: Exception) {
                 // 抓不到就继续显示缓存那一屏，只把失败状态显示出来。
                 if (expected == revision) state = state.copy(error = error.userMessage())
@@ -416,6 +452,26 @@ class RealChildInternetRepository internal constructor(
             ))
         }
         updateUsageFromReport(uid)
+    }
+
+    /**
+     * 202 之后的自动补读：界面上不留红色横幅，也不让用户再点一次刷新。
+     *
+     * 次数封顶是故意的 —— 路由器真不在的时候，无限重试只会把 Hub 的队列填满
+     * 同一台设备的同一条读命令。
+     */
+    private fun retryDetails(uid: String, expected: Long, attempt: Int) {
+        if (attempt >= PENDING_READ_ATTEMPTS) return
+        scope.launch {
+            delay(PENDING_READ_RETRY_MS)
+            if (expected != revision) return@launch
+            try {
+                readDetails(uid, expected)
+                state = state.copy(error = "")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (stillRunning: ChildGuardPendingException) { retryDetails(uid, expected, attempt + 1) }
+            catch (error: Exception) { state = state.copy(error = error.userMessage()) }
+        }
     }
 
     /** 上网报告 payload 的唯一抓取入口；写入状态的一律是 `applyUsage`。 */
@@ -476,21 +532,60 @@ class RealChildInternetRepository internal constructor(
                 val response = withContext(Dispatchers.IO) { request() }
                 accepted(response)
                 updateMasterState()
-                pending.remove(uid)
-                state = state.copy(pendingDeviceIds = pending.toSet())
+                clearPending(uid)
                 // Acknowledgement is independent of the slower background read-back.
                 refreshAfterMutation(uid)
                 onResult(Result.success(Unit))
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (stillRunning: ChildGuardPendingException) {
+                // 202 = Hub 已受理、路由器还在写。这不是失败：留着「同步中」，
+                // 轮询 commandId，等真正的结果回来再落状态。
+                awaitCommand(stillRunning.commandId, uid, onResult)
+            }
             catch (error: Exception) {
-                pending.remove(uid)
-                state = state.copy(pendingDeviceIds = pending.toSet())
+                clearPending(uid)
                 // A timeout or a multi-device partial failure may still have changed router state.
                 refreshAfterMutation(uid)
                 state = state.copy(error = error.userMessage())
                 onResult(Result.failure(error))
             }
         }
+    }
+
+    /** 轮询 Hub 的命令结果；成功/失败/超时三条路都会把「同步中」摘掉。 */
+    private fun awaitCommand(commandId: String, uid: String,
+                             onResult: (Result<Unit>) -> Unit, attempt: Int = 0) {
+        if (commandId.isBlank() || attempt >= COMMAND_POLL_ATTEMPTS) {
+            clearPending(uid)
+            // 没查到结果不等于失败 —— 命令可能已经生效，只是 Hub 的队列把它清了。
+            // 这时交给读回拿真实状态，而不是报一个「操作失败」把用户推向重试。
+            refreshAfterMutation(uid)
+            onResult(Result.success(Unit))
+            return
+        }
+        scope.launch {
+            delay(COMMAND_POLL_MS)
+            try {
+                withContext(Dispatchers.IO) { api.commandResult(commandId) }
+                clearPending(uid)
+                updateMasterState()
+                refreshAfterMutation(uid)
+                onResult(Result.success(Unit))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (stillRunning: ChildGuardPendingException) {
+                awaitCommand(commandId, uid, onResult, attempt + 1)
+            } catch (error: Exception) {
+                clearPending(uid)
+                refreshAfterMutation(uid)
+                state = state.copy(error = error.userMessage())
+                onResult(Result.failure(error))
+            }
+        }
+    }
+
+    private fun clearPending(uid: String) {
+        pending.remove(uid)
+        state = state.copy(pendingDeviceIds = pending.toSet())
     }
 
     /**
@@ -506,6 +601,7 @@ class RealChildInternetRepository internal constructor(
         scope.launch {
             try { readDetails(uid, revision) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (stillRunning: ChildGuardPendingException) { retryDetails(uid, revision, 0) }
             catch (error: Exception) { state = state.copy(error = error.userMessage()) }
         }
     }
@@ -595,6 +691,9 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
      * 所以这个 GET 本身不会要求路由器重扫，可以放心 20 秒轮一次。
      */
     fun overview() = get("$base/overview$routerQuery")
+
+    /** 202 之后的结果查询：路由器 ack 了才回 payload，还在处理就继续抛 pending。 */
+    fun commandResult(commandId: String) = get("$base/command/${pathPart(commandId)}")
     fun plans(uid: String) = parseChildGuardPlans(get("$base/devices/${pathPart(uid)}/plans$routerQuery"))
     fun runtime(uid: String) = parseChildGuardRuntime(get("$base/devices/${pathPart(uid)}/runtime$routerQuery"), uid)
     fun createPlan(uid: String, plan: DeviceGuardPlan, deviceMac: String? = null, deviceName: String? = null) = write(
@@ -646,6 +745,9 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
     private fun write(path: String, method: String, body: JSONObject = JSONObject()) = checked(hub.request(path, method, body))
     private fun checked(root: JSONObject): JSONObject {
         if (root.has("ok") && !root.optBoolean("ok")) throw IllegalStateException(root.optString("message").ifBlank { root.optString("error") }.ifBlank { "儿童守护请求失败" })
+        // Hub 等不到路由器 ack 会回 202 + commandId。这不是失败，也**不是**数据：
+        // 拿它去 parse 会得到一份空计划/空 runtime，把屏幕上真实的那一屏擦掉。
+        if (root.optBoolean("pending")) throw ChildGuardPendingException(root.optString("commandId"))
         return root
     }
 }
@@ -1205,20 +1307,35 @@ private fun JSONObject.weekdaySet(vararg keys: String): Set<Int> {
     return raw.mapNotNull { it.toIntOrNull()?.takeIf { day -> day in 1..7 } ?: weekdayNumber(it).takeIf { day -> day in 1..7 } }.toSet()
 }
 private fun pathPart(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20")
-private fun Throwable.userMessage(): String {
-    val raw = message.orEmpty().trim()
+
+/**
+ * 反代（Lucky/nginx）超时回的是给浏览器看的一整页 HTML，它跟在 "HTTP 502: " 后面
+ * 一起进了异常消息。这页东西对用户没有意义，还会把整屏撑坏，所以先剥掉再判。
+ */
+internal fun stripMarkupForDisplay(raw: String): String =
+    raw.substringBefore('<').trim().trimEnd(':', ' ').trim()
+
+private val httpStatusInText = Regex("""\bHTTP\s*(\d{3})\b""", RegexOption.IGNORE_CASE)
+
+internal fun Throwable.userMessage(): String {
+    val raw = stripMarkupForDisplay(message.orEmpty())
     val lower = raw.lowercase()
+    val status = (this as? HubHttpException)?.statusCode
+        ?: httpStatusInText.find(raw)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     return when {
-        raw.isBlank() -> "儿童守护请求失败"
-        "timeout" in lower || "timed out" in lower || "504" in lower -> "路由器响应超时，请检查路由器连接"
-        "unauthorized" in lower || "bad hook token" in lower || "401" in lower -> "身份凭证已失效，请重新连接 Hub"
+        status in 502..504 || "bad gateway" in lower || "gateway timeout" in lower ->
+            "Hub 网关无响应，路由器可能还在处理，稍后自动重试"
+        status == 500 || "internal server error" in lower -> "Hub 处理失败，请稍后重试"
+        status == 404 || "not found" in lower -> "Hub 上找不到这台设备的守护数据"
+        "timeout" in lower || "timed out" in lower -> "路由器响应超时，请检查路由器连接"
+        status == 401 || "unauthorized" in lower || "bad hook token" in lower -> "身份凭证已失效，请重新连接 Hub"
         "connection refused" in lower || "failed to connect" in lower -> "无法连接 Hub，请检查网络"
         "stale command" in lower || "delivery timeout" in lower -> "路由器响应超时，请重试"
         "invalid plan id" in lower -> "计划标识无效"
         "invalid device uid" in lower -> "设备标识无效"
         "no router" in lower -> "未检测到关联路由器"
-        raw.any { it.code > 127 } -> raw
-        else -> "儿童守护请求失败 ($raw)"
+        raw.isBlank() -> "儿童守护请求失败"
+        else -> if (raw.any { it.code > 127 }) raw.take(80) else "儿童守护请求失败 (${raw.take(80)})"
     }
 }
 

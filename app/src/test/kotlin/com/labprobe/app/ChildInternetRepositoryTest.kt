@@ -501,4 +501,48 @@ class ChildInternetRepositoryTest {
     fun cachePruneOnAnEmptyStoreIsANoOp() {
         assertEquals(0, pruneChildGuardCache(JSONObject(), "2026-09-20", 10).length())
     }
+
+    /** 反代超时回的那一整页 HTML 曾经直接铺满屏幕顶部（真机截图 15:56）。 */
+    @Test
+    fun gatewayErrorPageNeverReachesTheScreen() {
+        val html = "HTTP 502: <!DOCTYPE html>\n<html lang=\"zh\">\n<head><title>Lucky Warning</title></head>" +
+            "<body><center><h1>502 Bad Gateway</h1></center></body></html>"
+        val message = HubHttpException(502, html).userMessage()
+        assertFalse(message.contains("<"))
+        assertFalse(message.contains("Lucky"))
+        assertFalse(message.contains("502"))
+        assertEquals("Hub 网关无响应，路由器可能还在处理，稍后自动重试", message)
+    }
+
+    @Test
+    fun statusTextWithoutTheTypedExceptionStillMaps() {
+        assertEquals("Hub 网关无响应，路由器可能还在处理，稍后自动重试",
+            IllegalStateException("HTTP 502: <html><body>Bad Gateway</body></html>").userMessage())
+        assertEquals("身份凭证已失效，请重新连接 Hub", HubHttpException(401, "bad hook token").userMessage())
+        assertEquals("无法连接 Hub，请检查网络",
+            IllegalStateException("Failed to connect to hub.example.com").userMessage())
+    }
+
+    @Test
+    fun hubSideChineseMessagesStayVerbatim() {
+        assertEquals("儿童上网操作失败", IllegalStateException("儿童上网操作失败").userMessage())
+        assertEquals("儿童守护请求失败", IllegalStateException("   ").userMessage())
+    }
+
+    /**
+     * 202 不是失败，也不是数据。当成空计划解析会把屏幕上真实的那一屏擦掉，
+     * 所以它必须是自己的异常类型，让调用方留着缓存再查一次。
+     */
+    @Test
+    fun aPendingReadThrowsInsteadOfLookingLikeAnEmptyPlanList() {
+        val api = ChildGuardHubApi({ _, _, _ ->
+            JSONObject().put("ok", true).put("pending", true).put("commandId", "a".repeat(24))
+        }, "default")
+        val error = runCatching { api.plans("AABBCCDDEEFF00112233445566778899") }.exceptionOrNull()
+        assertTrue(error is ChildGuardPendingException)
+        assertEquals("a".repeat(24), (error as ChildGuardPendingException).commandId)
+        // 同一条 202 走 runtime 也一样：不能回一份「没被禁网」的空状态。
+        assertTrue(runCatching { api.runtime("AABBCCDDEEFF00112233445566778899") }
+            .exceptionOrNull() is ChildGuardPendingException)
+    }
 }
