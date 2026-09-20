@@ -101,6 +101,25 @@ data class ChildGuardPresence(
     val updatedAtEpoch: Long? = null
 )
 
+/**
+ * Hub 用缓存的上网计划算出来的「此刻生效态」，唯一写入者也是总览聚合。
+ *
+ * 时段和「多久之后变」都是服务器给的：App 只把 `nextChangeAtEpoch` 换算成还剩
+ * 多久，绝不自己从当前时间推任何一段时间。
+ */
+data class ChildGuardSchedule(
+    /** unrestricted / allowed / partial / blocked；空或 unknown = Hub 还没读过这台设备的计划。 */
+    val state: String = "",
+    val planCount: Int = 0,
+    val currentStart: String = "",
+    val currentEnd: String = "",
+    val nextChangeAtEpoch: Long? = null,
+    val minutesToChange: Int? = null
+) {
+    /** 「不知道」和「不受限」是两句话，界面对这两句的处理也不同。 */
+    val known: Boolean get() = state.isNotBlank() && state != "unknown"
+}
+
 data class UsageBar(
     val label: String,
     val minutes: Int,
@@ -201,6 +220,8 @@ data class ChildInternetDeviceState(
     val attentionEntries: List<ParentAttentionEntry> = emptyList(),
     /** 总览聚合写入的存在性快照，唯一写入者是 `/child-guard/overview`。 */
     val presence: ChildGuardPresence? = null,
+    /** 此刻的计划生效态，同样只由总览聚合写入（Hub 本地算，不碰路由器）。 */
+    val schedule: ChildGuardSchedule = ChildGuardSchedule(),
     /** A usage refresh is in flight; the page keeps showing cached data meanwhile. */
     val usageLoading: Boolean = false
 ) {

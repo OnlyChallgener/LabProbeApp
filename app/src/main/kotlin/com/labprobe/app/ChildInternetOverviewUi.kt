@@ -394,6 +394,43 @@ private fun MasterGuardCard(enabled: Boolean, busy: Boolean, hasPlans: Boolean, 
     }
 }
 
+/**
+ * 卡片副标题那句「此刻能不能上网」。全部是 Hub 算好的生效态，App 只做单位换算：
+ * 倒计时从 `nextChangeAtEpoch` 这个真实边界减出来，绝不拿当前时间编一段时间。
+ */
+internal fun childGuardScheduleText(schedule: ChildGuardSchedule, nowEpoch: Long): String {
+    if (!schedule.known) return ""
+    val window = if (schedule.currentStart.isNotBlank() && schedule.currentEnd.isNotBlank())
+        " ${schedule.currentStart}–${schedule.currentEnd}" else ""
+    val plans = if (schedule.planCount > 1) " · ${schedule.planCount} 条计划" else ""
+    val changeIn = childGuardChangeIn(schedule, nowEpoch)
+    return when (schedule.state) {
+        "allowed" -> "允许上网$window$plans"
+        "partial" -> "部分应用可用$window$plans"
+        // 下一次变化已经过去（缓存的旧总览）就不报倒计时，宁可只说「禁网中」。
+        "blocked" -> buildString {
+            append("禁网中")
+            if (changeIn.isNotBlank()) append(" · ${changeIn}后允许上网")
+            if (schedule.planCount > 1) append(" · ${schedule.planCount} 条计划")
+        }
+        "unrestricted" -> "当前网络无限制"
+        else -> ""
+    }
+}
+
+private fun childGuardChangeIn(schedule: ChildGuardSchedule, nowEpoch: Long): String {
+    val minutes = schedule.nextChangeAtEpoch?.let { (it - nowEpoch + 59) / 60 }
+        ?: schedule.minutesToChange?.toLong()
+    return when {
+        minutes == null || minutes <= 0 -> ""
+        minutes < 60 -> "$minutes 分钟"
+        // 139 分钟说成「2 小时」会把家长差出去二十分钟，所以带上余数。
+        minutes < 24 * 60 -> if (minutes % 60 == 0L) "${minutes / 60} 小时"
+            else "${minutes / 60} 小时 ${minutes % 60} 分钟"
+        else -> "${minutes / (24 * 60)} 天"
+    }
+}
+
 @Composable
 private fun ProtectedDeviceCard(
     device: ChildInternetDeviceState,
@@ -522,15 +559,17 @@ private fun ProtectedDeviceCard(
                         ((summary.blockedUntilEpoch - nowEpoch + 59) / 60).toInt().coerceAtLeast(1)
                     } else 0
 
+                    val scheduleText = childGuardScheduleText(device.schedule, nowEpoch)
                     val statusText = when {
                         isTemporaryBlock -> "已禁网 · 剩余 $remainingMins 分钟"
                         isBlocked && summary.blockedUntilEpoch > 1L -> "禁网已到期 · 正在确认状态"
                         isBlocked -> "已一键禁网 · 手动恢复后可用"
+                        scheduleText.isNotBlank() -> scheduleText
                         summary.status == GuardStatus.GUARDED -> "上网计划守护中"
                         else -> "当前网络无限制"
                     }
                     val statusColor = when {
-                        isBlocked -> LabV2.Red
+                        isBlocked || device.schedule.state == "blocked" -> LabV2.Red
                         summary.status == GuardStatus.GUARDED -> LabV2.Primary
                         else -> Color(0xFF94A3B8)
                     }

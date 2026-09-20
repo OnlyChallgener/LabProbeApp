@@ -545,4 +545,46 @@ class ChildInternetRepositoryTest {
         assertTrue(runCatching { api.runtime("AABBCCDDEEFF00112233445566778899") }
             .exceptionOrNull() is ChildGuardPendingException)
     }
+
+    @Test
+    fun overviewCarriesTheServerComputedSchedule() {
+        val next = 1_800_000_000L
+        val root = JSONObject().put("devices", JSONArray().put(JSONObject()
+            .put("uid", "AABBCCDDEEFF00112233445566778899")
+            .put("planCount", 2).put("schedule", "blocked")
+            .put("blockedRange", JSONObject().put("start", "00:00").put("end", "17:00"))
+            .put("nextChangeAtEpoch", next).put("minutesToChange", 139)))
+        val schedule = parseChildGuardOverview(root).devices.single().schedule
+        assertEquals("blocked", schedule.state)
+        assertEquals(2, schedule.planCount)
+        assertEquals(next, schedule.nextChangeAtEpoch)
+        assertEquals("禁网中 · 2 小时 19 分钟后允许上网 · 2 条计划",
+            childGuardScheduleText(schedule, next - 139 * 60))
+    }
+
+    /** 「Hub 还没读过计划」不能显示成「不受限」，也不能显示成任何一句判断。 */
+    @Test
+    fun unknownScheduleSaysNothingAtAll() {
+        assertEquals("", childGuardScheduleText(ChildGuardSchedule(), 0L))
+        assertEquals("", childGuardScheduleText(ChildGuardSchedule(state = "unknown"), 0L))
+        assertEquals("当前网络无限制",
+            childGuardScheduleText(ChildGuardSchedule(state = "unrestricted"), 0L))
+        assertEquals("允许上网 17:00–21:30", childGuardScheduleText(
+            ChildGuardSchedule(state = "allowed", planCount = 1, currentStart = "17:00", currentEnd = "21:30"), 0L))
+        assertEquals("部分应用可用 19:00–20:00", childGuardScheduleText(
+            ChildGuardSchedule(state = "partial", currentStart = "19:00", currentEnd = "20:00"), 0L))
+    }
+
+    /** 缓存里那份旧总览的边界可能已经过了：这时只说「禁网中」，不编倒计时。 */
+    @Test
+    fun aScheduleWhoseNextChangeAlreadyPassedDropsTheCountdown() {
+        val stale = ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 1_000L, minutesToChange = 139)
+        assertEquals("禁网中", childGuardScheduleText(stale, 2_000L))
+        assertEquals("禁网中 · 3 小时后允许上网",
+            childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 12_600L), 1_800L))
+        assertEquals("禁网中 · 3 小时 15 分钟后允许上网",
+            childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 13_500L), 1_800L))
+        assertEquals("禁网中 · 2 天后允许上网",
+            childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 172_800L), 0L))
+    }
 }

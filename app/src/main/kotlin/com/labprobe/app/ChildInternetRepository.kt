@@ -263,7 +263,8 @@ class RealChildInternetRepository internal constructor(
                     status = if (row.blocked) GuardStatus.BLOCKED else cached?.summary?.status ?: GuardStatus.UNRESTRICTED,
                     blockedUntilEpoch = row.blockedUntilEpoch
                 ),
-                presence = if (snapshot.presenceKnown) row.presence else null
+                presence = if (snapshot.presenceKnown) row.presence else null,
+                schedule = row.schedule
             )
         }
         // 聚合里消失的设备是 Hub 确认过的离队成员才掉出列表；整个 devices
@@ -837,6 +838,8 @@ internal data class ChildGuardOverviewDevice(
     val blocked: Boolean,
     val blockedUntilEpoch: Long,
     val updatedAtEpoch: Long?,
+    /** Hub 本地算出来的此刻生效态；state 为空就是还没读过这台设备的计划。 */
+    val schedule: ChildGuardSchedule = ChildGuardSchedule(),
     val accentArgb: Int
 ) {
     val summary: ProtectedDeviceSummary
@@ -906,6 +909,14 @@ private fun childGuardDeviceRows(root: JSONObject): List<ChildGuardOverviewDevic
             blocked = item.bool("blocked", "paused"),
             blockedUntilEpoch = item.longOrNull("blockedUntilEpoch") ?: 0L,
             updatedAtEpoch = item.longOrNull("updatedAt"),
+            schedule = ChildGuardSchedule(
+                state = item.text("schedule"),
+                planCount = item.optInt("planCount", 0),
+                currentStart = item.optJSONObject("currentRange")?.text("start").orEmpty(),
+                currentEnd = item.optJSONObject("currentRange")?.text("end").orEmpty(),
+                nextChangeAtEpoch = item.longOrNull("nextChangeAtEpoch"),
+                minutesToChange = item.intOrNull("minutesToChange"),
+            ),
             accentArgb = item.optInt("accentArgb", 0xFF64748B.toInt())
         )
     }
