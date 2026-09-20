@@ -948,23 +948,49 @@ private fun AppUsageTimelineDialog(
                 Spacer(Modifier.height(12.dp))
 
                 if (entry.sessions.isNotEmpty()) {
-                    // 官方每条会话就是一行「00:10-00:25  使用15分钟」，行高 40dp；
-                    // 之前那根连起来的竖线时间轴把弹窗撑得很开。
-                    entry.sessions.forEach { session ->
+                    // 官方是「圆点 + 上下点之间的竖线」把几段会话串成一列，时长紧跟在
+                    // 时段后面、同一个字号，而不是被顶到最右边 —— 顶到右边会让中间空出一
+                    // 大片，读起来像两张表。
+                    entry.sessions.forEachIndexed { index, session ->
                         Row(
-                            Modifier.fillMaxWidth().height(34.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            Modifier.fillMaxWidth().height(38.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Box(
+                                modifier = Modifier.width(16.dp).fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Canvas(Modifier.fillMaxHeight().width(2.dp)) {
+                                    val mid = size.height / 2f
+                                    if (index > 0) drawLine(
+                                        color = Color(0xFFE5E7EB),
+                                        start = Offset(size.width / 2f, 0f),
+                                        end = Offset(size.width / 2f, mid),
+                                        strokeWidth = 1.5.dp.toPx()
+                                    )
+                                    if (index < entry.sessions.lastIndex) drawLine(
+                                        color = Color(0xFFE5E7EB),
+                                        start = Offset(size.width / 2f, mid),
+                                        end = Offset(size.width / 2f, size.height),
+                                        strokeWidth = 1.5.dp.toPx()
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier.size(6.dp)
+                                        .clip(CircleShape).background(Color(0xFFD1D5DB))
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 session.timeRange,
-                                modifier = Modifier.weight(1f),
-                                style = LabTypography.Body.copy(fontSize = 14.sp, color = LabV2.Ink),
-                                maxLines = 1
+                                modifier = Modifier.width(120.dp),
+                                style = LabTypography.Body.copy(fontSize = 15.sp, color = LabV2.Ink),
+                                maxLines = 1,
+                                softWrap = false
                             )
                             Text(
-                                session.durationText,
-                                style = LabTypography.Supporting.copy(color = LabV2.InkMuted)
+                                "使用${session.durationText}",
+                                style = LabTypography.Body.copy(fontSize = 15.sp, color = LabV2.Ink)
                             )
                         }
                     }
