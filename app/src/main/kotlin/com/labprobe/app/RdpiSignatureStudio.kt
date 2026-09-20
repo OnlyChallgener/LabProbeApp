@@ -377,7 +377,13 @@ fun RdpiSignatureCard(
                         },
                         enabled = !bundleLoading,
                         shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF16A34A), contentColor = Color.White,
+                            // 不设这两条，禁用时 Material3 用 38% 黑 —— 绿底上一团灰字，
+                            // 看着像坏了其实只是不可用。
+                            disabledContainerColor = Color(0xFF16A34A).copy(alpha = 0.55f),
+                            disabledContentColor = Color.White.copy(alpha = 0.9f)
+                        ),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier.height(34.dp)
                     ) {
@@ -412,7 +418,11 @@ fun RdpiSignatureCard(
                     onClick = { showImportDialog = true },
                     modifier = Modifier.weight(1.2f).height(40.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LabV2.Cyan, contentColor = Color.White,
+                        disabledContainerColor = LabV2.Cyan.copy(alpha = 0.55f),
+                        disabledContentColor = Color.White.copy(alpha = 0.9f)
+                    )
                 ) {
                     Icon(Icons.Rounded.CloudUpload, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(5.dp))
