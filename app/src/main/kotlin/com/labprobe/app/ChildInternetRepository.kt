@@ -254,9 +254,13 @@ class RealChildInternetRepository internal constructor(
                     row.macs.any { mac -> device.summary.matchesChildGuardDevice(mac) }
             }
             cached?.let { available.remove(it) }
-            (cached ?: newChildGuardDevice(row.uid, row.name, row.iconKey)).copy(
+            (cached ?: newChildGuardDevice(row.uid, row.name, row.iconKey, row.macs)).copy(
                 summary = (cached?.summary ?: row.summary).copy(
-                    name = row.name.ifBlank { cached?.summary?.name.orEmpty() }.ifBlank { row.uid },
+                    // 新名字优先；路由器这一轮只给了占位串时，继承上一轮的真名字，
+                    // 两者都没有才用 MAC 尾号 —— 名字不能随着轮询在两类回退间跳。
+                    name = childGuardDisplayName(
+                        listOf(row.name, cached?.summary?.name.orEmpty()), row.uid, row.macs
+                    ),
                     iconKey = row.iconKey.ifBlank { cached?.summary?.iconKey.orEmpty() },
                     macAddresses = row.macs.ifEmpty { cached?.summary?.macAddresses ?: setOf(row.uid) },
                     isOnline = snapshot.presenceKnown && row.online,
@@ -306,25 +310,26 @@ class RealChildInternetRepository internal constructor(
                     if (expected != revision) break
                     try { readDetails(device.summary.deviceId, expected) }
                     catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                    catch (stillRunning: ChildGuardPendingException) {
-                        retryDetails(device.summary.deviceId, expected, 0)
-                    }
                     catch (error: Exception) {
-                        if (expected == revision) state = state.copy(error = error.userMessage())
+                        if (error.needsASilentRetry()) retryDetails(device.summary.deviceId, expected, 0)
+                        else if (expected == revision) state = state.copy(error = error.userMessage())
                     }
                 }
                 updateMasterState()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (stillRunning: ChildGuardPendingException) {
-                // 路由器还在上一轮里忙：留着当前这一屏，几秒后自己再来一次。
-                state = state.copy(loading = false)
-                if (expected == revision && attempt < PENDING_READ_ATTEMPTS) {
-                    delay(PENDING_READ_RETRY_MS)
-                    refreshFrom(attempt + 1)
-                }
             } catch (error: Exception) {
-                if (expected == revision) state = state.copy(loading = false, error = error.userMessage())
+                if (error.needsASilentRetry()) {
+                    // 上一轮还在路由器手里，或这一秒 DNS 没解析出来：留着当前这一屏，
+                    // 几秒后自己再来一次，别把用户推到「再点一次刷新」。
+                    state = state.copy(loading = false)
+                    if (expected == revision && attempt < PENDING_READ_ATTEMPTS) {
+                        delay(PENDING_READ_RETRY_MS)
+                        refreshFrom(attempt + 1)
+                    }
+                } else if (expected == revision) {
+                    state = state.copy(loading = false, error = error.userMessage())
+                }
             }
         }
     }
@@ -344,7 +349,8 @@ class RealChildInternetRepository internal constructor(
         if (targets.isEmpty()) return
         mutate("*", {}, request = {
             targets.forEach { (uid, id) -> api.setPlanEnabled(uid, id, enabled) }
-            Unit
+            // 逐条各发一次写，`accepted` 不看响应，所以这里只交回「都发完了」。
+            JSONObject()
         }, accepted = {
             state = state.copy(devices = state.devices.map { d ->
                 withPlans(d, d.plans.map { it.copy(enabled = enabled) })
@@ -425,15 +431,17 @@ class RealChildInternetRepository internal constructor(
                 if (expected == revision) state = state.copy(error = "")
                 onResult(Result.success(Unit))
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (stillRunning: ChildGuardPendingException) {
-                // 路由器还在处理：留着缓存那一屏，几秒后自己再看一次，不报错误。
-                retryDetails(uid, expected, 0)
-                onResult(Result.success(Unit))
-            }
             catch (error: Exception) {
-                // 抓不到就继续显示缓存那一屏，只把失败状态显示出来。
-                if (expected == revision) state = state.copy(error = error.userMessage())
-                onResult(Result.failure(error))
+                if (error.needsASilentRetry()) {
+                    // 路由器还在处理，或这一秒手机解析不出 Hub：留着当前这一屏，
+                    // 几秒后自己再看一次，不弹红色横幅让用户再点一遍刷新。
+                    retryDetails(uid, expected, 0)
+                    onResult(Result.success(Unit))
+                } else {
+                    // 抓不到就继续显示缓存那一屏，只把失败状态显示出来。
+                    if (expected == revision) state = state.copy(error = error.userMessage())
+                    onResult(Result.failure(error))
+                }
             } finally {
                 setUsageLoading(uid, false)
             }
@@ -470,8 +478,10 @@ class RealChildInternetRepository internal constructor(
                 readDetails(uid, expected)
                 state = state.copy(error = "")
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (stillRunning: ChildGuardPendingException) { retryDetails(uid, expected, attempt + 1) }
-            catch (error: Exception) { state = state.copy(error = error.userMessage()) }
+            catch (error: Exception) {
+                if (error.needsASilentRetry()) retryDetails(uid, expected, attempt + 1)
+                else state = state.copy(error = error.userMessage())
+            }
         }
     }
 
@@ -517,8 +527,8 @@ class RealChildInternetRepository internal constructor(
     private fun setUsageLoading(uid: String, loading: Boolean) =
         updateDevice(uid) { d -> if (d.usageLoading == loading) d else d.copy(usageLoading = loading) }
 
-    private fun <T> mutate(deviceId: String, onResult: (Result<Unit>) -> Unit,
-        request: () -> T, accepted: (T) -> Unit) {
+    private fun mutate(deviceId: String, onResult: (Result<Unit>) -> Unit,
+        request: () -> JSONObject, accepted: (JSONObject) -> Unit) {
         val uid = resolveRouterUid(deviceId)
         if (pending.isNotEmpty()) {
             onResult(Result.failure(IllegalStateException("正在同步上一项操作，请稍候")))
@@ -541,7 +551,7 @@ class RealChildInternetRepository internal constructor(
             catch (stillRunning: ChildGuardPendingException) {
                 // 202 = Hub 已受理、路由器还在写。这不是失败：留着「同步中」，
                 // 轮询 commandId，等真正的结果回来再落状态。
-                awaitCommand(stillRunning.commandId, uid, onResult)
+                awaitCommand(stillRunning.commandId, uid, onResult, accepted)
             }
             catch (error: Exception) {
                 clearPending(uid)
@@ -553,28 +563,39 @@ class RealChildInternetRepository internal constructor(
         }
     }
 
-    /** 轮询 Hub 的命令结果；成功/失败/超时三条路都会把「同步中」摘掉。 */
+    /**
+     * 轮询 Hub 的命令结果；成功/失败/超时三条路都会把「同步中」摘掉。
+     *
+     * 拿到最终结果时必须补做同步路径那份 `accepted`：Hub 回 202 时 `accepted` 一次
+     * 都没跑，界面上「解除儿童守护」成功了设备却还在列表里，就是因为这一份状态
+     * 只落在了「路由器同步返回」那条少数的快路上。
+     */
     private fun awaitCommand(commandId: String, uid: String,
-                             onResult: (Result<Unit>) -> Unit, attempt: Int = 0) {
+                             onResult: (Result<Unit>) -> Unit,
+                             accepted: (JSONObject) -> Unit,
+                             attempt: Int = 0) {
         if (commandId.isBlank() || attempt >= COMMAND_POLL_ATTEMPTS) {
             clearPending(uid)
-            // 没查到结果不等于失败 —— 命令可能已经生效，只是 Hub 的队列把它清了。
-            // 这时交给读回拿真实状态，而不是报一个「操作失败」把用户推向重试。
+            // 问不到结果不等于成功：命令可能还在路由器上跑，也可能已经失败。
+            // 报成功会让界面弹「已解除儿童守护」并把那一行留在原地，所以这里
+            // 只说「还在处理」，把判断交给读回来的真实状态。
             refreshAfterMutation(uid)
-            onResult(Result.success(Unit))
+            onResult(Result.failure(IllegalStateException(
+                "路由器还在处理，稍后会自动更新，不用重复操作")))
             return
         }
         scope.launch {
             delay(COMMAND_POLL_MS)
             try {
-                withContext(Dispatchers.IO) { api.commandResult(commandId) }
+                val result = withContext(Dispatchers.IO) { api.commandResult(commandId) }
+                accepted(result)
                 clearPending(uid)
                 updateMasterState()
                 refreshAfterMutation(uid)
                 onResult(Result.success(Unit))
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (stillRunning: ChildGuardPendingException) {
-                awaitCommand(commandId, uid, onResult, attempt + 1)
+                awaitCommand(commandId, uid, onResult, accepted, attempt + 1)
             } catch (error: Exception) {
                 clearPending(uid)
                 refreshAfterMutation(uid)
@@ -602,8 +623,10 @@ class RealChildInternetRepository internal constructor(
         scope.launch {
             try { readDetails(uid, revision) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (stillRunning: ChildGuardPendingException) { retryDetails(uid, revision, 0) }
-            catch (error: Exception) { state = state.copy(error = error.userMessage()) }
+            catch (error: Exception) {
+                if (error.needsASilentRetry()) retryDetails(uid, revision, 0)
+                else state = state.copy(error = error.userMessage())
+            }
         }
     }
 
@@ -644,11 +667,13 @@ internal fun ChildInternetDeviceState.withUsage(report: ChildGuardUsageReport): 
 )
 
 /** 总览/成员表里新出现的设备：只带身份，统计一律留空等上网报告来写。 */
-internal fun newChildGuardDevice(uid: String, name: String, iconKey: String): ChildInternetDeviceState =
+internal fun newChildGuardDevice(
+    uid: String, name: String, iconKey: String, macs: Set<String> = emptySet()
+): ChildInternetDeviceState =
     ChildInternetDeviceState(
         summary = ProtectedDeviceSummary(
             deviceId = childGuardDeviceKey(uid),
-            name = name.ifBlank { uid },
+            name = childGuardDisplayName(listOf(name), uid, macs),
             iconKey = iconKey.ifBlank { "unknown" },
             accentArgb = 0xFF64748B.toInt(),
             status = GuardStatus.UNRESTRICTED
@@ -895,12 +920,16 @@ private fun childGuardDeviceRows(root: JSONObject): List<ChildGuardOverviewDevic
         ChildGuardOverviewDevice(
             uid = id,
             macs = macs,
-            name = listOf(
-                item.text("userDefinedName"),
-                item.text("recommendedName"),
-                item.text("name", "displayName"),
-                item.text("hostname")
-            ).firstOrNull { it.isNotBlank() && it != "受守护设备" && it != "LabProbe 设备" } ?: id,
+            // 这里只留「路由器真给的名字」，占位串一律当没有：名字的回退要等到
+            // applyOverview 手里有上一轮的真名可以继承时再做。
+            name = childGuardRealName(
+                listOf(
+                    item.text("userDefinedName"),
+                    item.text("recommendedName"),
+                    item.text("name", "displayName"),
+                    item.text("hostname")
+                ), id
+            ),
             iconKey = iconKey,
             online = online,
             // 缺 activeNow 就是不知道，绝不能拿在线顶替「正在上网」。
@@ -1328,12 +1357,26 @@ internal fun stripMarkupForDisplay(raw: String): String =
 
 private val httpStatusInText = Regex("""\bHTTP\s*(\d{3})\b""", RegexOption.IGNORE_CASE)
 
+/** OkHttp 的自定义 DNS 解析不出来时，异常原文是「CustomDns@… returned no addresses for …」。 */
+private val unresolvedHostText = Regex(
+    "returned no addresses|unable to resolve host|name or service not known|no host found",
+    RegexOption.IGNORE_CASE
+)
+
+internal fun Throwable.isUnresolvedHubHost(): Boolean =
+    unresolvedHostText.containsMatchIn(message.orEmpty())
+
+/** 值得「不报错、过几秒自己再试一次」的两种失败：路由器还在处理，和 DNS 打嗝。 */
+internal fun Throwable.needsASilentRetry(): Boolean =
+    this is ChildGuardPendingException || isUnresolvedHubHost()
+
 internal fun Throwable.userMessage(): String {
     val raw = stripMarkupForDisplay(message.orEmpty())
     val lower = raw.lowercase()
     val status = (this as? HubHttpException)?.statusCode
         ?: httpStatusInText.find(raw)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     return when {
+        isUnresolvedHubHost() -> "无法解析 Hub 域名，请检查手机网络或 DNS"
         status in 502..504 || "bad gateway" in lower || "gateway timeout" in lower ->
             "Hub 网关无响应，路由器可能还在处理，稍后自动重试"
         status == 500 || "internal server error" in lower -> "Hub 处理失败，请稍后重试"
@@ -1362,6 +1405,32 @@ internal fun childGuardDeviceKey(value: String): String {
 
 internal fun sameChildGuardDevice(left: String, right: String): Boolean =
     childGuardDeviceKey(left).equals(childGuardDeviceKey(right), ignoreCase = true)
+
+/** 中继在拿不到身份信息时回的就是这些占位串 —— 它们不是名字。 */
+private val childGuardPlaceholderNames = listOf("受守护设备", "受保护设备", "LabProbe 设备", "未知设备")
+
+/**
+ * 设备名的最后一道，绝不把 32 位 UID 显示成名字：用户报的「设备名经常变成一长串
+ * 字符」就是这条回退 —— 路由器那侧的名字偶尔是占位串，被拒绝后原代码拿 uid 顶上。
+ * 有 MAC 就用它的尾号做区分，一个都没有才说「未命名设备」。
+ */
+internal fun childGuardDisplayName(
+    candidates: List<String>,
+    uid: String,
+    macs: Set<String> = emptySet()
+): String {
+    val tail = macs.firstOrNull { it.length >= 5 }?.uppercase()?.takeLast(5)
+    return childGuardRealName(candidates, uid)
+        .ifBlank { if (tail != null) "未命名设备 · $tail" else "未命名设备" }
+}
+
+/** 路由器给的名字里第一个「像名字」的；一个都没有就回空串，由调用方决定怎么补。 */
+internal fun childGuardRealName(candidates: List<String>, uid: String): String =
+    candidates.map(String::trim).firstOrNull { candidate ->
+        candidate.isNotBlank() &&
+            childGuardPlaceholderNames.none { it.equals(candidate, ignoreCase = true) } &&
+            !sameChildGuardDevice(candidate, uid)
+    }.orEmpty()
 
 internal fun ProtectedDeviceSummary.matchesChildGuardDevice(value: String): Boolean =
     sameChildGuardDevice(deviceId, value) || macAddresses.any { sameChildGuardDevice(it, value) }

@@ -558,7 +558,7 @@ class ChildInternetRepositoryTest {
         assertEquals("blocked", schedule.state)
         assertEquals(2, schedule.planCount)
         assertEquals(next, schedule.nextChangeAtEpoch)
-        assertEquals("禁网中 · 2 小时 19 分钟后允许上网 · 2 条计划",
+        assertEquals("当前时段禁网，2 小时 19 分钟后允许上网",
             childGuardScheduleText(schedule, next - 139 * 60))
     }
 
@@ -575,16 +575,56 @@ class ChildInternetRepositoryTest {
             ChildGuardSchedule(state = "partial", currentStart = "19:00", currentEnd = "20:00"), 0L))
     }
 
-    /** 缓存里那份旧总览的边界可能已经过了：这时只说「禁网中」，不编倒计时。 */
+    /** 缓存里那份旧总览的边界可能已经过了：这时只说「当前时段禁网」，不编倒计时。 */
     @Test
     fun aScheduleWhoseNextChangeAlreadyPassedDropsTheCountdown() {
         val stale = ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 1_000L, minutesToChange = 139)
-        assertEquals("禁网中", childGuardScheduleText(stale, 2_000L))
-        assertEquals("禁网中 · 3 小时后允许上网",
+        assertEquals("当前时段禁网", childGuardScheduleText(stale, 2_000L))
+        assertEquals("当前时段禁网，3 小时后允许上网",
             childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 12_600L), 1_800L))
-        assertEquals("禁网中 · 3 小时 15 分钟后允许上网",
+        assertEquals("当前时段禁网，3 小时 15 分钟后允许上网",
             childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 13_500L), 1_800L))
-        assertEquals("禁网中 · 2 天后允许上网",
+        // 两天以上报的是真实边界那一刻（北京时间 1970-01-03 08:00 是周六），不是「2 天」。
+        assertEquals("当前时段禁网，本周周六 08:00 后允许上网",
             childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 172_800L), 0L))
+    }
+
+    /** 真机 17:03 的那条：OkHttp 的自定义 DNS 一时解析不出 Hub 域名。 */
+    @Test
+    fun dnsBlipBecomesASentenceAndNotAnExceptionDump() {
+        val dns = IllegalStateException(
+            "com.labprobe.app.CustomDns@4f393b0 returned no addresses for lp.lab86.shinya.icu")
+        assertEquals("无法解析 Hub 域名，请检查手机网络或 DNS", dns.userMessage())
+        assertTrue(dns.needsASilentRetry())
+        assertTrue(ChildGuardPendingException("a".repeat(24)).needsASilentRetry())
+        assertFalse(HubHttpException(401, "bad hook token").needsASilentRetry())
+        assertFalse(IllegalStateException("invalid plan id").needsASilentRetry())
+    }
+
+    /**
+     * 「设备名经常变成一长串字符」= 名字被占位串挤掉后退成了 32 位 UID。
+     * 名字只能是真的，或者是「未命名设备 · MAC 尾号」。
+     */
+    @Test
+    fun aDeviceNameIsNeverTheUid() {
+        val uid = "AABBCCDDEEFF00112233445566778899"
+        val macs = setOf("da:1f:85:0c:19:fc")
+        assertEquals("华为Mate60", childGuardDisplayName(listOf("受守护设备", "华为Mate60"), uid, macs))
+        // 路由器这一轮只给了占位串：继承上一轮的真名字，不退回 UID。
+        assertEquals("华为Mate60", childGuardDisplayName(listOf("", "华为Mate60"), uid, macs))
+        assertEquals("未命名设备 · 19:FC", childGuardDisplayName(listOf("LabProbe 设备", ""), uid, macs))
+        assertEquals("未命名设备", childGuardDisplayName(listOf(uid), uid, emptySet()))
+        assertEquals("", childGuardRealName(listOf("受保护设备", uid), uid))
+        assertEquals("t982_ar31a8", childGuardRealName(listOf("t982_ar31a8"), uid))
+    }
+
+    @Test
+    fun overviewRowsPreferARealHostnameOverThePlaceholder() {
+        val uid = "AABBCCDDEEFF00112233445566778899"
+        val root = JSONObject().put("devices", JSONArray().put(JSONObject()
+            .put("uid", uid).put("name", "LabProbe 设备").put("hostname", "printer-702F")
+            .put("macs", JSONArray().put("da:1f:85:0c:19:fc"))))
+        val row = parseChildGuardOverview(root).devices.single()
+        assertEquals("printer-702F", row.name)
     }
 }

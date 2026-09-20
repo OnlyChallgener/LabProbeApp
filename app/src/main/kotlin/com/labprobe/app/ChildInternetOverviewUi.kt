@@ -56,6 +56,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 private const val CHILD_GUARD_OVERVIEW_POLL_MS = 20_000L
 
@@ -407,28 +411,47 @@ internal fun childGuardScheduleText(schedule: ChildGuardSchedule, nowEpoch: Long
     return when (schedule.state) {
         "allowed" -> "允许上网$window$plans"
         "partial" -> "部分应用可用$window$plans"
-        // 下一次变化已经过去（缓存的旧总览）就不报倒计时，宁可只说「禁网中」。
-        "blocked" -> buildString {
-            append("禁网中")
-            if (changeIn.isNotBlank()) append(" · ${changeIn}后允许上网")
-            if (schedule.planCount > 1) append(" · ${schedule.planCount} 条计划")
-        }
+        // 下一次变化已经过去（缓存的旧总览）就不报倒计时，宁可只说「当前时段禁网」。
+        "blocked" -> if (changeIn.isBlank()) "当前时段禁网" else "当前时段禁网，${changeIn}后允许上网"
         "unrestricted" -> "当前网络无限制"
         else -> ""
     }
 }
 
+private val childGuardWeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+private val childGuardClockFormat = DateTimeFormatter.ofPattern("HH:mm")
+
 private fun childGuardChangeIn(schedule: ChildGuardSchedule, nowEpoch: Long): String {
-    val minutes = schedule.nextChangeAtEpoch?.let { (it - nowEpoch + 59) / 60 }
-        ?: schedule.minutesToChange?.toLong()
+    val at = schedule.nextChangeAtEpoch
+    val minutes = at?.let { (it - nowEpoch + 59) / 60 } ?: schedule.minutesToChange?.toLong()
     return when {
         minutes == null || minutes <= 0 -> ""
         minutes < 60 -> "$minutes 分钟"
         // 139 分钟说成「2 小时」会把家长差出去二十分钟，所以带上余数。
         minutes < 24 * 60 -> if (minutes % 60 == 0L) "${minutes / 60} 小时"
             else "${minutes / 60} 小时 ${minutes % 60} 分钟"
-        else -> "${minutes / (24 * 60)} 天"
+        at == null -> "${minutes / (24 * 60)} 天"
+        else -> childGuardWeekdayClock(at, nowEpoch)
     }
+}
+
+/**
+ * 超过一天的下一次变化按官方那样报「下周三 14:44」。
+ *
+ * 「下周」按 ISO 周算：周日属于上一周，所以周日看周三就是「下周三」，尽管只隔三天。
+ */
+private fun childGuardWeekdayClock(epoch: Long, nowEpoch: Long): String {
+    val zone = childGuardDefaultZone()
+    val fromWeek = Instant.ofEpochSecond(nowEpoch).atZone(zone).toLocalDate().with(DayOfWeek.MONDAY)
+    val target = Instant.ofEpochSecond(epoch).atZone(zone)
+    val weeks = ChronoUnit.WEEKS.between(fromWeek, target.toLocalDate().with(DayOfWeek.MONDAY))
+    val prefix = when {
+        weeks >= 2 -> "${weeks}周后"
+        weeks == 1L -> "下周"
+        else -> "本周"
+    }
+    return "$prefix${childGuardWeekdayLabels[target.dayOfWeek.value - 1]} " +
+        target.format(childGuardClockFormat)
 }
 
 @Composable
@@ -448,7 +471,10 @@ private fun ProtectedDeviceCard(
     val onlineKnown = presence != null || matchedDevice != null
     val isOnline = presence?.online ?: matchedDevice?.online ?: false
     val isBlocked = summary.status == GuardStatus.BLOCKED
-    val busy = repository.state.pendingDeviceIds.isNotEmpty()
+    // 「正在同步」只属于被操作的那一台；只有全设备开关（"*"）才让所有卡片一起变。
+    val busy = repository.state.pendingDeviceIds.any { pending ->
+        pending == "*" || sameChildGuardDevice(pending, summary.deviceId)
+    }
     var nowEpoch by remember { mutableStateOf(System.currentTimeMillis() / 1000L) }
     LaunchedEffect(summary.blockedUntilEpoch, isBlocked) {
         nowEpoch = System.currentTimeMillis() / 1000L
