@@ -261,7 +261,7 @@ internal fun visibleSpeedHistory(
     expanded: Boolean
 ): List<SpeedHistoryRecord> = if (expanded) history.take(10) else emptyList()
 
-/** 6th top-level page: router tool board — speed test up front, then child guard and native settings. */
+/** 6th top-level page: router tool board — speed test, child guard, then RDPI and native settings. */
 @Composable
 fun RouterToolsScreen(
     prefs: AppPrefs,
@@ -270,8 +270,22 @@ fun RouterToolsScreen(
 ) {
     ScreenShell("路由工具", "路由器原生能力 · 与官方网页端同源接口", topNav = topNav) {
         SpeedTestCard(prefs)
+        // 儿童上网是家长天天用的入口，排在特征库上面；特征库是低频运维页。
+        ChildGuardQuickSection(onOpen)
         RdpiSignatureCard(prefs)
         RouterToolsQuickSection(onOpen)
+    }
+}
+
+@Composable
+private fun ChildGuardQuickSection(onOpen: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text("儿童上网", style = LabTypography.SectionTitle.copy(color = SpeedInk))
+        RouterToolTile(
+            title = "儿童上网",
+            subtitle = "上网计划 · 应用管控 · 停网时段",
+            icon = Icons.Rounded.ChildCare
+        ) { onOpen("child_internet_overview") }
     }
 }
 
@@ -283,10 +297,7 @@ private data class RouterToolEntry(
 
 @Composable
 private fun RouterToolsQuickSection(onOpen: (String) -> Unit) {
-    val guardSection = listOf(
-        RouterToolEntry("儿童上网", "上网计划 · 应用管控 · 停网时段", "child_internet_overview"),
-        RouterToolEntry("应用特征库 (RDPI 识别)", "内核七层流量审计 · 抓包特征扩展与热重载", "tool_rdpi")
-    )
+    // 儿童上网和特征库都已经有自己独立的卡片了，这里别再重复列一遍入口。
     val settingSection = listOf(
         RouterToolEntry("映射与 UPnP", "IPv6 映射 · 原生端口映射 · UPnP", "tool_portmap"),
         RouterToolEntry("防火墙", "入站 · 出站 · 转发规则", "tool_router_firewall"),
@@ -298,11 +309,6 @@ private fun RouterToolsQuickSection(onOpen: (String) -> Unit) {
         RouterToolEntry("Webhook", "自定义服务推送与公网地址", "tool_router_webhook")
     )
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text("儿童上网", style = LabTypography.SectionTitle.copy(color = SpeedInk))
-        guardSection.forEach { entry ->
-            val icon = if (entry.route == "tool_rdpi") Icons.Rounded.Fingerprint else Icons.Rounded.ChildCare
-            RouterToolTile(title = entry.title, subtitle = entry.subtitle, icon = icon) { onOpen(entry.route) }
-        }
         Text("路由设置与诊断", style = LabTypography.SectionTitle.copy(color = SpeedInk))
         settingSection.forEach { entry ->
             RouterToolTile(title = entry.title, subtitle = entry.subtitle) { onOpen(entry.route) }

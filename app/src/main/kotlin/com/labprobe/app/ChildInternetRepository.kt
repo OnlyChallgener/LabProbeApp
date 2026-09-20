@@ -347,11 +347,17 @@ class RealChildInternetRepository internal constructor(
     }
 
     override fun setMasterEnabled(enabled: Boolean) {
-        val targets = state.devices.flatMap { d -> d.plans.map { d.summary.deviceId to it.id } }
-        if (targets.isEmpty()) return
+        // 一台设备一次调用，不是一条计划一次。每条写都要中继跑一轮
+        // `/etc/init.d/child_guard reload`（真机 40 秒以上，还会先拆 iptables 链），
+        // 逐条发就是让路由器连续 busy 一分多钟，期间所有 Hub 请求都卡住 —— 界面上
+        // 就是反复弹「儿童守护请求失败」。
+        val devices = state.devices.filter { d -> d.plans.any { it.id.isNotBlank() } }
+        if (devices.isEmpty()) return
         mutate("*", {}, request = {
-            targets.forEach { (uid, id) -> api.setPlanEnabled(uid, id, enabled) }
-            // 逐条各发一次写，`accepted` 不看响应，所以这里只交回「都发完了」。
+            devices.forEach { device ->
+                api.setAllPlansEnabled(resolveRouterUid(device.summary.deviceId), enabled)
+            }
+            // 逐台各发一次写，`accepted` 不看响应，所以这里只交回「都发完了」。
             JSONObject()
         }, hudText = "配置中…", accepted = {
             state = state.copy(devices = state.devices.map { d ->
@@ -791,6 +797,8 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
     fun updatePlan(uid: String, plan: DeviceGuardPlan) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(plan.id)}$routerQuery", "PUT", plan.toChildGuardJson())
     fun deletePlan(uid: String, planId: String) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(planId)}$routerQuery", "DELETE")
     fun setPlanEnabled(uid: String, planId: String, enabled: Boolean) = write("$base/devices/${pathPart(uid)}/plans/${pathPart(planId)}/enabled$routerQuery", "POST", JSONObject().put("enabled", enabled))
+    /** 一台设备的所有计划一次写完：逐条发就是逐次固件 reload。 */
+    fun setAllPlansEnabled(uid: String, enabled: Boolean) = write("$base/devices/${pathPart(uid)}/plans/enabled-all$routerQuery", "POST", JSONObject().put("enabled", enabled))
     fun pauseDevice(uid: String, untilEpoch: Long? = null) = write(
         "$base/devices/${pathPart(uid)}/pause$routerQuery",
         "POST",

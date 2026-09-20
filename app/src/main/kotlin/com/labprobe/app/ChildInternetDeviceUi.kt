@@ -16,6 +16,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
@@ -761,7 +762,13 @@ private fun UsageBarsWithGrid(
                         } else 0f
 
                         Column(
-                            Modifier.weight(1f).fillMaxHeight().clickable { onSelectBar(index) },
+                            // 柱子只要选中态，点下去不要那层灰色涟漪 —— 一整排细柱
+                            // 每根都亮一下比官方那种「只有一根变色」脏得多。
+                            Modifier.weight(1f).fillMaxHeight()
+                                .clickable(
+                                    interactionSource = remember(index) { MutableInteractionSource() },
+                                    indication = null
+                                ) { onSelectBar(index) },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Bottom
                         ) {

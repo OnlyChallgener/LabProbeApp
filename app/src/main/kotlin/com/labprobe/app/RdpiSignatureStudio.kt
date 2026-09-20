@@ -317,17 +317,23 @@ fun RdpiSignatureCard(
             }
 
             // Stat Badges
-            val total = summary?.totalCount ?: 379
-            val custom = summary?.customCount ?: 0
+            // 没读到 summary 就是「还没拿到」，不能拿一个编出来的 379 顶上 —— 那是
+            // 官方库某一版的真实条数，特征库一更新这里就一直说假话。
+            val total = summary?.totalCount
+            val custom = summary?.customCount
             val ip6Count = ip6Status?.count ?: 0
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RdpiStatBadge("官方特征", "$total 款", LabV2.Cyan)
-                RdpiStatBadge("IPv6 降级审计", if (ip6Count > 0) "${ip6Count} 台守护" else "已激活", LabV2.Green)
-                RdpiStatBadge("自定义扩展", "$custom 款", if (custom > 0) LabV2.Primary else LabV2.InkMuted)
-                RdpiStatBadge("热重载引擎", "就绪", LabV2.Green)
+                RdpiStatBadge("官方特征", total?.let { "$it 款" } ?: "--", LabV2.Cyan)
+                RdpiStatBadge(
+                    "IPv6 降级审计",
+                    if (ip6Status == null) "--" else if (ip6Count > 0) "${ip6Count} 台守护" else "已激活",
+                    LabV2.Green
+                )
+                RdpiStatBadge("自定义扩展", custom?.let { "$it 款" } ?: "--", LabV2.Primary)
+                RdpiStatBadge("热重载引擎", if (summary == null) "--" else "就绪", LabV2.Green)
             }
 
             // Curated Bundle Banner
@@ -413,7 +419,7 @@ fun RdpiSignatureCard(
                     Text("上传/导入特征", style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold))
                 }
 
-                if (custom > 0) {
+                if (custom != null && custom > 0) {
                     IconButton(
                         onClick = { showRulesDialog = true },
                         modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(LabV2.FieldSoft)
@@ -431,8 +437,10 @@ fun RdpiSignatureCard(
 private fun RdpiStatBadge(title: String, value: String, accent: Color) {
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = accent.copy(alpha = 0.08f),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.25f))
+        // 8% 的强调色底 + 灰字，在浅卡片上几乎看不清标题；改成中性底、深色标题，
+        // 强调色只留给圆点和数字，既读得清也不刺眼。
+        color = Color(0xFFF7F9FC),
+        border = BorderStroke(1.dp, Color(0xFFE3E8F0))
     ) {
         Row(
             Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
@@ -440,7 +448,7 @@ private fun RdpiStatBadge(title: String, value: String, accent: Color) {
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Box(Modifier.size(6.dp).clip(CircleShape).background(accent))
-            Text(title, style = LabTypography.Caption.copy(color = LabV2.InkMuted))
+            Text(title, style = LabTypography.Caption.copy(color = LabV2.Ink))
             Text(value, style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = accent))
         }
     }
