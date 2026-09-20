@@ -289,6 +289,22 @@ private fun ChildGuardQuickSection(onOpen: (String) -> Unit) {
     }
 }
 
+/**
+ * Hub 的测速接口把状态码放在 `error`、中文文案放在 `message`（speedtest_service.py:362），
+ * 但启动/进度这两条请求路径只把 `error` 塞进了异常，于是界面上出现过
+ * `router_rejected` 这种内部码。文案与 Hub 自己给的那句保持一致。
+ */
+internal fun speedTestErrorText(raw: String?): String = when (raw?.trim()) {
+    null, "" -> "测速请求失败，请稍后重试"
+    "router_rejected" -> "路由器未能启动测速，请确认宽带连接后重试"
+    "router_unavailable" -> "Hub 尚未完成路由器连接初始化"
+    "invalid_request" -> "测速参数无效"
+    "timeout" -> "路由器响应超时，请稍后重试"
+    "speedtest_failed" -> "测速失败，请稍后重试"
+    // 已经是中文的就照原样给回去 —— 那是 Hub 写好的可读文案，别覆盖掉。
+    else -> if (raw.any { it.code > 127 }) raw else "测速请求失败，请稍后重试"
+}
+
 private data class RouterToolEntry(
     val title: String,
     val subtitle: String,
@@ -380,7 +396,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
             ports = api.ports()
             nodes = api.nodes()
             selectedNode = "0"
-        }.onFailure { current -> error = current.message ?: "无法读取路由器测速信息" }
+        }.onFailure { current -> error = speedTestErrorText(current.message) }
         ports.firstOrNull { it.testable }?.name?.lowercase()?.takeIf { it.isNotBlank() }?.let {
             selectedPort = it
         }
@@ -449,7 +465,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                             api.start(selectedPort, selectedNode)
                             running = true
                         } catch (throwable: Exception) {
-                            error = throwable.message ?: "路由器未能启动测速"
+                            error = speedTestErrorText(throwable.message)
                         }
                     }
                 },
