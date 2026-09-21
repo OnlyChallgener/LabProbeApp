@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.produceState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,8 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -62,14 +58,12 @@ fun DashboardAppIcon(
 ) {
     val cacheKey = "$iconKey|${localIconPath.orEmpty()}"
     val context = LocalContext.current
-    val bitmap by produceState<ImageBitmap?>(dashboardIconMemoryCache[cacheKey], cacheKey) {
-        if (value != null) return@produceState
-        value = withContext(Dispatchers.IO) {
-            val local = loadLocalPackageIcon(localIconPath)
-            val bundled = if (local == null) loadBundledIcon(context, iconKey) else null
-            (local ?: bundled)?.also { dashboardIconMemoryCache[cacheKey] = it }
-                ?: loadBundledIcon(context, UNKNOWN_APP_ICON_KEY)
-        }
+    // 内置图就在 APK assets 里，取它不需要切线程。以前走 produceState 异步加载，
+    // 列表回收或重排的那一帧还留着上一行的位图 —— 实测「微信支付」先闪成安全教育
+    // 平台的幼苗、「微信视频号」和「抖音」互换，过一秒才自己纠正过来。同步取就没有
+    // 这个中间帧。
+    val bitmap = remember(iconKey, localIconPath) {
+        loadAppIcon(context, cacheKey, iconKey, localIconPath)
     }
     val shape = RoundedCornerShape((sizeDp * .24f).dp)
     Box(
@@ -109,6 +103,16 @@ private fun LetterAvatar(label: String?, sizeDp: Int) {
             maxLines = 1
         )
     }
+}
+
+/** Local package icon, then the bundled pack, then 未识别应用 —— all in one pass. */
+private fun loadAppIcon(context: Context, cacheKey: String, iconKey: String, localIconPath: String?): ImageBitmap? {
+    dashboardIconMemoryCache[cacheKey]?.let { return it }
+    val bitmap = loadLocalPackageIcon(localIconPath)
+        ?: loadBundledIcon(context, iconKey)
+        ?: loadBundledIcon(context, UNKNOWN_APP_ICON_KEY)
+    bitmap?.let { dashboardIconMemoryCache[cacheKey] = it }
+    return bitmap
 }
 
 /** Icons shipped in APK assets under appicons/, generated from MIT-licensed packs. */
