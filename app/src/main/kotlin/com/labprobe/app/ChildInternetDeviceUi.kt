@@ -1155,17 +1155,19 @@ private fun AppUsageTimelineDialog(
                             ) {
                                 // 点和线不要连起来：线在圆点上下各让开一截，点才读得出
                                 // 是「一段会话一个点」，而不是一根线上穿了珠子。
+                                // 整列再收细一档：这一列只是引导线，抢过右边的时段文字
+                                // 就本末倒置了。
                                 val rail = Color(0xFFCBD5E1)
                                 Canvas(Modifier.fillMaxHeight().width(2.dp)) {
                                     val mid = size.height / 2f
                                     val x = size.width / 2f
-                                    val stroke = 1.5.dp.toPx()
-                                    val clearance = 6.dp.toPx()
+                                    val stroke = 1.dp.toPx()
+                                    val clearance = 5.dp.toPx()
                                     if (index > 0) drawLine(rail, Offset(x, 0f), Offset(x, mid - clearance), stroke)
                                     if (index < entry.sessions.lastIndex) drawLine(rail, Offset(x, mid + clearance), Offset(x, size.height), stroke)
                                 }
                                 Box(
-                                    modifier = Modifier.size(4.dp)
+                                    modifier = Modifier.size(3.dp)
                                         .clip(CircleShape).background(Color(0xFF9AA6B6))
                                 )
                             }
