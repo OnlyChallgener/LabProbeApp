@@ -547,8 +547,10 @@ private fun ProtectedDeviceCard(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            // 「一键禁网」那行和「家长请注意」那行之间留 9dp 会显得卡片很松，
+            // 官方是贴着排的。
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(

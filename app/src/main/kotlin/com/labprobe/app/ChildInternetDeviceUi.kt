@@ -81,6 +81,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -388,9 +389,17 @@ private fun ChildDeviceHeader(
     onOpenLog: () -> Unit = {}
 ) {
     val accent = Color(summary.accentArgb)
+    val context = LocalContext.current
+    // 父级在导航宿主上吃了 windowInsetsPadding(safeDrawing)，子页画不到状态栏底下，
+    // 所以这里把状态栏本身染成蓝带顶色 —— 否则顶上永远留着一条浅色，看起来是三层。
+    DisposableEffect(Unit) {
+        val activity = context.findActivity()
+        val previous = activity?.window?.statusBarColor
+        activity?.window?.statusBarColor = android.graphics.Color.rgb(0xD6, 0xE2, 0xF8)
+        onDispose { activity?.window?.statusBarColor = previous ?: android.graphics.Color.TRANSPARENT }
+    }
     // 官方那版：设备名居中，返回键和右侧两个操作浮在同一条蓝带上。这里刻意不再
-    // 自己刷背景 —— 状态栏是透明的，头部再盖一层平色就会把外层那道渐变切断，
-    // 顶上看起来就成了「状态栏 / 头部 / 标签」三条。
+    // 自己刷背景 —— 头部再盖一层平色就会把外层那道渐变切断。
     Box(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -416,17 +425,17 @@ private fun ChildDeviceHeader(
         ) {
             Box(
                 modifier = Modifier
-                    .size(22.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
                     .background(accent.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                LabMiniDeviceIcon(summary.iconKey, accent, sizeDp = 17)
+                LabMiniDeviceIcon(summary.iconKey, accent, sizeDp = 20)
             }
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = summary.name,
-                style = LabTypography.PageTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                style = LabTypography.PageTitle.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = 210.dp)
@@ -633,15 +642,16 @@ private fun ChildInternetReportScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 官方是浅灰轨道上的一枚白色小胶囊，不是实心蓝块 —— 蓝块在这个页面上太抢。
+        // 外圈也要贴着内层胶囊，别留一圈空轨道。
         CompactSegmentedControl(
             options = listOf("今日", "最近10天"),
             selected = period,
             onSelect = { period = it },
             accent = Color.White,
             activeContentColor = LabV2.Ink,
-            barHeight = 34.dp,
-            cornerRadius = 20.dp,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 88.dp)
+            barHeight = 30.dp,
+            cornerRadius = 15.dp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 96.dp)
         )
 
         // 当日上网时长 Card
@@ -682,11 +692,33 @@ private fun ChildInternetReportScreen(
 
         // 当日应用详情 Card
         LabCoreCard(contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp)) {
-            // 官方标题不带日期；日期只在选中那根柱子的气泡上出现。
-            Text(
-                text = if (period == "今日") "今日应用详情" else "当日应用详情",
-                style = LabTypography.CardTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-            )
+            // 日期只在「最近10天」下选了某一天时，标在标题旁边；别的地方不出现日期。
+            val selectedDay = currentBars.getOrNull(safeIndex)?.date.orEmpty()
+            val dayLabel = if (period == "今日" || selectedDay.isBlank()) "" else {
+                val parts = selectedDay.split("-")
+                val month = parts.getOrNull(1)?.toIntOrNull()
+                val day = parts.getOrNull(2)?.toIntOrNull()
+                if (month != null && day != null) {
+                    val prefix = if (selectedDay == java.time.LocalDate.now().toString()) "今天 " else ""
+                    "$prefix${month}月${day}日"
+                } else ""
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = if (period == "今日") "今日应用详情" else "当日应用详情",
+                    style = LabTypography.CardTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                )
+                if (dayLabel.isNotBlank()) {
+                    Text(
+                        text = dayLabel,
+                        style = LabTypography.Supporting.copy(fontSize = 12.sp, color = LabV2.InkMuted)
+                    )
+                }
+            }
             Spacer(Modifier.height(2.dp))
             if (currentEntries.isEmpty()) {
                 Column(
@@ -871,13 +903,16 @@ private fun UsageBarsWithGrid(
     }
 
     BoxWithConstraints(
-        // 顶上留一条 32dp 的带子专门放气泡：官方那句「15点:上网45分钟」是贴在最高
-        // 那根网格线**上方**，用一小段竖线连到柱子；我们之前浮在绘图区里面，压住了
-        // 柱头和 60 分钟那条线。
-        Modifier.fillMaxWidth().height(192.dp).padding(top = 32.dp)
+        // 只有「今日」有点击气泡（官方在逐日图上就只换右上角那个数，不弹气泡）。
+        // 气泡贴在 60 分钟那条线**上方**的带子里，用一截竖线连到柱子，不压绘图区；
+        // 逐日图没有气泡就把这条带子收掉，绘图区更高，和上面那行副标题之间也不空。
+        Modifier.fillMaxWidth().height(if (isHourly) 194.dp else 208.dp)
     ) {
         val chartWidth = maxWidth
-        Row(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().fillMaxHeight()
+                .padding(top = if (isHourly) 32.dp else 4.dp)
+        ) {
             Column(
                 Modifier.width(21.dp).fillMaxHeight().padding(bottom = 26.dp),
                 verticalArrangement = Arrangement.SpaceBetween,
@@ -982,7 +1017,7 @@ private fun UsageBarsWithGrid(
             }
         }
 
-        if (bubbleShown && selectedIndex in bars.indices) {
+        if (bubbleShown && isHourly && selectedIndex in bars.indices) {
             val bar = bars[selectedIndex]
             val bubbleWidth = 100.dp
             // 柱子是从 Y 轴右边开始的，锚点要按绘图区算，不然气泡会整体偏左。
@@ -1098,31 +1133,26 @@ private fun AppUsageTimelineDialog(
                     // 大片，读起来像两张表。
                     entry.sessions.forEachIndexed { index, session ->
                         Row(
-                            Modifier.fillMaxWidth().height(38.dp),
+                            Modifier.fillMaxWidth().height(32.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
                                 modifier = Modifier.width(16.dp).fillMaxHeight(),
                                 contentAlignment = Alignment.Center
                             ) {
+                                // 竖线要真的穿过圆点：颜色比点淡一档但别淡到看不见，
+                                // 端点直接从本行顶画到本行底，上下行接起来就是一条。
+                                val rail = Color(0xFFCBD5E1)
                                 Canvas(Modifier.fillMaxHeight().width(2.dp)) {
                                     val mid = size.height / 2f
-                                    if (index > 0) drawLine(
-                                        color = Color(0xFFE5E7EB),
-                                        start = Offset(size.width / 2f, 0f),
-                                        end = Offset(size.width / 2f, mid),
-                                        strokeWidth = 1.5.dp.toPx()
-                                    )
-                                    if (index < entry.sessions.lastIndex) drawLine(
-                                        color = Color(0xFFE5E7EB),
-                                        start = Offset(size.width / 2f, mid),
-                                        end = Offset(size.width / 2f, size.height),
-                                        strokeWidth = 1.5.dp.toPx()
-                                    )
+                                    val x = size.width / 2f
+                                    val stroke = 1.5.dp.toPx()
+                                    if (index > 0) drawLine(rail, Offset(x, 0f), Offset(x, mid), stroke)
+                                    if (index < entry.sessions.lastIndex) drawLine(rail, Offset(x, mid), Offset(x, size.height), stroke)
                                 }
                                 Box(
                                     modifier = Modifier.size(6.dp)
-                                        .clip(CircleShape).background(Color(0xFFD1D5DB))
+                                        .clip(CircleShape).background(Color(0xFF9AA6B6))
                                 )
                             }
                             Spacer(Modifier.width(10.dp))
