@@ -30,10 +30,6 @@ class HubTransportSecurityTest {
         assertEquals("http://192.168.5.46:58443", normalizeHubBaseUrl("192.168.5.46:58443"))
         assertEquals("http://192.168.5.46:58443", normalizeHubBaseUrl("http://192.168.5.46:58443"))
         assertEquals("https://example.com", normalizeHubBaseUrl("https://example.com"))
-
-        assertEquals("192.168.5.46:58443", normalizeHubAddressForDisplay("192.168.5.46:58443"))
-        assertEquals("192.168.5.46:58443", normalizeHubAddressForDisplay("http://192.168.5.46:58443"))
-        assertEquals("https://example.com", normalizeHubAddressForDisplay("https://example.com"))
     }
 
     @Test

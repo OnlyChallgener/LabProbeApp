@@ -11337,7 +11337,9 @@ fun SettingsScreen(
         lineHeight = (LabTypography.PageTitle.lineHeight.value - 1f).coerceAtLeast(1f).sp,
     )
 ) {
-    var hub by remember { mutableStateOf(normalizeHubAddressForDisplay(prefs.hub)) }
+    // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.5.46`
+    // 会被显示成 `192.168.5.46`，看着像把用户输入吃掉了。
+    var hub by remember { mutableStateOf(prefs.hub) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var routerName by remember { mutableStateOf(prefs.routerDisplayName) }
@@ -11415,10 +11417,9 @@ fun SettingsScreen(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
-                val displayHub = normalizeHubAddressForDisplay(cleanHub)
                 val cleanAppToken = appToken.trim()
                 val connectionChanged = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
-                hub = displayHub
+                hub = cleanHub
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
@@ -11445,10 +11446,9 @@ fun SettingsScreen(
             }
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
-                val displayHub = normalizeHubAddressForDisplay(cleanHub)
                 val cleanAppToken = appToken.trim()
                 val changed = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
-                hub = displayHub
+                hub = cleanHub
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns

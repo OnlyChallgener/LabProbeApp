@@ -7,15 +7,6 @@ package com.labprobe.app
  *
  * 发起 HTTP 请求时，未写协议的地址按 http:// 处理。
  */
-fun normalizeHubAddressForDisplay(raw: String): String {
-    val value = raw.trim().trimEnd('/')
-    return if (value.startsWith("http://", ignoreCase = true)) {
-        value.substring(7).trimEnd('/')
-    } else {
-        value
-    }
-}
-
 fun normalizeHubBaseUrl(raw: String): String {
     val value = raw.trim().trimEnd('/')
     if (value.isBlank()) return ""
