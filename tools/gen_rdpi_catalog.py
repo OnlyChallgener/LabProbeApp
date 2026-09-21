@@ -119,7 +119,13 @@ def build(db_path: str):
         # The `-0` rule is the app itself; the higher suffixes are its variants.
         head_index, head_name = members[0]
         bases = {VARIANT_SUFFIX.sub("", n).strip() for _, n in members}
-        if head_index.endswith("-0") or len(bases) == 1:
+        if len(bases) == 1:
+            # 整个家族归一之后只剩一个名字，就用那个截断名：中继上报应用名时按 `_`
+            # 截断（`4-6-4-1 PUBG: BATTLEGROUNDS_login` 上报成 `PUBG: BATTLEGROUNDS`），
+            # 目录里留着带后缀的原名，这个开关就永远对不上任何一条流 —— 官方条目被
+            # 回收掉 `-0` 主条目之后就会出现这种家里只剩派生名的情况。
+            name = next(iter(bases))
+        elif head_index.endswith("-0"):
             name = head_name
         else:
             # 没有 `-0` 主条目又混了不同名字（花瓣测速下行/上行）：取公共前缀，
