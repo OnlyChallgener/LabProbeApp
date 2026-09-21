@@ -442,13 +442,18 @@ class ChildInternetRepositoryTest {
     @Test
     fun catalogDefaultsStillSelectTheCuratedBaseline() {
         val categories = childInternetCatalogCategories()
-        val keys = categories.map { it.id }
-        assertEquals(listOf("education", "media", "games", "tools", "social", "ainews", "shopping", "stores"), keys)
+        assertEquals(rdpiCatalogCategories.map { it.first }, categories.map { it.id })
         categories.forEach { category ->
             assertTrue("${category.id} should ship at least one app", category.apps.isNotEmpty())
-            assertTrue("${category.id} should have a stable app id", category.apps.all { it.id.startsWith(category.id) })
         }
         assertEquals(setOf("education", "media", "tools"), categories.filter { it.enabled }.map { it.id }.toSet())
+        // 条目 id 就是主特征编号：目录会随固件增删，只有编号在版本之间不会挪位置。
+        val ids = categories.flatMap { it.apps }.map { it.id }
+        assertEquals("app ids must be unique", ids.size, ids.toSet().size)
+        categories.flatMap { it.apps }.forEach { app ->
+            assertTrue("${app.name} needs a signature to enforce", app.rdpiIds.isNotEmpty())
+            assertTrue("${app.id} must belong to ${app.name}", app.id in app.rdpiIds)
+        }
     }
 
     /**

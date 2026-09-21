@@ -43,6 +43,26 @@ PLAN = {
     "quark": (NEW, "夸克.png"),
     "cainiao": (NEW, "菜鸟.png"),
     "mijia": (OFFICIAL, "米家.png"),
+    # 认不出来的应用一律用这张：显式打包，别让它靠「碰巧同名」生效。
+    "unknown": (OFFICIAL, "未识别应用图标.png"),
+    # 特征库有 10-5-2-0 红果免费短剧，logo 早就在这堆文件里，只是没人加映射。
+    "hongguo-shortdrama": (OFFICIAL, "红果免费短剧.png"),
+    # 本轮 test/应用logo 新增：这些应用在 309 款目录里，但一直没有映射。
+    "bank-of-china": (NEW, "中国银行.png"),
+    "xuexitong": (NEW, "学习通.png"),
+    "sohu-video": (NEW, "搜狐视频.png"),
+    "baidu-translate": (NEW, "百度翻译.png"),
+    "tencent-weishi": (NEW, "腾讯微视.png"),
+    "lol-mobile": (NEW, "英雄联盟手游.png"),
+    # 文件名写着「酷狗音乐#酷我音乐」，图只有一张蓝色 K —— 那是酷狗的标。
+    # 只挂给酷狗：一张图盖两个品牌，就是又一次「腾讯会议显示成今日头条」。
+    "kugou-music": (NEW, "酷狗音乐#酷我音乐.png"),
+    # 第二轮新增。文件名和特征库名不一致的（YY语音 -> YY、番茄小说 -> 番茄免费
+    # 小说）在这里显式对上，不靠猜。
+    "duolingo": (NEW, "多邻国.png"),
+    "youdao-dict": (NEW, "有道词典.png"),
+    "yy": (NEW, "YY语音.png"),
+    "global-net-test": (NEW, "全球网测.png"),
 }
 
 SIZE = (192, 192)

@@ -459,8 +459,9 @@ fun CompactSegmentedControl(
     accent: Color = LabV2.Primary,
     activeContentColor: Color = Color.White,
     barHeight: Dp = 40.dp,
-    cornerRadius: Dp = 17.dp
-) = LabV2SegmentedControl(options, selected, onSelect, modifier, accent, activeContentColor, barHeight, cornerRadius)
+    cornerRadius: Dp = 17.dp,
+    trackPadding: Dp = 3.dp
+) = LabV2SegmentedControl(options, selected, onSelect, modifier, accent, activeContentColor, barHeight, cornerRadius, trackPadding)
 
 @Composable
 fun CompactListCard(
@@ -604,6 +605,7 @@ fun LabV2SegmentedControl(
     activeContentColor: Color = Color.White,
     barHeight: Dp = 40.dp,
     cornerRadius: Dp = 17.dp,
+    trackPadding: Dp = 3.dp,
     textStyle: TextStyle? = null
 ) {
     val resolvedTextStyle = textStyle
@@ -615,13 +617,13 @@ fun LabV2SegmentedControl(
         border = BorderStroke(1.dp, LabV2.Border),
         tonalElevation = 0.dp
     ) {
-        Row(Modifier.fillMaxWidth().padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(Modifier.fillMaxWidth().padding(trackPadding), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             options.forEach { option ->
                 val active = option == selected
                 Surface(
                     modifier = Modifier.weight(1f),
                     onClick = { onSelect(option) },
-                    shape = RoundedCornerShape(cornerRadius - 3.dp),
+                    shape = RoundedCornerShape(cornerRadius - trackPadding),
                     color = if (active) accent else Color.Transparent,
                     tonalElevation = 0.dp,
                     shadowElevation = if (active) 1.dp else 0.dp

@@ -19,7 +19,9 @@ data class SelectableAppItem(
     val localIconPath: String? = null,
     val selected: Boolean = true,
     /** A catalog entry may expand to several vendor RDPI signatures. */
-    val rdpiIds: Set<String> = emptySet()
+    val rdpiIds: Set<String> = emptySet(),
+    /** 特征库 note 原文：这条特征还包含哪些子应用（抖音系列 -> 抖音、抖音极速版…）。 */
+    val note: String = ""
 )
 
 data class AppCategoryPlan(

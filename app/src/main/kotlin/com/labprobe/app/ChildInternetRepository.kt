@@ -1587,75 +1587,35 @@ private fun mockDevice(id: String, name: String, icon: String, color: Int): Chil
         plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
     )
 
-internal fun childInternetCatalogCategories(allowedRdpiIds: Set<String>? = null, allowedAppIds: Set<String> = emptySet()) = listOf(
-    catalogCategory("education", "学习/教育", listOf("腾讯课堂", "瓜瓜龙启蒙", "凯叔讲故事", "叽里呱啦", "出口成章", "拍照搜题", "伴鱼绘本"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("media", "视频/音频", listOf("腾讯视频", "爱奇艺", "哔哩哔哩", "喜马拉雅", "网易云音乐"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("games", "游戏", listOf("王者荣耀", "和平精英", "蛋仔派对", "元梦之星", "迷你世界"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("tools", "工具", listOf("百度", "夸克", "计算器", "天气", "地图"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("social", "社交", listOf("QQ", "微信", "百度贴吧", "微博", "小红书"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("ainews", "AI/资讯", listOf("豆包", "DeepSeek", "今日头条"), allowedRdpiIds, allowedAppIds),
-    catalogCategory("shopping", "支付/购物", listOf("支付宝", "云闪付", "京东", "淘宝", "拼多多", "唯品会"), allowedRdpiIds, allowedAppIds),
-    // 应用商店的名字一律照抄官方特征库（华为应用商店 / 小米应用商店 / 酷安应用市场 /
-    // 应用宝），界面名与 rdpi 上报名一致，规则与图标才不会对不上号。
-    catalogCategory("stores", "应用商店", listOf("华为应用商店", "小米应用商店", "OPPO应用商店", "VIVO应用商店", "应用宝", "酷安应用市场"), allowedRdpiIds, allowedAppIds)
-)
-private fun catalogCategory(id: String, name: String, names: List<String>, allowed: Set<String>?, appIds: Set<String>): AppCategoryPlan {
+/**
+ * 可选应用清单来自路由器特征库的快照（`RdpiCatalogGenerated.kt`，由
+ * `tools/gen_rdpi_catalog.py` 从 /usr/share/ndpi/db.default.json 生成）。
+ * 只有特征库认得出的应用才可能被封，手写名单一定漏 —— 之前就是这样漏了
+ * 抖音系列、QQ音乐和后来新增的米家那一批。
+ */
+internal fun childInternetCatalogCategories(allowedRdpiIds: Set<String>? = null, allowedAppIds: Set<String> = emptySet()) =
+    rdpiCatalogCategories.map { (id, label) -> catalogCategory(id, label, allowedRdpiIds, allowedAppIds) }
+
+private fun catalogCategory(id: String, label: String, allowed: Set<String>?, appIds: Set<String>): AppCategoryPlan {
     val baseEnabled = id in setOf("education", "media", "tools")
-    // 不含年龄分级：官方该值来自锐捷云端应用目录，本地无真实数据源，
-    // 已按产品决策整体移除（见 SelectableAppItem，模型里不再有该字段）。
-    val apps = names.mapIndexed { i, name -> val appId = "$id-$i"; val rdpi = childInternetRdpiIds(name); val selected = when { allowed == null -> baseEnabled || i < 2; appId in appIds -> true; else -> rdpi.any { it in allowed } }; SelectableAppItem(appId, name, dashboardIconKey(name), selected = selected, rdpiIds = rdpi) }
-    return AppCategoryPlan(id, name, if (allowed == null) baseEnabled else apps.any { it.selected }, apps)
-}
-/** One UI app can require several original RDPI IDs. */
-internal fun childInternetRdpiIds(name: String): Set<String> = when (name) {
-    "微信" -> setOf("7-1-2-0", "7-1-2-3", "7-1-2-12", "7-1-2-14")
-    "微信视频号" -> setOf("10-1-2-0")
-    "抖音", "抖音系列" -> setOf("10-5-1-0")
-    "快手", "快手系列" -> setOf("10-146-1-0")
-    "拼多多" -> setOf("18-158-1-0")
-    "淘宝" -> setOf("18-4-2-0")
-    // 自建特征：官方特征库没有"阿里CDN"条目，按阿里系编号占 18-4-3-0。
-    "阿里CDN" -> setOf("18-4-3-0")
-    "京东" -> setOf("18-159-1-0")
-    "小红书" -> setOf("7-68-1-0")
-    "哔哩哔哩" -> setOf("10-141-1-0")
-    "王者荣耀" -> setOf("4-1-1-0", "4-1-1-1", "4-1-1-2")
-    "和平精英" -> setOf("4-1-4-0", "4-1-4-2")
-    // 自建特征：官方库无条目，占用 9-* 自定义编号段（官方库未使用）。
-    "豆包" -> setOf("9-201-1-0")
-    "DeepSeek" -> setOf("9-202-1-0")
-    "今日头条" -> setOf("9-203-1-0")
-    "唯品会" -> setOf("9-204-1-0")
-    "夸克" -> setOf("9-206-1-0")
-    // 以下为官方特征库原生 ID（rdpi -t 实测），_weak_relation/_null_relation
-    // 变体一并纳入，否则只封主域名时应用换个入口就绕过规则。
-    "QQ" -> setOf("7-1-1-0", "7-1-1-1", "7-1-1-2", "7-1-1-4", "7-1-1-5", "7-1-1-7", "7-1-1-8", "7-1-1-9", "7-1-1-14")
-    "贴吧", "百度贴吧" -> setOf("7-3-1-0", "7-3-1-2", "7-3-1-14")
-    "百度" -> setOf("7-3-2-0")
-    "微博" -> setOf("7-73-1-0")
-    "网易云音乐" -> setOf("7-2-1-0")
-    "腾讯课堂" -> setOf("8-1-2-0", "8-1-2-14")
-    "瓜瓜龙启蒙" -> setOf("8-100-1-0")
-    "凯叔讲故事" -> setOf("8-101-1-0")
-    "叽里呱啦" -> setOf("8-102-1-0")
-    "出口成章" -> setOf("8-103-1-0")
-    "拍照搜题" -> setOf("8-105-1-0")
-    "伴鱼绘本" -> setOf("8-106-1-0")
-    "喜马拉雅" -> setOf("8-91-1-0", "8-90-1-0")
-    "腾讯视频" -> setOf("10-1-3-0", "10-1-3-14")
-    "爱奇艺" -> setOf("10-142-1-0", "10-142-1-15")
-    "迷你世界" -> setOf("4-9-1-0")
-    "支付宝" -> setOf("18-4-1-0", "18-4-1-14")
-    "云闪付" -> setOf("18-156-1-0")
-    "应用宝" -> setOf("19-1-1-0", "19-1-1-15")
-    "华为应用商店" -> setOf("19-154-1-0", "19-154-1-14")
-    "小米应用商店" -> setOf("19-165-1-0", "19-165-1-14")
-    "OPPO应用商店" -> setOf("19-166-1-0", "19-166-1-14")
-    "VIVO应用商店" -> setOf("19-167-1-0", "19-167-1-14")
-    "酷安应用市场" -> setOf("19-169-1-0")
-    else -> emptySet()
+    val apps = rdpiCatalogApps.filter { it.categoryId == id }.mapIndexed { i, entry ->
+        // 条目 id 用主特征编号而不是位置：目录会随固件增删，位置会变，编号不会。
+        val selected = when {
+            allowed == null -> baseEnabled || i < 2
+            entry.name in appIds -> true
+            else -> entry.indexes.any { it in allowed }
+        }
+        SelectableAppItem(
+            id = entry.indexes.first(), name = entry.name, iconKey = dashboardIconKey(entry.name),
+            selected = selected, rdpiIds = entry.indexes, note = entry.note
+        )
+    }
+    return AppCategoryPlan(id, label, if (allowed == null) baseEnabled else apps.any { it.selected }, apps)
 }
 
+/** 界面名 -> 该应用全部 RDPI 编号；封禁要一次覆盖主特征和它的派生变体。 */
+internal fun childInternetRdpiIds(name: String): Set<String> =
+    rdpiCatalogApps.firstOrNull { it.name == name }?.indexes ?: emptySet()
 /**
  * RDPI 中文名 -> 图标 key。内置图标包（assets/appicons）覆盖国内应用，
  * 其余回落 Homarr Dashboard Icons CDN（kebab-case 命名），两者都没有时用
@@ -1665,7 +1625,7 @@ private fun dashboardIconKey(rawName: String): String {
     // 特征库的派生名（王者荣耀_login、优酷视频_weak_relation …）与主应用共用图标。
     val name = rawName.replace(Regex("_(login|gaming|weak_relation|null_relation)$"), "")
     return when (name) {
-    // 待补图：腾讯课堂 / 微视 / 酷狗音乐 / 百度翻译 / 陌陌 / 探探 / 转转。
+    // 待补图：腾讯课堂 / 转转。
     // 没有内置图就不要写进映射表 —— 见 ChildInternetRepositoryTest.everyMappedIconKeyShipsBundledArtwork。
     "微信" -> "wechat"; "企业微信" -> "wecom"; "微信读书" -> "weread"; "微信视频号" -> "wechat-channels"
     "QQ" -> "qq"; "QQ音乐" -> "qq-music"; "QQ浏览器" -> "qq-browser"; "腾讯会议" -> "tencent-meeting"
@@ -1702,7 +1662,13 @@ private fun dashboardIconKey(rawName: String): String {
     "微信支付" -> "wechat-pay"; "安全教育平台" -> "safety-education"
     "TP-LINK物联" -> "tp-link-iot"; "海尔智家" -> "haier-smart-home"
     "美的美居" -> "midea-meiju"; "小爱同学" -> "xiaoai"; "醒图" -> "xingtu"
-    "西瓜视频" -> "xigua-video"; "番茄免费小说" -> "fanqie-novel"
+    "西瓜视频" -> "xigua-video"; "番茄免费小说" -> "fanqie-novel"; "红果免费短剧" -> "hongguo-shortdrama"
+    // 目录改成按特征库全量生成后新补的 logo。名字必须是库里的官方 name：
+    // 快手在库里叫「快手系列」，写「快手」就永远匹配不上。
+    "快手系列" -> "kuaishou"; "酷狗音乐" -> "kugou-music"; "微视" -> "tencent-weishi"
+    "英雄联盟手游" -> "lol-mobile"; "搜狐视频" -> "sohu-video"; "百度翻译" -> "baidu-translate"
+    "学习通" -> "xuexitong"; "中国银行" -> "bank-of-china"
+    "多邻国" -> "duolingo"; "有道词典" -> "youdao-dict"; "YY" -> "yy"; "全球网测" -> "global-net-test"
     "三角洲行动" -> "delta-force"; "山姆会员商店" -> "sams-club"; "菜鸟" -> "cainiao"
     "米家" -> "mijia"
     // 仓库里早就带着这些图，但一直没有名字映射，等于白装。

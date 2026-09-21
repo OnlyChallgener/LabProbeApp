@@ -2465,7 +2465,13 @@ fun LabProbeApp(prefs: AppPrefs) {
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { pad ->
             Box(Modifier.fillMaxSize().then(if (darkHealth) Modifier.background(Color(0xFF10171F)) else Modifier.appBackground())) {
-                Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(WindowInsets.safeDrawing)) {
+                // 儿童上网设备页的顶部是一条渐变蓝带，官方把它一直铺到状态栏。宿主这里
+                // 吃了 safeDrawing 的顶部 inset，页面就永远画不到那条带子上面 —— 只对
+                // 这一个路由让开顶部，页面自己用 statusBarsPadding 撑内容。
+                val pageInsets = if (route == "child_internet_device") {
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+                } else WindowInsets.safeDrawing
+                Box(Modifier.fillMaxSize().padding(pad).windowInsetsPadding(pageInsets)) {
                     AnimatedContent(
                         targetState = route,
                         modifier = Modifier.fillMaxSize().then(primaryPageSwipeModifier),

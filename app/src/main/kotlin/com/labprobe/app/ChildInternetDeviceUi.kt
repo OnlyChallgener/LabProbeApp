@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
@@ -261,9 +262,11 @@ fun ChildInternetDeviceScreen(
     Column(Modifier.fillMaxSize().appBackground()) {
         ChildGuardOperationHud(repository.state.pendingHud)
         Column(
+            // background 在 statusBarsPadding 之前：渐变铺满状态栏那一条，内容
+            // 才被顶下来。反过来写就只剩状态栏底下是页面底色，顶上永远分一层。
             Modifier.fillMaxWidth().background(
                 Brush.verticalGradient(listOf(ChildInternetBandTop, ChildInternetBandBottom))
-            )
+            ).statusBarsPadding()
         ) {
             ChildDeviceHeader(
                 summary = deviceState.summary,
@@ -389,15 +392,6 @@ private fun ChildDeviceHeader(
     onOpenLog: () -> Unit = {}
 ) {
     val accent = Color(summary.accentArgb)
-    val context = LocalContext.current
-    // 父级在导航宿主上吃了 windowInsetsPadding(safeDrawing)，子页画不到状态栏底下，
-    // 所以这里把状态栏本身染成蓝带顶色 —— 否则顶上永远留着一条浅色，看起来是三层。
-    DisposableEffect(Unit) {
-        val activity = context.findActivity()
-        val previous = activity?.window?.statusBarColor
-        activity?.window?.statusBarColor = android.graphics.Color.rgb(0xD6, 0xE2, 0xF8)
-        onDispose { activity?.window?.statusBarColor = previous ?: android.graphics.Color.TRANSPARENT }
-    }
     // 官方那版：设备名居中，返回键和右侧两个操作浮在同一条蓝带上。这里刻意不再
     // 自己刷背景 —— 头部再盖一层平色就会把外层那道渐变切断。
     Box(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -638,19 +632,21 @@ private fun ChildInternetReportScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = LabV2.PageHorizontal, vertical = 12.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = LabV2.PageHorizontal).padding(top = 8.dp, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 官方是浅灰轨道上的一枚白色小胶囊，不是实心蓝块 —— 蓝块在这个页面上太抢。
-        // 外圈也要贴着内层胶囊，别留一圈空轨道。
+        // 轨道内边距归零：外框要和白色胶囊齐平，留一圈空轨道会显得整块偏高。
         CompactSegmentedControl(
             options = listOf("今日", "最近10天"),
             selected = period,
             onSelect = { period = it },
             accent = Color.White,
             activeContentColor = LabV2.Ink,
-            barHeight = 30.dp,
-            cornerRadius = 15.dp,
+            barHeight = 28.dp,
+            cornerRadius = 14.dp,
+            trackPadding = 0.dp,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 96.dp)
         )
 
@@ -667,7 +663,9 @@ private fun ChildInternetReportScreen(
                         style = LabTypography.Supporting.copy(fontSize = 12.sp, color = LabV2.InkMuted)
                     )
                 }
-                FormattedDurationText(usage.totalMinutes)
+                // 标题写的是「当日」，这个数就得是选中那根柱子的量；一直挂 10 天
+                // 里最大的那天，选中周日却显示别的数字，读起来是错的。
+                FormattedDurationText(if (period == "今日") usage.totalMinutes else selectedBar?.minutes)
             }
             UsageBarsWithGrid(
                 bars = currentBars,
@@ -901,17 +899,17 @@ private fun UsageBarsWithGrid(
         delay(5_000)
         bubbleShown = false
     }
+    // 顶部这条带子专门留给气泡：带子的下沿就是 60 分钟那条虚线，气泡压在上面、
+    // 竖线从虚线走到柱顶，两段接在同一条线上才看得出一根柱子被点中了。
+    val bandHeight = 32.dp
+    val bubbleBar = if (bubbleShown && isHourly) bars.getOrNull(selectedIndex) else null
 
     BoxWithConstraints(
-        // 只有「今日」有点击气泡（官方在逐日图上就只换右上角那个数，不弹气泡）。
-        // 气泡贴在 60 分钟那条线**上方**的带子里，用一截竖线连到柱子，不压绘图区；
-        // 逐日图没有气泡就把这条带子收掉，绘图区更高，和上面那行副标题之间也不空。
         Modifier.fillMaxWidth().height(if (isHourly) 194.dp else 208.dp)
     ) {
         val chartWidth = maxWidth
         Row(
-            Modifier.fillMaxWidth().fillMaxHeight()
-                .padding(top = if (isHourly) 32.dp else 4.dp)
+            Modifier.fillMaxWidth().fillMaxHeight().padding(top = if (isHourly) bandHeight else 4.dp)
         ) {
             Column(
                 Modifier.width(21.dp).fillMaxHeight().padding(bottom = 26.dp),
@@ -1014,35 +1012,50 @@ private fun UsageBarsWithGrid(
                         }
                     }
                 }
+
+                if (bubbleBar != null) {
+                    // 竖线画在绘图区自己的坐标系里（和虚线网格同一块 Canvas），
+                    // 所以它的顶端天然就压在 60 分钟那条线上，不会和气泡错开。
+                    val fraction = (bubbleBar.minutes.toFloat() / maxMinutes).coerceIn(0f, 1f)
+                    Canvas(modifier = Modifier.fillMaxSize().padding(bottom = 26.dp)) {
+                        val x = size.width * (selectedIndex + 0.5f) / bars.size
+                        drawLine(
+                            color = Color(0xFFCBD5E1),
+                            start = Offset(x, size.height * (1f - fraction)),
+                            end = Offset(x, 0f),
+                            strokeWidth = 1.5.dp.toPx()
+                        )
+                    }
+                }
             }
         }
 
-        if (bubbleShown && isHourly && selectedIndex in bars.indices) {
-            val bar = bars[selectedIndex]
-            val bubbleWidth = 100.dp
+        if (bubbleBar != null) {
+            // 气泡定宽：只有宽度已知，竖线和气泡才能对到同一根柱子的中点上。
+            // 小时柱最长也就「23点:上网60分钟」，超出走省略号。
+            val bubbleWidth = 120.dp
             // 柱子是从 Y 轴右边开始的，锚点要按绘图区算，不然气泡会整体偏左。
             val plotLeft = 24.dp
             val anchor = plotLeft + (chartWidth - plotLeft) * ((selectedIndex + 0.5f) / bars.size)
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = (anchor - bubbleWidth / 2).coerceAtLeast(0.dp)),
-                horizontalAlignment = Alignment.CenterHorizontally
+            val left = (anchor - bubbleWidth / 2).coerceIn(0.dp, maxOf(0.dp, chartWidth - bubbleWidth))
+            Box(
+                modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().height(bandHeight),
+                contentAlignment = Alignment.BottomStart
             ) {
                 Surface(
-                    modifier = Modifier.widthIn(max = 140.dp),
+                    modifier = Modifier.offset(x = left).width(bubbleWidth),
                     shape = RoundedCornerShape(8.dp),
                     color = Color(0xFFF2F3F7)
                 ) {
                     Text(
-                        "${bar.label}:上网${formatChildDuration(bar.minutes)}",
-                        Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        "${bubbleBar.label}:上网${formatChildDuration(bubbleBar.minutes)}",
+                        Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
                         style = LabTypography.Caption.copy(fontSize = 11.sp, color = LabV2.Ink),
-                        maxLines = 1
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                // 官方那截把气泡连到柱子上的细竖线。
-                Box(Modifier.width(1.5.dp).height(9.dp).background(Color(0xFFCBD5E1)))
             }
         }
     }
@@ -1140,18 +1153,19 @@ private fun AppUsageTimelineDialog(
                                 modifier = Modifier.width(16.dp).fillMaxHeight(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                // 竖线要真的穿过圆点：颜色比点淡一档但别淡到看不见，
-                                // 端点直接从本行顶画到本行底，上下行接起来就是一条。
+                                // 点和线不要连起来：线在圆点上下各让开一截，点才读得出
+                                // 是「一段会话一个点」，而不是一根线上穿了珠子。
                                 val rail = Color(0xFFCBD5E1)
                                 Canvas(Modifier.fillMaxHeight().width(2.dp)) {
                                     val mid = size.height / 2f
                                     val x = size.width / 2f
                                     val stroke = 1.5.dp.toPx()
-                                    if (index > 0) drawLine(rail, Offset(x, 0f), Offset(x, mid), stroke)
-                                    if (index < entry.sessions.lastIndex) drawLine(rail, Offset(x, mid), Offset(x, size.height), stroke)
+                                    val clearance = 6.dp.toPx()
+                                    if (index > 0) drawLine(rail, Offset(x, 0f), Offset(x, mid - clearance), stroke)
+                                    if (index < entry.sessions.lastIndex) drawLine(rail, Offset(x, mid + clearance), Offset(x, size.height), stroke)
                                 }
                                 Box(
-                                    modifier = Modifier.size(6.dp)
+                                    modifier = Modifier.size(4.dp)
                                         .clip(CircleShape).background(Color(0xFF9AA6B6))
                                 )
                             }
@@ -1680,7 +1694,8 @@ private fun ChildInternetAppSelectionScreen(
     // 年龄分级已按产品决策整体移除：官方那份分级来自锐捷云端应用目录，
     // 路由器本地 RDPI 表不携带，本地猜不出来 => 不做，而不是做了看着像真的。
     val filtered = category.apps.filter { app ->
-        app.name.contains(search, ignoreCase = true)
+        // note 里也是应用名（抖音极速版、作业帮家长版…），搜得到才算搜得到。
+        app.name.contains(search, ignoreCase = true) || app.note.contains(search, ignoreCase = true)
     }
     val allFilteredSelected = filtered.isNotEmpty() && filtered.all { it.id in selectedIds }
 
@@ -1724,6 +1739,7 @@ private fun ChildInternetAppSelectionScreen(
                             title = app.name,
                             iconKey = app.iconKey,
                             localIconPath = app.localIconPath,
+                            subtitle = app.note,
                             checked = app.id in selectedIds,
                             onCheckedChange = { checked ->
                                 selectedIds = if (checked) {
@@ -1768,11 +1784,19 @@ private fun AppSelectionRow(
     title: String,
     iconKey: String?,
     localIconPath: String? = null,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
-        Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(vertical = 9.dp),
+        // 勾选行同样不要涟漪：一列长列表点一下就一块灰底，比官方的干净样式脏。
+        Modifier.fillMaxWidth()
+            .clickable(
+                interactionSource = remember(title) { MutableInteractionSource() },
+                indication = null,
+                onClick = { onCheckedChange(!checked) }
+            )
+            .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -1781,7 +1805,19 @@ private fun AppSelectionRow(
         } else {
             DashboardAppIcon(iconKey, localIconPath, sizeDp = 46, label = title)
         }
-        Text(title, style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // 副标题照抄特征库 note 原文（「抖音、抖音极速版、…」），官方那一行也是
+            // 这么来的；没有 note 就不占行，不编内容。
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = "含" + subtitle.replace("、", "/"),
+                    style = LabTypography.Supporting.copy(fontSize = 11.sp, color = LabV2.InkMuted),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
         Checkbox(
             checked = checked,
             onCheckedChange = onCheckedChange,
