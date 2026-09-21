@@ -391,9 +391,9 @@ private fun ChildDeviceHeader(
     // 官方那版：设备名居中，返回键和右侧两个操作浮在同一条蓝带上。这里刻意不再
     // 自己刷背景 —— 状态栏是透明的，头部再盖一层平色就会把外层那道渐变切断，
     // 顶上看起来就成了「状态栏 / 头部 / 标签」三条。
-    Box(Modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
@@ -407,8 +407,10 @@ private fun ChildDeviceHeader(
                 Icon(Icons.Rounded.FormatListBulleted, "上网日志", tint = LabV2.InkMuted)
             }
         }
+        // 设备名要在自己那一行的正中：左右居中靠 Arrangement.Center，上下居中靠
+        // align(Center) —— 少了后者，它会贴着 Box 顶部，看起来整体偏上。
         Row(
-            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+            Modifier.fillMaxWidth().align(Alignment.Center),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -704,7 +706,15 @@ private fun ChildInternetReportScreen(
                     }
                 }
             } else {
-                currentEntries.forEach { entry ->
+                currentEntries.forEachIndexed { index, entry ->
+                    if (index > 0) {
+                        // 官方就是一根很细的线把两行隔开，不是卡片、不是留白。
+                        Box(
+                            Modifier.fillMaxWidth().padding(horizontal = 2.dp)
+                                .height(0.6.dp)
+                                .background(LabV2.Border)
+                        )
+                    }
                     UsageEntryRow(entry, onClick = { selectedAppForTimeline = entry })
                 }
             }
@@ -1011,7 +1021,15 @@ private fun UsageEntryRow(entry: InternetUsageEntry, onClick: () -> Unit = {}) {
     val lastRange = entry.sessions.lastOrNull()?.timeRange?.takeIf { it.isNotBlank() }
         ?: entry.timeRange
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
+        // 列表行只要「按下就弹详情」，不要 Material 那层矩形涟漪 —— 一整列细行
+        // 每点一条就亮一块灰底，比官方的无反馈还脏。
+        Modifier.fillMaxWidth()
+            .clickable(
+                interactionSource = remember(entry.id) { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(11.dp)
     ) {

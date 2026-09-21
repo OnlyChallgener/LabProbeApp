@@ -42,6 +42,7 @@ PLAN = {
     # 夸克（浏览器和网盘共用一个入口图标）与菜鸟都做成独立特征，图配套。
     "quark": (NEW, "夸克.png"),
     "cainiao": (NEW, "菜鸟.png"),
+    "mijia": (OFFICIAL, "米家.png"),
 }
 
 SIZE = (192, 192)
