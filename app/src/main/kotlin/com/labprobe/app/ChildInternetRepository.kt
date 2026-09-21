@@ -1703,7 +1703,7 @@ private fun dashboardIconKey(rawName: String): String {
     "TP-LINK物联" -> "tp-link-iot"; "海尔智家" -> "haier-smart-home"
     "美的美居" -> "midea-meiju"; "小爱同学" -> "xiaoai"; "醒图" -> "xingtu"
     "西瓜视频" -> "xigua-video"; "番茄免费小说" -> "fanqie-novel"
-    "三角洲行动" -> "delta-force"; "山姆会员商店" -> "sams-club"
+    "三角洲行动" -> "delta-force"; "山姆会员商店" -> "sams-club"; "菜鸟" -> "cainiao"
     // 仓库里早就带着这些图，但一直没有名字映射，等于白装。
     "Kimi" -> "kimi"; "腾讯文档" -> "tencent-docs"; "金山文档" -> "kdocs"
     "美团外卖" -> "meituan-waimai"; "123云盘" -> "123pan"; "115网盘" -> "115-netdisk"

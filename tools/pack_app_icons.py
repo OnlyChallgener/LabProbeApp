@@ -39,6 +39,9 @@ PLAN = {
     "weibo": (NEW, "微博.png"),
     "kuaishou": (NEW, "快手.png"),
     "qq-music": (NEW, "QQ音乐.png"),
+    # 夸克（浏览器和网盘共用一个入口图标）与菜鸟都做成独立特征，图配套。
+    "quark": (NEW, "夸克.png"),
+    "cainiao": (NEW, "菜鸟.png"),
 }
 
 SIZE = (192, 192)

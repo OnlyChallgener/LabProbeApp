@@ -38,9 +38,11 @@ import org.json.JSONObject
 private const val RDPI_BASE = "/api/router/rdpi"
 
 data class RdpiSignatureSummary(
-    val totalCount: Int = 378,
-    val officialCount: Int = 378,
-    val customCount: Int = 0,
+    // 默认值一律不给「某一版的真实条数」：Hub 没回这个字段就是没读到，界面必须
+    // 显示 --，而不是编一个 378 顶上。
+    val totalCount: Int? = null,
+    val officialCount: Int? = null,
+    val customCount: Int? = null,
     val customSignatures: List<RdpiCustomApp> = emptyList(),
     val templateJson: String = ""
 )
@@ -56,6 +58,9 @@ data class RdpiCustomRule(
     val hosts: List<String>,
     val payloads: List<String>
 )
+
+/** 字段缺失就是「没读到」，不能拿一个编出来的条数顶上。 */
+private fun JSONObject.optIntOrNull(key: String): Int? = if (has(key)) optInt(key) else null
 
 internal val DEFAULT_FALLBACK_TEMPLATE = """
 {
@@ -85,9 +90,9 @@ internal suspend fun fetchRdpiSummary(prefs: AppPrefs, routerId: String = "defau
         val hub = HubApi(prefs)
         val query = if (routerId.isNotBlank()) "?router=$routerId" else ""
         val json = hub.requestJson("$RDPI_BASE/signatures$query")
-        val total = json.optInt("totalCount", 378)
-        val official = json.optInt("officialCount", 378)
-        val custom = json.optInt("customCount", 0)
+        val total = json.optIntOrNull("totalCount")
+        val official = json.optIntOrNull("officialCount")
+        val custom = json.optIntOrNull("customCount")
         val customApps = mutableListOf<RdpiCustomApp>()
         val arr = json.optJSONArray("customSignatures") ?: JSONArray()
         for (i in 0 until arr.length()) {
@@ -319,14 +324,16 @@ fun RdpiSignatureCard(
             // Stat Badges
             // 没读到 summary 就是「还没拿到」，不能拿一个编出来的 379 顶上 —— 那是
             // 官方库某一版的真实条数，特征库一更新这里就一直说假话。
-            val total = summary?.totalCount
+            val official = summary?.officialCount
             val custom = summary?.customCount
             val ip6Count = ip6Status?.count ?: 0
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RdpiStatBadge("官方特征", total?.let { "$it 款" } ?: "--", LabV2.Cyan)
+                // 这个位置写的是「官方特征」，就必须是官方条数，不能拿总条数顶 ——
+                // 自定义扩展是总数的子集，用总数会把 24 款自己算成官方特征。
+                RdpiStatBadge("官方特征", official?.let { "$it 款" } ?: "--", LabV2.Cyan)
                 RdpiStatBadge(
                     "IPv6 降级审计",
                     if (ip6Status == null) "--" else if (ip6Count > 0) "${ip6Count} 台守护" else "已激活",
@@ -339,8 +346,8 @@ fun RdpiSignatureCard(
             // Curated Bundle Banner
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                color = Color(0xFFF0FDF4),
-                border = BorderStroke(1.dp, Color(0xFFDCFCE7)),
+                color = LabV2.Green.copy(alpha = 0.07f),
+                border = BorderStroke(1.dp, LabV2.Green.copy(alpha = 0.18f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -350,11 +357,11 @@ fun RdpiSignatureCard(
                 ) {
                     Surface(
                         shape = CircleShape,
-                        color = Color(0xFF22C55E).copy(alpha = 0.15f),
+                        color = LabV2.Green.copy(alpha = 0.14f),
                         modifier = Modifier.size(32.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.Bolt, null, tint = Color(0xFF16A34A), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Bolt, null, tint = LabV2.Green, modifier = Modifier.size(18.dp))
                         }
                     }
                     Column(Modifier.weight(1f)) {
@@ -377,18 +384,20 @@ fun RdpiSignatureCard(
                         },
                         enabled = !bundleLoading,
                         shape = RoundedCornerShape(10.dp),
+                        // 这张卡原来有三块饱和色（绿补丁底、实心绿按钮、实心蓝按钮），
+                        // 互相抢视线。统一成「浅底深字、按钮跟随所属分区的颜色」：
+                        // 绿 = 自动增强补丁，青 = 手动导入（和卡头指纹图标同色）。
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF16A34A), contentColor = Color.White,
-                            // 不设这两条，禁用时 Material3 用 38% 黑 —— 绿底上一团灰字，
-                            // 看着像坏了其实只是不可用。
-                            disabledContainerColor = Color(0xFF16A34A).copy(alpha = 0.55f),
-                            disabledContentColor = Color.White.copy(alpha = 0.9f)
+                            containerColor = LabV2.Green.copy(alpha = 0.14f),
+                            contentColor = LabV2.Green,
+                            disabledContainerColor = LabV2.Green.copy(alpha = 0.07f),
+                            disabledContentColor = LabV2.Green.copy(alpha = 0.45f)
                         ),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier.height(34.dp)
                     ) {
                         if (bundleLoading) {
-                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(12.dp), color = Color.White)
+                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(12.dp), color = LabV2.Green)
                             Spacer(Modifier.width(4.dp))
                         }
                         Text("一键增强", style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp))
@@ -407,6 +416,8 @@ fun RdpiSignatureCard(
                     onClick = { showTemplateDialog = true },
                     modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(12.dp),
+                    // 给一条边框，否则浅底按钮和卡片白底糊在一起，看不出可按。
+                    border = BorderStroke(1.dp, LabV2.BorderStrong),
                     colors = ButtonDefaults.buttonColors(containerColor = LabV2.FieldSoft, contentColor = LabV2.Ink)
                 ) {
                     Icon(Icons.Rounded.Code, null, modifier = Modifier.size(16.dp), tint = LabV2.Primary)
@@ -416,12 +427,14 @@ fun RdpiSignatureCard(
 
                 Button(
                     onClick = { showImportDialog = true },
-                    modifier = Modifier.weight(1.2f).height(40.dp),
+                    modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, LabV2.Cyan.copy(alpha = 0.30f)),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = LabV2.Cyan, contentColor = Color.White,
-                        disabledContainerColor = LabV2.Cyan.copy(alpha = 0.55f),
-                        disabledContentColor = Color.White.copy(alpha = 0.9f)
+                        containerColor = LabV2.Cyan.copy(alpha = 0.12f),
+                        contentColor = LabV2.Cyan,
+                        disabledContainerColor = LabV2.Cyan.copy(alpha = 0.06f),
+                        disabledContentColor = LabV2.Cyan.copy(alpha = 0.40f)
                     )
                 ) {
                     Icon(Icons.Rounded.CloudUpload, null, modifier = Modifier.size(16.dp))

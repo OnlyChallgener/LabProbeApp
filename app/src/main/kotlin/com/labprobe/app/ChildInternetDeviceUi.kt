@@ -94,6 +94,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
@@ -253,109 +259,122 @@ fun ChildInternetDeviceScreen(
 
     Column(Modifier.fillMaxSize().appBackground()) {
         ChildGuardOperationHud(repository.state.pendingHud)
-        ChildDeviceHeader(
-            summary = deviceState.summary,
-            onBack = onBack,
-            onRemoveGuard = { confirmRemoveGuard = true },
-            onOpenLog = { showUsageLog = true }
-        )
-        ChildInternetTabs(
-            selected = selectedTab,
-            onSelect = { selectedTabName = it.name; editingPlanId = null }
-        )
-        if (repository.state.error.isNotBlank()) {
-            // 之前是一行裸红字飘在背景上，和页面没有任何关系；做成和总览
-            // 「更新失败」那颗一样调子的软色条。
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFFFFF5F5),
-                border = BorderStroke(1.dp, Color(0xFFFEE2E2))
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text("❗", style = LabTypography.Caption.copy(color = Color(0xFFEF4444), fontSize = 12.sp))
-                    Text(
-                        repository.state.error,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        style = LabTypography.Caption.copy(
-                            color = Color(0xFFEF4444),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    )
-                }
-            }
+        Column(
+            Modifier.fillMaxWidth().background(
+                Brush.verticalGradient(listOf(ChildInternetBandTop, ChildInternetBandBottom))
+            )
+        ) {
+            ChildDeviceHeader(
+                summary = deviceState.summary,
+                onBack = onBack,
+                onRemoveGuard = { confirmRemoveGuard = true },
+                onOpenLog = { showUsageLog = true }
+            )
+            ChildInternetTabs(
+                selected = selectedTab,
+                onSelect = { selectedTabName = it.name; editingPlanId = null }
+            )
         }
-        AnimatedContent(
-            targetState = selectedTab,
-            modifier = Modifier.fillMaxSize(),
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
-            label = "child-internet-tab"
-        ) { tab ->
-            when (tab) {
-                ChildInternetTab.REPORT -> ChildInternetReportScreen(
-                    deviceState,
-                    onRefresh = { repository.loadUsageReport(resolvedId) {} },
-                    onSelectDay = { date -> repository.loadUsageForDate(resolvedId, date) {} }
-                )
-                ChildInternetTab.PLAN -> {
-                    if (editingPlanId == null && deviceState.plans.isEmpty()) {
-                        ChildInternetPlanEmptyState(onOpen = { editingPlanId = "" })
-                    } else if (editingPlanId == null) {
-                        ChildInternetPlanOverview(
-                            plans = deviceState.plans,
-                            selectedDay = planDay,
-                            onSelectDay = { planDay = it },
-                            onOpenRule = { id -> editingPlanId = id },
-                            onAddRule = { editingPlanId = "" }
-                        )
-                    } else {
-                        ChildInternetPlanEditor(
-                            plan = draftPlan,
-                            saving = repository.state.pendingDeviceIds.isNotEmpty(),
-                            appManagementSupported = deviceState.summary.appManagementSupported,
-                            experimentalAppControl = deviceState.summary.experimentalAppControl,
-                            onPlanChange = { draftPlan = it },
-                            onOpenCategory = { selectedCategoryId = it },
-                            onEnabledChange = { enabled, context ->
-                                if (draftPlan.id.isBlank()) {
-                                    draftPlan = draftPlan.copy(enabled = enabled)
-                                } else {
-                                    repository.setPlanEnabled(resolvedId, draftPlan.id, enabled) { result ->
-                                        result.onSuccess {
-                                            draftPlan = draftPlan.copy(enabled = enabled)
-                                            toast(context, if (enabled) "计划已启用" else "计划已停用")
-                                        }.onFailure { toast(context, it.userMessage()) }
-                                    }
-                                }
-                            },
-                            onDelete = { context ->
-                                repository.deletePlan(resolvedId, draftPlan.id) { result ->
-                                    result.onSuccess {
-                                        editingPlanId = null
-                                        toast(context, "时段已删除")
-                                    }.onFailure { toast(context, it.userMessage()) }
-                                }
-                            },
-                            onSave = { context ->
-                                repository.savePlan(resolvedId, draftPlan) { result ->
-                                    result.onSuccess {
-                                        draftPlan.repeatDays.minOrNull()?.let { planDay = it }
-                                        editingPlanId = null
-                                        toast(context, "保存成功")
-                                    }.onFailure { toast(context, it.userMessage()) }
-                                }
-                            }
+        // 内容区：圆角顶 + 与蓝带接缝处那个小尖尖同色，整块像从蓝带里长出来的。
+        Column(
+            Modifier.fillMaxWidth().weight(1f)
+                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .background(ChildInternetSheet)
+        ) {
+            if (repository.state.error.isNotBlank()) {
+                // 之前是一行裸红字飘在背景上，和页面没有任何关系；做成和总览
+                // 「更新失败」那颗一样调子的软色条。
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFFF5F5),
+                    border = BorderStroke(1.dp, Color(0xFFFEE2E2))
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("❗", style = LabTypography.Caption.copy(color = Color(0xFFEF4444), fontSize = 12.sp))
+                        Text(
+                            repository.state.error,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            style = LabTypography.Caption.copy(
+                                color = Color(0xFFEF4444),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         )
                     }
                 }
-                ChildInternetTab.ATTENTION -> ChildInternetAttentionScreen(deviceState.attentionEntries)
+            }
+            AnimatedContent(
+                targetState = selectedTab,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                label = "child-internet-tab"
+            ) { tab ->
+                when (tab) {
+                    ChildInternetTab.REPORT -> ChildInternetReportScreen(
+                        deviceState,
+                        onRefresh = { repository.loadUsageReport(resolvedId) {} },
+                        onSelectDay = { date -> repository.loadUsageForDate(resolvedId, date) {} }
+                    )
+                    ChildInternetTab.PLAN -> {
+                        if (editingPlanId == null && deviceState.plans.isEmpty()) {
+                            ChildInternetPlanEmptyState(onOpen = { editingPlanId = "" })
+                        } else if (editingPlanId == null) {
+                            ChildInternetPlanOverview(
+                                plans = deviceState.plans,
+                                selectedDay = planDay,
+                                onSelectDay = { planDay = it },
+                                onOpenRule = { id -> editingPlanId = id },
+                                onAddRule = { editingPlanId = "" }
+                            )
+                        } else {
+                            ChildInternetPlanEditor(
+                                plan = draftPlan,
+                                saving = repository.state.pendingDeviceIds.isNotEmpty(),
+                                appManagementSupported = deviceState.summary.appManagementSupported,
+                                experimentalAppControl = deviceState.summary.experimentalAppControl,
+                                onPlanChange = { draftPlan = it },
+                                onOpenCategory = { selectedCategoryId = it },
+                                onEnabledChange = { enabled, context ->
+                                    if (draftPlan.id.isBlank()) {
+                                        draftPlan = draftPlan.copy(enabled = enabled)
+                                    } else {
+                                        repository.setPlanEnabled(resolvedId, draftPlan.id, enabled) { result ->
+                                            result.onSuccess {
+                                                draftPlan = draftPlan.copy(enabled = enabled)
+                                                toast(context, if (enabled) "计划已启用" else "计划已停用")
+                                            }.onFailure { toast(context, it.userMessage()) }
+                                        }
+                                    }
+                                },
+                                onDelete = { context ->
+                                    repository.deletePlan(resolvedId, draftPlan.id) { result ->
+                                        result.onSuccess {
+                                            editingPlanId = null
+                                            toast(context, "时段已删除")
+                                        }.onFailure { toast(context, it.userMessage()) }
+                                    }
+                                },
+                                onSave = { context ->
+                                    repository.savePlan(resolvedId, draftPlan) { result ->
+                                        result.onSuccess {
+                                            draftPlan.repeatDays.minOrNull()?.let { planDay = it }
+                                            editingPlanId = null
+                                            toast(context, "保存成功")
+                                        }.onFailure { toast(context, it.userMessage()) }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    ChildInternetTab.ATTENTION -> ChildInternetAttentionScreen(deviceState.attentionEntries)
+                }
             }
         }
     }
@@ -369,32 +388,18 @@ private fun ChildDeviceHeader(
     onOpenLog: () -> Unit = {}
 ) {
     val accent = Color(summary.accentArgb)
-    Surface(color = LabV2.BackgroundTop) {
+    // 官方那版：设备名居中，返回键和右侧两个操作浮在同一条蓝带上。这里刻意不再
+    // 自己刷背景 —— 状态栏是透明的，头部再盖一层平色就会把外层那道渐变切断，
+    // 顶上看起来就成了「状态栏 / 头部 / 标签」三条。
+    Box(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink)
             }
-            Spacer(Modifier.width(4.dp))
-            Box(
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(accent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                LabMiniDeviceIcon(summary.iconKey, accent, sizeDp = 20)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = summary.name,
-                style = LabTypography.PageTitle.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
+            Spacer(Modifier.weight(1f))
             IconButton(onClick = onRemoveGuard, modifier = Modifier.size(38.dp)) {
                 Icon(Icons.Rounded.DeleteOutline, "解除儿童守护", tint = LabV2.InkMuted)
             }
@@ -402,64 +407,171 @@ private fun ChildDeviceHeader(
                 Icon(Icons.Rounded.FormatListBulleted, "上网日志", tint = LabV2.InkMuted)
             }
         }
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                LabMiniDeviceIcon(summary.iconKey, accent, sizeDp = 17)
+            }
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = summary.name,
+                style = LabTypography.PageTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 210.dp)
+            )
+        }
     }
 }
 
+/**
+ * 顶部蓝带和内容区分层用的三个色：官方那版设备名和标签都在一条渐变蓝带上，内容
+ * 从带子下面「长」出来，接缝处有一个指向当前标签的小尖尖。
+ */
+internal val ChildInternetBandTop = Color(0xFFD6E2F8)
+internal val ChildInternetBandBottom = Color(0xFFE7EEFA)
+internal val ChildInternetSheet = Color(0xFFF5F8FC)
+
 @Composable
 private fun ChildInternetTabs(selected: ChildInternetTab, onSelect: (ChildInternetTab) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        ChildInternetTab.entries.forEach { tab ->
-            val active = tab == selected
-            val activeColor = when (tab) {
-                ChildInternetTab.REPORT -> Color(0xFF2563EB)
-                ChildInternetTab.PLAN -> LabV2.Primary
-                ChildInternetTab.ATTENTION -> Color(0xFFD97706)
-            }
-            val icon = when (tab) {
-                ChildInternetTab.REPORT -> Icons.Rounded.Assessment
-                ChildInternetTab.PLAN -> Icons.Rounded.EditCalendar
-                ChildInternetTab.ATTENTION -> Icons.Rounded.NotificationImportant
-            }
-            Column(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onSelect(tab) }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = tab.title,
-                    tint = if (active) activeColor else Color(0xFF94A3B8),
-                    modifier = Modifier.size(26.dp)
-                )
-                Text(
-                    text = tab.title,
-                    style = LabTypography.Caption.copy(
-                        color = if (active) Color(0xFF0F172A) else Color(0xFF64748B),
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = 13.sp
-                    ),
-                    maxLines = 1
-                )
-                if (active) {
-                    Box(
-                        modifier = Modifier
-                            .width(20.dp)
-                            .height(2.5.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(activeColor)
+    val tabs = ChildInternetTab.entries.toList()
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+            tabs.forEach { tab ->
+                val active = tab == selected
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onSelect(tab) }
+                        .padding(vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    ChildInternetTabIcon(tab, active, Modifier.size(30.dp))
+                    Text(
+                        text = tab.title,
+                        style = LabTypography.Caption.copy(
+                            color = if (active) Color(0xFF0F172A) else Color(0xFF7A879B),
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = 13.sp
+                        ),
+                        maxLines = 1
                     )
-                } else {
-                    Spacer(Modifier.height(2.5.dp))
                 }
+            }
+        }
+        // 小尖尖：和内容区同色，压在蓝带与内容区的接缝上，正对着选中的标签 ——
+        // 官方靠它把「当前标签」和「下面的内容」连成一个整体，而不是三条下划线。
+        BoxWithConstraints(Modifier.fillMaxWidth().height(9.dp)) {
+            val index = tabs.indexOf(selected).coerceAtLeast(0)
+            Canvas(
+                Modifier
+                    .size(width = 22.dp, height = 9.dp)
+                    .align(Alignment.TopCenter)
+                    .offset(x = maxWidth * ((index + 0.5f) / tabs.size) - maxWidth / 2)
+            ) {
+                drawPath(
+                    Path().apply {
+                        moveTo(size.width / 2f, 0f)
+                        lineTo(size.width, size.height)
+                        lineTo(0f, size.height)
+                        close()
+                    },
+                    ChildInternetSheet
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 三个标签的插画图标，照着官方那版画：网格纸 + 折线（上网报告）、打开的本子 +
+ * 铅笔（上网计划）、淡紫圆 + 感叹号（家长请注意）。未选中一律压成灰调，选中才
+ * 上色 —— 官方就是靠饱和度而不是下划线区分当前页。
+ */
+@Composable
+private fun ChildInternetTabIcon(tab: ChildInternetTab, active: Boolean, modifier: Modifier = Modifier) {
+    val muted = Color(0xFFAEB9C9)
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        when (tab) {
+            ChildInternetTab.REPORT -> {
+                drawRoundRect(
+                    color = if (active) Color.White else Color(0xFFE8ECF2),
+                    topLeft = Offset(w * 0.18f, h * 0.10f),
+                    size = Size(w * 0.64f, h * 0.80f), cornerRadius = CornerRadius(w * 0.10f)
+                )
+                val grid = if (active) Color(0xFFDCE6F5) else Color(0xFFD6DDE7)
+                for (i in 1..3) {
+                    val y = h * (0.10f + 0.80f * i / 4f)
+                    drawLine(grid, Offset(w * 0.24f, y), Offset(w * 0.76f, y), w * 0.035f)
+                }
+                drawPath(
+                    Path().apply {
+                        moveTo(w * 0.26f, h * 0.66f)
+                        lineTo(w * 0.42f, h * 0.40f)
+                        lineTo(w * 0.56f, h * 0.58f)
+                        lineTo(w * 0.74f, h * 0.30f)
+                    },
+                    if (active) Color(0xFF2563EB) else muted,
+                    style = Stroke(width = w * 0.085f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+            }
+            ChildInternetTab.PLAN -> {
+                drawRoundRect(
+                    color = if (active) Color.White else Color(0xFFE8ECF2),
+                    topLeft = Offset(w * 0.10f, h * 0.22f),
+                    size = Size(w * 0.56f, h * 0.60f), cornerRadius = CornerRadius(w * 0.07f)
+                )
+                val rule = if (active) Color(0xFFBFD8F5) else Color(0xFFD6DDE7)
+                for (i in 1..3) {
+                    val y = h * (0.34f + 0.15f * i)
+                    drawLine(rule, Offset(w * 0.20f, y), Offset(w * 0.58f, y), w * 0.04f)
+                }
+                drawLine(
+                    if (active) Color(0xFF60A5FA) else muted,
+                    Offset(w * 0.10f, h * 0.22f), Offset(w * 0.10f, h * 0.82f), w * 0.05f
+                )
+                run {
+                    drawRoundRect(
+                        color = if (active) Color(0xFFF59E0B) else muted,
+                        topLeft = Offset(w * 0.62f, h * 0.16f),
+                        size = Size(w * 0.15f, h * 0.46f), cornerRadius = CornerRadius(w * 0.035f)
+                    )
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.62f, h * 0.62f)
+                            lineTo(w * 0.695f, h * 0.78f)
+                            lineTo(w * 0.77f, h * 0.62f)
+                            close()
+                        },
+                        if (active) Color(0xFFFCD34D) else muted
+                    )
+                }
+            }
+            ChildInternetTab.ATTENTION -> {
+                val center = Offset(w / 2f, h / 2f)
+                drawCircle(
+                    if (active) Color(0xFFE1DDFB) else Color(0xFFE2E7EE),
+                    radius = w * 0.42f, center = center
+                )
+                val mark = if (active) Color(0xFF6D5BD0) else muted
+                drawRoundRect(
+                    mark, Offset(w * 0.455f, h * 0.26f),
+                    Size(w * 0.09f, h * 0.30f), cornerRadius = CornerRadius(w * 0.045f)
+                )
+                drawCircle(mark, radius = w * 0.055f, center = Offset(w / 2f, h * 0.70f))
             }
         }
     }
