@@ -32,6 +32,8 @@ interface ChildInternetRepository {
     fun ensureDevice(deviceId: String, name: String, iconKey: String, accentArgb: Int)
     fun setMasterEnabled(enabled: Boolean)
     fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int? = null, onResult: (Result<Unit>) -> Unit = {})
+    /** 临时放行：只报时长代号（today/10m/30m/1h/cancel），绝对截止时间由 Hub 按北京时间算。 */
+    fun setDevicePass(deviceId: String, preset: String, onResult: (Result<Unit>) -> Unit = {})
     fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit = {})
     fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit = {})
     fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit = {})
@@ -267,7 +269,8 @@ class RealChildInternetRepository internal constructor(
                     macAddresses = row.macs.ifEmpty { cached?.summary?.macAddresses ?: setOf(row.uid) },
                     isOnline = snapshot.presenceKnown && row.online,
                     status = if (row.blocked) GuardStatus.BLOCKED else cached?.summary?.status ?: GuardStatus.UNRESTRICTED,
-                    blockedUntilEpoch = row.blockedUntilEpoch
+                    blockedUntilEpoch = row.blockedUntilEpoch,
+                    passUntilEpoch = row.passUntilEpoch
                 ),
                 presence = if (snapshot.presenceKnown) row.presence else null,
                 schedule = row.schedule
@@ -381,6 +384,20 @@ class RealChildInternetRepository internal constructor(
                 )
             }
         })
+    }
+
+    override fun setDevicePass(deviceId: String, preset: String, onResult: (Result<Unit>) -> Unit) {
+        mutate(deviceId, onResult, request = { api.passDevice(resolveRouterUid(deviceId), preset) },
+            hudText = "放行中…", accepted = { response ->
+                // 路由器回的是它真正接受的绝对时间；界面只存这一个数，剩余分钟由卡片自己算。
+                val until = response.data().optLong("passUntilEpoch", 0L)
+                updateDevice(deviceId) { d ->
+                    d.copy(
+                        runtime = d.runtime.copy(passUntilEpoch = until),
+                        summary = d.summary.copy(passUntilEpoch = until)
+                    )
+                }
+            })
     }
 
     override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) {
@@ -520,7 +537,8 @@ class RealChildInternetRepository internal constructor(
         updateDevice(uid) { d ->
             withPlans(d, plans).copy(runtime = runtime, summary = d.summary.copy(
                 status = guardStatus(runtime.paused, plans),
-                blockedUntilEpoch = runtime.blockedUntilEpoch
+                blockedUntilEpoch = runtime.blockedUntilEpoch,
+                passUntilEpoch = runtime.passUntilEpoch
             ))
         }
         updateUsageFromReport(uid)
@@ -767,7 +785,8 @@ internal fun mergeChildGuardDeviceList(
         usageSource = cached?.usageSource ?: raw.usageSource,
         presence = cached?.presence ?: raw.presence,
         runtime = (cached?.runtime ?: raw.runtime).copy(paused = raw.summary.status == GuardStatus.BLOCKED,
-            blockedUntilEpoch = raw.summary.blockedUntilEpoch)
+            blockedUntilEpoch = raw.summary.blockedUntilEpoch,
+            passUntilEpoch = raw.summary.passUntilEpoch)
     )
 }
 
@@ -807,6 +826,10 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
         }
     )
     fun resumeDevice(uid: String) = write("$base/devices/${pathPart(uid)}/resume$routerQuery", "POST")
+    /** 预设交给 Hub 换算：中继在路由器上算不出「今天还剩多久」。 */
+    fun passDevice(uid: String, preset: String) = write(
+        "$base/devices/${pathPart(uid)}/pass$routerQuery", "POST", JSONObject().put("preset", preset)
+    )
     fun usage(uid: String) = get("$base/devices/${pathPart(uid)}/usage$routerQuery")
     fun candidates() = parseChildGuardCandidates(get("$base/devices/candidates$routerQuery"))
     fun addDevice(macs: List<String>, name: String? = null) = write("$base/devices$routerQuery", "POST", JSONObject().apply {
@@ -930,6 +953,7 @@ internal data class ChildGuardOverviewDevice(
     val lastSeenAtEpoch: Long?,
     val blocked: Boolean,
     val blockedUntilEpoch: Long,
+    val passUntilEpoch: Long,
     val updatedAtEpoch: Long?,
     /** Hub 本地算出来的此刻生效态；state 为空就是还没读过这台设备的计划。 */
     val schedule: ChildGuardSchedule = ChildGuardSchedule(),
@@ -944,7 +968,8 @@ internal data class ChildGuardOverviewDevice(
             status = if (blocked) GuardStatus.BLOCKED else GuardStatus.UNRESTRICTED,
             macAddresses = macs,
             isOnline = online,
-            blockedUntilEpoch = blockedUntilEpoch
+            blockedUntilEpoch = blockedUntilEpoch,
+            passUntilEpoch = passUntilEpoch
         )
     val presence: ChildGuardPresence
         get() = ChildGuardPresence(online, activeNow, lastSeenAtEpoch, updatedAtEpoch)
@@ -1005,6 +1030,7 @@ private fun childGuardDeviceRows(root: JSONObject): List<ChildGuardOverviewDevic
             lastSeenAtEpoch = item.longOrNull("lastSeenAt"),
             blocked = item.bool("blocked", "paused"),
             blockedUntilEpoch = item.longOrNull("blockedUntilEpoch") ?: 0L,
+            passUntilEpoch = item.longOrNull("passUntilEpoch") ?: 0L,
             updatedAtEpoch = item.longOrNull("updatedAt"),
             schedule = ChildGuardSchedule(
                 state = item.text("schedule"),
@@ -1063,7 +1089,8 @@ internal fun parseChildGuardRuntime(root: JSONObject, fallbackUid: String = ""):
     val bound = d.stringSet("policyIds")
     val effect = d.text("effectPolicyId").takeUnless { it.equals("none", true) }
     return ChildGuardRuntimeState(d.text("uid").ifBlank { fallbackUid }, bound, effect, mapRuntimeEffectPolicy(effect, bound),
-        paused = d.bool("blocked", "paused"), blockedUntilEpoch = d.optLong("blockedUntilEpoch", 0L))
+        paused = d.bool("blocked", "paused"), blockedUntilEpoch = d.optLong("blockedUntilEpoch", 0L),
+        passUntilEpoch = d.optLong("passUntilEpoch", 0L))
 }
 
 /** The 上网统计 window. Matches the Hub's relay/Hub retention (10 days). */
@@ -1525,6 +1552,7 @@ object FakeChildInternetRepository : ChildInternetRepository {
     }
     override fun setMasterEnabled(enabled: Boolean) { state = state.copy(masterEnabled = enabled) }
     override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = if (blocked) GuardStatus.BLOCKED else GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
+    override fun setDevicePass(deviceId: String, preset: String, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) { val saved = plan.copy(id = plan.id.ifBlank { "preview-plan" }, configured = true, enabled = true); state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(plan = saved, plans = listOf(saved), summary = it.summary.copy(status = GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }
     override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }

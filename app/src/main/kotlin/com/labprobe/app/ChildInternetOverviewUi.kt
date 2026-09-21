@@ -27,6 +27,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -515,18 +516,25 @@ private fun ProtectedDeviceCard(
         pending == "*" || sameChildGuardDevice(pending, summary.deviceId)
     }
     var nowEpoch by remember { mutableStateOf(System.currentTimeMillis() / 1000L) }
-    LaunchedEffect(summary.blockedUntilEpoch, isBlocked) {
+    LaunchedEffect(summary.blockedUntilEpoch, summary.passUntilEpoch, isBlocked) {
         nowEpoch = System.currentTimeMillis() / 1000L
-        if (isBlocked && summary.blockedUntilEpoch > 1L) {
-            while (nowEpoch < summary.blockedUntilEpoch) {
+        val deadline = maxOf(summary.blockedUntilEpoch, summary.passUntilEpoch)
+        if (deadline > 1L) {
+            while (nowEpoch < deadline) {
                 kotlinx.coroutines.delay(15_000)
                 nowEpoch = System.currentTimeMillis() / 1000L
             }
+            // 放行/禁网到点的那一瞬间路由器已经改了状态，界面上不能停在旧文案。
             repository.refreshOverview()
         }
     }
 
     var showBlockMenu by remember { mutableStateOf(false) }
+    // 临时放行是固件的 skip 通道：Hub 在放行期间已经把 isBlocked 算成 false，所以这里
+    // 只需要说「为什么现在能上网、还剩多久」。
+    val onPass = summary.passUntilEpoch > nowEpoch
+    val passMinutes =
+        if (onPass) ((summary.passUntilEpoch - nowEpoch + 59) / 60).toInt().coerceAtLeast(1) else 0
 
     Surface(
         modifier = Modifier
@@ -574,12 +582,16 @@ private fun ProtectedDeviceCard(
                         isTemporaryBlock -> "已禁网 · 剩余 $remainingMins 分钟"
                         isBlocked && summary.blockedUntilEpoch > 1L -> "禁网已到期 · 正在确认状态"
                         isBlocked -> "已一键禁网 · 手动恢复后可用"
+                        onPass && summary.blockedUntilEpoch > nowEpoch ->
+                            "临时放行中 · 剩余 $passMinutes 分钟，之后恢复禁网"
+                        onPass -> "临时放行中 · 剩余 $passMinutes 分钟"
                         scheduleText.isNotBlank() -> scheduleText
                         summary.status == GuardStatus.GUARDED -> "上网计划守护中"
                         else -> "当前网络无限制"
                     }
                     val statusColor = when {
                         isBlocked || device.schedule.state == "blocked" -> LabV2.Red
+                        onPass -> Color(0xFF16A34A)
                         summary.status == GuardStatus.GUARDED -> LabV2.Primary
                         else -> Color(0xFF94A3B8)
                     }
@@ -601,6 +613,8 @@ private fun ProtectedDeviceCard(
                         if (isTemporaryBlock) "已禁网 ($remainingMins 分钟)" else "已禁网",
                         Color(0xFFFEE2E2), Color(0xFFDC2626), bold = true
                     )
+                } else if (onPass) {
+                    PresenceBadge("放行中 ($passMinutes 分钟)", Color(0xFFEAF8EF), Color(0xFF16A34A), bold = true)
                 } else if (presence?.activeNow == true) {
                     // 「正在上网」只认当前/上一个自然分钟的真实业务流量。
                     PresenceBadge("正在上网", Color(0xFFEAF8EF), Color(0xFF16A34A))
@@ -684,7 +698,28 @@ private fun ProtectedDeviceCard(
                             }
                         }
                     }
-                    // 官方是一张贴着按钮的大圆角小卡：四行居中文，没有标题、说明和分割线。
+                    // 官方是一张贴着按钮的大圆角小卡：居中文、没有标题和说明。
+                    // 禁网和放行是两个相反的开关，各占一组，中间一道分隔线。
+                    val menuChoice: @Composable (String, () -> Unit) -> Unit = { label, choose ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    label,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center,
+                                    style = LabTypography.Body.copy(
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                )
+                            },
+                            onClick = {
+                                showBlockMenu = false
+                                choose()
+                            },
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                        )
+                    }
                     DropdownMenu(
                         expanded = showBlockMenu,
                         onDismissRequest = { showBlockMenu = false },
@@ -694,32 +729,24 @@ private fun ProtectedDeviceCard(
                         tonalElevation = 0.dp,
                         shadowElevation = 10.dp
                     ) {
-                        listOf(
+                        listOf<Pair<String, Int?>>(
                             "立即禁网" to null,
                             "禁网 10 分钟" to 10,
                             "禁网 30 分钟" to 30,
                             "禁网 1 小时" to 60
                         ).forEach { (label, minutes) ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        label,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        textAlign = TextAlign.Center,
-                                        style = LabTypography.Body.copy(
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    )
-                                },
-                                onClick = {
-                                    showBlockMenu = false
-                                    repository.setDeviceBlocked(
-                                        summary.deviceId, true, durationMinutes = minutes
-                                    )
-                                },
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                            )
+                            menuChoice(label) {
+                                repository.setDeviceBlocked(summary.deviceId, true, durationMinutes = minutes)
+                            }
+                        }
+                        HorizontalDivider(color = Color(0xFFF1F5F9))
+                        listOf(
+                            "今日放行" to "today",
+                            "放行 10 分钟" to "10m",
+                            "放行 30 分钟" to "30m",
+                            "放行 1 小时" to "1h"
+                        ).forEach { (label, preset) ->
+                            menuChoice(label) { repository.setDevicePass(summary.deviceId, preset) }
                         }
                     }
                 }

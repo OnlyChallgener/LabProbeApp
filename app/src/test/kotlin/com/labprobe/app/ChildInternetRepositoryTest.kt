@@ -637,4 +637,24 @@ class ChildInternetRepositoryTest {
         val row = parseChildGuardOverview(root).devices.single()
         assertEquals("printer-702F", row.name)
     }
+
+    @Test
+    fun aLivePassWindowCarriesItsOwnDeadline() {
+        val uid = "AABBCCDDEEFF00112233445566778899"
+        val root = JSONObject().put("devices", JSONArray().put(JSONObject()
+            .put("uid", uid).put("name", "小明平板")
+            .put("blocked", false).put("blockedUntilEpoch", 1_789_862_400L)
+            .put("passUntilEpoch", 1_789_866_000L)))
+        val row = parseChildGuardOverview(root).devices.single()
+        assertEquals(1_789_866_000L, row.passUntilEpoch)
+        assertEquals(1_789_866_000L, row.summary.passUntilEpoch)
+        // 放行期间 Hub 已经把「此刻能不能上网」算成 blocked=false；界面不许再拿
+        // block 自己反推一遍，否则会出现放行中显示「已禁网」。
+        assertEquals(GuardStatus.UNRESTRICTED, row.summary.status)
+
+        val runtime = parseChildGuardRuntime(JSONObject().put("data", JSONObject()
+            .put("runtime", JSONObject().put("blocked", false)
+                .put("blockedUntilEpoch", 0L).put("passUntilEpoch", 1_789_866_000L))), uid)
+        assertEquals(1_789_866_000L, runtime.passUntilEpoch)
+    }
 }

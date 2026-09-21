@@ -69,7 +69,9 @@ data class ChildGuardRuntimeState(
     val effectPolicyId: String? = null,
     val effectPolicy: RuntimeEffectPolicy = RuntimeEffectPolicy.NONE,
     val paused: Boolean = false,
-    val blockedUntilEpoch: Long = 0L
+    val blockedUntilEpoch: Long = 0L,
+    /** 临时放行的截止时间（epoch 秒）。0 = 没在放行。固件的 skip 通道。 */
+    val passUntilEpoch: Long = 0L
 )
 
 /**
@@ -89,7 +91,9 @@ data class ProtectedDeviceSummary(
     val macAddresses: Set<String> = emptySet(),
     /** 在线 = 设备连着路由器；与「正在上网」是两回事。 */
     val isOnline: Boolean = false,
-    val blockedUntilEpoch: Long = 0L
+    val blockedUntilEpoch: Long = 0L,
+    /** 临时放行截止时间；Hub 在放行期间已经把 `status`/禁网时间算成「此刻能不能上网」。 */
+    val passUntilEpoch: Long = 0L
 )
 
 /** `/child-guard/overview` 独有的存在性字段，唯一写入者是总览聚合。 */
