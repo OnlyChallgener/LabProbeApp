@@ -657,4 +657,30 @@ class ChildInternetRepositoryTest {
                 .put("blockedUntilEpoch", 0L).put("passUntilEpoch", 1_789_866_000L))), uid)
         assertEquals(1_789_866_000L, runtime.passUntilEpoch)
     }
+
+    /**
+     * 图标映射里出现的每个 key 都必须在 APK assets 里带着图。缺图不会报错，只会
+     * 悄悄显示成未识别图标 —— 以前还会去第三方 CDN 拿一张，于是出现过「腾讯会议」
+     * 显示今日头条的 logo。这条测试把这一整类问题钉死在源码层。
+     */
+    @Test
+    fun everyMappedIconKeyShipsBundledArtwork() {
+        val source = java.io.File("src/main/kotlin/com/labprobe/app/ChildInternetRepository.kt")
+        val assets = java.io.File("src/main/assets/appicons")
+        assertTrue("找不到图标映射源码：${source.absolutePath}", source.exists())
+        assertTrue("找不到内置图标目录：${assets.absolutePath}", assets.exists())
+        assertTrue("未识别应用图标必须内置", java.io.File(assets, "unknown.png").exists())
+
+        val body = source.readText()
+            .substringAfter("private fun dashboardIconKey")
+            .substringBefore("\n}")
+        val keys = Regex("""->\s*"([a-z0-9][a-z0-9-]*)"""")
+            .findAll(body)
+            .map { it.groupValues[1] }
+            .toSet() - "missing"
+        assertTrue("映射表为空，八成是函数名或结构变了", keys.size > 50)
+
+        val bare = keys.filter { !java.io.File(assets, "$it.png").exists() }.sorted()
+        assertTrue("这些图标 key 没有内置图，只会显示未识别图标：$bare", bare.isEmpty())
+    }
 }

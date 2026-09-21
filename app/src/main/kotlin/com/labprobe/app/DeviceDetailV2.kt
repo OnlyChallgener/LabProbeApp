@@ -153,11 +153,8 @@ fun DeviceDetailScreen(
 
         CompactListCard(coreSurface = true) {
             Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                DeviceDetailMetric("频段", band, LabV2.Primary, Modifier.weight(1f))
-                DeviceDetailMetric("信号", signal, LabV2.Amber, Modifier.weight(1f))
-                DeviceDetailMetric("速率", rate, LabV2.Green, Modifier.weight(1f))
-            }
+            // 频段 / 信号 / 速率 顶部那排胶囊已经给过了，这里再列一行就是把同一
+            // 批数字显示两遍。
             if (wifiName.isNotBlank()) {
                 Surface(shape = RoundedCornerShape(14.dp), color = LabV2.Primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .09f))) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

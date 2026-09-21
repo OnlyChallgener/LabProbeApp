@@ -27,22 +27,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-
-// Homarr Labs Dashboard Icons: Apache-2.0 collection, resolved by kebab-case key.
-private const val DASHBOARD_ICON_BASE = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png"
 
 /** Bundled artwork for apps no icon source covers (未识别应用图标). */
 private const val UNKNOWN_APP_ICON_KEY = "unknown"
-
-private val dashboardIconClient = OkHttpClient.Builder()
-    .connectTimeout(3, TimeUnit.SECONDS)
-    .readTimeout(4, TimeUnit.SECONDS)
-    .build()
 
 private val dashboardIconMemoryCache = ConcurrentHashMap<String, ImageBitmap>()
 private val dashboardIconMissCache = ConcurrentHashMap.newKeySet<String>()
@@ -55,10 +44,13 @@ private val avatarPalette = listOf(
 
 /**
  * Resolves app artwork without making the page depend on the network. Priority:
- * a verified feature-package PNG/WebP, then the icon pack bundled in APK assets
- * (Chinese apps missing from public icon CDNs), then the Dashboard Icons CDN,
+ * a verified feature-package PNG/WebP, then the icon pack bundled in APK assets,
  * then the bundled 未识别应用 artwork, and finally a letter avatar so no
  * placeholder squares appear.
+ *
+ * 这里刻意不再回落到第三方图标 CDN：CDN 按 key 取图，拿到什么全看对方仓库里那个
+ * 文件名对应的是哪个应用 —— 实测「腾讯会议」取回来一张今日头条的 logo。显示一个
+ * 错的图标比显示未识别图标更糟。
  */
 @Composable
 fun DashboardAppIcon(
@@ -76,13 +68,7 @@ fun DashboardAppIcon(
             val local = loadLocalPackageIcon(localIconPath)
             val bundled = if (local == null) loadBundledIcon(context, iconKey) else null
             (local ?: bundled)?.also { dashboardIconMemoryCache[cacheKey] = it }
-                ?: run {
-                    // CDN 最长要等数秒，先把未识别图标显示出来，这期间不出现首字母。
-                    val unknown = loadBundledIcon(context, UNKNOWN_APP_ICON_KEY)
-                    value = unknown
-                    val remote = loadDashboardIcon(iconKey)
-                    remote?.also { dashboardIconMemoryCache[cacheKey] = it } ?: unknown
-                }
+                ?: loadBundledIcon(context, UNKNOWN_APP_ICON_KEY)
         }
     }
     val shape = RoundedCornerShape((sizeDp * .24f).dp)
@@ -133,19 +119,6 @@ private fun loadBundledIcon(context: Context, iconKey: String): ImageBitmap? {
             BitmapFactory.decodeStream(stream)?.asImageBitmap()
         }
     }.getOrNull()
-}
-
-private fun loadDashboardIcon(iconKey: String): ImageBitmap? {
-    if (!iconKey.matches(Regex("[a-z0-9][a-z0-9-]*")) || iconKey == "missing" || iconKey in dashboardIconMissCache) return null
-    val bitmap = runCatching {
-        val request = Request.Builder().url("$DASHBOARD_ICON_BASE/$iconKey.png").build()
-        dashboardIconClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            response.body?.bytes()?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
-        }
-    }.getOrNull()
-    if (bitmap == null) dashboardIconMissCache.add(iconKey)
-    return bitmap
 }
 
 private fun loadLocalPackageIcon(localIconPath: String?): ImageBitmap? = runCatching {

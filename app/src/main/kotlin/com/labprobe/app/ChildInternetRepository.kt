@@ -1665,24 +1665,26 @@ private fun dashboardIconKey(rawName: String): String {
     // 特征库的派生名（王者荣耀_login、优酷视频_weak_relation …）与主应用共用图标。
     val name = rawName.replace(Regex("_(login|gaming|weak_relation|null_relation)$"), "")
     return when (name) {
+    // 待补图：腾讯课堂 / 微视 / 酷狗音乐 / 百度翻译 / 陌陌 / 探探 / 转转。
+    // 没有内置图就不要写进映射表 —— 见 ChildInternetRepositoryTest.everyMappedIconKeyShipsBundledArtwork。
     "微信" -> "wechat"; "企业微信" -> "wecom"; "微信读书" -> "weread"; "微信视频号" -> "wechat-channels"
-    "QQ" -> "qq"; "QQ音乐" -> "qq-music"; "QQ浏览器" -> "qq-browser"; "腾讯课堂" -> "tencent-classroom"; "腾讯会议" -> "tencent-meeting"
-    "腾讯视频" -> "tencent-video"; "哔哩哔哩" -> "bilibili"; "微视" -> "weishi"
+    "QQ" -> "qq"; "QQ音乐" -> "qq-music"; "QQ浏览器" -> "qq-browser"; "腾讯会议" -> "tencent-meeting"
+    "腾讯视频" -> "tencent-video"; "哔哩哔哩" -> "bilibili";
     "抖音" -> "douyin"; "抖音系列" -> "douyin"; "快手" -> "kuaishou"; "小红书" -> "rednote"
     "爱奇艺" -> "iqiyi"; "优酷" -> "youku"; "优酷视频" -> "youku"; "芒果TV" -> "mango-tv"; "咪咕视频" -> "migu-video"
-    "网易云音乐" -> "netease-music"; "酷狗音乐" -> "kugou-music"; "酷我音乐" -> "kuwo-music"
+    "网易云音乐" -> "netease-music"; "酷我音乐" -> "kuwo-music"
     "喜马拉雅" -> "himalaya"; "喜马拉雅儿童" -> "himalaya"
-    "百度" -> "baidu"; "百度贴吧" -> "baidu-tieba"; "贴吧" -> "baidu-tieba"; "百度网盘" -> "baidu-netdisk"; "百度地图" -> "baidu-map"; "百度翻译" -> "baidu-fanyi"
+    "百度" -> "baidu"; "百度贴吧" -> "baidu-tieba"; "贴吧" -> "baidu-tieba"; "百度网盘" -> "baidu-netdisk"; "百度地图" -> "baidu-map";
     "高德地图" -> "amap"; "腾讯地图" -> "tencent-map"; "夸克" -> "quark"; "UC浏览器" -> "uc-browser"
     "阿里云盘" -> "aliyunpan"; "迅雷" -> "xunlei"; "菜鸟" -> "cainiao"; "顺丰速运" -> "sf-express"; "顺丰速递" -> "sf-express"
     // 自建特征（rdpi 18-4-3-0）：官方库未明确归属的阿里基础设施流量。
     "阿里CDN" -> "alibaba"
-    "微博" -> "weibo"; "知乎" -> "zhihu"; "豆瓣" -> "douban"; "Soul" -> "soul"; "陌陌" -> "momo"; "探探" -> "tantan"
+    "微博" -> "weibo"; "知乎" -> "zhihu"; "豆瓣" -> "douban"; "Soul" -> "soul"
     "钉钉" -> "dingtalk"; "飞书" -> "feishu"; "WPS Office" -> "wps-office"
     "淘宝" -> "taobao"; "京东" -> "jingdong"; "拼多多" -> "pinduoduo"; "支付宝" -> "alipay"; "唯品会" -> "vipshop"
     "云闪付" -> "unionpay"
     "美团" -> "meituan"; "饿了么" -> "eleme"; "滴滴出行" -> "didi"
-    "闲鱼" -> "goofish"; "得物" -> "dewu"; "转转" -> "zhuanzhun"
+    "闲鱼" -> "goofish"; "得物" -> "dewu"
     "携程旅行" -> "ctrip"; "去哪儿旅行" -> "qunar"; "同程旅行" -> "tongcheng"; "马蜂窝" -> "mafengwo"
     "淘票票" -> "taopiaopiao"; "铁路12306" -> "railway-12306"; "大众点评" -> "dianping"
     // 应用商店走内置图标（用户提供的官方 logo），不依赖 CDN；
@@ -1694,6 +1696,20 @@ private fun dashboardIconKey(rawName: String): String {
     "番茄小说" -> "fanqie-novel"; "米游社" -> "mihoyo-bbs"; "瑞幸咖啡" -> "luckin"
     "王者荣耀" -> "honor-of-kings"; "中国建设银行" -> "ccb"; "今日头条" -> "toutiao"
     "豆包" -> "doubao"; "DeepSeek" -> "deepseek"
+    // 儿童上网列表里会出现、但以前没有对应关系的应用：名字一律对齐 RDPI 特征库
+    // 里的官方 name（中继按 `_` 截断派生名），否则落到 else 分支会变成中文 key，
+    // 加载不到任何图。
+    "微信支付" -> "wechat-pay"; "安全教育平台" -> "safety-education"
+    "TP-LINK物联" -> "tp-link-iot"; "海尔智家" -> "haier-smart-home"
+    "美的美居" -> "midea-meiju"; "小爱同学" -> "xiaoai"; "醒图" -> "xingtu"
+    "西瓜视频" -> "xigua-video"; "番茄免费小说" -> "fanqie-novel"
+    "三角洲行动" -> "delta-force"; "山姆会员商店" -> "sams-club"
+    // 仓库里早就带着这些图，但一直没有名字映射，等于白装。
+    "Kimi" -> "kimi"; "腾讯文档" -> "tencent-docs"; "金山文档" -> "kdocs"
+    "美团外卖" -> "meituan-waimai"; "123云盘" -> "123pan"; "115网盘" -> "115-netdisk"
+    "爱回收" -> "aihuishou"; "不背单词" -> "bubei-danci"; "粉笔" -> "fenbi"
+    "幕布" -> "mubu"; "i4Tools" -> "i4tools"; "Epic Games" -> "epic-games"
+    "Xbox" -> "xbox"
     else -> name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "missing" }
     }
 }
