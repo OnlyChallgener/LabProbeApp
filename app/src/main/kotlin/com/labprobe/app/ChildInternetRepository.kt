@@ -1621,9 +1621,11 @@ internal fun childInternetRdpiIds(name: String): Set<String> =
  * 其余回落 Homarr Dashboard Icons CDN（kebab-case 命名），两者都没有时用
  * 内置的"未识别应用图标"兜底，不再出现首字母色块。
  */
+/** 派生名后缀（王者荣耀_login、优酷视频_weak_relation…）与主应用共用图标。 */
+private val derivedAppNameSuffix = Regex("_(login|gaming|weak_relation|null_relation)$")
+
 private fun dashboardIconKey(rawName: String): String {
-    // 特征库的派生名（王者荣耀_login、优酷视频_weak_relation …）与主应用共用图标。
-    val name = rawName.replace(Regex("_(login|gaming|weak_relation|null_relation)$"), "")
+    val name = rawName.replace(derivedAppNameSuffix, "")
     return when (name) {
     // 待补图：腾讯课堂 / 转转。
     // 没有内置图就不要写进映射表 —— 见 ChildInternetRepositoryTest.everyMappedIconKeyShipsBundledArtwork。
@@ -1669,6 +1671,17 @@ private fun dashboardIconKey(rawName: String): String {
     "英雄联盟手游" -> "lol-mobile"; "搜狐视频" -> "sohu-video"; "百度翻译" -> "baidu-translate"
     "学习通" -> "xuexitong"; "中国银行" -> "bank-of-china"
     "多邻国" -> "duolingo"; "有道词典" -> "youdao-dict"; "YY" -> "yy"; "全球网测" -> "global-net-test"
+    // 2026-09-21 补特征那一批：名字必须和下发到路由器的特征库 name 一字不差，
+    // 否则界面上有图、列表里却是另一个应用。
+    "UU远程" -> "uu-remote"; "360儿童卫士" -> "qihoo-kids-watch"
+    "360智慧生活" -> "qihoo-smart-life"; "亲宝宝" -> "qinbaobao"
+    // 「补充图标1」批次：这 11 款都在目录里，之前一张图都没有，全落到未识别图标。
+    "TapTap" -> "taptap"; "中国农业银行" -> "abc-bank"; "中国工商银行" -> "icbc"
+    "人人视频" -> "renren-video"; "使命召唤手游" -> "call-of-duty-mobile"
+    "探探" -> "tantan"; "陌陌" -> "momo"; "花椒直播" -> "huajiao-live"
+    "虎牙直播" -> "huya-live"; "苏宁易购" -> "suning"; "魅族应用商店" -> "meizu-app-store"
+    "95美女秀" -> "95meinvxiu"; "PP视频" -> "pp-video"; "华为视频" -> "huawei-video"
+    "南瓜电影" -> "pumpkin-film"; "瞩目" -> "zumu"
     "三角洲行动" -> "delta-force"; "山姆会员商店" -> "sams-club"; "菜鸟" -> "cainiao"
     "米家" -> "mijia"
     // 仓库里早就带着这些图，但一直没有名字映射，等于白装。

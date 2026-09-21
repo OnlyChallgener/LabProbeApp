@@ -13,7 +13,7 @@ import sys
 from PIL import Image
 
 ROOT = r"D:\Github\LabProbeApp"
-LOGO = os.path.join(ROOT, "test", "应用logo")
+LOGO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "test", "应用logo")
 ART = os.path.join(ROOT, "app", "src", "main", "assets", "appicons")
 CAT = os.path.join(ROOT, "app", "src", "main", "kotlin", "com", "labprobe", "app", "RdpiCatalogGenerated.kt")
 
