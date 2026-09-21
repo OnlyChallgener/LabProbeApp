@@ -457,7 +457,6 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
     LaunchedEffect(Unit) {
         state.refreshRouterDashboard(silent = true)
         runCatching { state.requestRouterCredentialsRefresh() }
-        runCatching { state.fetchRouterTrend() }
     }
     LaunchedEffect(state.mqttConnected) {
         while (isActive) {
@@ -489,7 +488,6 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
                 .onFailure { state.refreshRouterDashboard(silent = false) }
             refreshing = false
             launch { runCatching { state.requestRouterCredentialsRefresh() } }
-            launch { runCatching { state.fetchRouterTrend() } }
         }
     }
 
