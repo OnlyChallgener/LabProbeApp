@@ -10,10 +10,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -385,7 +387,9 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
     }
-    LaunchedEffect(labProbeDdns.updatedAt, nativeDdns.updatedAt, profiles.map { it.id to it.endpointRevision }, sharedOperation?.running) {
+    // 循环内部每次都从 store 重新读，所以键里不能再放 profiles：写回一次 endpointRevision
+    // 就会重启循环并立刻再打一轮 Hub，Hub 日志里的「每秒三次」就是这么来的。
+    LaunchedEffect(labProbeDdns.updatedAt, nativeDdns.updatedAt, sharedOperation?.running) {
         if (operations.state.value?.running == true) return@LaunchedEffect
         val operationVersion = operations.state.value?.completedVersion ?: 0L
         val current = withContext(Dispatchers.IO) { store.load() }
@@ -409,7 +413,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             reload()
         }
     }
-    LaunchedEffect(profiles.map { Triple(it.id, it.endpointBindingId, it.endpointRevision) }, sharedOperation?.completedVersion) {
+    LaunchedEffect(sharedOperation?.completedVersion) {
         val stunApi = StunApi(prefs)
         while (true) {
             if (operations.state.value?.running == true) {
@@ -1232,6 +1236,8 @@ private fun WireGuardEditorDialog(
     var allowedIps by remember(initial.id) { mutableStateOf(initial.allowedIps.joinToString(", ")) }
     var bindingId by remember(initial.id) { mutableStateOf(initial.endpointBindingId) }
     var error by remember { mutableStateOf("") }
+    /** 删除是多步远端操作，浮窗要一直说清走到哪一步（卡片底部那行字常被滚出屏幕）。 */
+    var deleteInFlight by remember(initial.id) { mutableStateOf(false) }
     var source by remember(initial.id) { mutableStateOf(initial.endpointSource) }
     var submittedAfterVersion by remember(initial.id) { mutableStateOf<Long?>(null) }
     val operationTarget = wireGuardProfileTarget(initial.id)
@@ -1248,6 +1254,7 @@ private fun WireGuardEditorDialog(
         val floor = submittedAfterVersion ?: return@LaunchedEffect
         if (operation?.targetId != operationTarget || operation.running || operation.completedVersion <= floor) return@LaunchedEffect
         submittedAfterVersion = null
+        deleteInFlight = false
         if (operation.error == null) onDismiss() else error = uiMessageZh(operation.error)
     }
 
@@ -1257,6 +1264,7 @@ private fun WireGuardEditorDialog(
             shape = LabV2.CardShape,
             color = Color.White,
         ) {
+            Box(Modifier.fillMaxSize()) {
             Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
                 Text(if (isExisting) "编辑 WireGuard 配置" else "新建 WireGuard 配置", style = LabTypography.PageTitle)
                 Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp), color = wireGuardSourceColor(source).copy(alpha = .10f)) {
@@ -1437,7 +1445,7 @@ private fun WireGuardEditorDialog(
                     TextButton(
                         onClick = {
                             val floor = operation?.completedVersion ?: 0L
-                            if (onDelete()) submittedAfterVersion = floor
+                            if (onDelete()) { submittedAfterVersion = floor; deleteInFlight = true }
                             else error = "已有网络配置操作正在进行，请稍候"
                         },
                         enabled = !busy,
@@ -1456,6 +1464,28 @@ private fun WireGuardEditorDialog(
                             Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("删除此配置", style = LabTypography.CompactButton)
+                        }
+                    }
+                }
+            }
+                if (deleteInFlight) {
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
+                        shape = LabCoreSurface.InnerShape,
+                        color = Color.White,
+                        border = BorderStroke(1.dp, WireGuardRed.copy(alpha = .38f)),
+                        shadowElevation = 10.dp,
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = WireGuardRed)
+                            Text(
+                                operation?.takeIf { it.targetId == operationTarget }?.label ?: "正在删除配置…",
+                                style = LabTypography.Caption.copy(color = LabV2.Ink, fontWeight = FontWeight.SemiBold),
+                            )
                         }
                     }
                 }
