@@ -3984,12 +3984,21 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
+    var handshaked by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { running = wireGuardShortcutRunning(context, prefs) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val tunnelState = wireGuardShortcutState(context, prefs)
+            running = tunnelState.tunnelUp
+            handshaked = tunnelState.handshaked
+            // 本地读隧道统计，不碰网络；等握手时读得勤一点，免得状态停在「握手中」。
+            delay(if (tunnelState.tunnelUp && !tunnelState.handshaked) 2_000L else 8_000L)
+        }
+    }
     CompactListCard(coreSurface = true) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            LabV2ToolIcon(Icons.Rounded.VpnKey, LabV2.Primary, size = 34, muted = !running)
+            LabV2ToolIcon(Icons.Rounded.VpnKey, LabV2.Primary, size = 34, muted = !handshaked)
             Spacer(Modifier.width(10.dp))
             Column(
                 Modifier.weight(1f)
@@ -4003,7 +4012,8 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
                 Text(
                     when {
                         busy -> "正在切换…"
-                        running -> "已连接"
+                        handshaked -> "已连接"
+                        running -> "隧道已起，等待握手"
                         hint.isNotBlank() -> hint
                         else -> "未连接"
                     },

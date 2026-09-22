@@ -45,9 +45,13 @@ class WireGuardTileService : TileService() {
         val tile = qsTile ?: return
         val prefs = AppPrefs(applicationContext)
         scope.launch {
-            val running = wireGuardShortcutRunning(applicationContext, prefs)
-            tile.state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-            tile.label = if (running) "已连回家" else "连回家庭网"
+            val tunnelState = wireGuardShortcutState(applicationContext, prefs)
+            tile.state = if (tunnelState.tunnelUp) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+            tile.label = when {
+                tunnelState.handshaked -> "已连回家"
+                tunnelState.tunnelUp -> "握手中"
+                else -> "连回家庭网"
+            }
             tile.updateTile()
         }
     }

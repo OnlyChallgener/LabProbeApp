@@ -655,7 +655,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(6.dp))
             Text(if (operation?.targetId == WIREGUARD_SYNC_TARGET && operation?.running == true) "正在同步 Agent…" else "重新同步自动配置", style = LabTypography.CompactButton)
         }
-        visibleOperation?.let {
+        // 弹窗打开时页面在背后还会渲染同一条操作状态，红色提示会叠成三层。
+        visibleOperation?.takeIf { editor == null }?.let {
             WireGuardOperationStatus(
                 operation = it,
                 errorPrefix = gatewayErrorPrefix,

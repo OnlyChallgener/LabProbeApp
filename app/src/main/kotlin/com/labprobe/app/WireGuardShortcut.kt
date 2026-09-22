@@ -43,9 +43,20 @@ internal suspend fun toggleWireGuardShortcut(
     }
 }
 
-internal suspend fun wireGuardShortcutRunning(context: Context, prefs: AppPrefs): Boolean =
+internal data class WireGuardShortcutState(val tunnelUp: Boolean, val handshaked: Boolean)
+
+/**
+ * 隧道接口起来了不等于连上了：路由器不认这把公钥时接口照样 UP，却一个包都收不到。
+ * 只有近期握过手才能对用户说「已连接」，否则就是「握手中」。
+ */
+internal suspend fun wireGuardShortcutState(context: Context, prefs: AppPrefs): WireGuardShortcutState =
     withContext(Dispatchers.IO) {
-        runCatching {
-            WireGuardTunnelController.get(context.applicationContext, prefs).status().running
-        }.getOrDefault(false)
+        val status = runCatching {
+            WireGuardTunnelController.get(context.applicationContext, prefs).status()
+        }.getOrNull()
+        WireGuardShortcutState(
+            tunnelUp = status?.running == true,
+            handshaked = status?.running == true && status.latestHandshakeAt > 0L &&
+                System.currentTimeMillis() - status.latestHandshakeAt < 180_000L,
+        )
     }
