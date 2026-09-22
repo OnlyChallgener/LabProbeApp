@@ -1687,6 +1687,8 @@ private fun dashboardIconKey(rawName: String): String {
     // 仓库里早就带着这些图，但一直没有名字映射，等于白装。
     "Kimi" -> "kimi"; "腾讯文档" -> "tencent-docs"; "金山文档" -> "kdocs"
     "美团外卖" -> "meituan-waimai"; "123云盘" -> "123pan"; "115网盘" -> "115-netdisk"
+    // 两个私有云 App：特征库 2026-09-22 才补上（9-232-1-0 / 9-233-1-0），图配套。
+    "绿联云" -> "ugreen-nas"; "飞牛私有云" -> "fnos"
     "爱回收" -> "aihuishou"; "不背单词" -> "bubei-danci"; "粉笔" -> "fenbi"
     "幕布" -> "mubu"; "i4Tools" -> "i4tools"; "Epic Games" -> "epic-games"
     "Xbox" -> "xbox"
