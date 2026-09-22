@@ -51,8 +51,12 @@ data class WireGuardProfile(
     val interfaceAddresses: List<String> = listOf("10.77.0.2/32"),
     val dnsServers: List<String> = emptyList(),
     val serverPublicKey: String = "",
-    /** MVP deliberately routes only the selected home LAN, never all Internet traffic. */
-    val allowedIps: List<String> = listOf("192.168.1.0/24"),
+    /**
+     * User-authored routes only. The home LAN /24 is appended at connect time by
+     * [homeLanRouteCidrs]; a guessed literal here once silently killed LAN access
+     * for every network that was not 192.168.1.x.
+     */
+    val allowedIps: List<String> = listOf("10.77.0.0/24"),
     val persistentKeepalive: Int = DEFAULT_WIREGUARD_KEEPALIVE,
     /** Optional Hub record / STUN rule identity. It is metadata, not an endpoint. */
     val endpointBindingId: String = "",
@@ -102,7 +106,9 @@ data class WireGuardProfile(
                 interfaceAddresses = jsonStringList(value.optJSONArray("interfaceAddresses")).ifEmpty { listOf("10.77.0.2/32") },
                 dnsServers = jsonStringList(value.optJSONArray("dnsServers")),
                 serverPublicKey = value.optString("serverPublicKey").trim(),
-                allowedIps = jsonStringList(value.optJSONArray("allowedIps")).ifEmpty { listOf("192.168.1.0/24") },
+                allowedIps = jsonStringList(value.optJSONArray("allowedIps"))
+                    .filterNot { it == LEGACY_GUESSED_HOME_LAN }
+                    .ifEmpty { listOf("10.77.0.0/24") },
                 persistentKeepalive = value.optInt("persistentKeepalive", DEFAULT_WIREGUARD_KEEPALIVE).coerceIn(0, 65535),
                 endpointBindingId = value.optString("endpointBindingId").trim(),
                 profileRevision = value.optLong("profileRevision", 1L).coerceAtLeast(1L),
@@ -133,6 +139,22 @@ data class WireGuardProfile(
 
 const val DEFAULT_WIREGUARD_PORT = 51820
 const val DEFAULT_WIREGUARD_MTU = 1420
+
+/** Old hard-coded default that silently routed a LAN almost nobody has. */
+private const val LEGACY_GUESSED_HOME_LAN = "192.168.1.0/24"
+
+/**
+ * Home LANs the tunnel should reach, derived from the router's own measured
+ * address instead of a literal. Only IPv4 hosts are used; host names yield nothing.
+ */
+internal fun homeLanRouteCidrs(vararg sources: String?): List<String> = sources
+    .asSequence()
+    .mapNotNull { it?.trim() }
+    .map { it.removePrefix("http://").removePrefix("https://").substringBefore('/').substringBefore(':') }
+    .filter { host -> host.split('.').size == 4 && host.split('.').all { it.toIntOrNull() != null } }
+    .map { host -> host.split('.').take(3).joinToString(".") + ".0/24" }
+    .distinct()
+    .toList()
 const val DEFAULT_WIREGUARD_KEEPALIVE = 25
 
 internal fun followsWireGuardServerPort(profile: WireGuardProfile, previousListenPort: Int): Boolean =
@@ -375,15 +397,26 @@ internal fun wireGuardPublicKey(privateKey: String): String = runCatching {
     KeyPair(Key.fromBase64(privateKey.trim())).publicKey.toBase64()
 }.getOrDefault("")
 
-internal fun wireGuardQuickConfig(profile: WireGuardProfile, privateKey: String): String {
-    val safe = privateKey.trim()
-    require(wireGuardProfileError(profile, safe).isBlank()) { "WireGuard 配置不完整" }
-    fun lines(values: List<String>) = values.map { it.trim() }.filter { it.isNotBlank() }.joinToString(", ")
+internal fun wireGuardEffectiveAllowedIps(
+    profile: WireGuardProfile,
+    homeLanRoutes: List<String> = emptyList(),
+): List<String> {
     val autoSubnet = profile.interfaceAddresses.firstOrNull()?.split('/')?.firstOrNull()?.let { ip ->
         val parts = ip.split('.')
         if (parts.size == 4) "${parts[0]}.${parts[1]}.${parts[2]}.0/24" else null
     }
-    val effectiveAllowedIps = (profile.allowedIps + listOfNotNull(autoSubnet, "10.77.0.0/24")).distinct()
+    return (profile.allowedIps + homeLanRoutes + listOfNotNull(autoSubnet, "10.77.0.0/24")).distinct()
+}
+
+internal fun wireGuardQuickConfig(
+    profile: WireGuardProfile,
+    privateKey: String,
+    homeLanRoutes: List<String> = emptyList(),
+): String {
+    val safe = privateKey.trim()
+    require(wireGuardProfileError(profile, safe).isBlank()) { "WireGuard 配置不完整" }
+    fun lines(values: List<String>) = values.map { it.trim() }.filter { it.isNotBlank() }.joinToString(", ")
+    val effectiveAllowedIps = wireGuardEffectiveAllowedIps(profile, homeLanRoutes)
     return buildString {
         appendLine("[Interface]")
         appendLine("PrivateKey = $safe")
@@ -436,7 +469,15 @@ class WireGuardTunnelController private constructor(context: Context, private va
         val permission = VpnService.prepare(appContext)
         if (permission != null) return@withContext WireGuardStartResult.PermissionRequired(permission)
         runCatching {
-            val config = Config.parse(ByteArrayInputStream(wireGuardQuickConfig(profile, privateKey).toByteArray(Charsets.UTF_8)))
+            val config = Config.parse(
+                ByteArrayInputStream(
+                    wireGuardQuickConfig(
+                        profile,
+                        privateKey,
+                        homeLanRouteCidrs(prefs.wgHomeLanIpv4, prefs.routerLanUrl),
+                    ).toByteArray(Charsets.UTF_8)
+                )
+            )
             val next = if (tunnelProfileId == profile.id) tunnel ?: LabProbeTunnel(profile.id) else LabProbeTunnel(profile.id)
             backend.setState(next, Tunnel.State.UP, config)
             tunnel = next

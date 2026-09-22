@@ -325,6 +325,42 @@ class WireGuardClientTest {
     }
 
     @Test
+    fun homeLanRoutesComeFromMeasuredAddressesOnly() {
+        assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("192.168.5.1"))
+        assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("http://192.168.5.1:8080"))
+        assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("", "mq.lab86.shinya.icu", "192.168.5.46"))
+        assertTrue(homeLanRouteCidrs("router.local", "", null).isEmpty())
+    }
+
+    @Test
+    fun generatedConfigAddsMeasuredHomeLanWithoutEditingTheProfile() {
+        val profile = WireGuardProfile(
+            id = "stun",
+            name = "家庭 STUN",
+            endpointSource = WireGuardEndpointSource.STUN,
+            endpointHost = "203.0.113.8",
+            serverPublicKey = "server-public-key",
+            interfaceAddresses = listOf("10.77.0.3/32"),
+            allowedIps = listOf("10.77.0.0/24"),
+        )
+        val config = wireGuardQuickConfig(profile, "client-private-key", listOf("192.168.5.0/24"))
+        assertTrue(config.contains("AllowedIPs = 10.77.0.0/24, 192.168.5.0/24"))
+    }
+
+    @Test
+    fun legacyGuessedHomeLanIsDroppedWhenReadingStoredProfiles() {
+        val stored = JSONObject()
+            .put("id", "stun")
+            .put("name", "家庭 WireGuard（STUN）")
+            .put("endpointSource", "stun")
+            .put("endpointHost", "203.0.113.8")
+            .put("serverPublicKey", "server-public-key")
+            .put("allowedIps", JSONArray().put("192.168.1.0/24"))
+        val profile = WireGuardProfile.fromJson(stored)!!
+        assertEquals(listOf("10.77.0.0/24"), profile.allowedIps)
+    }
+
+    @Test
     fun generatedConfigRoutesHomeLanAndSupportsFullTunnel() {
         val profile = WireGuardProfile(
             id = "ddns",

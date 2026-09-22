@@ -406,6 +406,9 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("wireguard_profiles_v1", v).apply()
     var wireGuardActiveProfileId: String get() = sp.getString("wireguard_active_profile_v1", "") ?: ""
         set(v) = sp.edit().putString("wireguard_active_profile_v1", v.trim()).apply()
+    /** Router LAN IPv4 as reported by the Hub; used to derive the tunnel's home route. */
+    var wgHomeLanIpv4: String get() = sp.getString("wg_home_lan_ipv4_v1", "") ?: ""
+        set(v) = sp.edit().putString("wg_home_lan_ipv4_v1", v.trim()).apply()
     var routerLanUrl: String get() = sp.getString("router_lan_url_v1", "") ?: ""
         set(v) = sp.edit().putString("router_lan_url_v1", v.trim()).apply()
     var routerWanUrl: String get() = sp.getString("router_wan_url_v1", "") ?: ""

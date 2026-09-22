@@ -165,6 +165,12 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var gatewaySubmissionConfirmed by remember { mutableStateOf(false) }
     var gatewayOperationMode by remember { mutableStateOf("save") }
     var gatewayAppliedThisAttempt by remember { mutableStateOf(false) }
+    /** Timestamp of the moment a managed tunnel came up without any handshake. */
+    var handshakeWatchSince by remember { mutableStateOf(0L) }
+    val handshaked = runtime.running && runtime.latestHandshakeAt > 0L &&
+        System.currentTimeMillis() - runtime.latestHandshakeAt < 180_000L
+    val noHandshakeTooLong = handshakeWatchSince > 0L && System.currentTimeMillis() - handshakeWatchSince > 15_000L
+    val homeLanRoutes = homeLanRouteCidrs(prefs.wgHomeLanIpv4, prefs.routerLanUrl)
     val gatewayErrorPrefix = when {
         operation?.targetId != WIREGUARD_GATEWAY_TARGET || operation.error == null -> null
         gatewayOperationMode == "refresh" -> "刷新失败"
@@ -337,24 +343,11 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         "STUN 绑定尚未就绪，请先保存并同步配置"
                     }
                 }
-                report("正在检查 WireGuard 网关状态…")
-                val state = wireGuardHubApi.loadServerState()
-                serverConfig = state.config
-                when {
-                    !state.config.enabled -> {
-                        pendingServerEnable = profile
-                        report("等待确认启用 WireGuard 网关")
-                    }
-                    !isWireGuardServerReady(state) -> {
-                        val error = wireGuardServerErrorForRevision(state, state.config.revision)
-                        throw IllegalStateException(error.ifBlank { "WireGuard 网关尚未就绪" })
-                    }
-                    else -> {
-                        report("正在启动 ${profile.name}…")
-                        val started = startClient(profile)
-                        report(if (started) "${profile.name} 已启动" else "等待系统 VPN 授权")
-                    }
-                }
+                // 网关状态不再预检：Hub/Agent 的能力快照会把「探测不到」报成「没就绪」，
+                // 用它拦连接就是把一个坏信号变成连不上的理由。直接连，握手结果自己会说话。
+                report("正在启动 ${profile.name}…")
+                val started = startClient(profile)
+                report(if (started) "${profile.name} 已启动" else "等待系统 VPN 授权")
             } finally {
                 startCheckInProgress = false
             }
@@ -366,6 +359,14 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         var serverPollTick = 0
         while (true) {
             runtime = controller.status()
+            val managedTunnel = runtime.running &&
+                profiles.firstOrNull { it.id == runtime.profileId }?.endpointSource != WireGuardEndpointSource.MANUAL
+            val handshakeFresh = runtime.latestHandshakeAt > 0L &&
+                System.currentTimeMillis() - runtime.latestHandshakeAt < 180_000L
+            handshakeWatchSince = when {
+                !managedTunnel || handshakeFresh -> 0L
+                else -> if (handshakeWatchSince > 0L) handshakeWatchSince else System.currentTimeMillis()
+            }
             if (serverPollTick % 5 == 0 && operations.state.value?.running != true) {
                 val serverState = runCatching { wireGuardHubApi.loadServerState() }.getOrNull()
                 if (serverState != null) {
@@ -422,6 +423,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     val currentServerConfig = wireGuardHubApi.loadServerConfig()
                     Triple(stunApi.list(), currentServerConfig, wireGuardHubApi.loadRouterLanIp())
                 }.onSuccess { (snapshot, currentServerConfig, routerIp) ->
+                    // 路由器 LAN 一旦学到就存下来：隧道该路由哪个内网网段靠它，而不是猜。
+                    if (routerIp.isNotBlank() && prefs.wgHomeLanIpv4 != routerIp) prefs.wgHomeLanIpv4 = routerIp
                     if (!snapshot.rulesLoaded) return@onSuccess
                     if (operations.state.value?.running == true || operations.state.value?.completedVersion != operationVersion) return@onSuccess
                     serverConfig = currentServerConfig
@@ -453,6 +456,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 runCatching {
                     Triple(stunApi.list(), wireGuardHubApi.loadServerConfig(), wireGuardHubApi.loadRouterLanIp())
                 }.onSuccess { (snapshot, currentServerConfig, routerIp) ->
+                    // 路由器 LAN 一旦学到就存下来：隧道该路由哪个内网网段靠它，而不是猜。
+                    if (routerIp.isNotBlank() && prefs.wgHomeLanIpv4 != routerIp) prefs.wgHomeLanIpv4 = routerIp
                     if (!snapshot.rulesLoaded) return@onSuccess
                     serverConfig = currentServerConfig
                     stunRules = selectableWireGuardStunRules(snapshot.rules, currentServerConfig.listenPort, routerIp)
@@ -470,8 +475,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         unifiedTypography = true,
     ) {
         val runningProfile = profiles.firstOrNull { it.id == runtime.profileId }
-        val gatewayRelevant = runningProfile?.endpointSource != WireGuardEndpointSource.MANUAL
-        val isHandshaked = (!gatewayRelevant || serverConfig.enabled) && runtime.running && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
+        val isHandshaked = handshaked
         LabCoreCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LabV2ToolIcon(Icons.Rounded.Shield, WireGuardBlue, size = 38)
@@ -503,6 +507,35 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 "MVP 仅路由家庭内网网段；不会接管全部手机流量。切换配置时官方 WireGuard 后端会短暂重连。",
                 style = LabTypography.Caption.copy(color = LabV2.InkMuted),
             )
+            Text(
+                if (homeLanRoutes.isEmpty()) "家庭内网网段还没学到：连着 Hub 打开本页就会自动识别并加入路由。"
+                else "自动路由家庭内网 ${homeLanRoutes.joinToString("、")}（取自路由器实测地址）",
+                style = LabTypography.Caption.copy(color = if (homeLanRoutes.isEmpty()) WireGuardAmber else LabV2.InkMuted),
+            )
+            if (noHandshakeTooLong && runningProfile != null) {
+                Surface(
+                    color = WireGuardAmber.copy(alpha = .07f),
+                    shape = LabCoreSurface.InnerShape,
+                    border = BorderStroke(1.dp, WireGuardAmber.copy(alpha = .28f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "隧道起来但 ${runningProfile.name} 一直握不上手：公网地址或路由器网关可能没在收包。",
+                            Modifier.weight(1f),
+                            style = LabTypography.Caption.copy(color = WireGuardAmber),
+                            maxLines = 2,
+                        )
+                        TextButton(
+                            onClick = { pendingServerEnable = runningProfile },
+                            enabled = sharedOperation?.running != true,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        ) {
+                            Text("启用网关", style = LabTypography.CompactButton.copy(color = LabV2.Primary))
+                        }
+                    }
+                }
+            }
             Surface(
                 color = LabCoreSurface.Inner,
                 shape = LabCoreSurface.InnerShape,
@@ -816,9 +849,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     startCheckInProgress = true
                     try {
                         if (profile.endpointSource == WireGuardEndpointSource.STUN) {
-                            require(profile.endpointBindingId.isNotBlank() && profile.endpointUpdateError.isBlank()) {
-                                profile.endpointUpdateError.ifBlank { "STUN 绑定尚未就绪，请先保存并同步配置" }
-                            }
+                            require(profile.endpointBindingId.isNotBlank()) { "STUN 绑定尚未就绪，请先保存并同步配置" }
                         }
                         val state = wireGuardHubApi.enableServerAndAwaitReady()
                         serverConfig = state.config
@@ -854,6 +885,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             duplicateServerKey = isDuplicateKey,
             availableStunRules = stunRules,
             serverListenPort = serverConfig.listenPort,
+            homeLanRoutes = homeLanRoutes,
             operation = visibleOperation,
             onDismissOperation = ::dismissOperationStatus,
             onDismiss = { editor = null },
@@ -1183,6 +1215,7 @@ private fun WireGuardEditorDialog(
     duplicateServerKey: Boolean,
     availableStunRules: List<StunRule>,
     serverListenPort: Int,
+    homeLanRoutes: List<String> = emptyList(),
     operation: NetworkOperationState?,
     onDismissOperation: () -> Unit,
     onDismiss: () -> Unit,
@@ -1324,7 +1357,7 @@ private fun WireGuardEditorDialog(
                         FilterChip(
                             selected = !isFullTunnel,
                             onClick = {
-                                if (isFullTunnel) allowedIps = "10.77.0.0/24, 192.168.5.0/24"
+                                if (isFullTunnel) allowedIps = (listOf("10.77.0.0/24") + homeLanRoutes).distinct().joinToString(", ")
                             },
                             label = { Text("内网分流 (推荐)", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
@@ -1343,6 +1376,12 @@ private fun WireGuardEditorDialog(
 
                 }
                 WireGuardField(allowedIps, { allowedIps = it }, if (isFullTunnel) "路由网段（全局接管：0.0.0.0/0, ::/0）" else "路由网段，例如 10.77.0.0/24, 192.168.5.0/24")
+                if (homeLanRoutes.isNotEmpty()) {
+                    Text(
+                        "连接时自动加入家庭内网：${homeLanRoutes.joinToString("、")}",
+                        style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                    )
+                }
                 WireGuardField(dns, { dns = it }, "隧道 DNS（可选）")
                 operation?.takeIf { it.targetId == operationTarget }?.let {
                     WireGuardOperationStatus(it, onDismiss = onDismissOperation)
