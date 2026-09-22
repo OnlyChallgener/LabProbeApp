@@ -44,7 +44,14 @@ private fun validateRdpiRule(rule: JSONObject?, position: Int) {
         "规则 ${position + 1} 只有 protocol，缺少有效匹配条件"
     }
     for (i in 0 until hosts.length()) {
-        require(hosts.stringAt(i).isNotEmpty()) { "规则 ${position + 1} 含空或错误类型的 hosts 条件" }
+        val host = hosts.stringAt(i)
+        require(host.isNotEmpty()) { "规则 ${position + 1} 含空或错误类型的 hosts 条件" }
+        // 引擎按裸域后缀匹配，`.example.com` / `*.example.com` 永远不会命中。本地检查
+        // 必须和 Hub 的校验同一条规矩，否则 Studio 说「格式正确」、导入却被 Hub 拒，
+        // 或者更糟：静默存成一条永不生效的死规则。
+        require(!host.contains('*') && !host.startsWith('.') && !host.endsWith('.')) {
+            "规则 ${position + 1} 的 hosts 必须是裸域名（不能带 * 或首尾的点）：$host 永远不会命中"
+        }
     }
     for (i in 0 until payloads.length()) validatePayload(payloads.optJSONObject(i), position)
     validateNonEmptyConditions(httpGets, position, "http-gets")

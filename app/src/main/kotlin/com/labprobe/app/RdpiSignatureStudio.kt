@@ -62,12 +62,18 @@ data class RdpiCustomRule(
 /** 字段缺失就是「没读到」，不能拿一个编出来的条数顶上。 */
 private fun JSONObject.optIntOrNull(key: String): Int? = if (has(key)) optInt(key) else null
 
+/**
+ * Hub 读不到时（离线/未配对）给用户的兜底模板，形状必须和 Hub 的
+ * STANDARD_RDPI_TEMPLATE 一致：host 规则自带 `payloads: []`（缺了它，引擎会停掉后面
+ * 所有域名规则），域名只写裸域（`.x.com` / `*.x.com` 永远不会命中，Hub 校验现在直接
+ * 拒绝），编号用 9- 段。
+ */
 internal val DEFAULT_FALLBACK_TEMPLATE = """
 {
   "${'$'}schema": "labprobe-rdpi-v1",
   "comment": "安全示例：请替换为已验证的真实域名/特征。本地格式检查与模板不保证路由器加载或识别。",
   "app": {
-    "index": "999-1-1-0",
+    "index": "9-999-1-0",
     "name": "自定义应用示例（请替换）",
     "note": "仅保留域名占位符；请以路由器确认的真实特征替换后导入",
     "rules": [
@@ -75,7 +81,8 @@ internal val DEFAULT_FALLBACK_TEMPLATE = """
         "protocol": "host",
         "hosts": [
           "game.example.invalid"
-        ]
+        ],
+        "payloads": []
       }
     ]
   }

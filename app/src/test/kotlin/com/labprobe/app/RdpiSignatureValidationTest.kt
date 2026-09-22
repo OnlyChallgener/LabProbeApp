@@ -29,8 +29,22 @@ class RdpiSignatureValidationTest {
     }
 
     @Test fun rejectsNonOfficialProtocolButPreservesOfficialMissingProtocol() {
-        assertFalse(validateRdpiSignature("""{"index":"999-1-1-0","name":"x","rules":[{"protocol":"any","hosts":["*.example.com"]}]}""").isSuccess)
-        assertTrue(validateRdpiSignature("""{"index":"999-1-1-0","name":"x","rules":[{"hosts":["*.example.com"]}]}""").isSuccess)
+        assertFalse(validateRdpiSignature("""{"index":"999-1-1-0","name":"x","rules":[{"protocol":"any","hosts":["example.com"]}]}""").isSuccess)
+        // 官方库里有些规则没有 protocol（WPS Office 就是这样），这种缺字段的要照收。
+        assertTrue(validateRdpiSignature("""{"index":"999-1-1-0","name":"x","rules":[{"hosts":["example.com"]}]}""").isSuccess)
+    }
+
+    @Test fun rejectsInertHostFormsTheEngineNeverMatches() {
+        // 引擎按裸域后缀匹配：带 * 或首尾点的写法永远不会命中。本地检查和 Hub 校验
+        // 保持同一条规矩，别让 Studio 说「格式正确」而导入后被静默存成死规则。
+        for (bad in listOf("*.example.com", ".example.com", "example.com.")) {
+            val json = """{"index":"999-1-1-0","name":"x","rules":[{"protocol":"host","hosts":["$bad"],"payloads":[]}]}"""
+            val result = validateRdpiSignature(json)
+            assertTrue("应当拒绝 $bad", result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message?.contains("裸域名") == true)
+        }
+        assertTrue(validateRdpiSignature(
+            """{"index":"999-1-1-0","name":"x","rules":[{"protocol":"host","hosts":["example.com"],"payloads":[]}]}""").isSuccess)
     }
 
     @Test fun acceptsOfficialHttpAndHostRuleForms() {
