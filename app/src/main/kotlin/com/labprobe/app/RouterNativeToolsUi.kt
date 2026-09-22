@@ -457,7 +457,9 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
     val failed = rows.count { it.status.contains("error", true) || it.status.contains("fail", true) }
     HealthMiniCard(
         title = "DDNS",
-        value = resource.value?.size?.toString() ?: "--",
+        // 大字给「启用数」——家长真正关心的是有没有在跑；总数和异常交给副标题说，
+        // 免得「2 条」和「启用 2」在同一张卡上写两遍。
+        value = if (resource.value == null) "--" else "$enabled",
         unit = "条",
         icon = Icons.Rounded.CloudSync,
         glyph = RouterGlyph.Ddns,
@@ -465,9 +467,10 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
         subtitle = when {
             resource.value == null -> "后台预加载中"
             resource.error.isNotBlank() -> "已保留上次快照"
-            rows.isEmpty() -> "暂无记录"
-            failed > 0 -> "启用 $enabled · 异常 $failed"
-            else -> "启用 $enabled · 状态正常"
+            rows.isEmpty() -> "还没有 DDNS 记录"
+            failed > 0 -> "共 ${rows.size} 条 · $failed 条异常"
+            enabled < rows.size -> "共 ${rows.size} 条 · ${rows.size - enabled} 条停用"
+            else -> "共 ${rows.size} 条全部生效"
         },
         modifier = modifier,
         onClick = onClick

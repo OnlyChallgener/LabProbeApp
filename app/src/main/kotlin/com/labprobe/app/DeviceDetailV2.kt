@@ -67,7 +67,6 @@ fun DeviceDetailScreen(
     val rate = cleanApiText(device.rxrate).ifBlank { "--" }
     val band = if (wifi) cleanApiText(device.band).ifBlank { "Wi-Fi" } else "有线"
     val wifiName = if (wifi) cleanApiText(device.ssid) else ""
-    val onlineTime = cleanApiText(device.onlineDurationText).takeIf { it.isNotBlank() }?.let(::formatDurationText).orEmpty().ifBlank { "--" }
     var editing by remember { mutableStateOf(false) }
     var waking by remember { mutableStateOf(false) }
 
@@ -121,7 +120,9 @@ fun DeviceDetailScreen(
                         DeviceHeroMetricPill(
                             icon = if (wifi) Icons.Rounded.Wifi else Icons.Rounded.Lan,
                             title = if (wifi) "$band Wi-Fi" else "有线网络",
-                            subtitle = if (wifi && signal != "--") signal else if (device.online) "已连接" else "离线",
+                            // 信号强度只在「无线信号」那一格出现，这里再写一遍就是
+                            // 同一个数在页面上出现两次。
+                            subtitle = if (device.online) "已连接" else "离线",
                             accent = if (wifi) LabV2.Amber else LabV2.Primary,
                             modifier = Modifier.weight(1f)
                         )
@@ -139,62 +140,10 @@ fun DeviceDetailScreen(
                             accent = if (wifi) LabV2.Cyan else LabV2.Primary,
                             modifier = Modifier.weight(1f)
                         )
-                        DeviceHeroMetricPill(
-                            icon = if (device.online) Icons.Rounded.CheckCircle else Icons.Rounded.AccessTime,
-                            title = if (device.online) onlineTime else "已离线",
-                            subtitle = "在网时长",
-                            accent = if (device.online) LabV2.Green else LabV2.InkMuted,
-                            modifier = Modifier.weight(1f)
-                        )
+                        // 「在网时长」不在这里出现：它和下面「连接概览·在线」「在线统计·
+                        // 连续在线」是同一件事的三个来源，统一归到在线统计那一张卡。
                     }
                 }
-            }
-        }
-
-        CompactListCard(coreSurface = true) {
-            Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            // 频段 / 信号 / 速率 顶部那排胶囊已经给过了，这里再列一行就是把同一
-            // 批数字显示两遍。
-            if (wifiName.isNotBlank()) {
-                Surface(shape = RoundedCornerShape(14.dp), color = LabV2.Primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .09f))) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Wifi, null, Modifier.size(15.dp), tint = LabV2.Primary)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Wi-Fi", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-                        Spacer(Modifier.width(8.dp))
-                        Text(wifiName, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                DeviceDetailMetric("在线", onlineTime, LabV2.Green, Modifier.weight(1f))
-                DeviceDetailMetric("今日上传", cleanApiText(device.todayUpload).ifBlank { "--" }, LabV2.Primary, Modifier.weight(1f))
-                DeviceDetailMetric("今日下载", cleanApiText(device.todayDownload).ifBlank { "--" }, LabV2.Cyan, Modifier.weight(1f))
-            }
-        }
-
-        if (device.followedOverride == true) {
-            FollowedDevicePresenceSection(device = device, events = state.events)
-        }
-
-        CompactListCard(coreSurface = true) {
-            Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DeviceDetailGridItem("IPv4", cleanApiText(device.ip).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp, valueColor = LabV2.Primary)
-                DeviceDetailGridItem("MAC", cleanMac(device.mac).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp, valueColor = profile.accent)
-            }
-            DeviceDetailAddress("IPv6", ipv6.ifBlank { "--" }, LabV2.Cyan, allowTwoLines = true)
-        }
-
-        CompactListCard(coreSurface = true) {
-            Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DeviceDetailGridItem("类型", profile.label, Modifier.weight(1f), labelWidth = 44.dp)
-                DeviceDetailGridItem("厂商", manufacturer.ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DeviceDetailGridItem("主机名", cleanApiText(device.hostName).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 44.dp)
-                DeviceDetailGridItem("备注", cleanApiText(device.remark).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
             }
         }
 
@@ -250,8 +199,8 @@ fun DeviceDetailScreen(
                     }
                     Text(
                         // 今日分钟数只有上网报告才有；措辞与总览同一套口径（-- / 无上网记录 / 时长）。
-                        if (childState != null) childGuardTodayLine(childState) + " · 点击管理计划与报告"
-                        else "设置允许上网时段、应用限制与活跃报告",
+                        // 整张卡本身就是入口，不用再写「点击管理计划与报告」。
+                        if (childState != null) childGuardTodayLine(childState) else "未加入守护",
                         style = LabTypography.Supporting,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -282,6 +231,54 @@ fun DeviceDetailScreen(
                 }
             }
         }
+        CompactListCard(coreSurface = true) {
+            Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+            // 频段 / 信号 / 速率 顶部那排胶囊已经给过了，这里再列一行就是把同一
+            // 批数字显示两遍。
+            if (wifiName.isNotBlank()) {
+                Surface(shape = RoundedCornerShape(14.dp), color = LabV2.Primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .09f))) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Wifi, null, Modifier.size(15.dp), tint = LabV2.Primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Wi-Fi", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+                        Spacer(Modifier.width(8.dp))
+                        Text(wifiName, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                // 「在线」这一格给的是同一个 onlineTime，和在线统计里的「连续在线」
+                // 重复（且两个来源会差 1 分钟），时长统一只在在线统计说一次。
+                DeviceDetailMetric("今日上传", cleanApiText(device.todayUpload).ifBlank { "--" }, LabV2.Primary, Modifier.weight(1f))
+                DeviceDetailMetric("今日下载", cleanApiText(device.todayDownload).ifBlank { "--" }, LabV2.Cyan, Modifier.weight(1f))
+            }
+        }
+
+        if (device.followedOverride == true) {
+            FollowedDevicePresenceSection(device = device, events = state.events)
+        }
+
+        CompactListCard(coreSurface = true) {
+            Text("地址信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceDetailGridItem("IPv4", cleanApiText(device.ip).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp, valueColor = LabV2.Primary)
+                DeviceDetailGridItem("MAC", cleanMac(device.mac).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp, valueColor = profile.accent)
+            }
+            DeviceDetailAddress("IPv6", ipv6.ifBlank { "--" }, LabV2.Cyan, allowTwoLines = true)
+        }
+
+        CompactListCard(coreSurface = true) {
+            Text("设备信息", modifier = Modifier.fillMaxWidth(), fontSize = LabTypography.SectionTitle.fontSize, lineHeight = LabTypography.SectionTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceDetailGridItem("类型", profile.label, Modifier.weight(1f), labelWidth = 44.dp)
+                DeviceDetailGridItem("厂商", manufacturer.ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceDetailGridItem("主机名", cleanApiText(device.hostName).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 44.dp)
+                DeviceDetailGridItem("备注", cleanApiText(device.remark).ifBlank { "--" }, Modifier.weight(1f), labelWidth = 36.dp)
+            }
+        }
+
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             DeviceActionButton(Icons.Rounded.PowerSettingsNew, if (waking) "发送中" else "WOL", Color(0xFF2563EB), Modifier.weight(1f), enabled = !waking) {

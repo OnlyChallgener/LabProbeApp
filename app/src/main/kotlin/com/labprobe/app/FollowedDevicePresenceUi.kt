@@ -521,6 +521,9 @@ private fun PresenceInsightPanel(
                         color = if (onlineRate > 50) LabV2.Green else LabV2.Primary
                     )
                 }
+                // 今日这一栏的「累计在网」就是上面「今日在线」那个数，同卡内不重复两遍；
+                // 近 7/10 天的合计是新信息，照旧显示。
+                if (!data.rangeLabel.startsWith("今日"))
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "累计在网",

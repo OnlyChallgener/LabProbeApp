@@ -588,8 +588,9 @@ private fun ChildInternetTabIcon(tab: ChildInternetTab, active: Boolean, modifie
 }
 
 /**
- * 首页那张「儿童上网」小卡：一眼要看到的是「几台在管、现在停没停网」，不是设备总数。
- * 数据只读 Hub 已经算好的总览聚合（`refreshOverview`），不会为了首页去逼路由器重扫。
+ * 首页那张「儿童上网」小卡：大字已经是「几台在管」，副标题就只说状态，不再把台数
+ * 重复一遍。数据只读 Hub 已经算好的总览聚合（`refreshOverview`），不会为了首页去逼
+ * 路由器重扫。
  */
 internal fun childGuardMiniSubtitle(state: ChildInternetOverviewState): String {
     val guarded = state.devices.size
@@ -600,13 +601,13 @@ internal fun childGuardMiniSubtitle(state: ChildInternetOverviewState): String {
             else -> "还没添加守护设备"
         }
     }
-    if (!state.masterEnabled) return "$guarded 台在管 · 总开关已关"
+    if (!state.masterEnabled) return "总开关已关"
     val blocked = state.devices.count { it.schedule.state == "blocked" }
     val free = state.devices.count { it.schedule.state in setOf("unrestricted", "allowed") }
     return when {
-        blocked > 0 -> "$guarded 台在管 · $blocked 台正停网"
-        free == guarded -> "$guarded 台在管 · 都在允许上网"
-        else -> "$guarded 台在管 · 按计划放行"
+        blocked > 0 -> "$blocked 台正停网"
+        free == guarded -> "都在允许上网"
+        else -> "按计划放行"
     }
 }
 
