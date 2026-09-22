@@ -108,7 +108,8 @@ fun DeviceDetailScreen(
                     }
                     Text(
                         // 厂商/类型/主机名在「设备信息」卡里都有；头部这一行只放别处没有的 Wi-Fi 名。
-                        if (wifiName.isNotBlank()) "Wi-Fi @$wifiName" else listOf(manufacturer, profile.label).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
+                        // SSID 原样显示：锐捷的 SSID 本身就带前导 @，再拼一个就成了 @@Ruijie-s8067。
+                        if (wifiName.isNotBlank()) "Wi-Fi $wifiName" else listOf(manufacturer, profile.label).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
                         fontSize = LabTypography.Supporting.fontSize,
                         fontWeight = FontWeight.SemiBold,
                         color = LabV2.InkMuted,
@@ -213,24 +214,49 @@ fun DeviceDetailScreen(
                     )
                 }
                 if (childState == null) {
+                    // 请求在飞的时候按钮自己得说话：以前它两秒毫无变化，然后突然跳页，
+                    // 看起来像没反应。
+                    var addingGuard by remember { mutableStateOf(false) }
                     Surface(
                         onClick = {
-                            childInternetRepository?.addGuardDevice(device.mac, device.name) { result ->
+                            if (addingGuard) return@Surface
+                            val repository = childInternetRepository ?: return@Surface
+                            addingGuard = true
+                            repository.addGuardDevice(device.mac, device.name) { result ->
+                                addingGuard = false
                                 result.onSuccess {
                                     toast(context, "已加入儿童守护")
                                     onOpenChildInternet()
                                 }.onFailure { toast(context, it.message ?: "添加失败") }
                             }
                         },
-                        enabled = childInternetRepository != null && childInternetRepository.state.pendingDeviceIds.isEmpty(),
+                        enabled = childInternetRepository != null &&
+                            childInternetRepository.state.pendingDeviceIds.isEmpty() && !addingGuard,
                         shape = RoundedCornerShape(50),
                         color = LabV2.Cyan.copy(alpha = .12f)
                     ) {
-                        Text(
-                            "+ 加入守护",
+                        Row(
                             Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            style = LabTypography.CompactButton.copy(color = LabV2.Cyan, fontWeight = FontWeight.SemiBold)
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (addingGuard) {
+                                CircularProgressIndicator(
+                                    Modifier.size(12.dp),
+                                    strokeWidth = 1.6.dp,
+                                    color = LabV2.Cyan
+                                )
+                            } else {
+                                Text("+", style = LabTypography.CompactButton.copy(color = LabV2.Cyan))
+                            }
+                            Text(
+                                if (addingGuard) "配置中…" else "加入守护",
+                                style = LabTypography.CompactButton.copy(
+                                    color = LabV2.Cyan,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            )
+                        }
                     }
                 } else {
                     Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = LabV2.InkFaint)

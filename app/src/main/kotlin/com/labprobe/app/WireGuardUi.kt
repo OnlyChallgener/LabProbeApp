@@ -3,6 +3,7 @@ package com.labprobe.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -327,8 +328,13 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     return@launch
                 }
                 if (profile.endpointSource == WireGuardEndpointSource.STUN) {
-                    require(profile.endpointBindingId.isNotBlank() && profile.endpointUpdateError.isBlank()) {
-                        profile.endpointUpdateError.ifBlank { "STUN 绑定尚未就绪，请先保存并同步配置" }
+                    // 只挡「结构不完整」：绑定身份为空说明这条配置根本没跟任何 STUN 规则挂上，
+                    // 中继侧（labrelay wireguard.rs）也会拒收。
+                    // 但 endpointUpdateError 不挡 —— 它只代表「这次刷新状态没成功」，地址本身是
+                    // 上次 STUN 成功时写进来的可用值；拿它拦连接等于让一次瞬时失败锁死入口，
+                    // 而且它会持久化到下次同步成功才清（WireGuardClient.kt:293）。
+                    require(profile.endpointBindingId.isNotBlank()) {
+                        "STUN 绑定尚未就绪，请先保存并同步配置"
                     }
                 }
                 report("正在检查 WireGuard 网关状态…")
@@ -618,6 +624,34 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 errorPrefix = gatewayErrorPrefix,
                 onDismiss = ::dismissOperationStatus,
             )
+        }
+        // 系统级「始终开启」才是真自动：App 自己在后台拉起 VPN 会被 Android 拦掉，而家里
+        // 在 CGNAT 后面、打洞会掉，所以这条引导比自研重连循环有用得多。
+        OutlinedButton(
+            onClick = {
+                // 用字符串常量：本文件已把 Icons.Rounded.Settings 导入成 `Settings`，
+                // 再引 android.provider.Settings 会撞名。
+                runCatching {
+                    context.startActivity(
+                        Intent("android.settings.VPN_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .32f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue),
+            shape = LabCoreSurface.InnerShape,
+        ) {
+            Icon(Icons.Rounded.Shield, null, Modifier.size(17.dp))
+            Spacer(Modifier.width(6.dp))
+            Column(Modifier.fillMaxWidth()) {
+                Text("断线自动重连：去系统开「始终开启 VPN」", style = LabTypography.CompactButton)
+                Text(
+                    "开机自连、断线由系统重连、切 Wi‑Fi / 4G 自动恢复。别勾「禁止未受保护的应用」—— 隧道起不来时那会让整机没网。",
+                    style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                    maxLines = 3,
+                )
+            }
         }
         if (gatewayVerificationPending) {
             Surface(
@@ -1034,17 +1068,27 @@ private fun WireGuardProfileCard(
                     Text("停止连接", style = LabTypography.CompactButton)
                 }
             } else {
+                val starting = operation?.running == true
                 Button(
                     onClick = onStart,
                     modifier = Modifier.weight(1.2f),
                     colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.White),
-                    enabled = actionsEnabled && profile.isComplete &&
-                        (profile.endpointSource != WireGuardEndpointSource.STUN || profile.endpointUpdateError.isBlank()),
+                    // 不再用 endpointUpdateError 拦「启动连接」：那只代表这次刷新状态没成功，
+                    // 地址是上次 STUN 成功时写入的可用值。地址齐不齐由 isComplete 管。
+                    enabled = actionsEnabled && profile.isComplete && !starting,
                     shape = LabCoreSurface.InnerShape
                 ) {
-                    Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp))
+                    if (starting) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    } else {
+                        Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp))
+                    }
                     Spacer(Modifier.width(4.dp))
-                    Text("启动连接", style = LabTypography.CompactButton)
+                    // 按钮自己说进度：以前它两秒不动，状态文字在卡片上方/屏幕外，看起来像没反应。
+                    Text(
+                        if (starting) "连接中…" else "启动连接",
+                        style = LabTypography.CompactButton
+                    )
                 }
             }
         }

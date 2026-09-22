@@ -34,6 +34,21 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+        <!-- 通知栏快捷开关：CGNAT 下 WG 能不能连回来取决于打洞是否保持，人在外面要的是
+             一步连上/断开。ACTIVE_TILE 让磁贴常驻显示连接态，不用等用户点开。 -->
+        <service
+            android:name=".WireGuardTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="连回家庭网"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
         <activity
             android:name=".MainActivity"
             android:exported="true"

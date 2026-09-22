@@ -477,13 +477,35 @@ class AppPrefs(context: Context) {
     var routerExitIpv4: String get() = sp.getString("router_exit_ipv4_v1", "") ?: ""
         set(v) = sp.edit().putString("router_exit_ipv4_v1", v.trim()).apply()
 
-    private fun historyLimit(key: String): Int = if (key.contains("ssh_cmd", true)) 6 else 3
+    /**
+     * Hub 自报的局域网直连地址，作为常驻候选显示、用户删不掉。
+     * 来源是 hub.py 的 /api/hub/reachability（容器 host 网络 + getsockname 选路）。
+     */
+    var hubLanUrl: String get() = sp.getString("hub_lan_url_v1", "") ?: ""
+        set(v) = sp.edit().putString("hub_lan_url_v1", normalizeHubBaseUrl(v)).apply()
+    var hubLanUpdatedAt: Long get() = sp.getLong("hub_lan_updated_at_v1", 0L)
+        set(v) = sp.edit().putLong("hub_lan_updated_at_v1", v).apply()
+    fun pinnedHubUrls(): List<String> = listOf(hubLanUrl).map(::normalizeHubBaseUrl).filter(String::isNotBlank)
+
+    // Hub 这一档单独放宽：以前只有 3 条，用户加两个外网地址就把家里的局域网地址挤掉了，
+    // 而局域网才是大多数时候能用的那一个。
+    private fun historyLimit(key: String): Int = when {
+        key.contains("ssh_cmd", true) -> 6
+        key.equals("hub", true) -> 5
+        else -> 3
+    }
     private fun getHistory(key: String): List<String> = (sp.getString(key, "") ?: "").split("\n").map { it.trim() }.filter { it.isNotBlank() }.take(historyLimit(key))
     private fun putHistory(key: String, items: List<String>) { sp.edit().putString(key, items.distinct().take(historyLimit(key)).joinToString("\n")).apply() }
     fun history(key: String): List<String> {
         val values = getHistory("history_" + key)
-        return if (key.equals("hub", true)) values.map(::normalizeHubBaseUrl).filter(String::isNotBlank).distinct() else values
+        return if (key.equals("hub", true)) {
+            // 常驻的局域网地址排最前，和用户手输的去重；最多 6 条（1 常驻 + 5 手输）。
+            (pinnedHubUrls() + values.map(::normalizeHubBaseUrl))
+                .filter(String::isNotBlank).distinct().take(6)
+        } else values
     }
+    fun isPinnedHubUrl(value: String): Boolean =
+        normalizeHubBaseUrl(value) in pinnedHubUrls()
     fun addHistory(key: String, value: String) {
         val v = if (key.equals("hub", true)) normalizeHubBaseUrl(value) else value.trim()
         if (v.isBlank()) return
@@ -497,6 +519,9 @@ class AppPrefs(context: Context) {
     }
     fun removeHistory(key: String, value: String) {
         val target = if (key.equals("hub", true)) normalizeHubBaseUrl(value) else value
+        // 常驻地址（Hub 自报的局域网地址）不是历史记录，删了下次还会被 Hub 报回来，
+        // 界面上也不给删除按钮；这里再兜一道，免得别处误调。
+        if (key.equals("hub", true) && target in pinnedHubUrls()) return
         putHistory(
             "history_" + key,
             getHistory("history_" + key).filter {
@@ -3046,16 +3071,47 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
             shadowElevation = 10.dp,
             modifier = Modifier.widthIn(min = 230.dp, max = 340.dp).padding(vertical = 6.dp)
         ) {
-            Text("最近使用", modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f))
+            Text(
+                if (keyName == "hub") "可用地址" else "最近使用",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha=.52f)
+            )
             items.forEach { item ->
+                val pinned = keyName == "hub" && prefs.isPinnedHubUrl(item)
+                // 紧凑：一行一条，地址占满、右侧只放类型角标或删除，不撑到 56dp 高。
                 DropdownMenuItem(
-                    text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
-                    onClick = { onPick(item); expanded = false },
-                    trailingIcon = {
-                        IconButton(onClick = { prefs.removeHistory(keyName, item); tick++ }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Rounded.Close, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                item, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (pinned) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "局域网",
+                                    fontSize = 9.5.sp, fontWeight = FontWeight.Bold,
+                                    color = LabV2.Primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(LabV2.Primary.copy(alpha = .10f))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
                         }
                     },
+                    onClick = { onPick(item); expanded = false },
+                    trailingIcon = {
+                        if (!pinned) {
+                            IconButton(onClick = { prefs.removeHistory(keyName, item); tick++ }, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Rounded.Close, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
+                            }
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 1.dp),
+                    modifier = Modifier.heightIn(min = 34.dp),
                     colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.onSurface)
                 )
             }
@@ -3914,6 +3970,78 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
     }
 }
 
+/**
+ * 首页的 WireGuard 通栏开关。
+ *
+ * 和系统磁贴共用 [toggleWireGuardShortcut]，所以两处不会一边能连一边不能连。失败时只把
+ * 原因写在这一行里，**不自动跳页** —— 用户抱怨过"点一下没反应突然跳走"。
+ */
+@Composable
+private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var hint by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { running = wireGuardShortcutRunning(context, prefs) }
+    CompactListCard(coreSurface = true) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LabV2ToolIcon(Icons.Rounded.VpnKey, LabV2.Primary, size = 34, muted = !running)
+            Spacer(Modifier.width(10.dp))
+            Column(
+                Modifier.weight(1f)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onOpenPage
+                    )
+            ) {
+                Text("连回家庭网", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
+                Text(
+                    when {
+                        busy -> "正在切换…"
+                        running -> "WireGuard 已连接"
+                        hint.isNotBlank() -> hint
+                        else -> "WireGuard 未连接"
+                    },
+                    style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Switch(
+                checked = running,
+                enabled = !busy,
+                onCheckedChange = {
+                    if (busy) return@Switch
+                    busy = true
+                    hint = ""
+                    scope.launch {
+                        when (val outcome = toggleWireGuardShortcut(context, prefs)) {
+                            is WireGuardShortcutResult.Connected -> running = true
+                            is WireGuardShortcutResult.Disconnected -> running = false
+                            is WireGuardShortcutResult.Failed -> {
+                                running = false
+                                hint = outcome.message
+                            }
+                            WireGuardShortcutResult.NeedsSetup -> {
+                                running = false
+                                hint = "还没有可用的 WireGuard 配置，点进来添加"
+                            }
+                            is WireGuardShortcutResult.NeedsPermission -> {
+                                running = false
+                                hint = "需要系统 VPN 授权，点进来完成"
+                            }
+                        }
+                        busy = false
+                    }
+                },
+                colors = SwitchDefaults.colors(checkedTrackColor = LabV2.Primary)
+            )
+        }
+    }
+}
+
 @Composable
 fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}, childInternet: ChildInternetRepository? = null, onUpdateClick: () -> Unit = {}) {
     var showVersion by remember { mutableStateOf(false) }
@@ -3969,6 +4097,16 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         val resolved = resolveRouterExitIpv4(state.status)
         if (resolved.isNotBlank() && resolved != prefs.routerExitIpv4) {
             prefs.routerExitIpv4 = resolved
+        }
+    }
+    // 连上 Hub 就问一次「家里该用哪个地址」，值变了才落盘。局域网地址因此不会被用户
+    // 加几个外网地址就挤掉，也不用他手输。
+    LaunchedEffect(state.hubConnected) {
+        if (!state.hubConnected) return@LaunchedEffect
+        val lan = HubApi(prefs).getReachability()?.optString("lan").orEmpty().trim()
+        if (lan.isNotBlank() && normalizeHubBaseUrl(lan) != prefs.hubLanUrl) {
+            prefs.hubLanUrl = lan
+            prefs.hubLanUpdatedAt = System.currentTimeMillis()
         }
     }
 
@@ -4036,17 +4174,22 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         message = state.message,
                         onNavigate = onNavigate
                     )
-                    "mini" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        HomeChildGuardMiniCard(
-                            guard = childInternet,
-                            onClick = { onNavigate("child_internet_overview") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        HomeDdnsMiniCard(
-                            prefs = prefs,
-                            onClick = { onNavigate("tool_router_ddns") },
-                            modifier = Modifier.weight(1f)
-                        )
+                    "mini" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            HomeChildGuardMiniCard(
+                                guard = childInternet,
+                                onClick = { onNavigate("child_internet_overview") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            HomeDdnsMiniCard(
+                                prefs = prefs,
+                                onClick = { onNavigate("tool_router_ddns") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        // 通栏开关放在这两张卡下面：在外面连不回 Hub 时，WireGuard 是唯一
+                        // 自助的入站路径（家庭宽带在 CGNAT 后面），所以它要在首页一步可点。
+                        HomeWireGuardQuickRow(prefs = prefs, onOpenPage = { onNavigate("tool_wireguard") })
                     }
                     "exit" -> HealthExitCard(
                         nas = nas,
@@ -11307,7 +11450,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAi: () -> Unit,
 ) = DetailShell(
-    title = "我的 / 设置", subtitle = "连接、AI、通知、隐私与关于", onBack = onBack,
+    title = "APP设置", subtitle = "连接、AI、通知、隐私与关于", onBack = onBack,
     titleStyleOverride = LabTypography.PageTitle.copy(
         fontSize = (LabTypography.PageTitle.fontSize.value - 1f).coerceAtLeast(1f).sp,
         lineHeight = (LabTypography.PageTitle.lineHeight.value - 1f).coerceAtLeast(1f).sp,
@@ -11562,6 +11705,10 @@ class HubApi(private val prefs: AppPrefs) {
     }
     suspend fun getRouterConfig(): RouterConfigSnapshot = withContext(Dispatchers.IO) {
         RouterConfigSnapshot.fromJson(requireRouterStatus(requestJson("/api/router/config")))
+    }
+    /** Hub 自报的局域网直连地址。拿不到就返回 null，让调用方保留上一次的已知值。 */
+    suspend fun getReachability(): JSONObject? = withContext(Dispatchers.IO) {
+        runCatching { requestJsonShort("/api/hub/reachability") }.getOrNull()?.takeIf { it.optBoolean("ok") }
     }
     suspend fun putRouterConfig(config: RouterConfigUpdate): RouterConfigSnapshot = withContext(Dispatchers.IO) {
         RouterConfigSnapshot.fromJson(requireRouterStatus(requestJson("/api/router/config", "PUT", config.toJson())))
