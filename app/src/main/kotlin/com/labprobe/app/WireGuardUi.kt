@@ -1391,7 +1391,8 @@ private fun WireGuardEditorDialog(
                     )
                 }
                 WireGuardField(dns, { dns = it }, "隧道 DNS（可选）")
-                operation?.takeIf { it.targetId == operationTarget }?.let {
+                // 删除进行中由底部浮窗独占播报，否则同一句话会出现三份进度圈。
+                operation?.takeIf { it.targetId == operationTarget && !deleteInFlight }?.let {
                     WireGuardOperationStatus(it, onDismiss = onDismissOperation)
                 }
                 if (error.isNotBlank()) {
@@ -1434,11 +1435,11 @@ private fun WireGuardEditorDialog(
                             else error = "已有网络配置操作正在进行，请稍候"
                         }
                     }, enabled = !busy, modifier = Modifier.weight(1f), border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .48f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue), shape = LabCoreSurface.InnerShape) {
-                        if (operation?.targetId == operationTarget && operation.running) {
+                        if (operation?.targetId == operationTarget && operation.running && !deleteInFlight) {
                             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = WireGuardBlue)
                             Spacer(Modifier.width(6.dp))
                         }
-                        Text(if (operation?.targetId == operationTarget && operation.running) "处理中…" else "保存", style = LabTypography.Button)
+                        Text(if (operation?.targetId == operationTarget && operation.running && !deleteInFlight) "处理中…" else "保存", style = LabTypography.Button)
                     }
                 }
                 if (isExisting) {
@@ -1452,7 +1453,7 @@ private fun WireGuardEditorDialog(
                         modifier = Modifier.align(Alignment.CenterHorizontally),
                         colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)
                     ) {
-                        if (operation?.targetId == operationTarget && operation.running) {
+                        if (operation?.targetId == operationTarget && operation.running && !deleteInFlight) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(14.dp),
                                 strokeWidth = 2.dp,
