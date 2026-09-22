@@ -170,6 +170,9 @@ fun ChildInternetDeviceScreen(
     // 上次停留的那个标签，看起来就像「随机跳到上网计划/家长请注意」。进设备页固定是
     // 上网报告。
     var selectedTabName by remember(resolvedId) { mutableStateOf(ChildInternetTab.REPORT.name) }
+    // 报告页的「今日 / 最近10天」同理挂在页面级：切标签还保留选中的那个，但重新进
+    // 这台设备就回到「今日」—— 上次停在「最近10天」，再进来还是逐日图，很莫名。
+    var usagePeriod by remember(resolvedId) { mutableStateOf("今日") }
     var planDay by rememberSaveable(resolvedId) { mutableStateOf(currentBeijingWeekday()) }
     /** null = 时段总览；"" = 新建时段；其他 = 正在编辑的规则 id。 */
     var editingPlanId by rememberSaveable(resolvedId) { mutableStateOf<String?>(null) }
@@ -323,6 +326,8 @@ fun ChildInternetDeviceScreen(
                 when (tab) {
                     ChildInternetTab.REPORT -> ChildInternetReportScreen(
                         deviceState,
+                        period = usagePeriod,
+                        onPeriodChange = { usagePeriod = it },
                         onRefresh = { repository.loadUsageReport(resolvedId) {} },
                         onSelectDay = { date -> repository.loadUsageForDate(resolvedId, date) {} }
                     )
@@ -582,17 +587,109 @@ private fun ChildInternetTabIcon(tab: ChildInternetTab, active: Boolean, modifie
     }
 }
 
+/**
+ * 首页那张「儿童上网」小卡：一眼要看到的是「几台在管、现在停没停网」，不是设备总数。
+ * 数据只读 Hub 已经算好的总览聚合（`refreshOverview`），不会为了首页去逼路由器重扫。
+ */
+internal fun childGuardMiniSubtitle(state: ChildInternetOverviewState): String {
+    val guarded = state.devices.size
+    if (guarded == 0) {
+        return when {
+            state.error.isNotBlank() -> "读不到 Hub 数据"
+            state.loading -> "正在读取…"
+            else -> "还没添加守护设备"
+        }
+    }
+    if (!state.masterEnabled) return "$guarded 台在管 · 总开关已关"
+    val blocked = state.devices.count { it.schedule.state == "blocked" }
+    val free = state.devices.count { it.schedule.state in setOf("unrestricted", "allowed") }
+    return when {
+        blocked > 0 -> "$guarded 台在管 · $blocked 台正停网"
+        free == guarded -> "$guarded 台在管 · 都在允许上网"
+        else -> "$guarded 台在管 · 按计划放行"
+    }
+}
+
+@Composable
+fun HomeChildGuardMiniCard(
+    guard: ChildInternetRepository?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val state = guard?.state
+    LaunchedEffect(guard) {
+        // 先把上次成功抓取的缓存铺上，再问一次聚合：首页不该因为一次网络慢就空着。
+        guard?.hydrateFromCache()
+        guard?.refreshOverview()
+    }
+    val devices = state?.devices?.size ?: 0
+    HealthMiniCard(
+        title = "儿童上网",
+        value = "$devices",
+        unit = "台",
+        icon = Icons.Rounded.ChildCare,
+        accent = Color(0xFFEA580C),
+        subtitle = state?.let { childGuardMiniSubtitle(it) } ?: "正在读取…",
+        modifier = modifier,
+        onClick = onClick
+    )
+}
+
+@Composable
+private fun ChildUsagePeriodToggle(
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // 不套轨道也不描边：这一对只是页面里的小开关，套一圈浅灰轨道再加 1px 描边，就
+    // 成了整页最重的控件，压在上面那张「上网时长」卡上。选中用文字加重 + 一截下划
+    // 线，和顶部三个标签同一套语言；未选中留同宽的占位，两行高度不会跳。
+    Row(
+        modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        options.forEach { option ->
+            val active = option == selected
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSelect(option) }
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    option,
+                    style = LabTypography.Body.copy(
+                        fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                        color = if (active) LabV2.Ink else LabV2.InkMuted
+                    ),
+                    maxLines = 1
+                )
+                Spacer(Modifier.height(5.dp))
+                Box(
+                    Modifier.size(width = 18.dp, height = 3.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(if (active) LabV2.Primary else Color.Transparent)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ChildInternetReportScreen(
     device: ChildInternetDeviceState,
+    period: String,
+    onPeriodChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onSelectDay: (String) -> Unit
 ) {
-    var period by rememberSaveable(device.summary.deviceId) { mutableStateOf("今日") }
     // -1 = 还没手动选过。「最近10天」默认点亮最后一根（今天）。以前固定 0，而切过去
     // 那一刻柱子常常还没回来，lastIndex 就是 0，于是选中最老的那天 —— 图上一片空、
     // 应用详情写着「暂无应用使用记录」。
-    var selectedBarIndex by rememberSaveable(device.summary.deviceId, period) { mutableStateOf(-1) }
+    var selectedBarIndex by remember(device.summary.deviceId, period) { mutableStateOf(-1) }
     var selectedAppForTimeline by remember { mutableStateOf<InternetUsageEntry?>(null) }
     var showExplanation by remember { mutableStateOf(false) }
     if (showExplanation) {
@@ -636,18 +733,10 @@ private fun ChildInternetReportScreen(
             .padding(horizontal = LabV2.PageHorizontal).padding(top = 8.dp, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 官方是浅灰轨道上的一枚白色小胶囊，不是实心蓝块 —— 蓝块在这个页面上太抢。
-        // 轨道内边距归零：外框要和白色胶囊齐平，留一圈空轨道会显得整块偏高。
-        CompactSegmentedControl(
+        ChildUsagePeriodToggle(
             options = listOf("今日", "最近10天"),
             selected = period,
-            onSelect = { period = it },
-            accent = Color.White,
-            activeContentColor = LabV2.Ink,
-            barHeight = 28.dp,
-            cornerRadius = 14.dp,
-            trackPadding = 0.dp,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 96.dp)
+            onSelect = onPeriodChange
         )
 
         // 当日上网时长 Card

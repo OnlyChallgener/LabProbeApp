@@ -2527,7 +2527,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                                     .then(if (routeIsDark) Modifier.background(Color(0xFF10171F)) else Modifier.appBackground())
                             ) {
                                 LabMaterialReferenceTheme(r) { when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }, childInternet = childInternetRepository) { showUpdateDialog = true }
                         "health_score", "network_health" -> NetworkHealthScreen(
                             prefs = prefs,
                             state = state,
@@ -2730,7 +2730,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             }
                         )
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
-                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }) { showUpdateDialog = true }
+                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }, childInternet = childInternetRepository) { showUpdateDialog = true }
                             } }
                             }
                         }
@@ -3915,7 +3915,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}, onUpdateClick: () -> Unit = {}) {
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}, childInternet: ChildInternetRepository? = null, onUpdateClick: () -> Unit = {}) {
     var showVersion by remember { mutableStateOf(false) }
     var privacyMode by remember { mutableStateOf(prefs.privacyMode) }
     var homeOrder by remember { mutableStateOf(normalizeHomeOrder(prefs.homeOrder)) }
@@ -3973,7 +3973,6 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     }
 
     val onlineCount = state.onlineDevices.size
-    val watchedCount = remember(state.devices) { followedDeviceList(state.devices).size }
     val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
     val vpnOk = stunRows.isNotEmpty() || vpnRows.isNotEmpty()
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
@@ -4038,22 +4037,10 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         onNavigate = onNavigate
                     )
                     "mini" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        HealthMiniCard(
-                            title = "终端在线",
-                            value = "${onlineCount}",
-                            unit = "台",
-                            icon = Icons.Rounded.Devices,
-                            accent = Color(0xFF22C55E),
-                            subtitle = when {
-                                watchedCount > 0 -> "关注 $watchedCount 台"
-                                onlineCount > 0 -> "$onlineCount 台在线"
-                                state.realtimeDataFresh -> "实时同步正常"
-                                state.mqttConnected -> "实时链路已连接，等待首帧数据"
-                                state.hubConnected -> "实时链路恢复中，已保留上次数据"
-                                else -> "等待连接"
-                            },
-                            modifier = Modifier.weight(1f),
-                            onClick = { onNavigate("devices") }
+                        HomeChildGuardMiniCard(
+                            guard = childInternet,
+                            onClick = { onNavigate("child_internet_overview") },
+                            modifier = Modifier.weight(1f)
                         )
                         HomeDdnsMiniCard(
                             prefs = prefs,

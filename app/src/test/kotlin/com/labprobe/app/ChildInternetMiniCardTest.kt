@@ -1,0 +1,46 @@
+package com.labprobe.app
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/** 首页「儿童上网」小卡副标题：只认 Hub 总览算好的存在性，不在客户端猜。 */
+class ChildInternetMiniCardTest {
+    private fun device(id: String, scheduleState: String) = ChildInternetDeviceState(
+        summary = ProtectedDeviceSummary(
+            deviceId = id, name = id, iconKey = "missing", accentArgb = 0,
+            status = GuardStatus.GUARDED
+        ),
+        plan = DeviceGuardPlan(),
+        schedule = ChildGuardSchedule(state = scheduleState)
+    )
+
+    private fun overview(master: Boolean, vararg devices: ChildInternetDeviceState, error: String = "") =
+        ChildInternetOverviewState(masterEnabled = master, devices = devices.toList(), error = error)
+
+    @Test
+    fun anEmptyGuardListSaysSoInsteadOfZero() {
+        assertEquals("还没添加守护设备", childGuardMiniSubtitle(overview(true)))
+        assertEquals("读不到 Hub 数据",
+            childGuardMiniSubtitle(overview(true, error = "hub unreachable")))
+    }
+
+    @Test
+    fun aSwitchedOffMasterIsNotReportedAsProtecting() {
+        val state = overview(false, device("a", "blocked"), device("b", "unrestricted"))
+        assertEquals("2 台在管 · 总开关已关", childGuardMiniSubtitle(state))
+    }
+
+    @Test
+    fun blockedDevicesAreNamedBeforeEverythingElse() {
+        val state = overview(true, device("a", "blocked"), device("b", "allowed"))
+        assertEquals("2 台在管 · 1 台正停网", childGuardMiniSubtitle(state))
+    }
+
+    @Test
+    fun allFreeVersusUnknownScheduleReadDifferently() {
+        assertEquals("2 台在管 · 都在允许上网",
+            childGuardMiniSubtitle(overview(true, device("a", "unrestricted"), device("b", "allowed"))))
+        assertEquals("2 台在管 · 按计划放行",
+            childGuardMiniSubtitle(overview(true, device("a", "partial"), device("b", "unrestricted"))))
+    }
+}

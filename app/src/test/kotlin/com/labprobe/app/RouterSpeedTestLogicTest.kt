@@ -21,7 +21,23 @@ class RouterSpeedTestLogicTest {
     )
 
     @Test
+    fun collapsedCardStillNamesTheLastResult() {
+        // 折叠着也不能看着像「不能测速」：上次结果要写在标题下面那一行。
+        assertEquals("上次下行 575.41 Mbps · 时延 1.61 ms",
+            speedTestCollapsedSummary(
+                SpeedProgress(stat = "end", finished = true,
+                    primary = sample(down = listOf(575.41)).copy(latency = 1.61)),
+                running = false
+            ))
+        assertEquals("测速进行中…",
+            speedTestCollapsedSummary(SpeedProgress("running", false, sample()), running = true))
+        assertEquals("路由器直连宽带测速 · 节点可选",
+            speedTestCollapsedSummary(null, running = false))
+    }
+
+    @Test
     fun gaugePositionUsesUniformDialSegmentsForOfficialSpeedThresholds() {
+
         assertEquals(0f, gaugePosition(-1f), 0f)
         assertEquals(1f / 16f, gaugePosition(5f), 0.001f)
         assertEquals(1f / 8f, gaugePosition(10f), 0.001f)

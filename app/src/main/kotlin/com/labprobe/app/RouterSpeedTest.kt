@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -261,6 +262,16 @@ internal fun visibleSpeedHistory(
     expanded: Boolean
 ): List<SpeedHistoryRecord> = if (expanded) history.take(10) else emptyList()
 
+/** 折叠状态下标题下面那一行：把上次结果直接报出来，别让卡片看起来是空的。 */
+internal fun speedTestCollapsedSummary(progress: SpeedProgress?, running: Boolean): String {
+    if (running) return "测速进行中…"
+    val down = progress?.primary?.currentDown ?: return "路由器直连宽带测速 · 节点可选"
+    val latency = progress.primary?.latency
+        ?.let { " · 时延 ${String.format(java.util.Locale.US, "%.2f", it)} ms" }
+        ?: ""
+    return "上次下行 ${formatSpeed(down)} Mbps$latency"
+}
+
 /** 6th top-level page: router tool board — speed test, child guard, then RDPI and native settings. */
 @Composable
 fun RouterToolsScreen(
@@ -379,6 +390,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     val api = remember(prefs.hub, prefs.token) { SpeedTestApi(prefs) }
 
+    var expanded by remember { mutableStateOf(false) }
     var ports by remember { mutableStateOf<List<SpeedTestPort>>(emptyList()) }
     var nodes by remember { mutableStateOf<List<SpeedTestNode>>(emptyList()) }
     var history by remember { mutableStateOf<List<SpeedHistoryRecord>>(emptyList()) }
@@ -387,26 +399,39 @@ private fun SpeedTestCard(prefs: AppPrefs) {
     var selectedPort by remember { mutableStateOf("wan") }
     var running by remember { mutableStateOf(false) }
     var preparing by remember { mutableStateOf(false) }
+    var starting by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<SpeedProgress?>(null) }
     var error by remember { mutableStateOf("") }
 
     LaunchedEffect(prefs.hub, prefs.token) {
         preparing = true
-        runCatching {
-            ports = api.ports()
-            nodes = api.nodes()
-            selectedNode = "0"
-        }.onFailure { current -> error = speedTestErrorText(current.message) }
-        ports.firstOrNull { it.testable }?.name?.lowercase()?.takeIf { it.isNotBlank() }?.let {
-            selectedPort = it
+        // 读接口各走各的：`servers` 实测要 3.5 秒，串行等它会把整张卡按在「正在读取
+        // 路由器」上，看着就像测速不可用。端口和节点一到位就解除就绪锁定。
+        coroutineScope {
+            launch {
+                runCatching {
+                    ports = api.ports()
+                    nodes = api.nodes()
+                    selectedNode = "0"
+                }.onFailure { current -> error = speedTestErrorText(current.message) }
+                ports.firstOrNull { it.testable }?.name?.lowercase()?.takeIf { it.isNotBlank() }?.let {
+                    selectedPort = it
+                }
+                preparing = false
+            }
+            // A test started from the web UI keeps its progress visible on entry.
+            launch { runCatching { api.running() }.onSuccess { running = it } }
+            launch { runCatching { api.history() }.onSuccess { history = it } }
+            // 上一次测速的结果进页面就要画出来 —— 以前只在「正在测」时才读 progress，
+            // 于是官方页面刚测完回到这里只剩两条 "--"，被当成不能测速。
+            launch { runCatching { api.progress() }.onSuccess { progress = it } }
         }
-        // A test started from the web UI keeps its progress visible on entry.
-        runCatching { api.running() }.onSuccess { running = it }
-        runCatching { api.history() }.onSuccess { history = it }
-        preparing = false
     }
 
     LaunchedEffect(running) {
+        // 测速一旦在跑（不管是这里点的还是官方页面点的），卡片自己摊开，别让人
+        // 为了看进度再去点标题。
+        if (running) expanded = true
         if (!running) return@LaunchedEffect
         while (true) {
             delay(1000)
@@ -431,84 +456,109 @@ private fun SpeedTestCard(prefs: AppPrefs) {
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 LabV2ToolIcon(Icons.Rounded.Speed, SpeedBlue, size = 36, muted = true)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("网络测速", style = LabTypography.CardTitle.copy(color = SpeedInk))
                     Text(
-                        "路由器直连宽带测速 · 节点可选",
+                        speedTestCollapsedSummary(progress, running),
                         style = LabTypography.Supporting.copy(color = SpeedMuted)
                     )
                 }
-            }
-
-            SpeedGauge(running = running, progress = progress)
-            SpeedMetricRow(progress)
-            progress?.primary?.takeIf { it.down.isNotEmpty() || it.up.isNotEmpty() }?.let { SpeedChart(it) }
-
-            if (error.isNotBlank()) {
-                Text(error, style = LabTypography.Supporting.copy(color = LabV2.Red))
-            }
-
-            if (nodes.isNotEmpty()) {
-                SpeedNodeRow(nodes = nodes, selected = selectedNode, enabled = !running) { selectedNode = it }
-            }
-
-            Button(
-                onClick = {
-                    if (running || preparing) return@Button
-                    error = ""
-                    progress = null
-                    scope.launch {
-                        try {
-                            api.start(selectedPort, selectedNode)
-                            running = true
-                        } catch (throwable: Exception) {
-                            error = speedTestErrorText(throwable.message)
-                        }
-                    }
-                },
-                enabled = !running && !preparing,
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = SpeedBlue, contentColor = Color.White),
-                modifier = Modifier.fillMaxWidth().height(44.dp)
-            ) {
-                Text(
-                    when {
-                        running -> "测速进行中…"
-                        preparing -> "正在读取路由器"
-                        else -> "开始测速"
-                    },
-                    color = if (running || preparing) LabV2.InkMuted else Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = if (expanded) "折叠网络测速" else "展开网络测速",
+                    tint = SpeedMuted,
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
-            if (history.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { historyExpanded = !historyExpanded }
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            if (error.isNotBlank()) {
+                // 折叠着也必须看得见失败，否则点一下没反应，更像是坏了。
+                Text(error, style = LabTypography.Supporting.copy(color = LabV2.Red))
+            }
+
+            if (expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SpeedGauge(running = running, progress = progress)
+                    SpeedMetricRow(progress)
+                    progress?.primary?.takeIf { it.down.isNotEmpty() || it.up.isNotEmpty() }?.let { SpeedChart(it) }
+
+                    if (nodes.isNotEmpty()) {
+                        SpeedNodeRow(nodes = nodes, selected = selectedNode, enabled = !running) { selectedNode = it }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (running || preparing || starting) return@Button
+                            error = ""
+                            progress = null
+                            // 必须同步按住：`running` 要等 POST 回来才置真，那之间再点
+                            // 一次就是第二条 start_test，固件回 409，界面弹「路由器未能
+                            // 启动测速」—— 实测 2026-09-22 09:14:15 同一秒 202 + 409。
+                            starting = true
+                            scope.launch {
+                                try {
+                                    api.start(selectedPort, selectedNode)
+                                    running = true
+                                } catch (throwable: Exception) {
+                                    error = speedTestErrorText(throwable.message)
+                                } finally {
+                                    starting = false
+                                }
+                            }
+                        },
+                        enabled = !running && !preparing && !starting,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = SpeedBlue, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
                     ) {
                         Text(
-                            "历史测速记录 (${history.size})",
-                            style = LabTypography.SectionTitle.copy(color = SpeedInk)
-                        )
-                        Icon(
-                            imageVector = if (historyExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                            contentDescription = if (historyExpanded) "收起" else "展开",
-                            tint = SpeedMuted,
-                            modifier = Modifier.size(20.dp)
+                            when {
+                                running -> "测速进行中…"
+                                preparing -> "正在读取路由器"
+                                starting -> "正在启动测速…"
+                                else -> "开始测速"
+                            },
+                            color = if (running || preparing || starting) LabV2.InkMuted else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
-                    visibleSpeedHistory(history, historyExpanded).forEach { record -> SpeedHistoryRow(record) }
+
+                    if (history.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { historyExpanded = !historyExpanded }
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "历史测速记录 (${history.size})",
+                                    style = LabTypography.SectionTitle.copy(color = SpeedInk)
+                                )
+                                Icon(
+                                    imageVector = if (historyExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                    contentDescription = if (historyExpanded) "收起" else "展开",
+                                    tint = SpeedMuted,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            visibleSpeedHistory(history, historyExpanded).forEach { record -> SpeedHistoryRow(record) }
+                        }
+                    }
                 }
             }
         }
@@ -645,7 +695,11 @@ private fun SpeedGauge(running: Boolean, progress: SpeedProgress?) {
                                 .background(if (running) Color(0xFF0095D8) else Color(0xFF94A3B8))
                         )
                         Text(
-                            text = if (running) "测速进行中" else "测速就绪",
+                            text = when {
+                                running -> "测速进行中"
+                                sample?.currentDown != null -> "上次结果"
+                                else -> "测速就绪"
+                            },
                             style = LabTypography.Caption.copy(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
