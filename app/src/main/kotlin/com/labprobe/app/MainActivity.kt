@@ -3999,13 +3999,13 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
                         onClick = onOpenPage
                     )
             ) {
-                Text("连回家庭网", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
+                Text("WireGuard", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
                 Text(
                     when {
                         busy -> "正在切换…"
-                        running -> "WireGuard 已连接"
+                        running -> "已连接"
                         hint.isNotBlank() -> hint
-                        else -> "WireGuard 未连接"
+                        else -> "未连接"
                     },
                     style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
                     maxLines = 2,
