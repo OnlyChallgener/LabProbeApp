@@ -325,6 +325,7 @@ internal val rdpiCatalogApps: List<RdpiCatalogEntry> = listOf(
     RdpiCatalogEntry("拼多多", "shopping", setOf("18-158-1-0", "18-158-1-14")),
     RdpiCatalogEntry("支付宝", "shopping", setOf("18-4-1-0", "18-4-1-14")),
     RdpiCatalogEntry("淘宝", "shopping", setOf("18-4-2-0")),
+    RdpiCatalogEntry("美团", "shopping", setOf("9-231-1-0")),
     RdpiCatalogEntry("苏宁易购", "shopping", setOf("18-157-1-0")),
     RdpiCatalogEntry("菜鸟", "shopping", setOf("9-218-1-0")),
     RdpiCatalogEntry("顺丰速递", "shopping", setOf("9-205-1-0")),
