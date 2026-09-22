@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @Composable
 fun DeviceDetailScreen(
@@ -71,6 +72,10 @@ fun DeviceDetailScreen(
     var waking by remember { mutableStateOf(false) }
 
     val manufacturer = resolveDeviceManufacturer(device)
+    val totalTraffic = remember(device.totalUpload, device.totalDownload) {
+        val bytes = parseTrafficBytes(cleanApiText(device.totalUpload)) + parseTrafficBytes(cleanApiText(device.totalDownload))
+        if (bytes > 0L) formatTrafficBytes(bytes) else "--"
+    }
 
     DetailShell("设备详情", "信息紧凑视图", onBack, unifiedTypography = true) {
         CompactListCard(coreSurface = true) {
@@ -102,7 +107,8 @@ fun DeviceDetailScreen(
                         LabStatusBadge(device.online)
                     }
                     Text(
-                        listOf(manufacturer, profile.label, cleanApiText(device.hostName)).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
+                        // 厂商/类型/主机名在「设备信息」卡里都有；头部这一行只放别处没有的 Wi-Fi 名。
+                        if (wifiName.isNotBlank()) "Wi-Fi @$wifiName" else listOf(manufacturer, profile.label).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.label },
                         fontSize = LabTypography.Supporting.fontSize,
                         fontWeight = FontWeight.SemiBold,
                         color = LabV2.InkMuted,
@@ -233,22 +239,8 @@ fun DeviceDetailScreen(
         }
         CompactListCard(coreSurface = true) {
             Text("连接概览", fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-            // 频段 / 信号 / 速率 顶部那排胶囊已经给过了，这里再列一行就是把同一
-            // 批数字显示两遍。
-            if (wifiName.isNotBlank()) {
-                Surface(shape = RoundedCornerShape(14.dp), color = LabV2.Primary.copy(alpha = .055f), border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Primary.copy(alpha = .09f))) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Wifi, null, Modifier.size(15.dp), tint = LabV2.Primary)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Wi-Fi", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-                        Spacer(Modifier.width(8.dp))
-                        Text(wifiName, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                // 「在线」这一格给的是同一个 onlineTime，和在线统计里的「连续在线」
-                // 重复（且两个来源会差 1 分钟），时长统一只在在线统计说一次。
+                DeviceDetailMetric("总流量", totalTraffic, LabV2.Amber, Modifier.weight(1f))
                 DeviceDetailMetric("今日上传", cleanApiText(device.todayUpload).ifBlank { "--" }, LabV2.Primary, Modifier.weight(1f))
                 DeviceDetailMetric("今日下载", cleanApiText(device.todayDownload).ifBlank { "--" }, LabV2.Cyan, Modifier.weight(1f))
             }
@@ -300,6 +292,31 @@ fun DeviceDetailScreen(
     }
 
     if (editing) LabDeviceEditSheet(device = device, state = state, onDismiss = { editing = false })
+}
+
+private fun parseTrafficBytes(text: String): Long {
+    val match = Regex("""([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?)\s*(?:i?B)?""", RegexOption.IGNORE_CASE).find(text.trim()) ?: return 0L
+    val value = match.groupValues[1].toDoubleOrNull() ?: return 0L
+    val multiplier = when (match.groupValues[2].uppercase(Locale.US)) {
+        "K" -> 1024L
+        "M" -> 1024L * 1024L
+        "G" -> 1024L * 1024L * 1024L
+        "T" -> 1024L * 1024L * 1024L * 1024L
+        else -> 1L
+    }
+    return (value * multiplier).toLong()
+}
+
+private fun formatTrafficBytes(bytes: Long): String {
+    if (bytes < 1024L) return "${bytes}B"
+    val units = arrayOf("K", "M", "G", "T")
+    var value = bytes.toDouble()
+    var unit = -1
+    while (value >= 1024.0 && unit < units.lastIndex) {
+        value /= 1024.0
+        unit++
+    }
+    return String.format(Locale.US, "%.2f%s", value, units[unit.coerceAtLeast(0)])
 }
 
 @Composable

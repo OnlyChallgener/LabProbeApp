@@ -131,7 +131,6 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
             )
         }
 
-        Spacer(Modifier.height(3.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("在线时长分布", modifier = Modifier.weight(1f), style = LabTypography.SectionTitle)
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -285,38 +284,16 @@ private fun PresenceBarChart(data: PresenceChartData) {
     val hasData = data.values.any { it > 0L }
     var selectedIndex by remember(data) { mutableStateOf<Int?>(null) }
     val isSelected = selectedIndex != null
-    val displayLabel = selectedIndex?.let { data.detailLabels.getOrNull(it) } ?: data.scaleLabel
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (isSelected) {
-                Text(
-                    "已选",
-                    style = LabTypography.Caption.copy(color = LabV2.PrimaryStrong, fontWeight = FontWeight.SemiBold)
-                )
-                Spacer(Modifier.width(4.dp))
-            }
-            Text(
-                displayLabel,
-                modifier = Modifier.weight(1f),
-                style = LabTypography.Caption.copy(
-                    color = if (isSelected) LabV2.PrimaryStrong else LabV2.InkMuted,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                ),
-                textAlign = TextAlign.End,
-                maxLines = 1
-            )
-            if (isSelected) {
-                Spacer(Modifier.width(4.dp))
-                Surface(
-                    shape = RoundedCornerShape(99.dp),
-                    color = Color.Transparent,
-                    onClick = { selectedIndex = null }
-                ) {
-                    Text("✕", modifier = Modifier.padding(horizontal = 4.dp), style = LabTypography.Caption.copy(color = LabV2.InkMuted))
-                }
-            }
-        }
+        // 选中态的日期/时长只在下方面板说一次；这里再写一遍就是同一段话出现两遍。
+        Text(
+            data.scaleLabel,
+            modifier = Modifier.fillMaxWidth(),
+            style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+            textAlign = TextAlign.End,
+            maxLines = 1
+        )
         Box(Modifier.fillMaxWidth().height(82.dp)) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                 repeat(3) {
@@ -521,19 +498,19 @@ private fun PresenceInsightPanel(
                         color = if (onlineRate > 50) LabV2.Green else LabV2.Primary
                     )
                 }
-                // 今日这一栏的「累计在网」就是上面「今日在线」那个数，同卡内不重复两遍；
-                // 近 7/10 天的合计是新信息，照旧显示。
-                if (!data.rangeLabel.startsWith("今日"))
+                // 今日视图的中间格放「活跃小时」（有在线记录的小时格数）：累计在网和左边
+                // 的在线率是同一个数换算来的，近 7/10 天的合计才是新信息。
+                val isToday = data.rangeLabel.startsWith("今日")
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        "累计在网",
+                        if (isToday) "活跃小时" else "累计在网",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = LabV2.InkMuted
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
-                        formatPresenceDuration(data.totalDurationMillis).ifBlank { "0分钟" },
+                        if (isToday) "${data.values.count { it > 0L }}小时" else formatPresenceDuration(data.totalDurationMillis).ifBlank { "0分钟" },
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = LabV2.Ink
