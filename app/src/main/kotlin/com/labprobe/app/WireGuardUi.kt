@@ -24,8 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Sync
 
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -662,12 +663,15 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue),
             shape = LabCoreSurface.InnerShape,
         ) {
-            Icon(Icons.Rounded.CloudSync, null, Modifier.size(17.dp))
-            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Rounded.Sync, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(7.dp))
             Text(if (operation?.targetId == WIREGUARD_SYNC_TARGET && operation?.running == true) "正在同步 Agent…" else "重新同步自动配置", style = LabTypography.CompactButton)
         }
-        // 弹窗打开时页面在背后还会渲染同一条操作状态，红色提示会叠成三层。
-        visibleOperation?.takeIf { editor == null }?.let {
+        // 同一条操作只播报一次：属于某个配置卡片的由那张卡片自己显示，
+        // 否则一条「配置已提交，待核对」会在卡里和页面底部各出现一次。
+        visibleOperation?.takeIf { state ->
+            editor == null && profiles.none { state.targetId == wireGuardProfileTarget(it.id) }
+        }?.let {
             WireGuardOperationStatus(
                 operation = it,
                 errorPrefix = gatewayErrorPrefix,
@@ -906,8 +910,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             onDismissOperation = ::dismissOperationStatus,
             onDismiss = { editor = null },
             onDelete = {
-                // 默认只删本机：官方 WireGuard 客户端的「删除」就是这个意思。
-                // 路由器上的 peer 是共享资源，只有显式「从路由器撤销」才动它。
+                // 只动本机：停隧道、删卡片和私钥。路由器上的 peer 是共享配置，
+                // 不在手机卡片里拆 —— 官方 WireGuard 客户端的删除也是这个语义。
                 operations.launch(wireGuardProfileTarget(profile.id), "正在删除 ${profile.name}…") { report ->
                     if (runtime.profileId == profile.id) {
                         report("正在停止 ${profile.name}…")
@@ -915,40 +919,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     }
                     withContext(Dispatchers.IO) { store.delete(profile.id) }
                     reload()
-                    report("已删除本机配置 ${profile.name}；路由器上的隧道保留，需要时再点「从路由器撤销」")
-                }
-            },
-            onRevokeRemote = {
-                operations.launch(wireGuardProfileTarget(profile.id), "正在撤销 ${profile.name}…") { report ->
-                    if (profile.endpointSource != WireGuardEndpointSource.MANUAL) {
-                        report("正在从 Agent 移除 ${profile.name}…")
-                        when (val result = wireGuardHubApi.removeAutomaticProfileTransaction(profile)) {
-                            is WireGuardRemoteMutationResult.Applied -> {
-                                if (runtime.profileId == profile.id) {
-                                    report("Agent 已确认移除，正在停止 ${profile.name}…")
-                                    runtime = controller.stop()
-                                }
-                                withContext(Dispatchers.IO) { store.delete(profile.id) }
-                                reload()
-                                report("已删除 ${profile.name}，Agent 端 Peer 已移除")
-                            }
-                            is WireGuardRemoteMutationResult.PendingVerification -> {
-                                message = wireGuardRemoteMutationStatus("删除", result)
-                                report("删除已提交，待核对；原本地配置保持不变")
-                            }
-                            is WireGuardRemoteMutationResult.NotSubmitted -> {
-                                throw IllegalStateException(wireGuardRemoteMutationStatus("删除", result))
-                            }
-                        }
-                    } else {
-                        if (runtime.profileId == profile.id) {
-                            report("正在停止 ${profile.name}…")
-                            runtime = controller.stop()
-                        }
-                        withContext(Dispatchers.IO) { store.delete(profile.id) }
-                        reload()
-                        report("已删除手动配置 ${profile.name}")
-                    }
+                    report("已删除 ${profile.name}")
                 }
             },
             onCopyClientKey = { copyWireGuard(context, "WireGuard 客户端公钥", clientPub) },
@@ -1057,17 +1028,39 @@ private fun WireGuardProfileCard(
             if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = if (isHandshaked) WireGuardGreen else WireGuardAmber, modifier = Modifier.size(20.dp))
         }
         if (active && runtime != null) {
+            // 发出去了却一个回包都没有 = 连不上，不是还在连；红叉比一直转圈诚实。
+            val connectFailed = runtime.lastError.isNotBlank() ||
+                (runtime.latestHandshakeAt == 0L && runtime.sentBytes > 0L)
             Surface(
-                color = if (isHandshaked) WireGuardGreen.copy(alpha = .08f) else WireGuardAmber.copy(alpha = .08f),
+                color = when {
+                    isHandshaked -> WireGuardGreen.copy(alpha = .08f)
+                    connectFailed -> WireGuardRed.copy(alpha = .07f)
+                    else -> WireGuardAmber.copy(alpha = .08f)
+                },
                 shape = LabCoreSurface.InnerShape,
-                border = BorderStroke(1.dp, if (isHandshaked) WireGuardGreen.copy(alpha = .24f) else WireGuardAmber.copy(alpha = .24f)),
+                border = BorderStroke(1.dp, when {
+                    isHandshaked -> WireGuardGreen.copy(alpha = .24f)
+                    connectFailed -> WireGuardRed.copy(alpha = .24f)
+                    else -> WireGuardAmber.copy(alpha = .24f)
+                }),
             ) {
 
                 Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val statusColor = if (isHandshaked) WireGuardGreen else if (connectFailed) WireGuardRed else WireGuardAmber
+                    when {
+                        isHandshaked -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(15.dp), tint = statusColor)
+                        connectFailed -> Icon(Icons.Rounded.Cancel, null, Modifier.size(15.dp), tint = statusColor)
+                        else -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = statusColor)
+                    }
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        if (isHandshaked) "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)})" else "正在握手 (等待服务端响应…)",
+                        when {
+                            isHandshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)})"
+                            connectFailed -> "连接失败 (未收到服务端回包)"
+                            else -> "正在握手 (等待服务端响应…)"
+                        },
                         Modifier.weight(1f),
-                        style = LabTypography.Caption.copy(color = if (isHandshaked) WireGuardGreen else WireGuardAmber),
+                        style = LabTypography.Caption.copy(color = statusColor),
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
@@ -1249,7 +1242,6 @@ private fun WireGuardEditorDialog(
     onDismissOperation: () -> Unit,
     onDismiss: () -> Unit,
     onDelete: () -> Boolean,
-    onRevokeRemote: () -> Boolean,
     onCopyClientKey: () -> Unit,
     onSave: (WireGuardProfile) -> Boolean,
 ) {
@@ -1430,6 +1422,24 @@ private fun WireGuardEditorDialog(
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // 删除只动本机：官方 WireGuard 客户端的删除就是这个语义，
+                    // 路由器上的 peer 由 Hub 那侧管理，不在手机卡片里拆共享链路。
+                    if (isExisting) {
+                        TextButton(
+                            onClick = {
+                                val floor = operation?.completedVersion ?: 0L
+                                if (onDelete()) { submittedAfterVersion = floor; deleteInFlight = true }
+                                else error = "已有网络配置操作正在进行，请稍候"
+                            },
+                            enabled = !busy,
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed),
+                        ) {
+                            Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("删除", style = LabTypography.Button)
+                        }
+                    }
                     OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = LabCoreSurface.InnerShape) { Text("取消", style = LabTypography.Button) }
                     OutlinedButton(onClick = {
                         val next = initial.copy(
@@ -1466,36 +1476,6 @@ private fun WireGuardEditorDialog(
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(if (operation?.targetId == operationTarget && operation.running && !deleteInFlight) "处理中…" else "保存", style = LabTypography.Button)
-                    }
-                }
-                if (isExisting) {
-                    fun submitDelete(revoke: Boolean) {
-                        val floor = operation?.completedVersion ?: 0L
-                        val started = if (revoke) onRevokeRemote() else onDelete()
-                        if (started) { submittedAfterVersion = floor; deleteInFlight = true }
-                        else error = "已有网络配置操作正在进行，请稍候"
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        TextButton(
-                            onClick = { submitDelete(revoke = false) },
-                            enabled = !busy,
-                            colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)
-                        ) {
-                            Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("删除本机配置", style = LabTypography.CompactButton)
-                        }
-                        if (source != WireGuardEndpointSource.MANUAL) {
-                            TextButton(
-                                onClick = { submitDelete(revoke = true) },
-                                enabled = !busy,
-                                colors = ButtonDefaults.textButtonColors(contentColor = WireGuardAmber)
-                            ) {
-                                Icon(Icons.Rounded.CloudSync, null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("从路由器撤销这条隧道", style = LabTypography.CompactButton)
-                            }
-                        }
                     }
                 }
             }
