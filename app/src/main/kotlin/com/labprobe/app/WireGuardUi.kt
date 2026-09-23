@@ -423,37 +423,48 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             val operationVersion = operations.state.value?.completedVersion ?: 0L
             val current = withContext(Dispatchers.IO) { store.load() }
             if (current.any { it.endpointSource == WireGuardEndpointSource.STUN }) {
-                runCatching {
-                    val currentServerConfig = wireGuardHubApi.loadServerConfig()
-                    Triple(stunApi.list(), currentServerConfig, wireGuardHubApi.loadRouterLanIp())
-                }.onSuccess { (snapshot, currentServerConfig, routerIp) ->
-                    // 路由器 LAN 一旦学到就存下来：隧道该路由哪个内网网段靠它，而不是猜。
-                    if (routerIp.isNotBlank() && prefs.wgHomeLanIpv4 != routerIp) prefs.wgHomeLanIpv4 = routerIp
-                    if (!snapshot.rulesLoaded) return@onSuccess
-                    if (operations.state.value?.running == true || operations.state.value?.completedVersion != operationVersion) return@onSuccess
-                    serverConfig = currentServerConfig
-                    stunRules = selectableWireGuardStunRules(snapshot.rules, currentServerConfig.listenPort, routerIp)
-                    val updated = withContext(Dispatchers.IO) {
-                        if (operations.state.value?.running == true || operations.state.value?.completedVersion != operationVersion) {
-                            return@withContext null
-                        }
-                        WireGuardEndpointCoordinator.applyStunSnapshot(
-                            store,
-                            current,
-                            snapshot.rules,
-                            currentServerConfig.listenPort,
-                            routerIp,
-                        )
-                        store.load()
-                    } ?: return@onSuccess
-                    updated.filter { it.endpointSource == WireGuardEndpointSource.STUN }.forEach { profile ->
-                        applyManagedEndpoint(profile, current.firstOrNull { it.id == profile.id }?.endpoint.orEmpty())
-                    }
-                    reload()
-                }.onFailure {
+                // 只有「看不见穿透规则」才配说 STUN 不可用。网关配置和路由器 LAN 只是交叉
+                // 核对用的，读不到就沿用上次的值 —— 之前把三者捆成一个 runCatching，
+                // 结果 Hub 一抖，正在握手的好地址也被刷成「STUN 状态暂时不可用」。
+                val snapshotResult = runCatching { stunApi.list() }
+                if (snapshotResult.isFailure) {
                     withContext(Dispatchers.IO) {
                         current.filter { it.endpointSource == WireGuardEndpointSource.STUN }
                             .forEach { profile -> store.markEndpointError(profile.id, WireGuardEndpointSource.STUN, "STUN 状态暂时不可用，保留上次地址") }
+                    }
+                } else {
+                    val snapshot = snapshotResult.getOrThrow()
+                    val probed = runCatching {
+                        wireGuardHubApi.loadServerConfig() to wireGuardHubApi.loadRouterLanIp()
+                    }.getOrNull()
+                    val currentServerConfig = probed?.first ?: serverConfig
+                    val routerIp = probed?.second?.takeIf { it.isNotBlank() } ?: prefs.wgHomeLanIpv4
+                    if (routerIp.isNotBlank() && prefs.wgHomeLanIpv4 != routerIp) prefs.wgHomeLanIpv4 = routerIp
+                    val stale = operations.state.value?.running == true ||
+                        operations.state.value?.completedVersion != operationVersion
+                    if (snapshot.rulesLoaded && !stale) {
+                        serverConfig = currentServerConfig
+                        stunRules = selectableWireGuardStunRules(snapshot.rules, currentServerConfig.listenPort, routerIp)
+                        val updated = withContext(Dispatchers.IO) {
+                            if (operations.state.value?.running == true || operations.state.value?.completedVersion != operationVersion) {
+                                null
+                            } else {
+                                WireGuardEndpointCoordinator.applyStunSnapshot(
+                                    store,
+                                    current,
+                                    snapshot.rules,
+                                    currentServerConfig.listenPort,
+                                    routerIp,
+                                )
+                                store.load()
+                            }
+                        }
+                        if (updated != null) {
+                            updated.filter { it.endpointSource == WireGuardEndpointSource.STUN }.forEach { profile ->
+                                applyManagedEndpoint(profile, current.firstOrNull { it.id == profile.id }?.endpoint.orEmpty())
+                            }
+                            reload()
+                        }
                     }
                 }
             } else {
@@ -895,7 +906,20 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             onDismissOperation = ::dismissOperationStatus,
             onDismiss = { editor = null },
             onDelete = {
+                // 默认只删本机：官方 WireGuard 客户端的「删除」就是这个意思。
+                // 路由器上的 peer 是共享资源，只有显式「从路由器撤销」才动它。
                 operations.launch(wireGuardProfileTarget(profile.id), "正在删除 ${profile.name}…") { report ->
+                    if (runtime.profileId == profile.id) {
+                        report("正在停止 ${profile.name}…")
+                        runtime = controller.stop()
+                    }
+                    withContext(Dispatchers.IO) { store.delete(profile.id) }
+                    reload()
+                    report("已删除本机配置 ${profile.name}；路由器上的隧道保留，需要时再点「从路由器撤销」")
+                }
+            },
+            onRevokeRemote = {
+                operations.launch(wireGuardProfileTarget(profile.id), "正在撤销 ${profile.name}…") { report ->
                     if (profile.endpointSource != WireGuardEndpointSource.MANUAL) {
                         report("正在从 Agent 移除 ${profile.name}…")
                         when (val result = wireGuardHubApi.removeAutomaticProfileTransaction(profile)) {
@@ -1225,6 +1249,7 @@ private fun WireGuardEditorDialog(
     onDismissOperation: () -> Unit,
     onDismiss: () -> Unit,
     onDelete: () -> Boolean,
+    onRevokeRemote: () -> Boolean,
     onCopyClientKey: () -> Unit,
     onSave: (WireGuardProfile) -> Boolean,
 ) {
@@ -1444,28 +1469,32 @@ private fun WireGuardEditorDialog(
                     }
                 }
                 if (isExisting) {
-                    TextButton(
-                        onClick = {
-                            val floor = operation?.completedVersion ?: 0L
-                            if (onDelete()) { submittedAfterVersion = floor; deleteInFlight = true }
-                            else error = "已有网络配置操作正在进行，请稍候"
-                        },
-                        enabled = !busy,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)
-                    ) {
-                        if (operation?.targetId == operationTarget && operation.running && !deleteInFlight) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = WireGuardRed
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("正在删除配置…", style = LabTypography.CompactButton)
-                        } else {
+                    fun submitDelete(revoke: Boolean) {
+                        val floor = operation?.completedVersion ?: 0L
+                        val started = if (revoke) onRevokeRemote() else onDelete()
+                        if (started) { submittedAfterVersion = floor; deleteInFlight = true }
+                        else error = "已有网络配置操作正在进行，请稍候"
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        TextButton(
+                            onClick = { submitDelete(revoke = false) },
+                            enabled = !busy,
+                            colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed)
+                        ) {
                             Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("删除此配置", style = LabTypography.CompactButton)
+                            Text("删除本机配置", style = LabTypography.CompactButton)
+                        }
+                        if (source != WireGuardEndpointSource.MANUAL) {
+                            TextButton(
+                                onClick = { submitDelete(revoke = true) },
+                                enabled = !busy,
+                                colors = ButtonDefaults.textButtonColors(contentColor = WireGuardAmber)
+                            ) {
+                                Icon(Icons.Rounded.CloudSync, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("从路由器撤销这条隧道", style = LabTypography.CompactButton)
+                            }
                         }
                     }
                 }
