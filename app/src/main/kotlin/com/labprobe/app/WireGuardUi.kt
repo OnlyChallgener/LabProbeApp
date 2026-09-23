@@ -123,9 +123,9 @@ internal fun wireGuardRemoteMutationStatus(
 ): String = when (result) {
     is WireGuardRemoteMutationResult.Applied<*> -> "${action}已由 Agent 确认"
     is WireGuardRemoteMutationResult.PendingVerification -> if (result.submittedRevision == null) {
-        "${action}提交结果待核对；原本地配置保持不变。${result.message}"
+        "${action}提交结果待核对；本地配置保持原样。${result.message}"
     } else {
-        "${action}已提交，待核对；原本地配置保持不变。${result.message}"
+        "${action}已提交，待核对；本地配置保持原样。${result.message}"
     }
     is WireGuardRemoteMutationResult.NotSubmitted -> "${action}失败，未更改：${result.message}"
 }
@@ -998,8 +998,11 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             ?: throw IllegalStateException("配置已被删除，请刷新后重新新增")
                     } else null
                     val next = editedWireGuardProfile(original, edited)
+                    val needsRouter = original != null &&
+                        original.endpointSource != WireGuardEndpointSource.MANUAL &&
+                        wireGuardEditNeedsRouter(original, next)
 
-                    if (original != null && original.endpointSource != WireGuardEndpointSource.MANUAL) {
+                    if (needsRouter) {
                         report("正在提交 ${original.name} 的远端变更…")
                         val publicKey = withContext(Dispatchers.IO) { wireGuardPublicKey(store.privateKey(original.id)) }
                         when (val result = wireGuardHubApi.transitionAutomaticProfile(original, next, publicKey)) {
@@ -1016,10 +1019,17 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             }
                             is WireGuardRemoteMutationResult.PendingVerification -> {
                                 message = wireGuardRemoteMutationStatus("配置", result)
-                                report("配置已提交，待核对；原本地配置保持不变")
+                                report("配置已提交，待核对；本地配置保持原样")
                             }
                             is WireGuardRemoteMutationResult.NotSubmitted -> {
-                                throw IllegalStateException(wireGuardRemoteMutationStatus("保存", result))
+                                // 远端没改成，本机这份改动也不能丢；这里不能再套用
+                                // 「失败，未更改」那句 —— 我们确实改了本地。
+                                withContext(Dispatchers.IO) { store.saveProfileEdit(next) }
+                                reload()
+                                throw IllegalStateException(
+                                    "配置已保存在本机，但路由器同步失败：${result.message}；" +
+                                        "等 Hub 可达后点「重新同步自动配置」即可补上",
+                                )
                             }
                         }
                         return@launch
@@ -1031,6 +1041,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     reload()
                     if (next.endpointSource == WireGuardEndpointSource.MANUAL) {
                         report(if (existingAtLaunch) "手动配置已保存" else "已创建手动配置，并生成客户端密钥")
+                    } else if (existingAtLaunch) {
+                        report("已保存在本机：这次只改了本机这一侧（路由网段 / DNS 等），没有动路由器")
                     } else {
                         report("配置已保存，正在同步 Agent…")
                         val saved = withContext(Dispatchers.IO) { store.load().first { it.id == next.id } }
@@ -1340,7 +1352,9 @@ private fun WireGuardEditorDialog(
         if (operation?.targetId != operationTarget || operation.running || operation.completedVersion <= floor) return@LaunchedEffect
         submittedAfterVersion = null
         deleteInFlight = false
-        if (operation.error == null) onDismiss() else error = uiMessageZh(operation.error)
+        // 失败只由上面那张操作状态卡播报：再抄一份进 error 就会同一条消息出现两遍
+        // （一张带「关闭」、一条带「知道了」）。
+        if (operation.error == null) onDismiss()
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1808,7 +1822,8 @@ private fun WireGuardServerSettingsDialog(
         val floor = submittedAfterVersion ?: return@LaunchedEffect
         if (operation == null || operation.running || operation.completedVersion <= floor) return@LaunchedEffect
         submittedAfterVersion = null
-        if (operation.error == null) onDismiss() else error = uiMessageZh(operation.error)
+        // 同一条失败由下面的操作状态卡播报一次就够，别再抄进 error。
+        if (operation.error == null) onDismiss()
     }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {

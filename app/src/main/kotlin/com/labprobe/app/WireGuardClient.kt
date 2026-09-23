@@ -199,6 +199,20 @@ internal fun editedWireGuardProfile(old: WireGuardProfile?, edited: WireGuardPro
 
 private val wireGuardProfileStoreLock = Any()
 
+/**
+ * 这次编辑要不要路由器重新下发。
+ *
+ * 名称、隧道地址、服务端公钥、端点来源/绑定会进路由器上的 peer；而 AllowedIPs、
+ * 隧道 DNS、MTU 只决定手机自己把哪些包塞进隧道。改后者不该被 Hub 是否可达挡住 ——
+ * 之前正是这个耦合让"已握手但内网不通"变成"什么都改不了"。
+ */
+internal fun wireGuardEditNeedsRouter(original: WireGuardProfile, edited: WireGuardProfile): Boolean =
+    original.interfaceAddresses != edited.interfaceAddresses ||
+        original.serverPublicKey != edited.serverPublicKey ||
+        original.endpointSource != edited.endpointSource ||
+        original.endpointBindingId != edited.endpointBindingId ||
+        original.name != edited.name
+
 private fun jsonStringList(array: JSONArray?): List<String> = buildList {
     if (array == null) return@buildList
     for (index in 0 until array.length()) {
@@ -711,7 +725,9 @@ internal fun isWireGuardSubmissionUncertain(error: Throwable): Boolean =
     error is IOException || (error is HubHttpException && (error.statusCode == 408 || error.statusCode >= 500))
 
 internal fun wireGuardMutationFailureMessage(stage: WireGuardMutationStage, error: Throwable): String {
-    val reason = error.message?.trim().orEmpty().ifBlank { "上游服务暂不可用" }
+    // 底层异常原文是英文（Software caused connection abort 之类），必须先翻成中文再拼进
+    // 提示，否则用户看到的是一句没有上下文的英文。
+    val reason = uiMessageZh(error.message).ifBlank { "上游服务暂不可用" }
     return when (stage) {
         WireGuardMutationStage.READ_BEFORE_SUBMIT -> "读取 WireGuard 配置失败，尚未提交：$reason"
         WireGuardMutationStage.SUBMIT -> if (isWireGuardSubmissionUncertain(error)) {

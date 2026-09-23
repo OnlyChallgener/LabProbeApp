@@ -13,6 +13,13 @@ import javax.crypto.spec.GCMParameterSpec
 private class SecureStringStore(context: Context, prefsName: String, private val alias: String) {
     private val prefs = context.applicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
+    // 缓存的键就是"落盘的密文本身"：密文没变，解出来的必然还是同一个值，
+    // 于是可以跳过一次 Keystore 往返。这样即使别处 new 了一个实例写入了新值，
+    // 这里也会因为密文不同而重新解密，不存在读到旧值的可能。
+    private var cachedCipherText: String? = null
+    private var cachedIv: String? = null
+    private var cachedPlain: String = ""
+
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(alias, null) as? SecretKey)?.let { return it }
@@ -25,30 +32,43 @@ private class SecureStringStore(context: Context, prefsName: String, private val
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setRandomizedEncryptionRequired(true)
-                .build()
+                .build(),
         )
         return generator.generateKey()
     }
 
+    @Synchronized
     fun get(): String {
         val cipherText = prefs.getString("ciphertext", null) ?: return ""
         val iv = prefs.getString("iv", null) ?: return ""
-        return runCatching {
+        if (cipherText == cachedCipherText && iv == cachedIv) return cachedPlain
+        val plain = runCatching {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             String(cipher.doFinal(Base64.decode(cipherText, Base64.NO_WRAP)), Charsets.UTF_8)
         }.getOrDefault("")
+        cachedCipherText = cipherText
+        cachedIv = iv
+        cachedPlain = plain
+        return plain
     }
 
+    @Synchronized
     fun set(value: String) {
         val clean = value.trim()
         if (clean.isBlank()) {
+            cachedCipherText = null
+            cachedIv = null
+            cachedPlain = ""
             prefs.edit().clear().apply()
             return
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = cipher.doFinal(clean.toByteArray(Charsets.UTF_8))
+        cachedCipherText = null
+        cachedIv = null
+        cachedPlain = ""
         prefs.edit()
             .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString("ciphertext", Base64.encodeToString(encrypted, Base64.NO_WRAP))

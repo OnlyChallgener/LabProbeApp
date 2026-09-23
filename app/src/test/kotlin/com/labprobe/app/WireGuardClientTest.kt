@@ -676,5 +676,28 @@ class WireGuardClientTest {
         assertEquals(listOf("app-phone", "app-old"), decoded.map { it.id })
         assertEquals(listOf(true, false), decoded.map { it.referenced })
     }
+
+    @Test
+    fun onlyPeerSideEditsNeedTheRouterLocalRoutesAndDnsNeverDo() {
+        val base = WireGuardProfile(
+            id = "phone",
+            name = "家庭 WireGuard（STUN）",
+            endpointSource = WireGuardEndpointSource.STUN,
+            endpointHost = "111.23.167.101",
+            endpointPort = 12354,
+            endpointBindingId = "stun-1",
+            interfaceAddresses = listOf("10.77.0.3/32"),
+            serverPublicKey = "KEY123",
+        )
+
+        // 纯本机这一侧：路由网段 / DNS / MTU 都不该被 Hub 可达性挡住。
+        assertFalse(wireGuardEditNeedsRouter(base, base.copy(allowedIps = listOf("10.77.0.0/24", "192.168.5.0/24"))))
+        assertFalse(wireGuardEditNeedsRouter(base, base.copy(dnsServers = listOf("223.5.5.5"), mtu = 1400)))
+        // 会写进路由器 peer 的字段。
+        assertTrue(wireGuardEditNeedsRouter(base, base.copy(interfaceAddresses = listOf("10.77.0.6/32"))))
+        assertTrue(wireGuardEditNeedsRouter(base, base.copy(name = "换名字")))
+        assertTrue(wireGuardEditNeedsRouter(base, base.copy(endpointBindingId = "stun-2")))
+        assertTrue(wireGuardEditNeedsRouter(base, base.copy(serverPublicKey = "KEY456")))
+    }
 }
 

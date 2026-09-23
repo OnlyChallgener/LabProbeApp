@@ -75,7 +75,7 @@ class WireGuardUiPolicyTest {
 
         assertTrue(pending.contains("已提交"))
         assertTrue(pending.contains("待核对"))
-        assertTrue(pending.contains("原本地配置保持不变"))
+        assertTrue(pending.contains("本地配置保持原样"))
         assertTrue(rejected.contains("失败，未更改"))
     }
 

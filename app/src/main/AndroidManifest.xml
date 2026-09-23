@@ -16,6 +16,9 @@
         android:label="极客网探"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
+        <!-- 让 adb 能对正式包做方法级采样（am profile）。只放开 shell 的采样权限，
+             不改变运行时行为、也不允许调试器附加；用来定位主线程卡顿。 -->
+        <profileable android:shell="true" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

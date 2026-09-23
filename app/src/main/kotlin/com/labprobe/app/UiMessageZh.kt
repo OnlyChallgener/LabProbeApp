@@ -21,6 +21,13 @@ fun uiMessageZh(raw: String?): String {
             "连接被拒绝，请检查服务是否可用"
         "broken pipe" in lower ->
             "连接已中断"
+        // Android 的 ECONNABORTED：本机路由表变了（隧道起停、Wi‑Fi/蜂窝切换）时最常见，
+        // 直译成英文对用户没有意义。
+        "software caused connection abort" in lower || "connection aborted" in lower ->
+            "连接被本机中断（网络或隧道刚切换），请重试"
+        // OkHttp 的连接超时原文是 "failed to connect to … after 6000ms"，不含 timeout 字样。
+        "failed to connect" in lower || "connect failure" in lower ->
+            "连不上目标服务，请检查地址是否可达"
         "timeout" in lower || "timed out" in lower ->
             "请求超时，请稍后重试"
         "network is unreachable" in lower || "no route to host" in lower || "no route" in lower ->
