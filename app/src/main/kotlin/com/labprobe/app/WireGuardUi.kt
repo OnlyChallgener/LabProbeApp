@@ -424,16 +424,10 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             val operationVersion = operations.state.value?.completedVersion ?: 0L
             val current = withContext(Dispatchers.IO) { store.load() }
             if (current.any { it.endpointSource == WireGuardEndpointSource.STUN }) {
-                // 只有「看不见穿透规则」才配说 STUN 不可用。网关配置和路由器 LAN 只是交叉
-                // 核对用的，读不到就沿用上次的值 —— 之前把三者捆成一个 runCatching，
-                // 结果 Hub 一抖，正在握手的好地址也被刷成「STUN 状态暂时不可用」。
+                // 这一页不再判定「STUN 地址能不能用」：读不到规则就什么都不做，
+                // 地址通不通由连接结果说。以前 Hub 一抖，正在工作的好地址也被刷成「不可用」。
                 val snapshotResult = runCatching { stunApi.list() }
-                if (snapshotResult.isFailure) {
-                    withContext(Dispatchers.IO) {
-                        current.filter { it.endpointSource == WireGuardEndpointSource.STUN }
-                            .forEach { profile -> store.markEndpointError(profile.id, WireGuardEndpointSource.STUN, "STUN 状态暂时不可用，保留上次地址") }
-                    }
-                } else {
+                if (snapshotResult.isSuccess) {
                     val snapshot = snapshotResult.getOrThrow()
                     val probed = runCatching {
                         wireGuardHubApi.loadServerConfig() to wireGuardHubApi.loadRouterLanIp()
@@ -1422,24 +1416,6 @@ private fun WireGuardEditorDialog(
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // 删除只动本机：官方 WireGuard 客户端的删除就是这个语义，
-                    // 路由器上的 peer 由 Hub 那侧管理，不在手机卡片里拆共享链路。
-                    if (isExisting) {
-                        TextButton(
-                            onClick = {
-                                val floor = operation?.completedVersion ?: 0L
-                                if (onDelete()) { submittedAfterVersion = floor; deleteInFlight = true }
-                                else error = "已有网络配置操作正在进行，请稍候"
-                            },
-                            enabled = !busy,
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed),
-                        ) {
-                            Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(15.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("删除", style = LabTypography.Button)
-                        }
-                    }
                     OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = LabCoreSurface.InnerShape) { Text("取消", style = LabTypography.Button) }
                     OutlinedButton(onClick = {
                         val next = initial.copy(
@@ -1476,6 +1452,24 @@ private fun WireGuardEditorDialog(
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(if (operation?.targetId == operationTarget && operation.running && !deleteInFlight) "处理中…" else "保存", style = LabTypography.Button)
+                    }
+                }
+                // 删除只动本机：官方 WireGuard 客户端的删除就是这个语义，
+                // 路由器上的 peer 由 Hub 那侧管理，不在手机卡片里拆共享链路。
+                if (isExisting) {
+                    TextButton(
+                        onClick = {
+                            val floor = operation?.completedVersion ?: 0L
+                            if (onDelete()) { submittedAfterVersion = floor; deleteInFlight = true }
+                            else error = "已有网络配置操作正在进行，请稍候"
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed),
+                    ) {
+                        Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("删除配置", style = LabTypography.CompactButton)
                     }
                 }
             }

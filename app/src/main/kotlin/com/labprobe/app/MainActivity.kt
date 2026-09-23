@@ -4009,18 +4009,34 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
                     )
             ) {
                 Text("WireGuard", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
-                Text(
-                    when {
-                        busy -> "正在切换…"
-                        handshaked -> "已连接"
-                        running -> "隧道已起，等待握手"
-                        hint.isNotBlank() -> hint
-                        else -> "未连接"
-                    },
-                    style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // 状态小字配状态图标：转圈=还在连，绿勾=真握上手，红叉=刚才那次失败。
+                // 图标槽固定 14dp，免得文字在有无图标之间跳位。
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
+                        when {
+                            busy || (running && !handshaked) -> CircularProgressIndicator(
+                                Modifier.size(13.dp), strokeWidth = 2.dp, color = LabV2.Amber
+                            )
+                            handshaked -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(14.dp), tint = LabV2.Green)
+                            hint.isNotBlank() -> Icon(Icons.Rounded.Cancel, null, Modifier.size(14.dp), tint = LabV2.Red)
+                        }
+                    }
+                    Text(
+                        when {
+                            busy -> "正在切换…"
+                            handshaked -> "已连接"
+                            running -> "隧道已起，等待握手"
+                            hint.isNotBlank() -> hint
+                            else -> "未连接"
+                        },
+                        style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Switch(
                 checked = running,

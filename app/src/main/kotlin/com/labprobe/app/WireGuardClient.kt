@@ -573,21 +573,23 @@ internal object WireGuardEndpointCoordinator {
                 profile.endpointBindingId,
             ) ?: profile
         }
-        // 拿不到网关端口 / 路由器 LAN 时只能跳过交叉核对：那是「不知道」，不是「不匹配」。
-        // 用未知去锁死一个正在工作的地址，就是之前「STUN 明明可用却判不可用」的来源。
-        val crossChecked = listenPort > 0 && routerIp.isNotBlank()
-        val error = when {
-            rule.transportProtocol != "UDP" || !rule.usesRouterNativeMapping || rule.targetType == "router_self" ->
-                "绑定的穿透规则不是路由器原生 UDP 映射"
-            rule.ready != true || rule.runtime.publicEndpoint.isBlank() -> "STUN 尚未就绪，旧地址仅供参考"
-            crossChecked && rule.targetPort != listenPort -> "穿透目标端口尚未同步至网关 $listenPort，旧地址仅供参考"
-            crossChecked && rule.targetIpv4 != routerIp -> "穿透目标并非当前网关，旧地址不可用于连接"
-            else -> ""
+        // 绑错规则是配置问题，要说；地址当下通不通不是配置问题，交给「连一下」裁决。
+        if (rule.transportProtocol != "UDP" || !rule.usesRouterNativeMapping || rule.targetType == "router_self") {
+            return@map store.markEndpointError(
+                profile.id,
+                WireGuardEndpointSource.STUN,
+                "绑定的穿透规则不是路由器原生 UDP 映射，请重新选择",
+                profile.endpointBindingId,
+            ) ?: profile
         }
-        if (error.isNotEmpty()) {
-            // Preserve the last working endpoint, so a temporary STUN probe
-            // failure cannot turn a working profile into an empty one.
-            return@map store.markEndpointError(profile.id, WireGuardEndpointSource.STUN, error, profile.endpointBindingId) ?: profile
+        // STUN 探测是瞬时状态，用它判死一个正在工作的地址，就会出现「能连上却提示不可用」。
+        // 规则还没就绪 / 端口或网关对不上时：保留上次地址，并清掉更早版本留下的告警残留。
+        val crossChecked = listenPort > 0 && routerIp.isNotBlank()
+        val usable = rule.ready == true && rule.runtime.publicEndpoint.isNotBlank() &&
+            (!crossChecked || (rule.targetPort == listenPort && rule.targetIpv4 == routerIp))
+        if (!usable) {
+            return@map if (profile.endpointUpdateError.isBlank()) profile
+            else store.markEndpointError(profile.id, WireGuardEndpointSource.STUN, "", profile.endpointBindingId) ?: profile
         }
         store.applyEndpointUpdate(
             profile.id,
