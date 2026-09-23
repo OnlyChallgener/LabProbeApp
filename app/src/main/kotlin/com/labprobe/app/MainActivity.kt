@@ -409,6 +409,11 @@ class AppPrefs(context: Context) {
     /** Router LAN IPv4 as reported by the Hub; used to derive the tunnel's home route. */
     var wgHomeLanIpv4: String get() = sp.getString("wg_home_lan_ipv4_v1", "") ?: ""
         set(v) = sp.edit().putString("wg_home_lan_ipv4_v1", v.trim()).apply()
+    /** Offline fallback for the router-tunnel cleanup panel: last successful peer list. */
+    var wgRouterPeersJson: String get() = sp.getString("wg_router_peers_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("wg_router_peers_v1", v).apply()
+    var wgRouterPeersAt: Long get() = sp.getLong("wg_router_peers_at_v1", 0L)
+        set(v) = sp.edit().putLong("wg_router_peers_at_v1", v).apply()
     var routerLanUrl: String get() = sp.getString("router_lan_url_v1", "") ?: ""
         set(v) = sp.edit().putString("router_lan_url_v1", v.trim()).apply()
     var routerWanUrl: String get() = sp.getString("router_wan_url_v1", "") ?: ""

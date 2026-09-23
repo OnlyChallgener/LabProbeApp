@@ -83,11 +83,13 @@ private const val WIREGUARD_GATEWAY_TARGET = "wireguard:gateway"
 private const val WIREGUARD_SYNC_TARGET = "wireguard:sync"
 private fun wireGuardProfileTarget(profileId: String) = "wireguard:profile:$profileId"
 private fun wireGuardConnectTarget(profileId: String) = "wireguard:connect:$profileId"
+private fun wireGuardPeerTarget(peerId: String) = "wireguard:peer:$peerId"
 
 /** The shared operation registry also serves STUN and favorites; WG never renders their terminal state. */
 internal fun isWireGuardOperationTarget(targetId: String): Boolean =
     targetId == WIREGUARD_GATEWAY_TARGET || targetId == WIREGUARD_SYNC_TARGET ||
-        targetId.startsWith("wireguard:profile:") || targetId.startsWith("wireguard:connect:")
+        targetId.startsWith("wireguard:profile:") || targetId.startsWith("wireguard:connect:") ||
+        targetId.startsWith("wireguard:peer:")
 
 /** Only rules that the core binding API will accept are offered as a WG binding choice. */
 internal fun selectableWireGuardStunRules(
@@ -174,6 +176,37 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         System.currentTimeMillis() - runtime.latestHandshakeAt < 180_000L
     val noHandshakeTooLong = handshakeWatchSince > 0L && System.currentTimeMillis() - handshakeWatchSince > 15_000L
     val homeLanRoutes = homeLanRouteCidrs(prefs.wgHomeLanIpv4, prefs.routerLanUrl)
+    var routerPeers by remember { mutableStateOf<List<WireGuardRouterPeer>>(emptyList()) }
+    var routerPeersAt by remember { mutableStateOf(0L) }
+    var routerPeersOffline by remember { mutableStateOf(false) }
+    var showRouterPeers by remember { mutableStateOf(false) }
+    var routerPeersTick by remember { mutableStateOf(0) }
+
+    suspend fun refreshRouterPeers() {
+        runCatching { wireGuardHubApi.loadRouterPeers() }
+            .onSuccess { peers ->
+                routerPeers = peers
+                routerPeersAt = System.currentTimeMillis()
+                routerPeersOffline = false
+                withContext(Dispatchers.IO) {
+                    prefs.wgRouterPeersJson = routerPeersToJson(peers)
+                    prefs.wgRouterPeersAt = System.currentTimeMillis()
+                }
+            }
+            .onFailure {
+                routerPeersOffline = true
+                // 离线时仍要能翻历史：读上次成功拉到的快照，删除按钮整排禁用。
+                val cached = withContext(Dispatchers.IO) { decodeRouterPeers(prefs.wgRouterPeersJson) }
+                if (cached.isNotEmpty()) {
+                    routerPeers = cached
+                    routerPeersAt = prefs.wgRouterPeersAt
+                }
+            }
+    }
+
+    LaunchedEffect(showRouterPeers, routerPeersTick) {
+        if (showRouterPeers) refreshRouterPeers()
+    }
     val gatewayErrorPrefix = when {
         operation?.targetId != WIREGUARD_GATEWAY_TARGET || operation.error == null -> null
         gatewayOperationMode == "refresh" -> "刷新失败"
@@ -661,10 +694,22 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(7.dp))
             Text(if (operation?.targetId == WIREGUARD_SYNC_TARGET && operation?.running == true) "正在同步 Agent…" else "重新同步自动配置", style = LabTypography.CompactButton)
         }
+        OutlinedButton(
+            onClick = { showRouterPeers = true },
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, WireGuardBlue.copy(alpha = .32f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = WireGuardBlue),
+            shape = LabCoreSurface.InnerShape,
+        ) {
+            Icon(Icons.Rounded.Public, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("路由器上的隧道", style = LabTypography.CompactButton)
+        }
         // 同一条操作只播报一次：属于某个配置卡片的由那张卡片自己显示，
         // 否则一条「配置已提交，待核对」会在卡里和页面底部各出现一次。
         visibleOperation?.takeIf { state ->
-            editor == null && profiles.none { state.targetId == wireGuardProfileTarget(it.id) }
+            editor == null && !state.targetId.startsWith("wireguard:peer:") &&
+                profiles.none { state.targetId == wireGuardProfileTarget(it.id) }
         }?.let {
             WireGuardOperationStatus(
                 operation = it,
@@ -879,6 +924,26 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     pendingServerEnable = profile
                 }
             },
+        )
+    }
+
+    if (showRouterPeers) {
+        WireGuardRouterPeersDialog(
+            peers = routerPeers,
+            snapshotAt = routerPeersAt,
+            offline = routerPeersOffline,
+            operation = visibleOperation?.takeIf { it.targetId.startsWith("wireguard:peer:") },
+            onDelete = { peer ->
+                val started = operations.launch(wireGuardPeerTarget(peer.id), "正在删除 ${peer.name.ifBlank { peer.id }}…") { report ->
+                    report("正在从路由器移除这条隧道…")
+                    wireGuardHubApi.removeRouterPeer(peer.id)
+                    refreshRouterPeers()
+                    report("已从路由器移除 ${peer.name.ifBlank { peer.id }}")
+                }
+                if (!started) message = "已有操作正在进行，请稍候"
+            },
+            onRefresh = { routerPeersTick++ },
+            onDismiss = { showRouterPeers = false },
         )
     }
 
@@ -1499,6 +1564,113 @@ private fun WireGuardEditorDialog(
     }
 }
 
+
+@Composable
+private fun WireGuardRouterPeersDialog(
+    peers: List<WireGuardRouterPeer>,
+    snapshotAt: Long,
+    offline: Boolean,
+    operation: NetworkOperationState?,
+    onDelete: (WireGuardRouterPeer) -> Unit,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val stamp = snapshotAt.takeIf { it > 0L }?.let {
+        runCatching {
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it))
+        }.getOrNull()
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 640.dp),
+            shape = LabV2.CardShape,
+            color = Color.White,
+        ) {
+            Column(
+                Modifier.padding(20.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Text("路由器上的隧道", style = LabTypography.PageTitle)
+                Text(
+                    "删手机上的配置不会动这里；这里删的是路由器共享的隧道，会真的断掉那一头的连接。",
+                    style = LabTypography.Caption.copy(color = LabV2.InkMuted),
+                )
+                Text(
+                    when {
+                        offline && stamp != null -> "离线快照 $stamp · 连上 Hub 才能删除"
+                        offline -> "还没成功连上 Hub 读取过"
+                        stamp != null -> "实时 · $stamp · 共 ${peers.size} 条"
+                        else -> "实时"
+                    },
+                    style = LabTypography.Caption.copy(
+                        color = if (offline) WireGuardAmber else LabV2.InkMuted,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                )
+                if (peers.isEmpty()) {
+                    Text("路由器上目前没有 WireGuard 隧道。", style = LabTypography.Caption.copy(color = LabV2.InkMuted))
+                }
+                peers.forEach { peer ->
+                    val label = peer.name.ifBlank { peer.id }
+                    val peerOperation = operation?.takeIf { it.targetId == wireGuardPeerTarget(peer.id) }
+                    val busy = peerOperation?.running == true
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = LabCoreSurface.Inner,
+                        shape = LabCoreSurface.InnerShape,
+                        border = BorderStroke(1.dp, if (peer.referenced) LabCoreSurface.Border else WireGuardAmber.copy(alpha = .32f)),
+                    ) {
+                        Column(Modifier.padding(horizontal = 11.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(label, style = LabTypography.CardTitle.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${peer.allowedIps.joinToString(" ")} · ${peer.publicKey.take(8)}… · " +
+                                            if (peer.referenced) "有对应配置" else "无对应配置（孤儿）",
+                                        style = LabTypography.Caption.copy(color = if (peer.referenced) LabV2.InkMuted else WireGuardAmber),
+                                        maxLines = 2,
+                                    )
+                                }
+                                if (busy) {
+                                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = LabV2.Primary)
+                                } else {
+                                    TextButton(
+                                        onClick = { onDelete(peer) },
+                                        enabled = !offline && operation?.running != true,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed),
+                                    ) { Text("删除", style = LabTypography.CompactButton) }
+                                }
+                            }
+                            peerOperation?.let { state ->
+                                Text(
+                                    state.error?.let { uiMessageZh(it) } ?: state.label,
+                                    style = LabTypography.Caption.copy(
+                                        color = if (state.error != null) WireGuardRed else LabV2.Primary,
+                                    ),
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onRefresh,
+                        enabled = operation?.running != true,
+                        modifier = Modifier.weight(1f),
+                        shape = LabCoreSurface.InnerShape,
+                    ) { Text(if (offline) "重试连接 Hub" else "刷新", style = LabTypography.Button) }
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = LabCoreSurface.InnerShape,
+                    ) { Text("关闭", style = LabTypography.Button) }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun WireGuardField(

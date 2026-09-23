@@ -134,7 +134,8 @@ fun ChildInternetOverviewScreen(
         ChildInternetOfficialHero(
             guardedCount = effectiveDevices.size,
             freshness = childGuardFreshnessLabel(
-                generatedAtEpoch = overview.generatedAtEpoch,
+                dataEpoch = overview.lastSampleAtEpoch,
+                stale = overview.stale,
                 refreshing = overview.refreshing,
                 failed = overview.error.isNotBlank()
             )
@@ -846,13 +847,25 @@ internal fun childGuardTodayLine(device: ChildInternetDeviceState): String {
     }
 }
 
-/** 时效标签只讲 Hub 的 `generatedAt`，从不声称「实时」。 */
-internal fun childGuardFreshnessLabel(generatedAtEpoch: Long?, refreshing: Boolean, failed: Boolean): String {
-    val stamp = generatedAtEpoch?.takeIf { it > 0L }?.let(::formatChildGuardClock)
+/**
+ * 时效标签只讲数据自己的时间，不讲「我刚问过 Hub」。
+ * Hub 的 generatedAt 是生成时刻：用量冻结时它照样是"现在"，于是「更新于 12:21」
+ * 会盖在 07:44 的旧数字上。数据超过十分钟没动就说「数据停在」。
+ */
+internal fun childGuardFreshnessLabel(
+    dataEpoch: Long?,
+    stale: Boolean,
+    refreshing: Boolean,
+    failed: Boolean,
+): String {
+    val stamp = dataEpoch?.takeIf { it > 0L }?.let(::formatChildGuardClock)
+    val dataAgeSeconds = dataEpoch?.takeIf { it > 0L }?.let { System.currentTimeMillis() / 1000 - it } ?: Long.MAX_VALUE
+    val frozen = stale || dataAgeSeconds > 10 * 60
     return when {
-        failed && stamp != null -> "更新失败 · 最后更新 $stamp"
+        failed && stamp != null -> "更新失败 · 最后数据 $stamp"
         failed -> "更新失败"
         stamp == null -> if (refreshing) "数据同步中…" else "等待首次同步"
+        frozen -> if (refreshing) "数据停在 $stamp · 同步中" else "数据停在 $stamp"
         refreshing -> "更新于 $stamp · 同步中"
         else -> "更新于 $stamp"
     }

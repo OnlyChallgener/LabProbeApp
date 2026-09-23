@@ -43,4 +43,15 @@ class ChildInternetMiniCardTest {
         assertEquals("按计划放行",
             childGuardMiniSubtitle(overview(true, device("a", "partial"), device("b", "unrestricted"))))
     }
+
+    @Test
+    fun freshnessLabelReportsDataTimeNotSyncTime() {
+        val now = System.currentTimeMillis() / 1000
+        fun label(dataEpoch: Long?, stale: Boolean) =
+            childGuardFreshnessLabel(dataEpoch = dataEpoch, stale = stale, refreshing = false, failed = false)
+        org.junit.Assert.assertTrue(label(now, false).startsWith("更新于"))
+        org.junit.Assert.assertTrue(label(now - 3 * 3600, false).startsWith("数据停在"))
+        org.junit.Assert.assertTrue(label(now, stale = true).startsWith("数据停在"))
+        org.junit.Assert.assertEquals("等待首次同步", label(null, false))
+    }
 }

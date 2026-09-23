@@ -605,6 +605,44 @@ internal fun boundWireGuardStunRule(profile: WireGuardProfile, rules: List<StunR
     if (profile.endpointSource != WireGuardEndpointSource.STUN || profile.endpointBindingId.isBlank()) null
     else rules.firstOrNull { it.id == profile.endpointBindingId && it.transportProtocol == "UDP" }
 
+internal data class WireGuardRouterPeer(
+    val id: String,
+    val name: String,
+    val publicKey: String,
+    val allowedIps: List<String>,
+    /** True when an endpoint profile still owns this peer; false means it is an orphan. */
+    val referenced: Boolean,
+)
+
+internal fun routerPeersToJson(peers: List<WireGuardRouterPeer>): String = JSONArray().apply {
+    peers.forEach {
+        put(
+            JSONObject()
+                .put("id", it.id)
+                .put("name", it.name)
+                .put("publicKey", it.publicKey)
+                .put("allowedIps", JSONArray(it.allowedIps))
+                .put("referenced", it.referenced),
+        )
+    }
+}.toString()
+
+internal fun decodeRouterPeers(raw: String): List<WireGuardRouterPeer> = runCatching {
+    val array = JSONArray(raw.ifBlank { "[]" })
+    (0 until array.length()).mapNotNull { index ->
+        val row = array.optJSONObject(index) ?: return@mapNotNull null
+        val id = row.optString("id").trim()
+        if (id.isBlank()) return@mapNotNull null
+        WireGuardRouterPeer(
+            id = id,
+            name = row.optString("name").trim(),
+            publicKey = row.optString("publicKey").trim(),
+            allowedIps = jsonStringList(row.optJSONArray("allowedIps")),
+            referenced = row.optBoolean("referenced", false),
+        )
+    }
+}.getOrDefault(emptyList())
+
 data class WireGuardProvisionResult(
     val profile: WireGuardProfile,
     val desiredRevision: Long,
@@ -1158,6 +1196,19 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
     }
 
     suspend fun loadRouterLanIp(): String = withContext(Dispatchers.IO) { routerLanIp() }
+
+    internal suspend fun loadRouterPeers(): List<WireGuardRouterPeer> = withContext(Dispatchers.IO) {
+        val root = JSONObject(requestText("/api/wireguard/peers"))
+        decodeRouterPeers(root.optJSONArray("peers")?.toString().orEmpty())
+    }
+
+    /** Shared router config: removing a tunnel here affects every client, hence the explicit UI. */
+    internal suspend fun removeRouterPeer(peerId: String) {
+        withContext(Dispatchers.IO) {
+            requestText("/api/wireguard/peers/${java.net.URLEncoder.encode(peerId, "UTF-8")}", "DELETE")
+            Unit
+        }
+    }
 
     suspend fun stunRuleDependents(ruleId: String): List<String> = withContext(Dispatchers.IO) {
         val root = getServer()
