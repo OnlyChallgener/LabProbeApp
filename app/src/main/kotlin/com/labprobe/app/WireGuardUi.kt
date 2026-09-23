@@ -174,7 +174,9 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var handshakeWatchSince by remember { mutableStateOf(0L) }
     val handshaked = runtime.running && runtime.latestHandshakeAt > 0L &&
         System.currentTimeMillis() - runtime.latestHandshakeAt < 180_000L
-    val noHandshakeTooLong = handshakeWatchSince > 0L && System.currentTimeMillis() - handshakeWatchSince > 15_000L
+    // 打通 CGNAT 的第一包 UDP 常会丢，wg 后端要重发几次 handshake initiation 才成；
+    // 15 秒就报「一直握不上手」等于在用户刚点连接时就判死，这里留 30 秒余量。
+    val noHandshakeTooLong = handshakeWatchSince > 0L && System.currentTimeMillis() - handshakeWatchSince > 30_000L
     val homeLanRoutes = homeLanRouteCidrs(prefs.wgHomeLanIpv4, prefs.routerLanUrl)
     var routerPeers by remember { mutableStateOf<List<WireGuardRouterPeer>>(emptyList()) }
     var routerPeersAt by remember { mutableStateOf(0L) }
