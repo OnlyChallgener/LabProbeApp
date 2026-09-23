@@ -1667,25 +1667,16 @@ private fun LabProbeDdnsDetailPage(
                 }
                 if (record.lastError.isNotBlank()) Text(uiMessageZh(record.lastError), fontSize = LabTypography.Caption.fontSize, color = RouterRed, fontWeight = FontWeight.SemiBold)
             }
+            // 忙时按钮保持原色 + 转圈，只是不再响应点击：变灰会让人以为点不动、
+            // 或者以为出错了（用户明确要求过）。真正不能用的原因是「未启用/没有可发布的地址」，
+            // 那才用灰色表达。
             if (record.recordTypes.any { it == "A" || it == "AAAA" }) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onRefreshAddress, enabled = !busy, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp)) { Text(if (busy) "处理中" else "刷新检测地址", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
-                    Button(onClick = onUpdateNow, enabled = canUpdate, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(13.dp), colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)) { Text(if (busy) "正在更新…" else "立即更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) }
+                    UpdateNowButton(canUpdate, busy, Modifier.weight(1f).height(42.dp), onUpdateNow)
                 }
             } else {
-                Button(
-                    onClick = onUpdateNow,
-                    enabled = canUpdate,
-                    modifier = Modifier.fillMaxWidth().height(42.dp),
-                    shape = RoundedCornerShape(13.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = RouterBlue),
-                ) {
-                    Text(
-                        if (busy) "正在更新…" else "立即更新",
-                        fontSize = LabTypography.Supporting.fontSize,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+                UpdateNowButton(canUpdate, busy, Modifier.fillMaxWidth().height(42.dp), onUpdateNow)
             }
         }
     }
@@ -1698,10 +1689,10 @@ private fun LabProbeDdnsAddressCard(title: String, published: String, detected: 
             Text(title, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.weight(1f))
             TinyBadge(if (published.isNotBlank()) "已发布" else if (detected.isNotBlank()) "待发布" else "无地址", if (published.isNotBlank()) RouterGreen else RouterAmber)
         }
-        LabProbeCopyableValue(published.ifBlank { detected }, "未检测到地址", textSize = LabTypography.Value.fontSize)
+        LabProbeKvRow("已发布", published, "未发布", muted = published.isBlank())
+        // 只在两个地址不一致时才多占一行；一致的时候再列一遍就是纯留白。
         if (published.isNotBlank() && detected.isNotBlank() && published != detected) {
-            Text("检测到新地址", fontSize = LabTypography.Caption.fontSize, color = RouterBlue, fontWeight = FontWeight.SemiBold)
-        LabProbeCopyableValue(detected, "未检测到地址", textSize = LabTypography.Value.fontSize, textColor = RouterBlue)
+            LabProbeKvRow("检测到", detected, "未检测到", accent = true)
         }
         Text("${labProbeAddressStateLabel(state)} · ${labProbeSourceLabel(source)}", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
     }
@@ -1711,13 +1702,64 @@ private fun LabProbeDdnsAddressCard(title: String, published: String, detected: 
 private fun LabProbeDdnsValueCard(type: String, label: String, value: String, published: String) {
     PremiumCard(if (published.isNotBlank()) RouterGreen else RouterAmber) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("记录类型：$type", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.weight(1f))
+            Text("记录类型", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, modifier = Modifier.width(66.dp))
+            Text(type, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.weight(1f))
             TinyBadge(if (published.isNotBlank()) "已发布" else "待发布", if (published.isNotBlank()) RouterGreen else RouterAmber)
         }
-        Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-        LabProbeCopyableValue(value, "未填写", textSize = LabTypography.Value.fontSize)
-        Text("已发布", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
-        LabProbeCopyableValue(published, "未发布", textSize = LabTypography.Supporting.fontSize, textColor = RouterMuted, textWeight = FontWeight.Medium)
+        LabProbeKvRow(label, value, "未填写")
+        LabProbeKvRow("已发布", published, "未发布", muted = published.isBlank())
+    }
+}
+
+/** 官方 App 那种一行一条：标签靠左、值靠右、复制贴在值后面，不再整片留白。 */
+@Composable
+private fun LabProbeKvRow(label: String, value: String, placeholder: String, muted: Boolean = false, accent: Boolean = false) {
+    val context = LocalContext.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            fontSize = LabTypography.Caption.fontSize,
+            fontWeight = FontWeight.SemiBold,
+            color = RouterMuted,
+            maxLines = 1,
+            modifier = Modifier.width(66.dp),
+        )
+        SelectionContainer(Modifier.weight(1f)) {
+            Text(
+                value.ifBlank { placeholder },
+                fontSize = LabTypography.Supporting.fontSize,
+                fontWeight = if (value.isBlank() || muted) FontWeight.Medium else FontWeight.SemiBold,
+                color = when {
+                    value.isBlank() || muted -> RouterMuted
+                    accent -> RouterBlue
+                    else -> RouterInk
+                },
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = { copy(context, value) }, enabled = value.isNotBlank(), modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Rounded.ContentCopy, "复制", Modifier.size(15.dp), tint = if (value.isNotBlank()) RouterBlue else RouterMuted.copy(alpha = .45f))
+        }
+    }
+}
+
+@Composable
+private fun UpdateNowButton(canUpdate: Boolean, busy: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Button(
+        onClick = { if (!busy) onClick() },
+        // 忙时不算"不可用"：按钮保持原色并转圈，只是不再接受第二次点击。
+        enabled = canUpdate || busy,
+        modifier = modifier,
+        shape = RoundedCornerShape(13.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = RouterBlue),
+    ) {
+        if (busy) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
+            Spacer(Modifier.width(7.dp))
+        }
+        Text(if (busy) "正在更新…" else "立即更新", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
     }
 }
 

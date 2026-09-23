@@ -612,6 +612,8 @@ internal data class WireGuardRouterPeer(
     val allowedIps: List<String>,
     /** True when an endpoint profile still owns this peer; false means it is an orphan. */
     val referenced: Boolean,
+    /** When the Hub first recorded this peer, as ISO-8601 UTC; blank means unknown. */
+    val createdAt: String = "",
 )
 
 internal fun routerPeersToJson(peers: List<WireGuardRouterPeer>): String = JSONArray().apply {
@@ -622,7 +624,8 @@ internal fun routerPeersToJson(peers: List<WireGuardRouterPeer>): String = JSONA
                 .put("name", it.name)
                 .put("publicKey", it.publicKey)
                 .put("allowedIps", JSONArray(it.allowedIps))
-                .put("referenced", it.referenced),
+                .put("referenced", it.referenced)
+                .put("createdAt", it.createdAt),
         )
     }
 }.toString()
@@ -639,6 +642,7 @@ internal fun decodeRouterPeers(raw: String): List<WireGuardRouterPeer> = runCatc
             publicKey = row.optString("publicKey").trim(),
             allowedIps = jsonStringList(row.optJSONArray("allowedIps")),
             referenced = row.optBoolean("referenced", false),
+            createdAt = row.optString("createdAt").trim(),
         )
     }
 }.getOrDefault(emptyList())

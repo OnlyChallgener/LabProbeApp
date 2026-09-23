@@ -183,8 +183,10 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var routerPeersOffline by remember { mutableStateOf(false) }
     var showRouterPeers by remember { mutableStateOf(false) }
     var routerPeersTick by remember { mutableStateOf(0) }
+    var routerPeersBusy by remember { mutableStateOf(false) }
 
     suspend fun refreshRouterPeers() {
+        routerPeersBusy = true
         runCatching { wireGuardHubApi.loadRouterPeers() }
             .onSuccess { peers ->
                 routerPeers = peers
@@ -204,6 +206,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     routerPeersAt = prefs.wgRouterPeersAt
                 }
             }
+        routerPeersBusy = false
     }
 
     LaunchedEffect(showRouterPeers, routerPeersTick) {
@@ -934,6 +937,9 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
             peers = routerPeers,
             snapshotAt = routerPeersAt,
             offline = routerPeersOffline,
+            refreshing = routerPeersBusy,
+            activePeerId = runtime.profileId.orEmpty().takeIf { it.isNotBlank() }?.let(::wireGuardPeerId).orEmpty(),
+            tunnelHandshaked = handshaked,
             operation = visibleOperation?.takeIf { it.targetId.startsWith("wireguard:peer:") },
             onDelete = { peer ->
                 val started = operations.launch(wireGuardPeerTarget(peer.id), "正在删除 ${peer.name.ifBlank { peer.id }}…") { report ->
@@ -1572,6 +1578,9 @@ private fun WireGuardRouterPeersDialog(
     peers: List<WireGuardRouterPeer>,
     snapshotAt: Long,
     offline: Boolean,
+    refreshing: Boolean,
+    activePeerId: String,
+    tunnelHandshaked: Boolean,
     operation: NetworkOperationState?,
     onDelete: (WireGuardRouterPeer) -> Unit,
     onRefresh: () -> Unit,
@@ -1616,22 +1625,58 @@ private fun WireGuardRouterPeersDialog(
                     val label = peer.name.ifBlank { peer.id }
                     val peerOperation = operation?.takeIf { it.targetId == wireGuardPeerTarget(peer.id) }
                     val busy = peerOperation?.running == true
+                    // 手机上正在用的那条一定要跳出来：这一排删除是共享配置，
+                    // 认错行就等于把自己刚连上的隧道删掉。
+                    val active = activePeerId.isNotBlank() && peer.id == activePeerId
+                    val created = formatRouterPeerCreated(peer.createdAt)
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        color = LabCoreSurface.Inner,
+                        color = if (active) WireGuardBlue.copy(alpha = .06f) else LabCoreSurface.Inner,
                         shape = LabCoreSurface.InnerShape,
-                        border = BorderStroke(1.dp, if (peer.referenced) LabCoreSurface.Border else WireGuardAmber.copy(alpha = .32f)),
+                        border = BorderStroke(
+                            1.dp,
+                            when {
+                                active -> WireGuardBlue.copy(alpha = .45f)
+                                peer.referenced -> LabCoreSurface.Border
+                                else -> WireGuardAmber.copy(alpha = .32f)
+                            },
+                        ),
                     ) {
                         Column(Modifier.padding(horizontal = 11.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(label, style = LabTypography.CardTitle.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Text(
+                                            label,
+                                            style = LabTypography.CardTitle.copy(fontSize = 14.sp),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (active) {
+                                            Surface(
+                                                color = if (tunnelHandshaked) WireGuardGreen.copy(alpha = .12f) else WireGuardAmber.copy(alpha = .12f),
+                                                shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp),
+                                            ) {
+                                                Text(
+                                                    if (tunnelHandshaked) "当前连接" else "正在连这条",
+                                                    Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                                    color = if (tunnelHandshaked) WireGuardGreen else WireGuardAmber,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                )
+                                            }
+                                        }
+                                    }
                                     Text(
                                         "${peer.allowedIps.joinToString(" ")} · ${peer.publicKey.take(8)}… · " +
-                                            if (peer.referenced) "有对应配置" else "无对应配置（孤儿）",
+                                            if (peer.referenced) "有对应配置" else "无对应配置（孤儿）" +
+                                            if (created.isNotBlank() && !peer.referenced) " · $created" else "",
                                         style = LabTypography.Caption.copy(color = if (peer.referenced) LabV2.InkMuted else WireGuardAmber),
                                         maxLines = 2,
                                     )
+                                    if (created.isNotBlank() && peer.referenced) {
+                                        Text(created, style = LabTypography.Caption.copy(color = LabV2.InkMuted))
+                                    }
                                 }
                                 if (busy) {
                                     CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = LabV2.Primary)
@@ -1659,10 +1704,19 @@ private fun WireGuardRouterPeersDialog(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = onRefresh,
-                        enabled = operation?.running != true,
+                        // 刷新自己得说出「正在读」：不转的话看起来像点了没反应。
+                        enabled = !refreshing && operation?.running != true,
                         modifier = Modifier.weight(1f),
                         shape = LabCoreSurface.InnerShape,
-                    ) { Text(if (offline) "重试连接 Hub" else "刷新", style = LabTypography.Button) }
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp, color = WireGuardBlue)
+                            Spacer(Modifier.width(7.dp))
+                            Text("正在读取…", style = LabTypography.Button)
+                        } else {
+                            Text(if (offline) "重试连接 Hub" else "刷新", style = LabTypography.Button)
+                        }
+                    }
                     OutlinedButton(
                         onClick = onDismiss,
                         modifier = Modifier.weight(1f),
@@ -1699,6 +1753,15 @@ private fun WireGuardField(
 }
 
 private fun splitWireGuardList(value: String): List<String> = value.split(',', '\n').map(String::trim).filter(String::isNotBlank)
+
+/** Hub 的 ISO-8601 UTC 创建时间 -> 「创建于 09-21 14:03」；没记过就返回空串，不猜。 */
+private fun formatRouterPeerCreated(iso: String): String {
+    if (iso.isBlank()) return ""
+    return runCatching {
+        val local = java.time.Instant.parse(iso).atZone(java.time.ZoneId.systemDefault())
+        "创建于 " + local.format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"))
+    }.getOrDefault("")
+}
 
 private fun formatWireGuardBytes(bytes: Long): String = when {
     bytes < 1024L -> "$bytes B"

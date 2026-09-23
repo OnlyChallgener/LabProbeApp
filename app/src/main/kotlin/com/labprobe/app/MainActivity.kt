@@ -1354,6 +1354,8 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     var wolDevices by mutableStateOf(parseWolDevices(prefs.wolDevicesJson))
     var loading by mutableStateOf(false)
     var hubConnected by mutableStateOf(false)
+    /** 已经记进「可用地址」的 Hub 地址，避免每次刷新都写一遍偏好。 */
+    private var lastRememberedHubUrl = ""
     var mqttConnected by mutableStateOf(false)
     var realtimeDataFresh by mutableStateOf(false)
     var lastRouterRealtimeAt by mutableLongStateOf(0L)
@@ -1863,7 +1865,17 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         }
         prefs.lastRefresh = nowClock()
         hubConnected = true
+        // 只有真连上过的地址才配进下拉列表。
+        rememberWorkingHubUrl()
         if (!silent) message = "刷新成功：${prefs.lastRefresh}"
+    }
+
+    /** 把当前正在工作的 Hub 地址记进「可用地址」，每个地址只写一次。 */
+    private fun rememberWorkingHubUrl() {
+        val url = normalizeHubBaseUrl(prefs.hub)
+        if (url.isBlank() || url == lastRememberedHubUrl) return
+        lastRememberedHubUrl = url
+        prefs.addHistory("hub", url)
     }
 
     private fun persistCachesAsync() {
@@ -3392,22 +3404,6 @@ fun TinyInfoParam(label: String, value: String, icon: ImageVector, accent: Color
                 Text(value, fontSize = 12.7.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-    }
-}
-
-@Composable
-fun LabeledHistoryInput(label: String, hint: String, value: String, onValueChange: (String) -> Unit, historyKey: String, prefs: AppPrefs, keyboardType: KeyboardType = KeyboardType.Text, password: Boolean = false) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        CompactTextField(
-            value = value,
-            onValueChange = onValueChange,
-            placeholder = hint,
-            trailingIcon = { HistoryDropdown(historyKey, prefs) { onValueChange(it) } },
-            visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            modifier = Modifier.weight(1f)
-        )
     }
 }
 
@@ -11520,7 +11516,27 @@ fun SettingsScreen(
         routerConfigLoading = false
     }
     ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
-        LabeledHistoryInput("Hub", "留空，手动填写 Hub 地址", hub, { hub = it }, "hub", prefs)
+        // 协议头做成下拉，正文只填 host:port：以前要手打 http:// 前缀，
+        // 打错一个字母就连不上，而且看不出来是协议头的问题。
+        val hubScheme = if (hub.trim().startsWith("https://", ignoreCase = true)) "https://" else "http://"
+        val hubBody = hub.trim().removePrefix("http://").removePrefix("https://")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Hub", Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            CompactDropdown(
+                value = hubScheme,
+                options = listOf("http://", "https://"),
+                onSelect = { scheme -> hub = scheme + hubBody },
+                modifier = Modifier.width(94.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            CompactTextField(
+                value = hubBody,
+                onValueChange = { hub = hubScheme + it },
+                placeholder = "192.168.5.46:58443",
+                trailingIcon = { HistoryDropdown("hub", prefs) { picked -> hub = picked } },
+                modifier = Modifier.weight(1f),
+            )
+        }
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -11576,7 +11592,8 @@ fun SettingsScreen(
                 prefs.hub = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
-                prefs.addHistory("hub", cleanHub)
+                // 地址要等真连上才进「可用地址」列表：以前一保存就写进去，
+                // 连不上的地址会一直留在下拉里，看着像可用。
                 if (connectionChanged) state.markHubChanged() else state.markHubSavedWithoutConnectionChange()
                 if (connectionChanged) scope.launch {
                     if (connectionChanged) state.refreshAll(forceHealth = true, forceFull = true, silent = true)

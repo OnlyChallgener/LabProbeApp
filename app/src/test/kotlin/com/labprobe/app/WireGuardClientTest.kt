@@ -653,5 +653,28 @@ class WireGuardClientTest {
         assertEquals("", wireGuardServerErrorForRevision(state, 12))
         assertFalse(isWireGuardServerReady(state))
     }
+
+    @Test
+    fun routerPeerSnapshotKeepsCreationTimeAndTreatsMissingAsUnknown() {
+        val peers = listOf(
+            WireGuardRouterPeer(
+                id = "app-phone", name = "Phone", publicKey = "abc123456789",
+                allowedIps = listOf("10.77.0.2/32"), referenced = true,
+                createdAt = "2026-09-21T06:12:21Z",
+            ),
+            WireGuardRouterPeer(
+                id = "app-old", name = "Old", publicKey = "def123456789",
+                allowedIps = listOf("10.77.0.9/32"), referenced = false,
+            ),
+        )
+
+        val decoded = decodeRouterPeers(routerPeersToJson(peers))
+
+        assertEquals("2026-09-21T06:12:21Z", decoded.first().createdAt)
+        // 没记过创建时间的老 peer 保持空，不能拿"今天"糊上去。
+        assertEquals("", decoded[1].createdAt)
+        assertEquals(listOf("app-phone", "app-old"), decoded.map { it.id })
+        assertEquals(listOf(true, false), decoded.map { it.referenced })
+    }
 }
 
