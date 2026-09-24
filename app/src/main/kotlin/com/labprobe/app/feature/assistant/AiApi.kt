@@ -326,11 +326,15 @@ class AiApiClient(
                     val item = rows.optJSONObject(index) ?: continue
                     val examples = item.optJSONArray("examples")
                     val example = examples?.optString(0).orEmpty()
-                    if (example.isNotBlank()) add(AiToolHint(
+                    // 能力面板要列全量目录，所以这里不再按 example 过滤；
+                    // 常用指令胶囊自己筛有 example 的项。
+                    add(AiToolHint(
                         id = item.optString("id"),
                         name = item.optString("name", example),
                         example = example,
                         risk = item.optString("risk", "read"),
+                        description = item.optString("description"),
+                        confirmation = item.optString("confirmation"),
                     ))
                 }
             }

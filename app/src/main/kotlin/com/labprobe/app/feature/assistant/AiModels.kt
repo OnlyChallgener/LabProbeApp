@@ -63,6 +63,8 @@ data class AiToolHint(
     val name: String,
     val example: String,
     val risk: String,
+    val description: String = "",
+    val confirmation: String = "",
 )
 
 data class AiToolConfirmation(

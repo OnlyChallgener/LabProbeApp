@@ -1688,6 +1688,108 @@ private fun AiQuickHintsRow(hints: List<AiToolHint>, onSelect: (String) -> Unit)
     }
 }
 
+// 之前"能力范围"是模型即兴写的文案，必然不全；这里直接渲染 Hub 下发的目录。
+// 内置项不是 catalog 工具（对话是用户界面本身、用量是 /api/ai/usage 端点），
+// 单列一组，避免和注册表混淆。
+private val AI_BUILTIN_CAPABILITIES = listOf(
+    "AI 对话" to "多轮对话、工具调用与〔操作记录〕确认流程都在本页完成",
+    "AI 用量" to "统计每次请求的 Token 消耗与缓存命中",
+    "API 配置" to "配置模型与 API 密钥，密钥由 Hub 加密托管",
+    "常用指令" to "点击指令胶囊，把示例问题填入输入框",
+)
+
+@Composable
+private fun AiCapabilitiesPanel(
+    tools: List<AiToolHint>,
+    onSelectExample: (String) -> Unit,
+    onCollapse: () -> Unit,
+) {
+    val grouped = remember(tools) { tools.partition { it.risk == "write" } }
+    AiPanel {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("能力范围", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
+                Text(
+                    if (tools.isEmpty()) "等待 Hub 下发" else "共 ${tools.size} 项 · 由 Hub 下发",
+                    color = AiTone.Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+                Text("收起", color = AiTone.Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.aiTap(onClick = onCollapse).padding(horizontal = 8.dp))
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (tools.isEmpty()) {
+                    item {
+                        Text("连接 Hub 后这里会列出全部可用能力；下面先显示本页内置能力。", color = AiTone.Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                    }
+                }
+                if (grouped.first.isNotEmpty()) {
+                    item { AiCapabilityGroupLabel("只读能力 · 直接调用", grouped.first.size) }
+                    items(grouped.first, key = { "read-" + it.id }, contentType = { "ai-capability" }) { hint ->
+                        AiCapabilityRow(hint, locked = false, onSelectExample)
+                    }
+                }
+                if (grouped.second.isNotEmpty()) {
+                    item { AiCapabilityGroupLabel("写入操作 · 需手机二次确认", grouped.second.size) }
+                    items(grouped.second, key = { "write-" + it.id }, contentType = { "ai-capability" }) { hint ->
+                        AiCapabilityRow(hint, locked = true, onSelectExample)
+                    }
+                }
+                item { AiCapabilityGroupLabel("本页内置", AI_BUILTIN_CAPABILITIES.size) }
+                items(AI_BUILTIN_CAPABILITIES, key = { "builtin-" + it.first }, contentType = { "ai-capability" }) { entry ->
+                    AiCapabilityStaticRow(entry.first, entry.second)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiCapabilityGroupLabel(label: String, count: Int) {
+    Text("$label（$count）", color = AiTone.MintDark, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+}
+
+@Composable
+private fun AiCapabilityRow(hint: AiToolHint, locked: Boolean, onSelectExample: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .aiTap(enabled = hint.example.isNotBlank()) { onSelectExample(hint.example) }
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        if (locked) {
+            Icon(Icons.Rounded.Lock, null, Modifier.size(13.dp), tint = AiTone.Warning)
+        } else {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(AiTone.Mint.copy(alpha = .55f)))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(hint.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AiTone.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (hint.description.isNotBlank()) {
+                Text(hint.description, fontSize = 10.5.sp, lineHeight = 13.5.sp, color = AiTone.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiCapabilityStaticRow(label: String, description: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(AiTone.Border))
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AiTone.Ink, maxLines = 1)
+            Text(description, fontSize = 10.5.sp, lineHeight = 13.5.sp, color = AiTone.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 @Composable
 private fun AiWelcomeGuideCard(onTryPrompt: (String) -> Unit) {
     val prompts = listOf(
@@ -2222,6 +2324,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var usage by remember(client.identity) { mutableStateOf(AiTokenSummary()) }
     var usageKnown by remember(client.identity) { mutableStateOf(true) }
     var showHistory by remember(client.identity) { mutableStateOf(false) }
+    var showCapabilities by remember(client.identity) { mutableStateOf(false) }
     var multiSelectHistory by remember(client.identity) { mutableStateOf(false) }
     var selectedHistoryIds by remember(client.identity) { mutableStateOf<Set<String>>(emptySet()) }
     var historyBusy by remember(client.identity) { mutableStateOf(false) }
@@ -2481,6 +2584,18 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 }
                 Surface(
                     modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
+                        showCapabilities = !showCapabilities
+                    }),
+                    shape = CircleShape,
+                    color = if (showCapabilities) AiTone.MintSoft else AiTone.Surface,
+                    border = BorderStroke(1.dp, if (showCapabilities) AiTone.Mint.copy(alpha = .45f) else AiTone.Border),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.SmartToy, "能力范围", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
+                }
+                Surface(
+                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
                         AiChatSession.messages.clear()
                         AiChatSession.conversationId = null
                         messages.clear()
@@ -2512,6 +2627,13 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 }
             }
         })
+        if (showCapabilities) {
+            AiCapabilitiesPanel(
+                tools = toolHints,
+                onSelectExample = selectToolHint,
+                onCollapse = { showCapabilities = false },
+            )
+        }
         if (showHistory) {
             AiPanel {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2872,8 +2994,10 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                 }
             }
         }
-        if (toolHints.isNotEmpty()) {
-            AiQuickHintsRow(toolHints, selectToolHint)
+        // catalog 现在返回全量目录（能力面板要用），胶囊只挑带示例的项。
+        val quickHints = remember(toolHints) { toolHints.filter { it.example.isNotBlank() } }
+        if (quickHints.isNotEmpty()) {
+            AiQuickHintsRow(quickHints, selectToolHint)
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
