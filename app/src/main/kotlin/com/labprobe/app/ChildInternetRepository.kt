@@ -172,13 +172,26 @@ class RealChildInternetRepository internal constructor(
 
     override fun hydrateFromCache() {
         cacheKeys = runCatching { cache.keys() }.getOrDefault(emptyList())
-        val today = childGuardStatisticsDate()
-        val cached = readCachedOverview(today) ?: run { state = state.copy(loading = true); return }
-        // 只有今天的聚合才带着「现在」的在离线；昨天的那份只留身份。
-        val snapshot = if (cached.first == today) cached.second else cached.second.withoutPresence()
-        applyOverview(snapshot, cacheRead = true)
-        state.devices.forEach { device -> applyCachedUsage(device.summary.deviceId) }
-        state = state.copy(loading = state.devices.isEmpty())
+        scope.launch {
+            val today = childGuardStatisticsDate()
+            // 缓存里的聚合与逐台报告都是几十到几百 KB 的 JSON，解析挪出主线程；
+            // 铺回界面前后状态一致，只是不再阻塞首页第一帧之后的第一次滑动。
+            val cached = withContext(Dispatchers.IO) { readCachedOverview(today) }
+            if (cached == null) { state = state.copy(loading = true); return@launch }
+            // 只有今天的聚合才带着「现在」的在离线；昨天的那份只留身份。
+            val snapshot = if (cached.first == today) cached.second else cached.second.withoutPresence()
+            applyOverview(snapshot, cacheRead = true)
+            val uids = state.devices.map { device -> device.summary.deviceId }
+            val reports = withContext(Dispatchers.IO) {
+                uids.mapNotNull { uid -> readCachedUsagePayload(uid)?.let { payload -> uid to parseChildGuardUsageReport(payload) } }
+            }
+            reports.forEach { (uid, report) ->
+                updateDevice(uid) { current ->
+                    if (current.usage != null) current else current.withUsage(report)
+                }
+            }
+            state = state.copy(loading = state.devices.isEmpty())
+        }
     }
 
     /** 今天的聚合优先；换天了才退回最近一份，至少设备名单不用等网络。 */
@@ -593,14 +606,19 @@ class RealChildInternetRepository internal constructor(
      * 分键，所以昨天那份只会以昨天的日期出现，不会冒充今天的实况。
      */
     private fun applyCachedUsage(uid: String) {
-        val prefix = usageCacheKey(uid, "").dropLast(1)
-        val latestKey = cacheKeys.filter { it.startsWith(prefix) && it.lastDatePart() != null }
-            .maxByOrNull { it.lastDatePart().orEmpty() } ?: return
-        val raw = runCatching { cache.read(latestKey) }.getOrNull() ?: return
-        val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val payload = readCachedUsagePayload(uid) ?: return
         updateDevice(uid) { current ->
             if (current.usage != null) current else current.withUsage(parseChildGuardUsageReport(payload))
         }
+    }
+
+    /** 找这台设备最近一份报告的原始 JSON；纯读，供 IO 线程调用。 */
+    private fun readCachedUsagePayload(uid: String): JSONObject? {
+        val prefix = usageCacheKey(uid, "").dropLast(1)
+        val latestKey = cacheKeys.filter { it.startsWith(prefix) && it.lastDatePart() != null }
+            .maxByOrNull { it.lastDatePart().orEmpty() } ?: return null
+        val raw = runCatching { cache.read(latestKey) }.getOrNull() ?: return null
+        return runCatching { JSONObject(raw) }.getOrNull()
     }
 
     private fun cacheKeyList(): List<String> = runCatching { cache.keys() }.getOrDefault(emptyList())

@@ -597,6 +597,17 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("offline_hidden_keys_v1", v).apply()
     var cacheEvents: String get() = sp.getString("cache_events", "") ?: ""
         set(v) = sp.edit().putString("cache_events", v).apply()
+    // 一批键一次 apply：apply() 每次都会把整个 prefs 文件全量序列化落盘，
+    // 五连写等于把多 MB 缓存盘 5 遍。
+    fun writeSnapshotCaches(status: String?, devices: String, online: String, offline: String, events: String) {
+        val editor = sp.edit()
+        status?.let { editor.putString("cache_status", it) }
+        editor.putString("cache_devices", devices)
+            .putString("cache_online_devices", online)
+            .putString("cache_offline_devices_v1", offline)
+            .putString("cache_events", events)
+            .apply()
+    }
     var hiddenEventDatesJson: String get() = sp.getString("hidden_event_dates_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("hidden_event_dates_v1", v).apply()
     var eventNotificationBaselineReady: Boolean get() = sp.getBoolean("event_notification_baseline_ready", false)
@@ -1250,6 +1261,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private val foregroundRecoverySignals = Channel<Boolean>(Channel.CONFLATED)
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cacheWriteMutex = Mutex()
+    // WSS 帧的 JSON 解析专用单线程通道：路由器面板约每 2 秒一帧，几十到几百 KB，
+    // 在主线程解析就是滑动掉帧与点击迟滞的源头；单通道保证帧序不乱。
+    private val realtimeParseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private var eventNotificationSessionIdentity: String? = null
     private var startupPresenceReminderPending = true
     private val cacheWriteVersion = AtomicLong(0L)
@@ -1290,10 +1304,12 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             }
         },
         onRouterRealtime = { raw ->
-            stateScope.launch {
+            realtimeParseScope.launch {
                 if (!foregroundActive) return@launch
-                runCatching { JSONObject(raw) }.getOrNull()?.let {
-                    realtimeSmoother.acceptRouter(it)
+                val root = runCatching { JSONObject(raw) }.getOrNull() ?: return@launch
+                stateScope.launch {
+                    if (!foregroundActive) return@launch
+                    realtimeSmoother.acceptRouter(root)
                     routerDashboardError = ""
                     mqttConnected = true
                     realtimeDataFresh = true
@@ -1312,15 +1328,23 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             }
         },
         onDevicesRealtime = { raw ->
-            stateScope.launch {
+            realtimeParseScope.launch {
                 if (!foregroundActive) return@launch
-                runCatching { JSONObject(raw) }.getOrNull()?.let { realtimeSmoother.acceptDevices(it) }
+                val root = runCatching { JSONObject(raw) }.getOrNull() ?: return@launch
+                stateScope.launch {
+                    if (!foregroundActive) return@launch
+                    realtimeSmoother.acceptDevices(root)
+                }
             }
         },
         onDevicesSnapshot = { raw ->
-            stateScope.launch {
+            realtimeParseScope.launch {
                 if (!foregroundActive) return@launch
-                acceptDevicesSnapshot(raw)
+                val frame = parseDevicesSnapshotFrame(raw) ?: return@launch
+                stateScope.launch {
+                    if (!foregroundActive) return@launch
+                    acceptDevicesSnapshot(frame)
+                }
             }
         },
         onTaskUpdate = { raw -> RouterTaskRepositoryRegistry.get(prefs).acceptRealtime(raw) },
@@ -1448,13 +1472,21 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         }
     }
 
-    private fun acceptDevicesSnapshot(raw: String) {
-        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return
-        if (!root.optBoolean("accepted", true) || !root.optBoolean("fullSnapshot", false)) return
+    private class DevicesSnapshotFrame(val root: JSONObject, val fresh: List<DeviceItem>)
+
+    /** 在 IO 通道做重活：整帧 JSON + 设备数组解析，一次 toString→再解析也不占主线程。 */
+    private fun parseDevicesSnapshotFrame(raw: String): DevicesSnapshotFrame? {
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        if (!root.optBoolean("accepted", true) || !root.optBoolean("fullSnapshot", false)) return null
+        val values = root.optJSONArray("devices") ?: return null
+        return DevicesSnapshotFrame(root, applyDeviceOverrides(parseDeviceArray(values.toString()), deviceOverrides))
+    }
+
+    private fun acceptDevicesSnapshot(frame: DevicesSnapshotFrame) {
+        val root = frame.root
         val epoch = root.optLong("sampleEpochMs", 0L)
         if (epoch > 0L && epoch <= lastDevicesSnapshotEpoch) return
-        val values = root.optJSONArray("devices") ?: return
-        val fresh = applyDeviceOverrides(parseDeviceArray(values.toString()), deviceOverrides)
+        val fresh = frame.fresh
         val confirmedEmpty = root.optBoolean("confirmedEmpty", false)
         if (fresh.isEmpty() && onlineDevices.isNotEmpty() && !confirmedEmpty) return
         if (epoch > 0L) lastDevicesSnapshotEpoch = epoch
@@ -1634,6 +1666,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         pauseRealtimeRendering()
         foregroundRecoverySignals.close()
         cacheScope.cancel()
+        realtimeParseScope.cancel()
         stateScope.cancel()
     }
 
@@ -1894,11 +1927,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
             val eventsText = JSONArray(eventSnapshot.map { it.toJson() }).toString()
             cacheWriteMutex.withLock {
                 if (version != cacheWriteVersion.get()) return@withLock
-                statusText?.let { prefs.cacheStatus = it }
-                prefs.cacheDevices = devicesText
-                prefs.cacheOnlineDevices = onlineText
-                prefs.cacheOfflineDevices = offlineText
-                prefs.cacheEvents = eventsText
+                prefs.writeSnapshotCaches(statusText, devicesText, onlineText, offlineText, eventsText)
             }
         }
     }
