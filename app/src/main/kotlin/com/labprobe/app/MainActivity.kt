@@ -2375,6 +2375,12 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
     var listLoading by remember { mutableStateOf(false) }
     var listError by remember { mutableStateOf("") }
     var showPicker by remember { mutableStateOf(false) }
+    var editingWorkspace by remember { mutableStateOf<RouterWorkspace?>(null) }
+    // 本机改过路由器名字之后要重算显示出来的那一列 —— 偏好不是 State，读不出变化。
+    var workspaceNamesEpoch by remember { mutableIntStateOf(0) }
+    val visibleWorkspaces = remember(workspaces, workspaceNamesEpoch, connectionEpoch) {
+        workspaces.map { it.withLocalRouterName(context) }
+    }
 
     fun switchWorkspace(id: String) {
         val target = selectableWorkspaceId(workspaces, id, listingConfirmed)
@@ -2432,17 +2438,33 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         AgentUpdateCoordinator.bind(prefs)
         RouterRepositoryRegistry.get(prefs).start()
     }
-    val currentWorkspace = workspaces.firstOrNull { it.routerId == workspaceId } ?: defaultRouterWorkspace()
+    val currentWorkspace = visibleWorkspaces.firstOrNull { it.routerId == workspaceId }
+        ?: defaultRouterWorkspace().withLocalRouterName(context)
     if (showPicker) {
         RouterWorkspacePickerDialog(
-            workspaces = workspaces,
+            workspaces = visibleWorkspaces,
             selectedId = workspaceId,
             listingConfirmed = listingConfirmed,
             loading = listLoading,
             error = listError,
             onSelect = ::switchWorkspace,
+            onEdit = { editingWorkspace = it },
             onRefresh = { scope.launch { loadWorkspaces(restoreSavedSelection = false) } },
             onDismiss = { showPicker = false },
+        )
+    }
+    editingWorkspace?.let { target ->
+        RouterWorkspaceEditDialog(
+            target = target,
+            hubRoot = rootPrefs.hubRoot,
+            onDismiss = { editingWorkspace = null },
+            onNameSaved = { workspaceNamesEpoch++ },
+            onDeleted = {
+                editingWorkspace = null
+                showPicker = false
+                workspaceNamesEpoch++
+                scope.launch { loadWorkspaces(restoreSavedSelection = true) }
+            },
         )
     }
     key(workspaceId, RouterWorkspaceStore.activationVersion()) {

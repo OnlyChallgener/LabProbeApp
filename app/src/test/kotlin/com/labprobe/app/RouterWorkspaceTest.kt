@@ -3,6 +3,7 @@ package com.labprobe.app
 import android.content.Context
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -165,6 +166,52 @@ class RouterWorkspaceTest {
         assertEquals("路由器在线 · 在线 5 台", routerWorkspaceCountsLine(row.copy(deviceCount = null, onlineDeviceCount = 5)))
         assertEquals("路由器在线 · 共 5 台", routerWorkspaceCountsLine(row.copy(deviceCount = 5, onlineDeviceCount = null)))
         assertEquals("路由器离线 · 在线 5 台", routerWorkspaceCountsLine(row.copy(online = false, deviceCount = null, onlineDeviceCount = 5)))
+    }
+
+    @Test
+    fun localRouterNameOverridesTheHubSuppliedOne() {
+        assertEquals("默认路由器", defaultRouterWorkspace().withLocalRouterName(context).name)
+        AppPrefs(context, DEFAULT_ROUTER_WORKSPACE_ID).routerDisplayName = "客厅那台"
+        assertEquals("客厅那台", defaultRouterWorkspace().withLocalRouterName(context).name)
+        val row = RouterWorkspace("north", "Ruijie BE72", "", "BE72-PRO", true, "/r/north", deviceCount = 25, onlineDeviceCount = 10)
+        assertEquals("Ruijie BE72", row.withLocalRouterName(context).name)
+        AppPrefs(context, "north").routerDisplayName = "北边锐捷"
+        val renamed = row.withLocalRouterName(context)
+        assertEquals("北边锐捷", renamed.name)
+        // 只换名字，在线/台数这些真数据必须原样留着。
+        assertEquals(row.copy(name = "北边锐捷"), renamed)
+    }
+
+    @Test
+    fun forgettingANonDefaultRouterClearsItsPrefsAndTheSavedSelection() {
+        val hub = "http://192.168.5.46:58443"
+        val north = AppPrefs(context, "north")
+        north.hubRoot = hub
+        north.routerDisplayName = "北边锐捷"
+        north.cacheStatus = """{"router":"north"}"""
+        RouterWorkspaceStore.activate(context, hub, "north")
+        assertEquals("north", RouterWorkspaceStore.remembered(context, hub))
+
+        forgetRouterWorkspace(context, hub, "north")
+
+        assertEquals("", AppPrefs(context, "north").routerDisplayName)
+        assertEquals("", AppPrefs(context, "north").cacheStatus)
+        assertEquals(DEFAULT_ROUTER_WORKSPACE_ID, RouterWorkspaceStore.remembered(context, hub))
+    }
+
+    @Test
+    fun forgettingTheDefaultRouterIsRefused() {
+        // 默认工作区的偏好和全局设置同一个文件，删它等于清空整个 App。
+        assertThrows(IllegalArgumentException::class.java) {
+            forgetRouterWorkspace(context, "http://192.168.5.46:58443", DEFAULT_ROUTER_WORKSPACE_ID)
+        }
+    }
+
+    @Test
+    fun countsLineKeepsUnknownApartFromZero() {
+        assertEquals("路由器在线 · 设备数待同步", routerWorkspaceCountsLine(defaultRouterWorkspace().copy(online = true)))
+        assertEquals("路由器在线 · 在线 0 / 共 0 台", routerWorkspaceCountsLine(
+            defaultRouterWorkspace().copy(online = true, deviceCount = 0, onlineDeviceCount = 0)))
     }
 
     @Test

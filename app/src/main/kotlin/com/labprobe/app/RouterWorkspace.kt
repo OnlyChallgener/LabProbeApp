@@ -11,18 +11,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Router
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,8 +37,13 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +61,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -246,6 +259,34 @@ internal class SecureWorkspaceStringStore(context: Context, routerId: String, hu
 }
 
 
+/**
+ * 删掉一台路由器在本机的全部痕迹：工作区偏好、Keystore 里的令牌/密码、以及记住的选择。
+ *
+ * 只针对非默认工作区。默认那台的 `AppPrefs` 在 `usesLegacyDefault()` 时直接落在全局
+ * `labprobe` 文件上（Hub 地址、令牌、收藏夹、AI 设置全在里面），删它等于清空整个 App。
+ */
+fun forgetRouterWorkspace(context: Context, hubRoot: String, routerId: String) {
+    require(routerId != DEFAULT_ROUTER_WORKSPACE_ID) { "默认路由器不能删除" }
+    val app = context.applicationContext
+    val digest = workspaceDigest(normalizeHubBaseUrl(hubRoot) + "|" + routerId)
+    app.getSharedPreferences(routerWorkspacePreferencesName(routerId, hubRoot), Context.MODE_PRIVATE)
+        .edit().clear().commit()
+    app.getSharedPreferences("labprobe_workspace_secure_$digest", Context.MODE_PRIVATE)
+        .edit().clear().commit()
+    runCatching {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        store.aliases().toList()
+            .filter { it.startsWith("labprobe_workspace_${digest}_") }
+            .forEach { runCatching { store.deleteEntry(it) } }
+    }
+    val selection = app.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+    val key = "selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}"
+    if (selection.getString(key, "") == routerId) {
+        selection.edit().putString(key, DEFAULT_ROUTER_WORKSPACE_ID).apply()
+    }
+}
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RouterWorkspacePickerDialog(
@@ -255,81 +296,111 @@ fun RouterWorkspacePickerDialog(
     loading: Boolean,
     error: String,
     onSelect: (String) -> Unit,
+    onEdit: (RouterWorkspace) -> Unit,
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color.White,
-        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        // 整块透明，让里面那张圆角卡片自己浮着 —— 官方那台列表就是两边留空的卡片，
+        // 不是贴满屏幕宽度的抽屉。抽屉把手也去掉，标题行本身就是抓手。
+        containerColor = Color.Transparent,
+        dragHandle = null,
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp),
-            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            shape = RoundedCornerShape(20.dp),
             color = Color.White,
         ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("切换路由器", style = LabTypography.SectionTitle, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onRefresh, enabled = !loading) {
-                        Text(if (loading) "刷新中…" else "刷新", style = LabTypography.Button)
+            // 照官方那样：一行标题、一台一行，点那行就切过去。
+            // 原来底部那个通栏「关闭」按钮删了 —— 下滑和点遮罩本来就能关，它只是把弹层
+            // 撑成一整屏，中间全是留白。
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("切换路由器", style = LabTypography.SectionTitle, modifier = Modifier.weight(1f))
+                TextButton(onClick = onRefresh, enabled = !loading) {
+                    if (loading) {
+                        CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp, color = LabV2.Primary)
+                        Spacer(Modifier.width(6.dp))
                     }
+                    Text(if (loading) "刷新中…" else "刷新", style = LabTypography.Button)
                 }
-                if (error.isNotBlank()) Text(error, style = LabTypography.Caption, color = LabV2.Red)
-                Column(
-                    Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    workspaces.forEach { item ->
-                        val selected = item.routerId == selectedId
-                        val selectable = listingConfirmed && !selected
-                        val accent = if (item.online) LabV2.Green else LabV2.InkMuted
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().then(
-                                if (selectable) Modifier.clickable { onSelect(item.routerId) } else Modifier
-                            ),
-                            shape = RoundedCornerShape(13.dp),
-                            color = if (selected) Color(0xFFEAF6FF) else Color(0xFFF8FAFC),
-                            border = BorderStroke(1.dp, if (selected) Color(0xFF57A8D7) else Color(0xFFE3E9EF)),
+            }
+            if (error.isNotBlank()) Text(error, style = LabTypography.Caption, color = LabV2.Red)
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                workspaces.forEach { item ->
+                    val selected = item.routerId == selectedId
+                    val selectable = listingConfirmed && !selected
+                    val accent = if (item.online) LabV2.Green else LabV2.InkMuted
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().then(
+                            if (selectable) Modifier.clickable { onSelect(item.routerId) } else Modifier
+                        ),
+                        shape = RoundedCornerShape(13.dp),
+                        color = if (selected) Color(0xFFEAF6FF) else Color(0xFFF8FAFC),
+                        border = BorderStroke(1.dp, if (selected) Color(0xFF57A8D7) else Color(0xFFE3E9EF)),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 11.dp, end = 5.dp, top = 8.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(start = 11.dp, end = 9.dp, top = 9.dp, bottom = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Rounded.Router, null, Modifier.size(20.dp), tint = Color(0xFF2381AE))
-                                Spacer(Modifier.width(9.dp))
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                    Text(item.name, style = LabTypography.CardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    // 一条副行就够：状态点和数字在前，型号丢了不影响判断。
-                                    val detail = listOf(item.site, item.model).filter(String::isNotBlank).joinToString(" · ")
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                    ) {
-                                        Box(Modifier.size(6.dp).background(accent, CircleShape))
-                                        Text(
-                                            routerWorkspaceCountsLine(item) + if (detail.isBlank()) "" else " · $detail",
-                                            style = LabTypography.Caption,
-                                            color = accent,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                    }
+                            Icon(Icons.Rounded.Router, null, Modifier.size(20.dp), tint = Color(0xFF2381AE))
+                            Spacer(Modifier.width(9.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text(item.name, style = LabTypography.CardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                // 一条副行就够：状态点和数字在前，型号丢了不影响判断。
+                                val detail = listOf(item.site, item.model).filter(String::isNotBlank).joinToString(" · ")
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Box(Modifier.size(6.dp).background(accent, CircleShape))
+                                    Text(
+                                        routerWorkspaceCountsLine(item) + if (detail.isBlank()) "" else " · $detail",
+                                        style = LabTypography.Caption,
+                                        color = accent,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
                                 }
-                                if (selected) Icon(Icons.Rounded.CheckCircle, "当前路由器", Modifier.size(19.dp), tint = LabV2.Green)
+                            }
+                            if (selected) Icon(Icons.Rounded.CheckCircle, "当前路由器", Modifier.size(19.dp), tint = LabV2.Green)
+                            // 官方的铅笔：嵌套 clickable 会吃掉这一格的点击，不会顺手切换。
+                            Box(
+                                Modifier.size(34.dp).clip(CircleShape).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { onEdit(item) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(Icons.Rounded.Edit, "编辑${item.name}", Modifier.size(16.dp), tint = LabV2.InkMuted)
                             }
                         }
                     }
                 }
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text("关闭", style = LabTypography.Button)
-                }
             }
         }
     }
+}
+
+
+}
+
+
+/** 本机的路由器备注优先于 Hub 下发的名字；没改过就照原样显示。 */
+fun RouterWorkspace.withLocalRouterName(context: Context): RouterWorkspace {
+    val local = AppPrefs(context.applicationContext, routerId).routerDisplayName
+    return if (local.isBlank() || local == name) this else copy(name = local)
 }
 
 
@@ -344,4 +415,106 @@ fun routerWorkspaceCountsLine(item: RouterWorkspace): String {
         else -> "设备数待同步"
     }
     return (if (item.online) "路由器在线" else "路由器离线") + " · " + counts
+}
+
+
+/**
+ * 编辑一台路由器：改名字、删除。动作由弹层自己做，所以按钮能显示自己真实的进行中状态，
+ * 结果再用浮层 toast 兜底 —— 静默两秒再突然关窗是最难看的反馈。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RouterWorkspaceEditDialog(
+    target: RouterWorkspace,
+    hubRoot: String,
+    onDismiss: () -> Unit,
+    onNameSaved: () -> Unit,
+    onDeleted: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var name by remember(target.routerId) { mutableStateOf(target.name) }
+    var saving by remember(target.routerId) { mutableStateOf(false) }
+    var deleting by remember(target.routerId) { mutableStateOf(false) }
+    var confirmDelete by remember(target.routerId) { mutableStateOf(false) }
+    val deletable = target.routerId != DEFAULT_ROUTER_WORKSPACE_ID
+    ModalBottomSheet(
+        onDismissRequest = { if (!saving && !deleting) onDismiss() },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Color.White,
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp),
+        ) {
+            Text("编辑", style = LabTypography.SectionTitle)
+            OutlinedTextField(
+                value = name,
+                onValueChange = { if (!saving) name = it },
+                label = { Text("路由器名称") },
+                singleLine = true,
+                enabled = !saving && !deleting,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = {
+                    val clean = name.trim()
+                    if (clean.isBlank()) {
+                        toast(context, "路由器名称不能为空")
+                    } else {
+                        saving = true
+                        AppPrefs(context, target.routerId).routerDisplayName = clean
+                        toast(context, "已保存路由器名称：$clean")
+                        saving = false
+                        onNameSaved()
+                        onDismiss()
+                    }
+                },
+                enabled = !deleting,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(13.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary, contentColor = Color.White),
+            ) {
+                if (saving) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
+                Text(if (saving) "保存中…" else "完成修改", Modifier.padding(start = if (saving) 8.dp else 0.dp), style = LabTypography.Button)
+            }
+            if (deletable) {
+                if (!confirmDelete) {
+                    OutlinedButton(
+                        onClick = { confirmDelete = true },
+                        enabled = !saving,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(13.dp),
+                    ) { Text("删除路由器", style = LabTypography.Button, color = LabV2.Red) }
+                } else {
+                    Text("删除只清本机保存的令牌、隧道和缓存；Hub 上的数据要动它得重新连上这台路由。", style = LabTypography.Caption, color = LabV2.InkMuted)
+                    Button(
+                        onClick = {
+                            deleting = true
+                            scope.launch {
+                                withContext(Dispatchers.IO) { forgetRouterWorkspace(context, hubRoot, target.routerId) }
+                                toast(context, "已删除路由器：${target.name}")
+                                deleting = false
+                                onDeleted()
+                            }
+                        },
+                        enabled = !saving,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(13.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = LabV2.Red),
+                        border = BorderStroke(1.dp, LabV2.Border),
+                    ) {
+                        if (deleting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = LabV2.Red)
+                        Text(if (deleting) "删除中…" else "确认删除", Modifier.padding(start = if (deleting) 8.dp else 0.dp), style = LabTypography.Button)
+                    }
+                    TextButton(onClick = { confirmDelete = false }, enabled = !deleting) { Text("取消删除") }
+                }
+            } else {
+                Text("默认路由器不提供删除：它的设置和全局偏好存在同一个文件里。", style = LabTypography.Caption, color = LabV2.InkMuted)
+            }
+            TextButton(onClick = onDismiss, enabled = !saving && !deleting) { Text("关闭") }
+        }
+    }
 }
