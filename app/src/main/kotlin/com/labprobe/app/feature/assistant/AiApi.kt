@@ -4,6 +4,7 @@ import android.content.Context
 import com.labprobe.app.AppPrefs
 import com.labprobe.app.favoriteShortcuts
 import com.labprobe.app.parseTcpPeakHistory
+import com.labprobe.app.routerScopedPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
@@ -35,7 +36,7 @@ class AiStreamProtocolException(
 
 /** Only non-secret AI preferences and the Hub-reported key status live on the device. */
 class AiSettingsStore(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("labprobe_ai", Context.MODE_PRIVATE)
+    private val prefs = routerScopedPreferences(context, "labprobe_ai")
 
     fun read() = AiSettings(
         enabled = prefs.getBoolean("enabled", false),

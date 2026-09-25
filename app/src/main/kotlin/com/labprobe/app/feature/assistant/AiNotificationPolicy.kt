@@ -1,10 +1,11 @@
 package com.labprobe.app.feature.assistant
 
-/** Seen cursor is independent of notification permission/delivery. Never replay a backlog. */
+/** The cursor advances only after every row in this batch is saved locally. */
 internal data class AiNotificationBatch(
     val cursor: Int,
     val baselinePending: Boolean,
-    val latest: AiNotification?,
+    val rows: List<AiNotification>,
+    val alertRows: List<AiNotification>,
 )
 
 internal fun planAiNotificationBatch(
@@ -13,12 +14,12 @@ internal fun planAiNotificationBatch(
     rows: List<AiNotification>,
 ): AiNotificationBatch {
     val cursor = previousCursor.coerceAtLeast(0)
-    val fresh = rows.filter { it.id > cursor }.distinctBy { it.id }
-    val newest = fresh.maxByOrNull { it.id }
-    // Drain every historical page quietly; one non-empty page is not proof we caught up.
+    val fresh = rows.filter { it.id > cursor }.distinctBy { it.id }.sortedBy { it.id }
+    // Drain historical pages into the inbox, without replaying old system banners.
     return AiNotificationBatch(
-        cursor = newest?.id ?: cursor,
+        cursor = fresh.lastOrNull()?.id ?: cursor,
         baselinePending = baselinePending && fresh.isNotEmpty(),
-        latest = newest.takeUnless { baselinePending },
+        rows = fresh,
+        alertRows = if (baselinePending) emptyList() else fresh,
     )
 }

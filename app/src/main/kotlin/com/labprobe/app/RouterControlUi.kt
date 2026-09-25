@@ -104,7 +104,7 @@ private fun RouterDiagnostic.toCacheJson(): JSONObject = JSONObject()
     })
 
 private fun loadRouterDiagnosticCache(context: Context): RouterDiagnostic {
-    val raw = context.getSharedPreferences("router_control", Context.MODE_PRIVATE)
+    val raw = routerScopedPreferences(context, "router_control")
         .getString(ROUTER_DIAGNOSTIC_CACHE_PREF, "")
         .orEmpty()
     if (raw.isBlank()) return RouterDiagnostic()
@@ -133,7 +133,7 @@ private fun loadRouterDiagnosticCache(context: Context): RouterDiagnostic {
 
 private fun saveRouterDiagnosticCache(context: Context, result: RouterDiagnostic) {
     if (result.items.isEmpty()) return
-    context.getSharedPreferences("router_control", Context.MODE_PRIVATE)
+    routerScopedPreferences(context, "router_control")
         .edit()
         .putString(ROUTER_DIAGNOSTIC_CACHE_PREF, result.toCacheJson().toString())
         .apply()

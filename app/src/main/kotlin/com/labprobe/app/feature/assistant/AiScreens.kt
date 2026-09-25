@@ -61,6 +61,7 @@ import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Security
@@ -72,6 +73,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -432,12 +434,14 @@ private fun AiHeader(title: String, subtitle: String, onBack: () -> Unit, traili
             Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ArrowBack, "返回", tint = AiTone.Ink) }
         }
         Spacer(Modifier.width(12.dp))
-        Column {
-            Text(title, color = AiTone.Ink, style = LabTypography.PageTitle)
-            Text(subtitle, color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+        Column(Modifier.weight(1f)) {
+            Text(title, color = AiTone.Ink, style = LabTypography.PageTitle,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = AiTone.Muted, fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         trailing?.let {
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(6.dp))
             it()
         }
     }
@@ -931,7 +935,7 @@ fun AiSettingsScreen(
 @Composable
 fun AiUsageScreen(context: Context, onBack: () -> Unit) {
     val store = remember { AiSettingsStore(context) }
-    val prefs = remember { AppPrefs(context) }
+    val prefs = remember { AppPrefs.current(context) }
     val client = remember(prefs.hub, prefs.token) { AiApiClient(store, prefs.hub, prefs.token) }
     val localCache = remember(client.identity) { AiLocalCache(context, client.identity) }
     val cachedUsage = remember(client.identity) { localCache.readUsage() }
@@ -2122,15 +2126,24 @@ private fun AiPartialCopyDialog(message: AiMessage, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun AiNotificationDetailDialog(
-    notice: AiNotice,
-    belongsToCurrentHub: Boolean,
-    onCopy: () -> Unit,
+private fun AiNotificationInboxDialog(
+    entries: List<AiInboxEntry>,
+    loading: Boolean,
+    error: String?,
+    highlightedId: String?,
+    wrongHub: Boolean,
+    onHighlight: (String?) -> Unit,
+    onCopy: (AiInboxEntry) -> Unit,
+    onDelete: (Set<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var selecting by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var confirmDeleteIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val detail = entries.firstOrNull { it.id == highlightedId }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 690.dp),
             shape = RoundedCornerShape(18.dp),
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
@@ -2138,57 +2151,134 @@ private fun AiNotificationDetailDialog(
             shadowElevation = 8.dp,
         ) {
             Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("AI 通知", style = LabTypography.CardTitle, color = AiTone.Ink)
-                    Text(
-                        "独立通知 · 不会加入当前对话或发送给模型",
-                        style = LabTypography.Caption.copy(color = AiTone.Muted),
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("AI 通知", style = LabTypography.CardTitle, color = AiTone.Ink, modifier = Modifier.weight(1f))
+                    Text("关闭", color = AiTone.MintDark, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.aiTap(onClick = onDismiss).padding(6.dp))
                 }
-                if (!belongsToCurrentHub) {
+                Text("通知保存在本机，不会加入对话或发送给模型。", style = LabTypography.Caption.copy(color = AiTone.Muted))
+                if (wrongHub) {
+                    Text("这条通知来自其他 Hub。切换到对应连接后才能查看正文。", color = AiTone.Warning,
+                        fontSize = 12.sp, lineHeight = 17.sp)
+                }
+                if (detail != null && !wrongHub) {
+                    Text("← 返回通知列表", color = AiTone.MintDark, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.aiTap { onHighlight(null) }.padding(vertical = 5.dp))
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 450.dp),
                         shape = RoundedCornerShape(14.dp),
-                        color = AiTone.Warning.copy(alpha = .09f),
-                        border = BorderStroke(1.dp, AiTone.Warning.copy(alpha = .35f)),
+                        color = AiTone.Field,
+                        border = BorderStroke(1.dp, AiTone.Border.copy(alpha = .75f)),
                         tonalElevation = 0.dp,
                         shadowElevation = 0.dp,
                     ) {
-                        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("通知属于其他连接", style = LabTypography.SectionTitle.copy(color = AiTone.Warning))
-                            Text(
-                                "请切换到收到此通知的 Hub 后再查看。为避免把内容带入错误的连接，此处不会显示通知正文。",
-                                style = LabTypography.Body.copy(color = AiTone.Ink),
-                            )
-                        }
-                    }
-                    AiAction("关闭", Modifier.fillMaxWidth(), onClick = onDismiss)
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = false)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(AiTone.Field)
-                            .verticalScroll(rememberScrollState())
-                            .padding(13.dp),
-                    ) {
                         SelectionContainer {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (notice.title.isNotBlank()) {
-                                    Text(notice.title, style = LabTypography.SectionTitle.copy(color = AiTone.Ink))
-                                }
-                                Text(
-                                    notice.content,
-                                    Modifier.fillMaxWidth(),
-                                    style = LabTypography.Body.copy(color = AiTone.Ink),
-                                )
+                            Column(Modifier.verticalScroll(rememberScrollState()).padding(13.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(detail.title.ifBlank { "AI 通知" }, style = LabTypography.SectionTitle.copy(color = AiTone.Ink))
+                                Text(detail.content, style = LabTypography.Body.copy(color = AiTone.Ink))
                             }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AiAction("复制全文", Modifier.weight(1f), primary = true, onClick = onCopy)
-                        AiAction("关闭", Modifier.weight(1f), onClick = onDismiss)
+                        AiAction("复制全文", Modifier.weight(1f), primary = true, onClick = { onCopy(detail) })
+                        AiAction("删除此条", Modifier.weight(1f), tone = AiTone.Danger,
+                            onClick = { confirmDeleteIds = setOf(detail.id) })
+                    }
+                } else {
+                    if (highlightedId != null && !wrongHub && !loading) {
+                        Text("这条通知已删除，或未保存在本机。", color = AiTone.Warning, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("共 " + entries.size + " 条", color = AiTone.Muted, fontSize = 11.sp,
+                            modifier = Modifier.weight(1f))
+                        Text(if (selecting) "取消多选" else "多选",
+                            color = if (selecting) AiTone.Danger else AiTone.MintDark,
+                            fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.aiTap {
+                                selecting = !selecting
+                                selectedIds = emptySet()
+                            }.padding(6.dp))
+                    }
+                    if (error != null) Text(error, color = AiTone.Danger, fontSize = 11.sp)
+                    if (loading && entries.isEmpty()) {
+                        Text("正在读取本机通知…", color = AiTone.Muted, fontSize = 12.sp,
+                            modifier = Modifier.padding(vertical = 24.dp))
+                    } else if (entries.isEmpty()) {
+                        Text("暂无 AI 通知", color = AiTone.Muted, fontSize = 12.sp,
+                            modifier = Modifier.padding(vertical = 24.dp))
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 450.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            items(entries, key = { it.id }) { entry ->
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).aiTap {
+                                        if (selecting) {
+                                            selectedIds = if (entry.id in selectedIds) selectedIds - entry.id
+                                            else selectedIds + entry.id
+                                        } else onHighlight(entry.id)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (entry.id in selectedIds) AiTone.MintSoft else AiTone.Field,
+                                    border = BorderStroke(1.dp, AiTone.Border),
+                                    tonalElevation = 0.dp,
+                                    shadowElevation = 0.dp,
+                                ) {
+                                    Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (selecting) {
+                                            Text(if (entry.id in selectedIds) "☑" else "□",
+                                                color = AiTone.MintDark, fontSize = 18.sp)
+                                        }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(entry.title.ifBlank { "AI 通知" }, color = AiTone.Ink, fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(entry.content, color = AiTone.Muted, fontSize = 11.sp,
+                                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(java.text.SimpleDateFormat("M月d日 HH:mm", Locale.CHINA)
+                                                .format(java.util.Date(entry.receivedAt)), color = AiTone.Muted.copy(alpha = .7f),
+                                                fontSize = 10.sp)
+                                        }
+                                        if (!selecting) {
+                                            Text("删除", color = AiTone.Danger, fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.aiTap { confirmDeleteIds = setOf(entry.id) }
+                                                    .padding(5.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (selecting && entries.isNotEmpty()) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            AiAction(if (selectedIds.size == entries.size) "取消全选" else "全选",
+                                Modifier.weight(1f), compact = true, onClick = {
+                                    selectedIds = if (selectedIds.size == entries.size) emptySet()
+                                    else entries.mapTo(mutableSetOf()) { it.id }
+                                })
+                            AiAction("删除所选 (" + selectedIds.size + ")", Modifier.weight(1.5f),
+                                primary = true, tone = AiTone.Danger, compact = true,
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = { confirmDeleteIds = selectedIds })
+                        }
+                    }
+                }
+                if (confirmDeleteIds.isNotEmpty()) {
+                    Text("删除 " + confirmDeleteIds.size + " 条通知？删除后无法恢复。",
+                        color = AiTone.Warning, fontSize = 12.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiAction("取消", Modifier.weight(1f), compact = true,
+                            onClick = { confirmDeleteIds = emptySet() })
+                        AiAction("确认删除", Modifier.weight(1f), primary = true, tone = AiTone.Danger,
+                            compact = true, onClick = {
+                                onDelete(confirmDeleteIds)
+                                selectedIds = selectedIds - confirmDeleteIds
+                                confirmDeleteIds = emptySet()
+                            })
                     }
                 }
             }
@@ -2300,13 +2390,10 @@ private fun AiTypingBubble() {
 }
 
 @Composable
-fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}, onOpenSettings: () -> Unit = {}, diagnosisProgress: DiagnosisProgress = DiagnosisProgress(), onStartDiagnosis: () -> Unit = {}) {
+fun AiChatScreen(context: Context, prefs: AppPrefs, onBack: () -> Unit, onNavigate: (String) -> Unit = {}, onRefreshData: () -> Unit = {}, onOpenSettings: () -> Unit = {}, diagnosisProgress: DiagnosisProgress = DiagnosisProgress(), onStartDiagnosis: () -> Unit = {}) {
     val store = remember { AiSettingsStore(context) }
-    val prefs = remember { AppPrefs(context) }
     val client = remember(prefs.hub, prefs.token) { AiApiClient(store, prefs.hub, prefs.token, appPrefs = prefs) }
     val localCache = remember(client.identity) { AiLocalCache(context, client.identity) }
-    val cachedConversation = remember(client.identity) { localCache.readConversation() }
-    val cachedConversations = remember(client.identity) { localCache.readConversations() }
     val localTools = remember { AiLocalToolExecutor(prefs) }
     val messages = AiChatSession.messages
     var toolHints by remember(client.identity) { mutableStateOf(AiChatSession.toolHints) }
@@ -2329,7 +2416,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var selectedHistoryIds by remember(client.identity) { mutableStateOf<Set<String>>(emptySet()) }
     var historyBusy by remember(client.identity) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
-    var conversations by remember(client.identity) { mutableStateOf(cachedConversations) }
+    var conversations by remember(client.identity) { mutableStateOf<List<AiConversation>>(emptyList()) }
     var loadingConversations by remember(client.identity) { mutableStateOf(false) }
     var expandedHistoryDays by remember(client.identity) { mutableStateOf<Set<LocalDate>>(emptySet()) }
     var editingConversationId by remember(client.identity) { mutableStateOf<String?>(null) }
@@ -2341,16 +2428,13 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
     var selectedMessageKeys by remember(client.identity) { mutableStateOf<Set<String>>(emptySet()) }
     var messageSelectionBusy by remember(client.identity) { mutableStateOf(false) }
     var messageSelectionError by remember(client.identity) { mutableStateOf<String?>(null) }
-    var notificationId by rememberSaveable { mutableStateOf("") }
-    var notificationTitle by rememberSaveable { mutableStateOf("") }
-    var notificationContent by rememberSaveable { mutableStateOf("") }
-    var notificationHubKey by rememberSaveable { mutableStateOf("") }
-    var resolvedNotificationTitle by remember(notificationId, notificationHubKey, notificationTitle) {
-        mutableStateOf(if (aiNotificationContentIsStored(notificationTitle)) "" else notificationTitle)
-    }
-    var resolvedNotificationContent by remember(notificationId, notificationHubKey, notificationContent) {
-        mutableStateOf(if (aiNotificationContentIsStored(notificationContent)) "" else notificationContent)
-    }
+    val inboxRevision by AiNotificationInboxSignals.revision.collectAsState()
+    var showInbox by rememberSaveable { mutableStateOf(false) }
+    var highlightedInboxId by rememberSaveable { mutableStateOf<String?>(null) }
+    var requestedInboxHubKey by rememberSaveable { mutableStateOf("") }
+    var inboxEntries by remember(client.identity) { mutableStateOf<List<AiInboxEntry>>(emptyList()) }
+    var inboxLoading by remember(client.identity) { mutableStateOf(false) }
+    var inboxError by remember(client.identity) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     fun clearMessageActions() {
@@ -2413,31 +2497,35 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
 
     LaunchedEffect(AppNavigator.pendingAiNotice) {
         val notice = AppNavigator.pendingAiNotice ?: return@LaunchedEffect
-        notificationId = notice.id
-        notificationTitle = notice.title
-        notificationContent = notice.content
-        notificationHubKey = notice.hubKey
+        highlightedInboxId = notice.id
+        requestedInboxHubKey = notice.hubKey
+        showInbox = true
         AppNavigator.pendingAiNotice = null
     }
 
-    LaunchedEffect(notificationTitle, notificationContent, notificationHubKey, client.identity) {
-        val currentHubKey = aiNotificationHubKey(client.identity)
-        if (notificationHubKey.isBlank() || notificationHubKey == currentHubKey) {
-            val resolved = withContext(Dispatchers.IO) {
-                val title = if (aiNotificationContentIsStored(notificationTitle)) {
-                    aiNotificationResolveContent(context, notificationTitle)
-                } else notificationTitle
-                val content = if (aiNotificationContentIsStored(notificationContent)) {
-                    aiNotificationResolveContent(context, notificationContent)
-                } else notificationContent
-                title to content
+    LaunchedEffect(showInbox, client.identity, inboxRevision) {
+        if (!showInbox) return@LaunchedEffect
+        inboxLoading = inboxEntries.isEmpty()
+        try {
+            inboxEntries = withContext(Dispatchers.IO) {
+                val inbox = AiNotificationInboxStore(context)
+                try { inbox.list(client.identity) } finally { inbox.close() }
             }
-            resolvedNotificationTitle = resolved.first
-            resolvedNotificationContent = resolved.second
+            inboxError = null
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Throwable) {
+            inboxError = "读取通知失败：" + (error.message ?: "未知错误")
+        } finally {
+            inboxLoading = false
         }
     }
 
     LaunchedEffect(client.identity, restoreNonce) {
+        val (cachedConversation, cachedConversations) = withContext(Dispatchers.IO) {
+            localCache.readConversation() to localCache.readConversations()
+        }
+        if (conversations.isEmpty()) conversations = cachedConversations
         val hubChanged = AiChatSession.hubIdentity != client.identity
         AiChatSession.resetForHub(client.identity)
         if (hubChanged) {
@@ -2548,9 +2636,26 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         AiHeader("AI 对话", "常用指令随 Hub 能力更新", onBack = {
             if (messageActionActive && !messageSelectionBusy) clearMessageActions() else onBack()
         }, trailing = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
+                    modifier = Modifier.size(30.dp).clip(CircleShape).aiTap {
+                        requestedInboxHubKey = ""
+                        highlightedInboxId = null
+                        showInbox = true
+                    },
+                    shape = CircleShape,
+                    color = AiTone.Surface,
+                    border = BorderStroke(1.dp, AiTone.Border),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Notifications, "AI 通知", tint = AiTone.Ink,
+                            modifier = Modifier.size(17.dp))
+                    }
+                }
+                Surface(
+                    modifier = Modifier.size(30.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
                         clearMessageActions()
                         showHistory = !showHistory
                         if (showHistory && !loadingConversations) {
@@ -2583,7 +2688,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.History, "历史对话", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
                 }
                 Surface(
-                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
+                    modifier = Modifier.size(30.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
                         showCapabilities = !showCapabilities
                     }),
                     shape = CircleShape,
@@ -2595,7 +2700,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.SmartToy, "能力范围", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
                 }
                 Surface(
-                    modifier = Modifier.size(34.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
+                    modifier = Modifier.size(30.dp).clip(CircleShape).aiTap(enabled = !sending, onClick = {
                         AiChatSession.messages.clear()
                         AiChatSession.conversationId = null
                         messages.clear()
@@ -2616,7 +2721,7 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.AddComment, "新对话", tint = AiTone.Ink, modifier = Modifier.size(17.dp)) }
                 }
                 Surface(
-                    modifier = Modifier.size(34.dp).aiTap(enabled = !sending, onClick = onOpenSettings),
+                    modifier = Modifier.size(30.dp).aiTap(enabled = !sending, onClick = onOpenSettings),
                     shape = CircleShape,
                     color = AiTone.MintSoft,
                     border = BorderStroke(1.dp, AiTone.Mint.copy(alpha = .35f)),
@@ -3512,22 +3617,53 @@ fun AiChatScreen(context: Context, onBack: () -> Unit, onNavigate: (String) -> U
         partialCopyMessage?.let { message ->
             AiPartialCopyDialog(message = message, onDismiss = { partialCopyMessage = null })
         }
-        if (notificationId.isNotBlank() || notificationTitle.isNotBlank() || notificationContent.isNotBlank()) {
-            val notice = AiNotice(notificationId, resolvedNotificationTitle, resolvedNotificationContent, notificationHubKey)
-            val belongsToCurrentHub = notificationHubKey.isBlank() || notificationHubKey == aiNotificationHubKey(client.identity)
-            AiNotificationDetailDialog(
-                notice = notice,
-                belongsToCurrentHub = belongsToCurrentHub,
-                onCopy = {
-                    val fullText = if (resolvedNotificationTitle.isBlank()) resolvedNotificationContent
-                    else "$resolvedNotificationTitle\n\n$resolvedNotificationContent"
+        if (showInbox) {
+            AiNotificationInboxDialog(
+                entries = inboxEntries,
+                loading = inboxLoading,
+                error = inboxError,
+                highlightedId = highlightedInboxId,
+                wrongHub = requestedInboxHubKey.isNotBlank() &&
+                    requestedInboxHubKey != aiNotificationHubKey(client.identity),
+                onHighlight = { id ->
+                    highlightedInboxId = id
+                    if (id != null) requestedInboxHubKey = ""
+                },
+                onCopy = { entry ->
+                    val fullText = if (entry.title.isBlank()) entry.content
+                    else entry.title + "\n\n" + entry.content
                     clipboard.setText(AnnotatedString(fullText))
                 },
+                onDelete = { ids ->
+                    val targets = inboxEntries.filter { it.id in ids }
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                val inbox = AiNotificationInboxStore(context)
+                                try { inbox.delete(client.identity, ids) } finally { inbox.close() }
+                            }
+                            val manager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE)
+                                as? android.app.NotificationManager
+                            targets.forEach { entry ->
+                                val identity = aiNotificationDeliveryIdentity(
+                                    entry.id.toIntOrNull() ?: 0, entry.title, entry.content, client.identity,
+                                )
+                                manager?.cancel(identity.notificationTag, identity.managerId)
+                            }
+                            inboxEntries = inboxEntries.filterNot { it.id in ids }
+                            if (highlightedInboxId?.let { it in ids } == true) highlightedInboxId = null
+                            inboxError = null
+                        } catch (cancel: CancellationException) {
+                            throw cancel
+                        } catch (error: Throwable) {
+                            inboxError = "删除通知失败：" + (error.message ?: "未知错误")
+                        }
+                    }
+                },
                 onDismiss = {
-                    notificationId = ""
-                    notificationTitle = ""
-                    notificationContent = ""
-                    notificationHubKey = ""
+                    showInbox = false
+                    highlightedInboxId = null
+                    requestedInboxHubKey = ""
                 },
             )
         }

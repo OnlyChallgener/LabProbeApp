@@ -26,9 +26,9 @@ internal suspend fun toggleWireGuardShortcut(
     prefs: AppPrefs,
 ): WireGuardShortcutResult = withContext(Dispatchers.IO) {
     val store = WireGuardProfileStore(context.applicationContext, prefs)
-    val controller = WireGuardTunnelController.get(context.applicationContext, prefs)
-    if (runCatching { controller.status().running }.getOrDefault(false)) {
-        runCatching { controller.stop() }
+    val controller = WireGuardTunnelController.get(context.applicationContext)
+    if (runCatching { controller.status(prefs).running }.getOrDefault(false)) {
+        runCatching { controller.stop(prefs) }
         return@withContext WireGuardShortcutResult.Disconnected
     }
     // 「上次那条」优先：用户在页面里最后用的配置，就是他想要的默认目标。
@@ -36,7 +36,7 @@ internal suspend fun toggleWireGuardShortcut(
     val profile = store.load().firstOrNull { it.id == wanted }
     val privateKey = profile?.let { store.privateKey(it.id) }.orEmpty()
     if (profile == null || privateKey.isBlank()) return@withContext WireGuardShortcutResult.NeedsSetup
-    when (val result = controller.start(profile, privateKey)) {
+    when (val result = controller.start(profile, privateKey, prefs)) {
         is WireGuardStartResult.Started -> WireGuardShortcutResult.Connected
         is WireGuardStartResult.PermissionRequired -> WireGuardShortcutResult.NeedsPermission(result.intent)
         is WireGuardStartResult.Failed -> WireGuardShortcutResult.Failed(result.message)
@@ -52,7 +52,7 @@ internal data class WireGuardShortcutState(val tunnelUp: Boolean, val handshaked
 internal suspend fun wireGuardShortcutState(context: Context, prefs: AppPrefs): WireGuardShortcutState =
     withContext(Dispatchers.IO) {
         val status = runCatching {
-            WireGuardTunnelController.get(context.applicationContext, prefs).status()
+            WireGuardTunnelController.get(context.applicationContext).status(prefs)
         }.getOrNull()
         WireGuardShortcutState(
             tunnelUp = status?.running == true,

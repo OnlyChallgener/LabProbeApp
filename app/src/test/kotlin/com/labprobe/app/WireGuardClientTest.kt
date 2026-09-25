@@ -4,10 +4,26 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
 class WireGuardClientTest {
+    @Test
+    fun privateKeyIdentifiersStayIndependentAcrossRoutersAndHubs() {
+        val profileId = "phone-shared"
+        val firstHub = "http://192.168.5.46:58443"
+        val secondHub = "http://office.example:58443"
+        val legacy = wireGuardPrivateKeyStorageId("default", firstHub, firstHub, profileId)
+        val office = wireGuardPrivateKeyStorageId("office", firstHub, firstHub, profileId)
+        val otherHub = wireGuardPrivateKeyStorageId("default", secondHub, firstHub, profileId)
+        assertEquals(profileId, legacy)
+        assertTrue(office != legacy)
+        assertTrue(otherHub != legacy)
+        assertTrue(office != otherHub)
+    }
+
     private fun portProfile(source: WireGuardEndpointSource, port: Int = 51820, follows: Boolean? = null) =
         WireGuardProfile(id = "phone", name = "Phone", endpointSource = source,
             endpointHost = "vpn.example.com", endpointPort = port, followsServerPort = follows)
@@ -28,6 +44,130 @@ class WireGuardClientTest {
         assertEquals(manual, applyWireGuardServerConfig(manual, 51826, 1380, 51820))
         val stun = portProfile(WireGuardEndpointSource.STUN, port = 42137)
         assertEquals(42137, applyWireGuardServerConfig(stun, 51826, 1380, 51820).endpointPort)
+    }
+
+    @Test
+    fun existingManagedProfileCannotReprovisionWhenHubServerDocumentIsMissing() {
+        val missing = JSONObject().put("server", JSONObject.NULL)
+        val existing = portProfile(WireGuardEndpointSource.STUN).copy(serverPublicKey = "known-server-key")
+        val failure = runCatching { requireManagedWireGuardServerForExistingProfile(missing, existing) }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertTrue(failure?.message.orEmpty().contains("已阻止覆盖"))
+
+        requireManagedWireGuardServerForExistingProfile(missing, existing.copy(serverPublicKey = ""))
+        requireManagedWireGuardServerForExistingProfile(
+            JSONObject().put("server", JSONObject()), existing,
+        )
+    }
+    private fun provisionProfile() = portProfile(WireGuardEndpointSource.STUN)
+        .copy(interfaceAddresses = listOf("10.77.0.6/24"), endpointBindingId = "wg-rule")
+
+    private fun provisionRoot(profile: WireGuardProfile = provisionProfile(), agentApplied: Boolean = true): JSONObject {
+        val base = JSONObject().put("revision", 8).put("server", JSONObject()
+            .put("interfaceName", "labwg0").put("address", "10.77.0.1/24")
+            .put("listenPort", 51820).put("mtu", 1420).put("enabled", true)
+            .put("peers", JSONArray()).put("endpointProfiles", JSONArray()))
+        val server = buildWireGuardServerPayload(base, profile, "phone-public-key")
+        server.remove("expectedRevision")
+        return JSONObject().put("revision", 9).put("server", server)
+            .put("agentStatus", JSONObject()
+                .put("revision", if (agentApplied) 9 else 8)
+                .put("applyResult", JSONObject()
+                    .put("revision", if (agentApplied) 9 else 8)
+                    .put("ok", true).put("enabled", true)
+                    .put("interfaceName", "labwg0").put("controlBackend", "kernel-netlink")
+                    .put("publicKey", "server-public-key"))
+                .put("capability", JSONObject()
+                    .put("wgToolAvailable", false).put("provisioningReady", true)
+                    .put("controlBackend", "kernel-netlink")
+                    .put("running", false).put("interfaces", JSONArray())))
+    }
+
+    @Test
+    fun identicalDesiredPeerAndEndpointCanReuseExistingRevision() {
+        val profile = provisionProfile()
+        val root = provisionRoot(profile)
+        assertTrue(wireGuardProvisionTargetMatches(root, profile, "phone-public-key"))
+        assertTrue(isWireGuardServerConfigApplied(parseWireGuardServerState(root), parseWireGuardServerState(root).config))
+        val peer = root.getJSONObject("server").getJSONArray("peers").getJSONObject(0)
+        assertEquals("10.77.0.6/32", peer.getJSONArray("allowedIps").getString(0))
+        assertFalse(wireGuardProvisionTargetMatches(root, profile.copy(interfaceAddresses = listOf("10.77.0.8/32")), "phone-public-key"))
+        assertFalse(wireGuardProvisionTargetMatches(root, profile.copy(endpointBindingId = "other-rule"), "phone-public-key"))
+        assertFalse(wireGuardProvisionTargetMatches(root, profile.copy(name = "Other phone"), "phone-public-key"))
+        assertFalse(wireGuardProvisionTargetMatches(root, profile, "different-key"))
+        val endpoint = root.getJSONObject("server").getJSONArray("endpointProfiles").getJSONObject(0)
+        endpoint.put("port", 51821)
+        assertFalse(wireGuardProvisionTargetMatches(root, profile, "phone-public-key"))
+        endpoint.put("port", 51820).put("endpointSource", "ddns")
+        assertFalse(wireGuardProvisionTargetMatches(root, profile, "phone-public-key"))
+        endpoint.put("endpointSource", "stun")
+        peer.put("allowedIps", JSONArray().put("10.77.0.0/24"))
+        assertFalse(wireGuardProvisionTargetMatches(root, profile, "phone-public-key"))
+        peer.put("allowedIps", JSONArray().put("10.77.0.6/32"))
+        root.getJSONObject("server").getJSONArray("peers").put(
+            JSONObject().put("id", "other-phone").put("publicKey", "phone-public-key"),
+        )
+        assertFalse(wireGuardProvisionTargetMatches(root, profile, "phone-public-key"))
+    }
+
+    @Test
+    fun unchangedPendingRevisionIsPolledUntilAgentConfirms() = runBlocking {
+        val profile = provisionProfile()
+        val pending = provisionRoot(profile, agentApplied = false)
+        val applied = provisionRoot(profile)
+        var loads = 0
+        var pauses = 0
+        val result = awaitWireGuardProvision(
+            parseWireGuardServerState(pending).config, profile, "phone-public-key",
+            load = { loads++; applied }, pause = { pauses++ }, attempts = 3, initial = pending,
+        )
+        assertEquals(1, loads)
+        assertEquals(1, pauses)
+        assertEquals(9L, result.desiredRevision)
+        assertEquals(9L, result.appliedRevision)
+        assertEquals("server-public-key", result.profile.serverPublicKey)
+    }
+
+    @Test
+    fun lostVerificationResponseRetainsSubmittedRevisionWithoutBlindResubmit() = runBlocking {
+        val profile = provisionProfile()
+        val expected = parseWireGuardServerState(provisionRoot(profile)).config
+        var loads = 0
+        var pauses = 0
+        val failure = try {
+            awaitWireGuardProvision(
+                expected, profile, "phone-public-key",
+                load = { loads++; throw IOException("connection dropped") },
+                pause = { pauses++ }, attempts = 3,
+            )
+            null
+        } catch (error: WireGuardPendingVerificationException) {
+            error
+        }
+        assertEquals(3, loads)
+        assertEquals(2, pauses)
+        assertEquals(9L, failure?.submittedRevision)
+        assertTrue(failure?.message.orEmpty().contains("已提交"))
+        assertTrue(failure?.message.orEmpty().contains("待核对"))
+    }
+
+    @Test
+    fun changedRemotePeerAfterSubmissionRequiresManualVerification() = runBlocking {
+        val profile = provisionProfile()
+        val changed = provisionRoot(profile)
+        changed.getJSONObject("server").getJSONArray("peers").getJSONObject(0)
+            .put("allowedIps", JSONArray().put("10.77.0.9/32"))
+        val failure = try {
+            awaitWireGuardProvision(
+                parseWireGuardServerState(provisionRoot(profile)).config, profile, "phone-public-key",
+                load = { changed }, pause = {}, attempts = 1,
+            )
+            null
+        } catch (error: WireGuardPendingVerificationException) {
+            error
+        }
+        assertEquals(9L, failure?.submittedRevision)
+        assertTrue(failure?.message.orEmpty().contains("peer 或端点已变化"))
     }
 
     @Test
@@ -157,6 +297,27 @@ class WireGuardClientTest {
         assertEquals("", owned.getString("resolvedEndpoint"))
         assertEquals(1, (0 until endpoints.length()).count { endpoints.getJSONObject(it).optString("stunRuleId") == "shared-stun" })
         assertEquals(2, plan.payload.getJSONArray("peers").length())
+    }
+
+    @Test
+    fun changingAutomaticClientAddressKeepsOldAddressUntilLocalTunnelCanRestart() {
+        val old = portProfile(WireGuardEndpointSource.STUN).copy(
+            endpointBindingId = "shared-stun",
+            interfaceAddresses = listOf("10.77.0.6/24"),
+        )
+        val next = old.copy(interfaceAddresses = listOf("10.77.0.8/32"))
+        val server = serverWithBindings()
+        val oldPeers = server.getJSONObject("server").getJSONArray("peers")
+        (0 until oldPeers.length()).map(oldPeers::getJSONObject)
+            .single { it.getString("id") == "app-phone" }
+            .put("allowedIps", JSONArray().put("10.77.0.0/24"))
+        val plan = buildWireGuardProfileTransitionPlan(server, old, next, "client-key")
+        val peers = plan.payload.getJSONArray("peers")
+        val own = (0 until peers.length()).map(peers::getJSONObject)
+            .single { it.getString("id") == "app-phone" }
+
+        assertEquals(listOf("10.77.0.6/32", "10.77.0.8/32"),
+            (0 until own.getJSONArray("allowedIps").length()).map { own.getJSONArray("allowedIps").getString(it) })
     }
 
     @Test
@@ -328,8 +489,37 @@ class WireGuardClientTest {
     fun homeLanRoutesComeFromMeasuredAddressesOnly() {
         assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("192.168.5.1"))
         assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("http://192.168.5.1:8080"))
+        assertEquals(listOf("192.168.5.0/24"), privateHubLanRouteCidrs("http://192.168.5.46:58443"))
+        assertTrue(privateHubLanRouteCidrs("http://111.23.167.101:58443").isEmpty())
         assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("", "mq.lab86.shinya.icu", "192.168.5.46"))
         assertTrue(homeLanRouteCidrs("router.local", "", null).isEmpty())
+    }
+
+    @Test
+    fun manualConfigUsesOnlyTheRoutesEnteredByItsOwner() {
+        val blankManual = WireGuardProfile.newProfile(WireGuardEndpointSource.MANUAL)
+        assertTrue(blankManual.interfaceAddresses.isEmpty())
+        assertTrue(blankManual.allowedIps.isEmpty())
+        val profile = WireGuardProfile(
+            id = "manual",
+            name = "外部 VPN",
+            endpointSource = WireGuardEndpointSource.MANUAL,
+            endpointHost = "vpn.example.com",
+            interfaceAddresses = listOf("10.8.0.5/24"),
+            serverPublicKey = "server-public-key",
+            allowedIps = listOf("10.8.0.0/24"),
+        )
+        assertEquals(listOf("10.8.0.0/24"), wireGuardEffectiveAllowedIps(profile, listOf("192.168.5.0/24")))
+        val config = wireGuardQuickConfig(profile, "client-private-key", listOf("192.168.5.0/24"))
+        assertEquals("AllowedIPs = 10.8.0.0/24", config.lineSequence().single { it.startsWith("AllowedIPs =") })
+        assertFalse(config.contains("10.77.0.0/24"))
+        assertFalse(config.contains("192.168.5.0/24"))
+    }
+
+    @Test
+    fun serverPeerRoutesAreSingleClientHostsEvenWhenPhoneAddressUsesSubnetPrefix() {
+        assertEquals(listOf("10.77.0.6/32", "2001:db8::6/128"),
+            wireGuardPeerHostRoutes(listOf("10.77.0.6/24", "2001:db8::6/64")))
     }
 
     @Test
@@ -345,6 +535,16 @@ class WireGuardClientTest {
         )
         val config = wireGuardQuickConfig(profile, "client-private-key", listOf("192.168.5.0/24"))
         assertTrue(config.contains("AllowedIPs = 10.77.0.0/24, 192.168.5.0/24"))
+    }
+
+    @Test
+    fun manualStoredRoutesAreNeverMigratedAway() {
+        val stored = JSONObject()
+            .put("id", "manual")
+            .put("endpointSource", "manual")
+            .put("endpointHost", "vpn.example.com")
+            .put("allowedIps", JSONArray().put("192.168.1.0/24"))
+        assertEquals(listOf("192.168.1.0/24"), WireGuardProfile.fromJson(stored)!!.allowedIps)
     }
 
     @Test
@@ -406,7 +606,7 @@ class WireGuardClientTest {
             endpointSource = WireGuardEndpointSource.STUN,
             endpointHost = "203.0.113.8",
             endpointPort = 24567,
-            interfaceAddresses = listOf("10.77.0.3/32"),
+            interfaceAddresses = listOf("10.77.0.3/24"),
             endpointBindingId = "stun-wireguard",
         )
 
@@ -695,9 +895,12 @@ class WireGuardClientTest {
         assertFalse(wireGuardEditNeedsRouter(base, base.copy(dnsServers = listOf("223.5.5.5"), mtu = 1400)))
         // 会写进路由器 peer 的字段。
         assertTrue(wireGuardEditNeedsRouter(base, base.copy(interfaceAddresses = listOf("10.77.0.6/32"))))
-        assertTrue(wireGuardEditNeedsRouter(base, base.copy(name = "换名字")))
+        assertFalse(wireGuardEditNeedsRouter(base, base.copy(name = "换名字")))
+        assertFalse(wireGuardLocalTunnelConfigChanged(base, base.copy(name = "换名字")))
+        assertTrue(wireGuardLocalTunnelConfigChanged(base, base.copy(allowedIps = listOf("192.168.5.0/24"))))
+        assertTrue(wireGuardLocalTunnelConfigChanged(base, base.copy(dnsServers = listOf("223.5.5.5"))))
+        assertTrue(wireGuardLocalTunnelConfigChanged(base, base.copy(mtu = 1400)))
         assertTrue(wireGuardEditNeedsRouter(base, base.copy(endpointBindingId = "stun-2")))
         assertTrue(wireGuardEditNeedsRouter(base, base.copy(serverPublicKey = "KEY456")))
     }
 }
-

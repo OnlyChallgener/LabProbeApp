@@ -2,6 +2,9 @@ package com.labprobe.app
 
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -90,6 +93,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
@@ -445,6 +450,36 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
 fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onOpenDevices: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val routerImageStore = remember(context) { RouterImageStore(context) }
+    val imageHub = prefs.hub
+    val imageWorkspace = prefs.workspaceId
+    val imageScope = remember(imageHub, imageWorkspace) { routerImageScopeId(imageHub, imageWorkspace) }
+    var routerImage by remember(imageScope) { mutableStateOf<Bitmap?>(null) }
+    var routerImageError by remember(imageScope) { mutableStateOf("") }
+    var pendingImageScope by remember { mutableStateOf<Pair<String, String>?>(null) }
+    LaunchedEffect(imageScope) {
+        val loaded = routerImageStore.load(imageHub, imageWorkspace)
+        if (routerImage == null) routerImage = loaded
+    }
+    val routerImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val target = pendingImageScope
+        pendingImageScope = null
+        if (uri != null && target != null) scope.launch {
+            try {
+                val imported = routerImageStore.importImage(uri, target.first, target.second)
+                if (target.first == prefs.hub && target.second == prefs.workspaceId) {
+                    routerImage = imported
+                    routerImageError = ""
+                }
+            } catch (error: Exception) {
+                routerImageError = error.message ?: "路由器图片导入失败"
+            }
+        }
+    }
+    fun chooseRouterImage() {
+        pendingImageScope = imageHub to imageWorkspace
+        routerImagePicker.launch("image/*")
+    }
     var refreshing by remember { mutableStateOf(false) }
     var showPortLegend by remember { mutableStateOf(false) }
     var showRouterEditor by remember { mutableStateOf(false) }
@@ -502,7 +537,14 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
                 prefs.routerLanUrl = normalizedRouterUrl(lan)
                 prefs.routerWanUrl = normalizedRouterUrl(wan)
                 showRouterEditor = false
-            }
+            },
+            imageEntry = {
+                LabProbeRouterImageEntry(
+                    hasImage = routerImage != null,
+                    error = routerImageError,
+                    onPick = ::chooseRouterImage,
+                )
+            },
         )
     }
 
@@ -522,6 +564,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
         if (state.routerDashboardError.isNotBlank()) RouterHubStatusError(state.routerDashboardError)
         RouterHeroCard(
             ui = ui,
+            routerImage = routerImage,
             refreshing = refreshing,
             onRefresh = ::refresh,
             onOpenDevices = onOpenDevices,
@@ -581,6 +624,7 @@ private fun RouterHubStatusError(error: String) {
 @Composable
 private fun RouterHeroCard(
     ui: RouterDashboardUi,
+    routerImage: Bitmap?,
     refreshing: Boolean,
     onRefresh: () -> Unit,
     onOpenDevices: () -> Unit,
@@ -648,10 +692,11 @@ private fun RouterHeroCard(
                     }
                 }
                 androidx.compose.foundation.Image(
-                    painter = painterResource(R.drawable.router_skeuomorphic_v3),
-                    contentDescription = "路由器",
+                    painter = routerImage?.let { BitmapPainter(it.asImageBitmap()) }
+                        ?: painterResource(R.drawable.router_skeuomorphic_v3),
+                    contentDescription = "路由器，轻点打开后台",
                     modifier = Modifier.fillMaxSize().padding(7.dp),
-                    contentScale = ContentScale.Fit
+                    contentScale = if (routerImage == null) ContentScale.Fit else ContentScale.Crop
                 )
             }
             Column(Modifier.weight(1.02f).padding(start = 1.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -1161,7 +1206,8 @@ private fun RouterIdentityDialog(
     lanUrl: String,
     wanUrl: String,
     onDismiss: () -> Unit,
-    onSave: (String, String, String) -> Unit
+    onSave: (String, String, String) -> Unit,
+    imageEntry: (@Composable () -> Unit)? = null,
 ) {
     var displayName by remember(name) { mutableStateOf(name) }
     var lan by remember(lanUrl) { mutableStateOf(lanUrl) }
@@ -1200,6 +1246,7 @@ private fun RouterIdentityDialog(
                     textStyle = LabTypography.FieldValue,
                     placeholderStyle = LabTypography.Placeholder
                 )
+                imageEntry?.invoke()
                 Text("点击路由器图片或名称时，会按收藏夹的内外网切换设置优先打开对应地址。", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted)
             }
         },

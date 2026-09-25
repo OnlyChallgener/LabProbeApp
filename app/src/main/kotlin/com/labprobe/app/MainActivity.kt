@@ -10,6 +10,7 @@ import com.labprobe.app.feature.assistant.AiFloatingPet
 import com.labprobe.app.feature.assistant.AiApiClient
 import com.labprobe.app.feature.assistant.AiNotifier
 import com.labprobe.app.feature.assistant.AiNotice
+import com.labprobe.app.feature.assistant.AiNotificationInboxStore
 import com.labprobe.app.feature.assistant.planAiNotificationBatch
 import com.labprobe.app.feature.assistant.AiSettingsStore
 import com.labprobe.app.feature.assistant.AiSettingsScreen
@@ -216,10 +217,11 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 合并版稳定性与 AI 本地缓存" to listOf(
-                "Hub 首帧/路由读取不再被 Agent 更新检查阻塞",
-                "AI 对话、API 配置、Token 用量按 Hub 身份本地缓存，先显示缓存后后台刷新，失败保留旧数据",
-                "路由配置读取短暂失败时保留并显示上次成功保存的名称与地址"
+            "v$NAME build$CODE · 多锐捷切换与通知收件箱" to listOf(
+                "同一 Hub 下切换两台锐捷，页面数据与操作按路由器隔离",
+                "网络健康和路由器状态支持上传并自动裁剪路由器图片",
+                "AI 通知集中保存，支持单条或多选删除",
+                "WireGuard 配置保存与同步反馈优化"
             )
         )
 }
@@ -248,10 +250,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = AppPrefs(this)
-        AgentUpdateCoordinator.bind(prefs)
-        // Preload the shared router-control repository before any settings page
-        // is opened. The repository waits briefly so WSS startup stays first.
-        RouterRepositoryRegistry.get(prefs).start()
+        // Router and Agent preload starts after the Hub confirms the active workspace.
         applyLabProbeSystemBars()
         consumedNotificationKey = savedInstanceState?.getString("consumed_notification_key")
         intent?.let { incoming ->
@@ -278,7 +277,7 @@ class MainActivity : ComponentActivity() {
         if (!notificationKey.isNullOrBlank() && notificationKey == consumedNotificationKey) return
         val requested = notificationRoute(incoming.getStringExtra("navigate_route"))
         val eventHubKey = incoming.getStringExtra("event_hub_key").orEmpty()
-        val prefs = AppPrefs(this)
+        val prefs = AppPrefs.current(this)
         val wrongEventHub = requested in setOf("events", "devices", "device_detail") && eventHubKey.isNotBlank() &&
             eventHubKey != eventNotificationScopeDigest("${prefs.hub.trimEnd('/')}#${prefs.token.trim()}")
         if (wrongEventHub) {
@@ -359,27 +358,107 @@ fun Activity.applyLabProbeSystemBars() {
     }
 }
 
-class AppPrefs(context: Context) {
-    private val sp: SharedPreferences = context.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
+class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSPACE_ID) {
+    companion object {
+        fun current(context: Context): AppPrefs = AppPrefs(context, RouterWorkspaceStore.activeWorkspaceId(context))
+    }
+
+    private val appContext: Context = context.applicationContext
+    private val globalSp: SharedPreferences = appContext.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
     private val secureSshPasswordStore = SecureSshPasswordStore(context)
-    init {
-        clearDeprecatedHookToken(context)
-        val legacy = sp.getString("token", "").orEmpty().trim()
-        if (secureTokenStore.get().isBlank() && legacy.isNotBlank()) secureTokenStore.set(legacy)
-        if (sp.contains("token")) sp.edit().remove("token").apply()
-        val legacySshPassword = sp.getString("ssh_password", "").orEmpty()
-        if (secureSshPasswordStore.get().isBlank() && legacySshPassword.isNotBlank()) {
-            secureSshPasswordStore.set(legacySshPassword)
-        }
-        if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply()
+    private var scopedSpName = ""
+    private var scopedSp: SharedPreferences? = null
+    private var scopedTokenRoot = ""
+    private var scopedTokenStore: SecureWorkspaceStringStore? = null
+    private var scopedSshRoot = ""
+    private var scopedSshStore: SecureWorkspaceStringStore? = null
+
+    private fun legacyDefaultHubRoot(): String {
+        val stored = globalSp.getString("legacy_default_hub_root_v1", null)
+        if (stored != null) return stored
+        val original = normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+        globalSp.edit().putString("legacy_default_hub_root_v1", original).commit()
+        return original
     }
-    var hub: String get() = normalizeHubBaseUrl(sp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
-        set(v) = sp.edit().putString("hub", normalizeHubBaseUrl(v)).apply()
-    var token: String get() = secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
-        set(v) = secureTokenStore.set(v)
-    var hubDns: String get() = sp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
-        set(v) = sp.edit().putString("hub_dns", v.trim()).apply()
+
+    private fun usesLegacyDefault(): Boolean =
+        workspaceId == DEFAULT_ROUTER_WORKSPACE_ID && hubRoot == legacyDefaultHubRoot()
+
+    private val sp: SharedPreferences
+        @Synchronized get() {
+            if (usesLegacyDefault()) return globalSp
+            val name = routerWorkspacePreferencesName(workspaceId, hubRoot)
+            if (scopedSpName != name || scopedSp == null) {
+                scopedSp = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
+                scopedSpName = name
+            }
+            return scopedSp!!
+        }
+
+    @Synchronized
+    private fun workspaceTokenStore(): SecureWorkspaceStringStore {
+        val root = hubRoot
+        if (scopedTokenRoot != root || scopedTokenStore == null) {
+            scopedTokenStore = SecureWorkspaceStringStore(appContext, workspaceId, root, "hub_token")
+            scopedTokenRoot = root
+        }
+        return scopedTokenStore!!
+    }
+
+    @Synchronized
+    private fun workspaceSshStore(): SecureWorkspaceStringStore {
+        val root = hubRoot
+        if (scopedSshRoot != root || scopedSshStore == null) {
+            scopedSshStore = SecureWorkspaceStringStore(appContext, workspaceId, root, "ssh_password")
+            scopedSshRoot = root
+        }
+        return scopedSshStore!!
+    }
+
+    init {
+        if (usesLegacyDefault()) {
+            if (!sp.getBoolean("deprecated_hook_token_cleared_v1", false)) {
+                clearDeprecatedHookToken(context)
+                sp.edit().putBoolean("deprecated_hook_token_cleared_v1", true).apply()
+            }
+            val legacy = sp.getString("token", "").orEmpty().trim()
+            if (legacy.isNotBlank() && secureTokenStore.get().isBlank()) secureTokenStore.set(legacy)
+            if (sp.contains("token")) sp.edit().remove("token").apply()
+            val legacySshPassword = sp.getString("ssh_password", "").orEmpty()
+            if (legacySshPassword.isNotBlank() && secureSshPasswordStore.get().isBlank()) {
+                secureSshPasswordStore.set(legacySshPassword)
+            }
+            if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply()
+        }
+    }
+    var hubRoot: String get() = normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+        set(v) {
+            val clean = normalizeHubBaseUrl(v)
+            if (clean != hubRoot) {
+                globalSp.edit().putString("hub", clean).apply()
+                RouterWorkspaceStore.hubConnectionChanged()
+            }
+        }
+    var hub: String get() = workspaceHubUrl(hubRoot, workspaceId)
+        set(v) { hubRoot = v }
+    var token: String get() = if (usesLegacyDefault())
+        secureTokenStore.get().ifBlank { DEFAULT_TOKEN } else workspaceTokenStore().get()
+        set(v) {
+            val changed = v.trim() != token
+            if (usesLegacyDefault()) secureTokenStore.set(v) else workspaceTokenStore().set(v)
+            if (changed && workspaceId == DEFAULT_ROUTER_WORKSPACE_ID) {
+                RouterWorkspaceStore.hubConnectionChanged()
+            }
+        }
+    var hubDns: String get() = globalSp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
+        set(v) {
+            val clean = v.trim()
+            if (clean != hubDns) {
+                globalSp.edit().putString("hub_dns", clean).apply()
+                RouterWorkspaceStore.hubConnectionChanged()
+            }
+        }
     var autoRefresh: String get() = "实时"
         set(v) = sp.edit().putString("auto_refresh", v).apply()
     var ignoredUpdateCode: Int get() = sp.getInt("ignored_update_code", 0)
@@ -887,8 +966,13 @@ class AppPrefs(context: Context) {
         set(v) = sp.edit().putString("ssh_user", v).apply()
     var sshSavePass: Boolean get() = sp.getBoolean("ssh_save_pass", false)
         set(v) = sp.edit().putBoolean("ssh_save_pass", v).apply()
-    var sshPassword: String get() = secureSshPasswordStore.get()
-        set(v) { secureSshPasswordStore.set(v); if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply() }
+    var sshPassword: String get() = if (usesLegacyDefault())
+        secureSshPasswordStore.get() else workspaceSshStore().get()
+        set(v) {
+            if (usesLegacyDefault()) secureSshPasswordStore.set(v)
+            else workspaceSshStore().set(v)
+            if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply()
+        }
     var sshCommand: String get() = sp.getString("ssh_cmd", "ip -6 neigh show") ?: "ip -6 neigh show"
         set(v) = sp.edit().putString("ssh_cmd", v).apply()
 
@@ -1255,6 +1339,10 @@ private fun appErrorZh(raw: String?, fallback: String = "请求失败"): String 
 }
 
 class AppState(private val prefs: AppPrefs, context: Context) {
+    private val workspaceActivation = RouterWorkspaceStore.activationVersion()
+    private fun ownsActiveWorkspace(): Boolean =
+        RouterWorkspaceStore.isActive(prefs.workspaceId, workspaceActivation)
+
     private val appContext = context.applicationContext
     private val refreshMutex = Mutex()
     private val stateScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -1273,84 +1361,120 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     internal val routerTrendSamples get() = realtimeSmoother.trendHistory.samples
     private var liteRenderJob: Job? = null
     private var realtimeFreshnessJob: Job? = null
+    private var realtimeFirstFrameJob: Job? = null
+    private var realtimeFallbackJob: Job? = null
+    private var lastWssRouterRealtimeAt = 0L
+    private var lastFallbackSampleEpochMs = 0L
     @Volatile private var foregroundActive = true
     private val realtimeClient = HubRealtimeWebSocketClient(
         dnsProvider = { CustomDns(prefs.hubDns) },
-        onState = { next ->
+        onState = stateFrame@{ next ->
+            if (!ownsActiveWorkspace()) return@stateFrame
             stateScope.launch {
+                if (!ownsActiveWorkspace()) return@launch
                 mqttState = next
                 when (next) {
                     HubRealtimeState.Connected -> {
                         mqttConnected = true
                         hubConnected = true
-                        realtimeDataFresh = false
-                        message = "实时链路已连接，等待首帧数据"
+                        if (!realtimeFallbackActive) {
+                            realtimeDataFresh = false
+                            message = if (lastRouterRealtimeAt > 0L) "实时链路已连接，等待最新数据" else "实时链路已连接，等待首帧数据"
+                        }
+                        realtimeFirstFrameJob?.cancel()
+                        realtimeFirstFrameJob = stateScope.launch {
+                            val expected = lastWssRouterRealtimeAt
+                            delay(20_000L)
+                            if (foregroundActive && mqttConnected && lastWssRouterRealtimeAt == expected) {
+                                restartStaleRealtime()
+                            }
+                        }
                     }
                     HubRealtimeState.Connecting -> {
+                        realtimeFirstFrameJob?.cancel()
+                        realtimeFreshnessJob?.cancel()
                         mqttConnected = false
-                        realtimeDataFresh = false
-                        message = if (hubConnected) "正在连接实时链路，已保留上次数据" else "正在连接 Hub"
+                        if (!realtimeFallbackActive) {
+                            realtimeDataFresh = false
+                            message = if (hubConnected) "正在连接实时链路，已保留上次数据" else "正在连接 Hub"
+                        }
                     }
                     is HubRealtimeState.Reconnecting -> {
+                        realtimeFirstFrameJob?.cancel()
+                        realtimeFreshnessJob?.cancel()
                         mqttConnected = false
-                        realtimeDataFresh = false
-                        message = if (hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
+                        if (!realtimeFallbackActive) {
+                            realtimeDataFresh = false
+                            message = if (hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
+                        }
                     }
                     HubRealtimeState.Disabled -> {
+                        realtimeFirstFrameJob?.cancel()
+                        realtimeFreshnessJob?.cancel()
                         mqttConnected = false
                         message = if (hubConnected) "Hub 已连接，等待实时链路" else message
                     }
                 }
             }
         },
-        onRouterRealtime = { raw ->
+        onRouterRealtime = routerFrame@{ raw ->
+            if (!ownsActiveWorkspace()) return@routerFrame
             realtimeParseScope.launch {
-                if (!foregroundActive) return@launch
+                if (!foregroundActive || !ownsActiveWorkspace()) return@launch
                 val root = runCatching { JSONObject(raw) }.getOrNull() ?: return@launch
                 stateScope.launch {
-                    if (!foregroundActive) return@launch
+                    if (!foregroundActive || !ownsActiveWorkspace()) return@launch
                     realtimeSmoother.acceptRouter(root)
                     routerDashboardError = ""
                     mqttConnected = true
+                    realtimeFallbackActive = false
                     realtimeDataFresh = true
                     lastRouterRealtimeAt = SystemClock.elapsedRealtime()
+                    lastWssRouterRealtimeAt = lastRouterRealtimeAt
+                    realtimeFirstFrameJob?.cancel()
                     message = "实时同步正常"
                     realtimeFreshnessJob?.cancel()
                     realtimeFreshnessJob = stateScope.launch {
-                        val expected = lastRouterRealtimeAt
+                        val expected = lastWssRouterRealtimeAt
                         delay(15_000L)
-                        if (lastRouterRealtimeAt == expected && mqttConnected) {
-                            realtimeDataFresh = false
-                            message = "实时数据暂时未更新，已保留上次结果"
+                        if (lastWssRouterRealtimeAt == expected && mqttConnected) {
+                            if (!realtimeFallbackActive) {
+                                realtimeDataFresh = false
+                                message = "实时数据暂时未更新，已保留上次结果"
+                            }
+                            restartStaleRealtime()
                         }
                     }
                 }
             }
         },
-        onDevicesRealtime = { raw ->
+        onDevicesRealtime = devicesFrame@{ raw ->
+            if (!ownsActiveWorkspace()) return@devicesFrame
             realtimeParseScope.launch {
-                if (!foregroundActive) return@launch
+                if (!foregroundActive || !ownsActiveWorkspace()) return@launch
                 val root = runCatching { JSONObject(raw) }.getOrNull() ?: return@launch
                 stateScope.launch {
-                    if (!foregroundActive) return@launch
+                    if (!foregroundActive || !ownsActiveWorkspace()) return@launch
                     realtimeSmoother.acceptDevices(root)
                 }
             }
         },
-        onDevicesSnapshot = { raw ->
+        onDevicesSnapshot = snapshotFrame@{ raw ->
+            if (!ownsActiveWorkspace()) return@snapshotFrame
             realtimeParseScope.launch {
-                if (!foregroundActive) return@launch
+                if (!foregroundActive || !ownsActiveWorkspace()) return@launch
                 val frame = parseDevicesSnapshotFrame(raw) ?: return@launch
                 stateScope.launch {
-                    if (!foregroundActive) return@launch
+                    if (!foregroundActive || !ownsActiveWorkspace()) return@launch
                     acceptDevicesSnapshot(frame)
                 }
             }
         },
-        onTaskUpdate = { raw -> RouterTaskRepositoryRegistry.get(prefs).acceptRealtime(raw) },
-        onConfigUpdate = { raw -> RouterRepositoryRegistry.get(prefs).acceptConfigRealtime(raw) },
-        onAgentUpdate = { raw -> AgentPresenceStoreRegistry.get(prefs).acceptRealtime(raw) },
-        onRealtimeReady = { reconnect ->
+        onTaskUpdate = { raw -> if (ownsActiveWorkspace()) RouterTaskRepositoryRegistry.get(prefs).acceptRealtime(raw) },
+        onConfigUpdate = { raw -> if (ownsActiveWorkspace()) RouterRepositoryRegistry.get(prefs).acceptConfigRealtime(raw) },
+        onAgentUpdate = { raw -> if (ownsActiveWorkspace()) AgentPresenceStoreRegistry.get(prefs).acceptRealtime(raw) },
+        onRealtimeReady = realtimeReady@{ reconnect ->
+            if (!ownsActiveWorkspace()) return@realtimeReady
             // WSS wins startup. Router settings preload starts only after Hub ready;
             // reconnect refresh is silent and limited to lightweight essentials.
             RouterRepositoryRegistry.get(prefs).onRealtimeReady(reconnect)
@@ -1382,6 +1506,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private var lastRememberedHubUrl = ""
     var mqttConnected by mutableStateOf(false)
     var realtimeDataFresh by mutableStateOf(false)
+    var realtimeFallbackActive by mutableStateOf(false)
     var lastRouterRealtimeAt by mutableLongStateOf(0L)
     private var lastDevicesSnapshotEpoch = 0L
     var mqttState by mutableStateOf<HubRealtimeState>(HubRealtimeState.Disabled)
@@ -1410,6 +1535,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     }
 
     suspend fun refreshAll(forceHealth: Boolean = false, forceFull: Boolean = false, silent: Boolean = false) {
+        if (!ownsActiveWorkspace()) return
         if (prefs.hub.isBlank()) {
             message = "Hub 地址为空，请先输入"
             return
@@ -1495,11 +1621,21 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         // compact devices frame only smooths instantaneous speed between snapshots.
         realtimeSmoother.acceptDevices(root)
         val previousOnline = onlineDevices
-        val currentRatesByMac = previousOnline.associateBy({ cleanMac(it.mac) }, { it.realtimeUploadBytes to it.realtimeDownloadBytes })
+        val previousByMac = previousOnline.associateBy { cleanMac(it.mac) }
         val freshWithPreservedRates = fresh.map { item ->
-            val existing = currentRatesByMac[cleanMac(item.mac)]
+            val existing = previousByMac[cleanMac(item.mac)]
             if (existing != null) {
-                item.copy(realtimeUploadBytes = existing.first, realtimeDownloadBytes = existing.second)
+                // Frequent WSS snapshots omit bulky IPv6 history. Keep metadata
+                // already read from Hub for addresses still present in this sample.
+                val previousIpv6 = existing.ipv6Candidates.associateBy { it.address.lowercase() }
+                val ipv6Candidates = item.ipv6Candidates.map { current ->
+                    if (current.source == "ipv6List") previousIpv6[current.address.lowercase()] ?: current else current
+                }
+                item.copy(
+                    realtimeUploadBytes = existing.realtimeUploadBytes,
+                    realtimeDownloadBytes = existing.realtimeDownloadBytes,
+                    ipv6Candidates = ipv6Candidates,
+                )
             } else {
                 item
             }
@@ -1556,7 +1692,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         if (liteRenderJob?.isActive == true) return
         liteRenderJob = stateScope.launch {
             while (isActive) {
-                if (foregroundActive && mqttConnected) {
+                if (foregroundActive && (mqttConnected || realtimeFallbackActive)) {
                     val now = SystemClock.elapsedRealtime()
                     realtimeSmoother.renderRouter(routerDashboard, now)?.let { routerDashboard = it }
                     val nextOnline = realtimeSmoother.renderDevices(onlineDevices, now)
@@ -1581,8 +1717,51 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     suspend fun startRealtime() {
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
         startRealtimeRendering()
+        startRealtimeFallback()
         realtimeClient.start(prefs.hub, prefs.token)
         stateScope.launch { calibrateRealtimeCache() }
+    }
+
+    private fun startRealtimeFallback() {
+        if (realtimeFallbackJob?.isActive == true) return
+        realtimeFallbackJob = stateScope.launch {
+            while (isActive) {
+                delay(2_000L)
+                if (!foregroundActive || prefs.hub.isBlank() || prefs.token.isBlank()) continue
+                val now = SystemClock.elapsedRealtime()
+                if (!realtimeFallbackActive && (realtimeDataFresh ||
+                            (lastRouterRealtimeAt > 0L && now - lastRouterRealtimeAt < 5_000L))) continue
+                val wssBeforeRequest = lastWssRouterRealtimeAt
+                val router = runCatching { liteRealtimeApi.router() }.getOrNull()
+                if (!foregroundActive) continue
+                if (mqttConnected && lastWssRouterRealtimeAt != wssBeforeRequest) continue
+                if (router != null && usableLiteRealtimeSample(router, lastFallbackSampleEpochMs)) {
+                    lastFallbackSampleEpochMs = router.optLong("sampleEpochMs")
+                    realtimeSmoother.acceptRouter(router)
+                    routerDashboardError = ""
+                    hubConnected = true
+                    realtimeFallbackActive = true
+                    realtimeDataFresh = true
+                    lastRouterRealtimeAt = SystemClock.elapsedRealtime()
+                    message = "实时数据由备用链路更新"
+                    val devices = runCatching { liteRealtimeApi.devices() }.getOrNull()
+                    if (foregroundActive && realtimeFallbackActive && devices != null) {
+                        realtimeSmoother.acceptDevices(devices)
+                    }
+                } else if (realtimeFallbackActive && now - lastRouterRealtimeAt >= 10_000L) {
+                    realtimeDataFresh = false
+                    message = "备用链路暂未更新，正在恢复"
+                }
+            }
+        }
+    }
+
+    private fun restartStaleRealtime() {
+        if (!foregroundActive || prefs.hub.isBlank() || prefs.token.isBlank()) return
+        // Rebuild the actual socket when the UI has stopped consuming router frames.
+        // A transport-level keepalive alone cannot prove that realtime data is usable.
+        realtimeClient.stop()
+        realtimeClient.start(prefs.hub, prefs.token)
     }
 
     suspend fun refreshRouterDashboard(silent: Boolean = true) {
@@ -1644,6 +1823,11 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     fun stopRealtime() {
         realtimeClient.stop()
+        realtimeFallbackJob?.cancel()
+        realtimeFallbackJob = null
+        realtimeFallbackActive = false
+        realtimeFirstFrameJob?.cancel()
+        realtimeFirstFrameJob = null
         pauseRealtimeRendering()
         realtimeFreshnessJob?.cancel()
         realtimeFreshnessJob = null
@@ -1673,6 +1857,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     private suspend fun syncFull(api: HubApi, silent: Boolean) {
         try {
             val snapshot = api.getSyncSnapshot()
+            if (!ownsActiveWorkspace()) return
             applyFullSnapshot(snapshot, silent)
             prefs.syncRevision = snapshot.revision
             prefs.syncHub = prefs.hub
@@ -1724,6 +1909,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         var changed = false
         while (pageCount++ < 12) {
             val page = api.getSyncChanges(cursor)
+            if (!ownsActiveWorkspace()) return
             if (page.fullRequired) throw HubRevisionGap("Hub 要求完整校准")
             var expected = cursor + 1L
             for (index in 0 until page.changes.length()) {
@@ -1921,6 +2107,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         cachePersistJob?.cancel()
         cachePersistJob = cacheScope.launch {
             delay(2_000L)
+            if (!ownsActiveWorkspace()) return@launch
             val devicesText = JSONArray(deviceSnapshot.map { it.toJson() }).toString()
             val onlineText = JSONArray(onlineSnapshot.map { it.toJson() }).toString()
             val offlineText = JSONArray(offlineSnapshot.map { it.toJson() }).toString()
@@ -1996,6 +2183,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
     fun markHubChanged() {
         stopRealtime()
         hubConnected = false
+        lastRouterRealtimeAt = 0L
+        lastWssRouterRealtimeAt = 0L
+        lastFallbackSampleEpochMs = 0L
         prefs.syncRevision = 0L
         prefs.lastFullSyncAt = 0L
         prefs.syncHub = ""
@@ -2004,8 +2194,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 
     fun markHubSavedWithoutConnectionChange() {
         message = when {
+            realtimeFallbackActive && realtimeDataFresh -> "实时数据由备用链路更新"
             realtimeDataFresh -> "实时同步正常"
-            mqttConnected -> "实时链路已连接，等待首帧数据"
+            mqttConnected -> if (lastRouterRealtimeAt > 0L) "实时数据暂未更新，正在恢复" else "实时链路已连接，等待首帧数据"
             hubConnected -> "Hub 已连接，实时链路恢复中"
             else -> "Hub 设置已保存，等待自动连接"
         }
@@ -2105,7 +2296,7 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         return wakeDevice(ctx, device)
     }
 
-    fun addOrUpdateWolDevice(item: WolDeviceConfig) {
+    fun addOrUpdateWolDevice(item: WolDeviceConfig, syncDeviceOverride: Boolean = true) {
         val clean = cleanMac(item.mac)
         if (!isValidMac(clean)) {
             message = "MAC 地址无效，未保存 WOL 设备"
@@ -2114,7 +2305,9 @@ class AppState(private val prefs: AppPrefs, context: Context) {
         val fixed = item.copy(mac = clean, id = item.id.ifBlank { clean }, typeId = normalizeDeviceTypeToken(item.typeId).ifBlank { item.typeId.ifBlank { "desktop" } }, updatedAt = System.currentTimeMillis())
         wolDevices = (listOf(fixed) + wolDevices.filterNot { it.mac.equals(clean, ignoreCase = true) }).take(80)
         prefs.wolDevicesJson = wolDevicesToJson(wolDevices)
-        saveDeviceOverride(clean, fixed.remark, fixed.typeId, fixed.enabled)
+        // 设备弹层自己已经按用户原文写过 override 了；这里再写一次会把清空成空的
+        // 备注回填成设备名，还会把「关注」开关冲掉。
+        if (syncDeviceOverride) saveDeviceOverride(clean, fixed.remark, fixed.typeId, fixed.enabled)
         message = "已保存 WOL 设备：${fixed.remark.ifBlank { fixed.mac }}"
     }
 
@@ -2152,10 +2345,128 @@ class AppState(private val prefs: AppPrefs, context: Context) {
 }
 
 
+private fun clearPortMappingWorkspaceCache() {
+    PortMappingMemoryCache.rules = emptyList()
+    PortMappingMemoryCache.rulesRevision = 0L
+    PortMappingMemoryCache.rulesUpdatedAt = ""
+    PortMappingMemoryCache.snapshotRevision = 0L
+    PortMappingMemoryCache.devices = emptyList()
+    PortMappingMemoryCache.devicesUpdatedAt = 0L
+    PortMappingMemoryCache.agent = null
+}
+
+@Composable
+fun LabProbeApp(initialPrefs: AppPrefs) {
+    val context = LocalContext.current
+    val rootPrefs = remember(context) {
+        if (initialPrefs.workspaceId == DEFAULT_ROUTER_WORKSPACE_ID) initialPrefs
+        else AppPrefs(context, DEFAULT_ROUTER_WORKSPACE_ID)
+    }
+    val scope = rememberCoroutineScope()
+    val connectionEpoch = RouterWorkspaceStore.connectionEpoch
+    var workspaceId by remember {
+        RouterWorkspaceStore.resetActive()
+        RouterConnectionStore.reset()
+        clearPortMappingWorkspaceCache()
+        mutableStateOf(DEFAULT_ROUTER_WORKSPACE_ID)
+    }
+    var workspaces by remember { mutableStateOf(listOf(defaultRouterWorkspace())) }
+    var listingConfirmed by remember { mutableStateOf(false) }
+    var listLoading by remember { mutableStateOf(false) }
+    var listError by remember { mutableStateOf("") }
+    var showPicker by remember { mutableStateOf(false) }
+
+    fun switchWorkspace(id: String) {
+        val target = selectableWorkspaceId(workspaces, id, listingConfirmed)
+        if (target == workspaceId) return
+        RouterWorkspaceStore.activate(context, rootPrefs.hubRoot, target)
+        RouterConnectionStore.reset()
+        clearPortMappingWorkspaceCache()
+        workspaceId = target
+        showPicker = false
+    }
+
+    suspend fun loadWorkspaces(restoreSavedSelection: Boolean) {
+        val requestedEpoch = RouterWorkspaceStore.connectionEpoch
+        listLoading = true
+        listError = ""
+        val result = runCatching { RouterWorkspaceApi(rootPrefs).list() }
+        result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        if (RouterWorkspaceStore.connectionEpoch != requestedEpoch) return
+        result
+            .onSuccess { rows ->
+                workspaces = rows
+                listingConfirmed = true
+                val target = if (restoreSavedSelection) {
+                    selectableWorkspaceId(rows, RouterWorkspaceStore.remembered(context, rootPrefs.hubRoot), true)
+                } else selectableWorkspaceId(rows, workspaceId, true)
+                if (target != workspaceId) switchWorkspace(target)
+            }
+            .onFailure { failure ->
+                if (!listingConfirmed) {
+                    workspaces = listOf(defaultRouterWorkspace())
+                    if (workspaceId != DEFAULT_ROUTER_WORKSPACE_ID) switchWorkspace(DEFAULT_ROUTER_WORKSPACE_ID)
+                }
+                listError = "路由器列表暂不可用：${uiMessageZh(failure.message)}"
+            }
+        listLoading = false
+    }
+
+    LaunchedEffect(connectionEpoch) {
+        RouterWorkspaceStore.resetActive()
+        RouterConnectionStore.reset()
+        clearPortMappingWorkspaceCache()
+        workspaceId = DEFAULT_ROUTER_WORKSPACE_ID
+        workspaces = listOf(defaultRouterWorkspace())
+        listingConfirmed = false
+        listError = ""
+        showPicker = false
+        loadWorkspaces(restoreSavedSelection = true)
+    }
+
+    val prefs = remember(context, workspaceId, connectionEpoch) { AppPrefs(context, workspaceId) }
+    // 路由器列表只是「还有谁可以切」的元数据。默认路由器有自己的本地令牌和缓存，
+    // 足够直接开跑 —— 让 /api/routers 慢、404 或只有多路由 Hub 才有这个接口时，
+    // 首页陪着转圈是不可接受的。
+    LaunchedEffect(prefs) {
+        AgentUpdateCoordinator.bind(prefs)
+        RouterRepositoryRegistry.get(prefs).start()
+    }
+    val currentWorkspace = workspaces.firstOrNull { it.routerId == workspaceId } ?: defaultRouterWorkspace()
+    if (showPicker) {
+        RouterWorkspacePickerDialog(
+            workspaces = workspaces,
+            selectedId = workspaceId,
+            listingConfirmed = listingConfirmed,
+            loading = listLoading,
+            error = listError,
+            onSelect = ::switchWorkspace,
+            onRefresh = { scope.launch { loadWorkspaces(restoreSavedSelection = false) } },
+            onDismiss = { showPicker = false },
+        )
+    }
+    key(workspaceId, RouterWorkspaceStore.activationVersion()) {
+        LabProbeWorkspaceApp(
+            prefs = prefs,
+            routerWorkspace = currentWorkspace,
+            onOpenRouterWorkspaces = { showPicker = true },
+            initialRoute = if (workspaceId != DEFAULT_ROUTER_WORKSPACE_ID && prefs.token.isBlank()) "settings" else "home",
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LabProbeApp(prefs: AppPrefs) {
-    var route by rememberSaveable { mutableStateOf("home") }
+private fun LabProbeWorkspaceApp(
+    prefs: AppPrefs,
+    routerWorkspace: RouterWorkspace,
+    onOpenRouterWorkspaces: () -> Unit,
+    initialRoute: String,
+) {
+    var route by rememberSaveable { mutableStateOf(initialRoute) }
+    LaunchedEffect(initialRoute) {
+        if (initialRoute == "settings") route = "settings"
+    }
     var selectedDeviceMac by rememberSaveable { mutableStateOf<String?>(null) }
     var childInternetReturnRoute by rememberSaveable { mutableStateOf("device_detail") }
     var childInternetOverviewReturnRoute by rememberSaveable { mutableStateOf("devices") }
@@ -2241,8 +2552,8 @@ fun LabProbeApp(prefs: AppPrefs) {
             }
         }
     }
-    // Keep AI notices alive for the main UI lifetime. They are system notifications,
-    // never synthetic chat messages or model context.
+    // Save every AI notice in a Hub-scoped inbox before advancing the cursor.
+    // System banners remain separate from chat messages and model context.
     LaunchedEffect(prefs.hub, prefs.token) {
         val aiStore = AiSettingsStore(context)
         val aiClient = AiApiClient(aiStore, prefs.hub, prefs.token, appPrefs = prefs)
@@ -2255,6 +2566,11 @@ fun LabProbeApp(prefs: AppPrefs) {
                 ensureActive()
                 if (aiClient.identity != "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}") break
                 val batch = planAiNotificationBatch(cursor, baselinePending, rows)
+                val inserted = withContext(Dispatchers.IO) {
+                    val inbox = AiNotificationInboxStore(context)
+                    try { inbox.save(aiClient.identity, batch.rows) } finally { inbox.close() }
+                }
+                // A failed local write must leave the cursor untouched, so the next poll retries.
                 val saved = withContext(Dispatchers.IO) {
                     aiStore.saveLastNotificationId(aiClient.identity, batch.cursor)
                 }
@@ -2262,11 +2578,13 @@ fun LabProbeApp(prefs: AppPrefs) {
                 if (aiClient.identity != "${prefs.hub.trimEnd('/')}#${prefs.token.trim()}") break
                 if (saved) {
                     baselinePending = batch.baselinePending
-                    batch.latest?.let { row ->
+                    val insertedIds = inserted.mapTo(mutableSetOf()) { it.id }
+                    batch.alertRows.filter { it.id.toString() in insertedIds }.forEach { row ->
                         withContext(Dispatchers.IO) {
                             AiNotifier.notifyAssistantMessage(
                                 context, row.title, row.content, route = "ai_chat",
                                 notificationId = row.id, hubIdentity = aiClient.identity,
+                                alreadyStored = true,
                             )
                         }
                     }
@@ -2284,10 +2602,13 @@ fun LabProbeApp(prefs: AppPrefs) {
         var startedOnce = false
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> {
+                Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
+                    val wasForeground = appForeground
                     appForeground = true
                     state.setForeground(true)
-                    if (startedOnce) state.requestForegroundRecovery(forceFull = false)
+                    if (startedOnce && (!wasForeground || event == Lifecycle.Event.ON_RESUME)) {
+                        state.requestForegroundRecovery(forceFull = false)
+                    }
                     startedOnce = true
                 }
                 Lifecycle.Event.ON_STOP -> {
@@ -2601,7 +2922,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                                     .then(if (routeIsDark) Modifier.background(Color(0xFF10171F)) else Modifier.appBackground())
                             ) {
                                 LabMaterialReferenceTheme(r) { when (r) {
-                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }, childInternet = childInternetRepository) { showUpdateDialog = true }
+                        "home" -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }, childInternet = childInternetRepository, routerWorkspace = routerWorkspace, onOpenRouterWorkspaces = onOpenRouterWorkspaces) { showUpdateDialog = true }
                         "health_score", "network_health" -> NetworkHealthScreen(
                             prefs = prefs,
                             state = state,
@@ -2716,6 +3037,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                         )
                         "ai_chat" -> AiChatScreen(
                             context,
+                            prefs = prefs,
                             onBack = { route = aiChatReturnRoute },
                             onNavigate = { route = mapAssistantRoute(it) },
                             onRefreshData = { scope.launch { state.refreshAll(forceFull = true) } },
@@ -2804,7 +3126,7 @@ fun LabProbeApp(prefs: AppPrefs) {
                             }
                         )
                         "tool_router_login" -> RouterHubStatusScreen(prefs, backFromTool, onOpenSettings = { route = "settings" })
-                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }, childInternet = childInternetRepository) { showUpdateDialog = true }
+                            else -> HomeScreen(prefs, state, autoRefresh, { autoRefresh = it; prefs.autoRefresh = it }, { scope.launch { state.refreshAll(forceFull = true) } }, navigate, topNav, pendingUpdate(), onUpdateFound = { info -> latestUpdate = info; showUpdateDialog = true }, childInternet = childInternetRepository, routerWorkspace = routerWorkspace, onOpenRouterWorkspaces = onOpenRouterWorkspaces) { showUpdateDialog = true }
                             } }
                             }
                         }
@@ -4102,7 +4424,7 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
 }
 
 @Composable
-fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}, childInternet: ChildInternetRepository? = null, onUpdateClick: () -> Unit = {}) {
+fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (String) -> Unit, onRefresh: () -> Unit, onNavigate: (String) -> Unit, topNav: @Composable () -> Unit, hasPendingUpdate: Boolean = false, onUpdateFound: (GitHubUpdateInfo) -> Unit = {}, childInternet: ChildInternetRepository? = null, routerWorkspace: RouterWorkspace = defaultRouterWorkspace(), onOpenRouterWorkspaces: () -> Unit = {}, onUpdateClick: () -> Unit = {}) {
     var showVersion by remember { mutableStateOf(false) }
     var privacyMode by remember { mutableStateOf(prefs.privacyMode) }
     var homeOrder by remember { mutableStateOf(normalizeHomeOrder(prefs.homeOrder)) }
@@ -4201,7 +4523,19 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                     Spacer(Modifier.width(8.dp))
                     VersionBadge(hasUpdate = hasPendingUpdate) { if (hasPendingUpdate) onUpdateClick() else showVersion = true }
                 }
-                    Text("家庭网络仪表盘", style = LabTypography.Supporting, maxLines = 1)
+                    Surface(
+                        modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onOpenRouterWorkspaces),
+                        color = Color(0xFFE7F3FB),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Router, null, Modifier.size(14.dp), tint = Color(0xFF1978A8))
+                            Spacer(Modifier.width(5.dp))
+                            Text("当前路由器：${routerWorkspace.name}", style = LabTypography.Caption, color = LabV2.Ink, maxLines = 1)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Rounded.KeyboardArrowDown, "切换路由器", Modifier.size(15.dp), tint = Color(0xFF1978A8))
+                        }
+                    }
             }
             HomeRefreshMenuButton(
                 autoRefresh = autoRefresh,
@@ -5338,7 +5672,7 @@ fun StatusCard(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("同步", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
-                Text(if (state.realtimeDataFresh) "实时数据正常" else if (state.mqttConnected) "等待首帧" else "实时未连接", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
+                Text(if (state.realtimeFallbackActive && state.realtimeDataFresh) "备用链路更新中" else if (state.realtimeDataFresh) "实时数据正常" else if (state.mqttConnected) (if (state.lastRouterRealtimeAt > 0L) "数据暂未更新" else "等待首帧") else "实时未连接", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
             }
             Text("最后成功 ${prefs.lastRefresh.ifBlank { "-" }}", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, maxLines = 1, color = LabV2.InkMuted)
         }
@@ -11517,7 +11851,7 @@ fun SettingsScreen(
 ) {
     // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.5.46`
     // 会被显示成 `192.168.5.46`，看着像把用户输入吃掉了。
-    var hub by remember { mutableStateOf(prefs.hub) }
+    var hub by remember { mutableStateOf(prefs.hubRoot) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var routerName by remember { mutableStateOf(prefs.routerDisplayName) }
@@ -11545,6 +11879,13 @@ fun SettingsScreen(
         routerConfigLoading = false
     }
     ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
+        if (prefs.workspaceId != DEFAULT_ROUTER_WORKSPACE_ID && appToken.isBlank()) {
+            Text(
+                "需先填写该路由访问令牌：输入此路由的 APP_TOKEN 后点“保存设置”。令牌仅保存在当前路由器工作区。",
+                style = LabTypography.Supporting,
+                color = LabV2.Amber,
+            )
+        }
         // 协议头做成下拉，正文只填 host:port：以前要手打 http:// 前缀，
         // 打错一个字母就连不上，而且看不出来是协议头的问题。
         val hubScheme = if (hub.trim().startsWith("https://", ignoreCase = true)) "https://" else "http://"
@@ -11578,8 +11919,8 @@ fun SettingsScreen(
                     Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
                         Spacer(Modifier.width(6.dp))
-                        val syncLabel = when (val realtime = state.mqttState) {
-                            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时数据正常" else "等待首帧"
+                        val syncLabel = if (state.realtimeFallbackActive && state.realtimeDataFresh) "备用链路更新中" else when (val realtime = state.mqttState) {
+                            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时数据正常" else if (state.lastRouterRealtimeAt > 0L) "数据暂未更新" else "等待首帧"
                             HubRealtimeState.Connecting -> "正在连接"
                             is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
                             HubRealtimeState.Disabled -> "实时未连接"
@@ -11597,8 +11938,8 @@ fun SettingsScreen(
             Column(Modifier.weight(1f)) { LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, { routerPassword = it; userEditedRouter = true }, password = true) }
         }
         if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
-        val liveConnectionMessage = when (val realtime = state.mqttState) {
-            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时同步正常" else "实时链路已连接，等待首帧数据"
+        val liveConnectionMessage = if (state.realtimeFallbackActive && state.realtimeDataFresh) "实时数据由备用链路更新，实时连接恢复中" else when (val realtime = state.mqttState) {
+            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时同步正常" else if (state.lastRouterRealtimeAt > 0L) "实时数据暂未更新，正在恢复" else "实时链路已连接，等待首帧数据"
             HubRealtimeState.Connecting -> if (state.hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
             is HubRealtimeState.Reconnecting -> "实时链路恢复中，已保留上次数据"
             HubRealtimeState.Disabled -> if (state.hubConnected) "Hub 已连接，实时链路未建立" else state.message.ifBlank { "等待连接" }
@@ -11616,9 +11957,9 @@ fun SettingsScreen(
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
                 val cleanAppToken = appToken.trim()
-                val connectionChanged = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
+                val connectionChanged = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
                 hub = cleanHub
-                prefs.hub = cleanHub
+                prefs.hubRoot = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
                 // 地址要等真连上才进「可用地址」列表：以前一保存就写进去，
@@ -11646,9 +11987,9 @@ fun SettingsScreen(
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
                 val cleanAppToken = appToken.trim()
-                val changed = prefs.hub != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
+                val changed = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
                 hub = cleanHub
-                prefs.hub = cleanHub
+                prefs.hubRoot = cleanHub
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
                 prefs.addHistory("hub", cleanHub)
@@ -11705,12 +12046,15 @@ private class HubAuthInterceptor(private val tokenProvider: () -> String) : Inte
 }
 
 class HubApi(private val prefs: AppPrefs) {
+    // A request started before a workspace switch must keep its original target.
+    private val targetHub = prefs.hub
+    private val targetToken = prefs.token
     private val client = OkHttpClient.Builder()
         .dns(CustomDns(prefs.hubDns))
         .connectTimeout(6, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
-        .addInterceptor(HubAuthInterceptor { prefs.token })
+        .addInterceptor(HubAuthInterceptor { targetToken })
         .build()
     private val shortControlClient = client.newBuilder()
         .connectTimeout(4, TimeUnit.SECONDS)
@@ -11719,17 +12063,17 @@ class HubApi(private val prefs: AppPrefs) {
         .build()
 
     suspend fun health(): String = withContext(Dispatchers.IO) {
-        if (prefs.hub.isBlank()) return@withContext "失败：Hub 地址为空"
+        if (targetHub.isBlank()) return@withContext "失败：Hub 地址为空"
         "连接成功：${retryText("/health", 3)}"
     }
 
     suspend fun healthWithRetry(attempts: Int = 3): String = withContext(Dispatchers.IO) {
-        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         retryText("/health", attempts)
     }
 
     suspend fun keepaliveWithRetry(attempts: Int = 3): String = withContext(Dispatchers.IO) {
-        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         retryText("/api/sync/revision", attempts)
     }
 
@@ -11890,8 +12234,8 @@ class HubApi(private val prefs: AppPrefs) {
         json: String? = null,
         requestClient: OkHttpClient = client
     ): String {
-        if (prefs.hub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        val safeHub = validateHubTransportAddress(prefs.hub)
+        if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        val safeHub = validateHubTransportAddress(targetHub)
         val requestBuilder = Request.Builder()
             .url(joinUrl(safeHub, path))
             .header("Accept", "application/json")

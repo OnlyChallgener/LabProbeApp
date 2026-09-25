@@ -2,6 +2,9 @@ package com.labprobe.app
 
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -77,6 +80,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -169,6 +174,36 @@ fun NetworkHealthScreen(
     val scope = rememberCoroutineScope()
 
     val context = LocalContext.current
+    val routerImageStore = remember(context) { RouterImageStore(context) }
+    val imageHub = prefs.hub
+    val imageWorkspace = prefs.workspaceId
+    val imageScope = remember(imageHub, imageWorkspace) { routerImageScopeId(imageHub, imageWorkspace) }
+    var routerImage by remember(imageScope) { mutableStateOf<Bitmap?>(null) }
+    var routerImageError by remember(imageScope) { mutableStateOf("") }
+    var pendingImageScope by remember { mutableStateOf<Pair<String, String>?>(null) }
+    LaunchedEffect(imageScope) {
+        val loaded = routerImageStore.load(imageHub, imageWorkspace)
+        if (routerImage == null) routerImage = loaded
+    }
+    val routerImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val target = pendingImageScope
+        pendingImageScope = null
+        if (uri != null && target != null) scope.launch {
+            try {
+                val imported = routerImageStore.importImage(uri, target.first, target.second)
+                if (target.first == prefs.hub && target.second == prefs.workspaceId) {
+                    routerImage = imported
+                    routerImageError = ""
+                }
+            } catch (error: Exception) {
+                routerImageError = error.message ?: "路由器图片导入失败"
+            }
+        }
+    }
+    fun chooseRouterImage() {
+        pendingImageScope = imageHub to imageWorkspace
+        routerImagePicker.launch("image/*")
+    }
     var showRouterUrlEditor by remember { mutableStateOf(false) }
     var routerLanUrl by remember { mutableStateOf(prefs.routerLanUrl) }
     var routerWanUrl by remember { mutableStateOf(prefs.routerWanUrl) }
@@ -211,7 +246,14 @@ fun NetworkHealthScreen(
                 prefs.routerLanUrl = lan
                 prefs.routerWanUrl = wan
                 showRouterUrlEditor = false
-            }
+            },
+            imageEntry = {
+                LabProbeRouterImageEntry(
+                    hasImage = routerImage != null,
+                    error = routerImageError,
+                    onPick = ::chooseRouterImage,
+                )
+            },
         )
     }
 
@@ -320,17 +362,19 @@ fun NetworkHealthScreen(
                 drawLine(Color(0x0F73A7FF), Offset(size.width * 0.70f, size.height * 0.66f), Offset(size.width * 0.85f, size.height * 0.66f), 1.6.dp.toPx())
             }
             Image(
-                painter = painterResource(R.drawable.router_skeuomorphic_v3),
-                contentDescription = "路由器",
+                painter = routerImage?.let { BitmapPainter(it.asImageBitmap()) }
+                    ?: painterResource(R.drawable.router_skeuomorphic_v3),
+                contentDescription = "路由器，轻点打开后台",
                 modifier = Modifier
                     .size(104.dp)
+                    .clip(RoundedCornerShape(18.dp))
                     .pointerInput(routerLanUrl, routerWanUrl, prefs.favoriteNetworkMode) {
                         detectTapGestures(
                             onTap = { openRouterUrl() },
                             onDoubleTap = { showRouterUrlEditor = true }
                         )
                     },
-                contentScale = ContentScale.Fit
+                contentScale = if (routerImage == null) ContentScale.Fit else ContentScale.Crop
             )
         }
 
@@ -964,7 +1008,8 @@ private fun RouterUrlDialog(
     onLanChange: (String) -> Unit,
     onWanChange: (String) -> Unit,
     onDismiss: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    imageEntry: (@Composable () -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -997,6 +1042,7 @@ private fun RouterUrlDialog(
                         placeholderStyle = LabTypography.Placeholder
                     )
                 }
+                imageEntry?.invoke()
             }
         },
         confirmButton = { Button(onClick = onSave, shape = RoundedCornerShape(14.dp)) { Text("保存", style = LabTypography.Button) } },

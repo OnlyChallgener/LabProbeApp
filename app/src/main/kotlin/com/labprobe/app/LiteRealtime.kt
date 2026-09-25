@@ -9,8 +9,8 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Dedicated small-payload client for initial/reconnect calibration only.
- * Automatic realtime delivery uses the authenticated Hub-native WSS.
+ * Dedicated small-payload client for startup calibration and temporary recovery
+ * while authenticated Hub-native WSS is missing router frames.
  */
 class LiteRealtimeApi(private val prefs: AppPrefs) {
     private val client = OkHttpClient.Builder()
@@ -50,6 +50,12 @@ class LiteRealtimeApi(private val prefs: AppPrefs) {
         if (clean.isBlank()) return ""
         return if (clean.startsWith("http://", true) || clean.startsWith("https://", true)) clean else "http://$clean"
     }
+}
+
+internal fun usableLiteRealtimeSample(sample: JSONObject, previousEpochMs: Long): Boolean {
+    val epoch = sample.optLong("sampleEpochMs", 0L)
+    val age = sample.optLong("sampleAgeMs", Long.MAX_VALUE)
+    return epoch > previousEpochMs && !sample.optBoolean("stale", false) && age in 0L..10_000L
 }
 
 fun mergeLiteRouterRealtime(base: JSONObject?, sample: JSONObject): JSONObject {

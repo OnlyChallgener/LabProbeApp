@@ -52,6 +52,10 @@ object RouterConnectionStore {
     var snapshot by mutableStateOf(RouterConnectionSnapshot())
         private set
 
+    fun reset() {
+        snapshot = RouterConnectionSnapshot()
+    }
+
     fun apply(status: RouterHubStatus) {
         val sessionConnected = status.sessionConnected || status.connected
         val localized = when {
@@ -90,6 +94,7 @@ object RouterConnectionStore {
 /** Product-level client for Hub router-control endpoints. All transport and auth go through HubApi. */
 class RouterControlApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
+    private val workspaceActivation = RouterWorkspaceStore.activationVersion()
 
     private fun execute(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
         // A DDNS/firewall/UPnP read failure is a resource refresh failure, not a
@@ -135,7 +140,11 @@ class RouterControlApi(private val prefs: AppPrefs) {
             message = cleanApiText(root.optString("message", "正在准备路由控制数据")),
             errorCode = cleanApiText(root.optString("errorCode", "")),
             lastSuccessAt = root.optLong("lastSuccessAt", 0L)
-        ).also(RouterConnectionStore::apply)
+        ).also { status ->
+            if (RouterWorkspaceStore.isActive(prefs.workspaceId, workspaceActivation)) {
+                RouterConnectionStore.apply(status)
+            }
+        }
     }
     suspend fun nativePortMappings(force: Boolean = false): List<NativePortMapRule> {
         val data = get("/api/router/port-mapping${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()

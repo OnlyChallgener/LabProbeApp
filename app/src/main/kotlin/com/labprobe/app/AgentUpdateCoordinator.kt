@@ -40,8 +40,11 @@ object AgentUpdateCoordinator {
     private var boundKey: String = ""
     private var monitorJob: Job? = null
 
+    private fun bindingKey(prefs: AppPrefs): String =
+        prefs.hub.trim() + "|" + prefs.token.hashCode()
+
     fun bind(prefs: AppPrefs) {
-        val key = "${prefs.hub.trim()}|${prefs.token.hashCode()}"
+        val key = bindingKey(prefs)
         if (key == boundKey && monitorJob?.isActive == true) return
 
         boundKey = key
@@ -69,7 +72,7 @@ object AgentUpdateCoordinator {
         bind(prefs)
         scope.launch {
             operationMutex.withLock {
-                if (!hasConnectionSettings(prefs)) return@withLock
+                if (bindingKey(prefs) != boundKey || !hasConnectionSettings(prefs)) return@withLock
 
                 val previous = _state.value
                 _state.value = previous.copy(
@@ -101,7 +104,7 @@ object AgentUpdateCoordinator {
         bind(prefs)
         scope.launch {
             operationMutex.withLock {
-                if (!hasConnectionSettings(prefs)) return@withLock
+                if (bindingKey(prefs) != boundKey || !hasConnectionSettings(prefs)) return@withLock
 
                 _state.value = _state.value.copy(
                     busy = true,
@@ -240,13 +243,17 @@ object AgentUpdateCoordinator {
     private fun publish(prefs: AppPrefs, info: AgentUpdateInfo) {
         val normalized = normalizeAgentVersionInfo(info)
         val message = normalized.message.ifBlank { "Relay 版本状态已刷新" }
-        _state.value = AgentUpdateUiState(info = normalized, message = message, busy = false)
+        if (bindingKey(prefs) == boundKey) {
+            _state.value = AgentUpdateUiState(info = normalized, message = message, busy = false)
+        }
         prefs.agentUpdateInfoJson = normalized.toCoordinatorJson()
         prefs.agentUpdateMessage = message
     }
 
     private fun publishError(prefs: AppPrefs, message: String) {
-        _state.value = _state.value.copy(message = message, busy = false)
+        if (bindingKey(prefs) == boundKey) {
+            _state.value = _state.value.copy(message = message, busy = false)
+        }
         prefs.agentUpdateMessage = message
     }
 }

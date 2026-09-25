@@ -30,8 +30,8 @@ sealed interface HubRealtimeState {
  *
  * One authenticated WSS connection carries router fast and terminal deltas.
  * Protocol pings, Hub application keepalives and a local frame watchdog prevent
- * half-open connections from sitting idle. HTTP is calibration-only and is
- * never an automatic realtime fallback.
+ * half-open connections from sitting idle. AppState uses the small authenticated
+ * HTTP endpoint only while router frames are missing.
  */
 class HubRealtimeWebSocketClient(
     private val dnsProvider: () -> Dns,
@@ -54,6 +54,8 @@ class HubRealtimeWebSocketClient(
     @Volatile private var activeToken = ""
     @Volatile private var hasConnectedBefore = false
     @Volatile private var lastFrameAt = 0L
+    @Volatile private var lastReadyAt = 0L
+    @Volatile private var lastRouterFrameAt = 0L
     private var reconnectJob: Job? = null
     private var watchdogJob: Job? = null
 
@@ -85,6 +87,8 @@ class HubRealtimeWebSocketClient(
         reconnectJob = null
         hasConnectedBefore = false
         lastFrameAt = 0L
+        lastReadyAt = 0L
+        lastRouterFrameAt = 0L
         activeUrl = ""
         activeToken = ""
         stopActiveSocket()
@@ -159,6 +163,8 @@ class HubRealtimeWebSocketClient(
                     connecting = false
                     socket = webSocket
                     lastFrameAt = SystemClock.elapsedRealtime()
+                    lastReadyAt = 0L
+                    lastRouterFrameAt = 0L
                     startFrameWatchdog(run, webSocket)
                     reconnect = hasConnectedBefore
                     hasConnectedBefore = true
@@ -168,12 +174,16 @@ class HubRealtimeWebSocketClient(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     if (!desired || run != generation) return
-                    lastFrameAt = SystemClock.elapsedRealtime()
+                    val receivedAt = SystemClock.elapsedRealtime()
+                    lastFrameAt = receivedAt
                     val root = runCatching { JSONObject(text) }.getOrNull() ?: return
                     val type = root.optString("type")
                     val data = root.optJSONObject("data")
                     when (type) {
-                        "router" -> if (data != null) onRouterRealtime(data.toString())
+                        "router" -> if (data != null) {
+                            lastRouterFrameAt = receivedAt
+                            onRouterRealtime(data.toString())
+                        }
                         "devices" -> if (data != null) onDevicesRealtime(data.toString())
                         "devices_snapshot" -> if (data != null) onDevicesSnapshot(data.toString())
                         "task" -> if (data != null) onTaskUpdate(data.toString())
@@ -181,6 +191,7 @@ class HubRealtimeWebSocketClient(
                         "agent" -> if (data != null) onAgentUpdate(data.toString())
                         "ready" -> if (!readyReceived) {
                             readyReceived = true
+                            lastReadyAt = receivedAt
                             onState(HubRealtimeState.Connected)
                             onRealtimeReady(reconnect)
                         }
@@ -213,8 +224,15 @@ class HubRealtimeWebSocketClient(
         watchdogJob = scope.launch {
             while (desired && run == generation && socket === webSocket) {
                 delay(WATCHDOG_INTERVAL_MS)
+                val now = SystemClock.elapsedRealtime()
                 val last = lastFrameAt
-                if (last > 0L && SystemClock.elapsedRealtime() - last >= SERVER_FRAME_TIMEOUT_MS) {
+                val ready = lastReadyAt
+                val router = lastRouterFrameAt
+                if (ready > 0L && now - (if (router > 0L) router else ready) >= ROUTER_FRAME_TIMEOUT_MS) {
+                    webSocket.cancel()
+                    return@launch
+                }
+                if (last > 0L && now - last >= SERVER_FRAME_TIMEOUT_MS) {
                     webSocket.cancel()
                     return@launch
                 }
@@ -272,6 +290,7 @@ class HubRealtimeWebSocketClient(
         const val PING_INTERVAL_SECONDS = 10L
         const val WATCHDOG_INTERVAL_MS = 1_000L
         const val SERVER_FRAME_TIMEOUT_MS = 45_000L
+        const val ROUTER_FRAME_TIMEOUT_MS = 20_000L
         const val MAX_RETRY_ATTEMPT = 3
         const val REALTIME_PATH = "/api/realtime/ws"
     }

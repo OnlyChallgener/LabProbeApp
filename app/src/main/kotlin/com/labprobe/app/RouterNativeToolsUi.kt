@@ -48,7 +48,15 @@ private val NativeMuted = LabV2.InkMuted
 private val NativeBorder = LabCoreSurface.Border
 
 private object RouterNativeMemoryCache {
+    private var scopeKey: String = ""
     var natResult: RouterNatResult? = null
+
+    fun ensureScope(prefs: AppPrefs) {
+        val next = prefs.hub.trimEnd('/') + "#" + prefs.workspaceId
+        if (scopeKey == next) return
+        scopeKey = next
+        natResult = null
+    }
 }
 
 private fun Modifier.nativeCardShadow(shape: RoundedCornerShape, elevation: androidx.compose.ui.unit.Dp = 2.dp): Modifier =
@@ -496,6 +504,7 @@ private fun mergeNatLog(previous: String, incoming: String): String {
 
 @Composable
 fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
+    RouterNativeMemoryCache.ensureScope(prefs)
     val tasks = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterTaskRepositoryRegistry.get(prefs) }
     val task by tasks.nat.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -766,7 +775,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 private const val ROUTER_BETA_SNAPSHOT_PREF = "router_beta_snapshot_v1"
 
 private fun loadRouterBetaSnapshot(context: Context): RouterBetaInfo {
-    val raw = context.getSharedPreferences("router_native_tools", Context.MODE_PRIVATE)
+    val raw = routerScopedPreferences(context, "router_native_tools")
         .getString(ROUTER_BETA_SNAPSHOT_PREF, "")
         .orEmpty()
     if (raw.isBlank()) return RouterBetaInfo()
@@ -803,7 +812,7 @@ private fun loadRouterBetaSnapshot(context: Context): RouterBetaInfo {
 
 private fun saveRouterBetaSnapshot(context: Context, info: RouterBetaInfo) {
     if (!info.hasSnapshot) return
-    context.getSharedPreferences("router_native_tools", Context.MODE_PRIVATE)
+    routerScopedPreferences(context, "router_native_tools")
         .edit()
         .putString(ROUTER_BETA_SNAPSHOT_PREF, info.toJson().toString())
         .apply()
@@ -1083,14 +1092,14 @@ private fun normalizeNatHistory(rows: List<RouterNatResult>): List<RouterNatResu
 private fun persistNatHistory(context: Context, rows: List<RouterNatResult>) {
     val array = JSONArray()
     rows.take(ROUTER_NAT_HISTORY_LIMIT).forEach { array.put(it.toJson()) }
-    context.getSharedPreferences("router_native_tools", Context.MODE_PRIVATE)
+    routerScopedPreferences(context, "router_native_tools")
         .edit()
         .putString("nat_history", array.toString())
         .apply()
 }
 
 private fun loadNatHistory(context: Context): List<RouterNatResult> {
-    val raw = context.getSharedPreferences("router_native_tools", Context.MODE_PRIVATE)
+    val raw = routerScopedPreferences(context, "router_native_tools")
         .getString("nat_history", "[]") ?: "[]"
     val array = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
     val normalized = normalizeNatHistory((0 until array.length()).mapNotNull { index ->

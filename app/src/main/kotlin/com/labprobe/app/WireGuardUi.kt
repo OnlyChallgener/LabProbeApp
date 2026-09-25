@@ -4,9 +4,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -140,7 +142,7 @@ private fun wireGuardSourceColor(source: WireGuardEndpointSource): Color = when 
 fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val context = LocalContext.current
     val store = remember(prefs) { WireGuardProfileStore(context, prefs) }
-    val controller = remember(prefs) { WireGuardTunnelController.get(context, prefs) }
+    val controller = remember(prefs) { WireGuardTunnelController.get(context) }
     val wireGuardHubApi = remember(prefs.hub, prefs.token, prefs.hubDns) { WireGuardHubApi(prefs) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val operations = remember(prefs.hub, prefs.token, prefs.hubDns) { NetworkOperationRegistry.get(prefs) }
@@ -155,6 +157,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var profiles by remember { mutableStateOf<List<WireGuardProfile>>(emptyList()) }
     var runtime by remember { mutableStateOf(WireGuardRuntimeStatus()) }
     var editor by remember { mutableStateOf<WireGuardProfile?>(null) }
+    var detailProfile by remember { mutableStateOf<WireGuardProfile?>(null) }
     var editingExisting by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf<WireGuardProfile?>(null) }
     var requestedStart by remember { mutableStateOf<WireGuardProfile?>(null) }
@@ -177,7 +180,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     // 打通 CGNAT 的第一包 UDP 常会丢，wg 后端要重发几次 handshake initiation 才成；
     // 15 秒就报「一直握不上手」等于在用户刚点连接时就判死，这里留 30 秒余量。
     val noHandshakeTooLong = handshakeWatchSince > 0L && System.currentTimeMillis() - handshakeWatchSince > 30_000L
-    val homeLanRoutes = homeLanRouteCidrs(prefs.wgHomeLanIpv4, prefs.routerLanUrl)
+    val homeLanRoutes = (homeLanRouteCidrs(prefs.wgHomeLanIpv4, prefs.routerLanUrl) +
+        privateHubLanRouteCidrs(prefs.hub)).distinct()
     var routerPeers by remember { mutableStateOf<List<WireGuardRouterPeer>>(emptyList()) }
     var routerPeersAt by remember { mutableStateOf(0L) }
     var routerPeersOffline by remember { mutableStateOf(false) }
@@ -301,7 +305,22 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         profile = withContext(Dispatchers.IO) {
             store.applyProvisionedProfile(profile.id, result.profile)
         } ?: result.profile
-        if (profile.endpoint.isNotBlank()) wireGuardHubApi.patchManagedEndpoint(profile)
+        if (profile.endpoint.isNotBlank()) {
+            try {
+                wireGuardHubApi.patchManagedEndpoint(profile)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // The peer is already applied by the Agent. A failed endpoint follow-up
+                // must not look like a failed WG submission when it uses that tunnel.
+                throw WireGuardPendingVerificationException(
+                    result.desiredRevision,
+                    "${profile.name} 的隧道已由 Agent 应用，端点地址同步结果待核对；" +
+                        "请稍后重新核对，不要连续提交：${uiMessageZh(error.message)}",
+                    error,
+                )
+            }
+        }
         reload()
         if (announce) message = "${profile.name} 已同步到 Agent，可开始连接"
         return profile
@@ -323,7 +342,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         if (operations.state.value?.running == true) return
         if (runtime.running && runtime.profileId == profile.id) {
             val privateKey = withContext(Dispatchers.IO) { store.privateKey(profile.id) }
-            when (val result = controller.start(profile, privateKey)) {
+            when (val result = controller.start(profile, privateKey, prefs)) {
                 WireGuardStartResult.Started -> message = "${profile.endpointSource.displayName} 地址已更新，连接已自动重载"
                 is WireGuardStartResult.Failed -> message = result.message
                 is WireGuardStartResult.PermissionRequired -> Unit
@@ -341,10 +360,10 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     suspend fun startClient(profile: WireGuardProfile): Boolean {
         val privateKey = withContext(Dispatchers.IO) { store.privateKey(profile.id) }
-        return when (val result = controller.start(profile, privateKey)) {
+        return when (val result = controller.start(profile, privateKey, prefs)) {
             WireGuardStartResult.Started -> {
                 message = "${profile.name} 已启动"
-                runtime = controller.status()
+                runtime = controller.status(prefs)
                 true
             }
             is WireGuardStartResult.PermissionRequired -> {
@@ -399,7 +418,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         var serverPollTick = 0
         while (true) {
-            runtime = controller.status()
+            runtime = controller.status(prefs)
             val managedTunnel = runtime.running &&
                 profiles.firstOrNull { it.id == runtime.profileId }?.endpointSource != WireGuardEndpointSource.MANUAL
             val handshakeFresh = runtime.latestHandshakeAt > 0L &&
@@ -414,7 +433,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     serverConfig = serverState.config
                     val runningProfile = profiles.firstOrNull { it.id == runtime.profileId }
                     if (!serverState.config.enabled && runtime.running && runningProfile?.endpointSource != WireGuardEndpointSource.MANUAL) {
-                        runtime = controller.stop()
+                        runtime = controller.stop(prefs)
                     }
                 }
             }
@@ -532,11 +551,13 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     Text("客户端连接", style = LabTypography.CardTitle)
                     Text(
                         when {
+                            runtime.otherWorkspaceActive -> "另一台路由器的隧道正在连接；启动本路由配置会切换隧道"
                             !runtime.running -> "未连接 · 同一时间只启用一个配置"
                             isHandshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)}) · ${formatWireGuardBytes(runtime.receivedBytes)} 下行 / ${formatWireGuardBytes(runtime.sentBytes)} 上行"
                             else -> "正在尝试握手… (未收到服务端回包，请排查密钥/端口/网络) · 发送 ${formatWireGuardBytes(runtime.sentBytes)}"
                         },
                         style = LabTypography.Caption.copy(color = when {
+                            runtime.otherWorkspaceActive -> WireGuardAmber
                             !runtime.running -> LabV2.InkMuted
                             isHandshaked -> WireGuardGreen
                             else -> WireGuardAmber
@@ -641,13 +662,14 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         onStart = { requestStart(profile) },
                         onStop = {
                             val launched = operations.launch(wireGuardConnectTarget(profile.id), "正在停止 ${profile.name}…") { report ->
-                                runtime = controller.stop()
+                                runtime = controller.stop(prefs)
                                 message = "WireGuard 已停止"
                                 report("${profile.name} 已停止")
                             }
                             if (!launched) message = "已有网络配置操作正在进行，请稍候"
                         },
-                        onEdit = { editor = profile; editingExisting = true },
+                        onDetails = { editorClientPublicKey = ""; detailProfile = profile },
+                        onEdit = { editorClientPublicKey = ""; editor = profile; editingExisting = true },
                     )
                 }
             }
@@ -868,19 +890,19 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     val hadRunningClient = runtime.running
                     val managedClientRunning = hadRunningClient && previousRunningProfile?.endpointSource != WireGuardEndpointSource.MANUAL
                     if (!result.config.enabled && managedClientRunning) {
-                        runtime = controller.stop()
+                        runtime = controller.stop(prefs)
                     } else if (result.config.enabled && managedClientRunning &&
                         updatedRunningProfile?.endpointSource == WireGuardEndpointSource.STUN &&
                         updatedRunningProfile.endpointUpdateError.isNotBlank()) {
-                        runtime = controller.stop()
+                        runtime = controller.stop(prefs)
                         report("网关已应用；当前 STUN 规则待同步，客户端已停止以避免使用旧地址")
                     } else if (result.config.enabled && managedClientRunning && previousRunningProfile != null && updatedRunningProfile != null &&
                         (previousRunningProfile.endpoint != updatedRunningProfile.endpoint || previousRunningProfile.mtu != updatedRunningProfile.mtu)) {
                         updatedRunningProfile.let { updatedProfile ->
                             report("网关已应用，正在重载当前客户端配置…")
                             val privateKey = withContext(Dispatchers.IO) { store.privateKey(updatedProfile.id) }
-                            when (val restart = controller.start(updatedProfile, privateKey)) {
-                                WireGuardStartResult.Started -> runtime = controller.status()
+                            when (val restart = controller.start(updatedProfile, privateKey, prefs)) {
+                                WireGuardStartResult.Started -> runtime = controller.status(prefs)
                                 is WireGuardStartResult.Failed -> throw IllegalStateException(restart.message)
                                 is WireGuardStartResult.PermissionRequired -> throw IllegalStateException("网关已应用，但客户端重载需要重新授权 VPN")
                             }
@@ -955,11 +977,25 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         )
     }
 
-    LaunchedEffect(editor?.id) {
-        val profile = editor
-        editorClientPublicKey = if (profile == null) "" else withContext(Dispatchers.IO) {
-            wireGuardPublicKey(store.privateKey(profile.id))
+    LaunchedEffect(editor?.id, detailProfile?.id) {
+        val profile = editor ?: detailProfile
+        editorClientPublicKey = ""
+        if (profile != null) {
+            editorClientPublicKey = withContext(Dispatchers.IO) {
+                wireGuardPublicKey(store.privateKey(profile.id))
+            }
         }
+    }
+
+    detailProfile?.let { selected ->
+        val current = profiles.firstOrNull { it.id == selected.id } ?: selected
+        WireGuardProfileDetailsDialog(
+            profile = current,
+            runtime = runtime.takeIf { it.running && it.profileId == current.id },
+            clientPublicKey = editorClientPublicKey,
+            homeLanRoutes = homeLanRoutes,
+            onDismiss = { detailProfile = null },
+        )
     }
 
     editor?.let { profile ->
@@ -982,7 +1018,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 operations.launch(wireGuardProfileTarget(profile.id), "正在删除 ${profile.name}…") { report ->
                     if (runtime.profileId == profile.id) {
                         report("正在停止 ${profile.name}…")
-                        runtime = controller.stop()
+                        runtime = controller.stop(prefs)
                     }
                     withContext(Dispatchers.IO) { store.delete(profile.id) }
                     reload()
@@ -1001,6 +1037,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     val needsRouter = original != null &&
                         original.endpointSource != WireGuardEndpointSource.MANUAL &&
                         wireGuardEditNeedsRouter(original, next)
+                    val addressChanged = original != null && original.interfaceAddresses != next.interfaceAddresses
 
                     if (needsRouter) {
                         report("正在提交 ${original.name} 的远端变更…")
@@ -1009,26 +1046,38 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             is WireGuardRemoteMutationResult.Applied -> {
                                 withContext(Dispatchers.IO) { store.saveProfileEdit(result.value.profile) }
                                 reload()
+                                if (addressChanged && next.endpointSource != WireGuardEndpointSource.MANUAL &&
+                                    runtime.running && runtime.profileId == next.id) {
+                                    report("服务端已兼容新旧地址，正在切换手机隧道…")
+                                    val privateKey = withContext(Dispatchers.IO) { store.privateKey(next.id) }
+                                    when (val started = controller.start(result.value.profile, privateKey, prefs)) {
+                                        WireGuardStartResult.Started -> runtime = controller.status(prefs)
+                                        is WireGuardStartResult.PermissionRequired -> {
+                                            pendingStart = result.value.profile.also { vpnPermission.launch(started.intent) }
+                                        }
+                                        is WireGuardStartResult.Failed -> throw IllegalStateException(
+                                            "服务端已接受新旧地址，但本机隧道切换失败：${started.message}；请停止后重新连接",
+                                        )
+                                    }
+                                }
                                 report(
                                     if (next.endpointSource == WireGuardEndpointSource.MANUAL) {
                                         "Agent 已确认移除自动引用，已切换为手动配置"
+                                    } else if (addressChanged) {
+                                        "新地址已保存；服务端暂时兼容旧地址，连通后可重新同步清理"
                                     } else {
                                         "${result.value.profile.name} 已由 Agent 确认应用"
                                     }
                                 )
+                                Toast.makeText(context, "${result.value.profile.name} 已保存", Toast.LENGTH_SHORT).show()
                             }
                             is WireGuardRemoteMutationResult.PendingVerification -> {
                                 message = wireGuardRemoteMutationStatus("配置", result)
                                 report("配置已提交，待核对；本地配置保持原样")
                             }
                             is WireGuardRemoteMutationResult.NotSubmitted -> {
-                                // 远端没改成，本机这份改动也不能丢；这里不能再套用
-                                // 「失败，未更改」那句 —— 我们确实改了本地。
-                                withContext(Dispatchers.IO) { store.saveProfileEdit(next) }
-                                reload()
                                 throw IllegalStateException(
-                                    "配置已保存在本机，但路由器同步失败：${result.message}；" +
-                                        "等 Hub 可达后点「重新同步自动配置」即可补上",
+                                    "服务端未接受变更，本机仍保留原配置：${result.message}",
                                 )
                             }
                         }
@@ -1039,10 +1088,30 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         if (existingAtLaunch) store.saveProfileEdit(next) else store.create(next)
                     }
                     reload()
-                    if (next.endpointSource == WireGuardEndpointSource.MANUAL) {
+                    val remoteNamePending = original != null && original.name != next.name &&
+                        next.endpointSource != WireGuardEndpointSource.MANUAL
+                    if (original != null && runtime.running && runtime.profileId == next.id &&
+                        wireGuardLocalTunnelConfigChanged(original, next)) {
+                        report("本机配置已保存，正在重载当前隧道…")
+                        val saved = withContext(Dispatchers.IO) { store.load().first { it.id == next.id } }
+                        val privateKey = withContext(Dispatchers.IO) { store.privateKey(saved.id) }
+                        when (val restarted = controller.start(saved, privateKey, prefs)) {
+                            WireGuardStartResult.Started -> {
+                                runtime = controller.status(prefs)
+                                report(if (remoteNamePending) "本机隧道已更新；远端显示名待下次同步" else "本机配置已保存并应用到当前隧道")
+                            }
+                            is WireGuardStartResult.PermissionRequired -> {
+                                pendingStart = saved.also { vpnPermission.launch(restarted.intent) }
+                                report("本机配置已保存，等待系统重新授权 VPN")
+                            }
+                            is WireGuardStartResult.Failed -> throw IllegalStateException(
+                                "新配置已保存在本机，但当前隧道重载失败：${restarted.message}；请停止后重新连接",
+                            )
+                        }
+                    } else if (next.endpointSource == WireGuardEndpointSource.MANUAL) {
                         report(if (existingAtLaunch) "手动配置已保存" else "已创建手动配置，并生成客户端密钥")
                     } else if (existingAtLaunch) {
-                        report("已保存在本机：这次只改了本机这一侧（路由网段 / DNS 等），没有动路由器")
+                        report(if (remoteNamePending) "名称已保存在本机；远端显示名待下次同步" else "已保存在本机：这次只改了本机这一侧（路由网段 / DNS 等），没有动路由器")
                     } else {
                         report("配置已保存，正在同步 Agent…")
                         val saved = withContext(Dispatchers.IO) { store.load().first { it.id == next.id } }
@@ -1059,6 +1128,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             throw IllegalStateException("配置已保存在本机，但 Agent 同步失败：${uiMessageZh(error.message)}", error)
                         }
                     }
+                    Toast.makeText(context, "${next.name} 已保存", Toast.LENGTH_SHORT).show()
                 }
             },
         )
@@ -1092,11 +1162,18 @@ private fun WireGuardProfileCard(
     actionsEnabled: Boolean = true,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onDetails: () -> Unit,
     onEdit: () -> Unit,
 ) {
     val accent = wireGuardSourceColor(profile.endpointSource)
     val isHandshaked = active && runtime != null && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
     LabCoreCard {
+        // Only the read-only body is clickable. Action buttons below are siblings,
+        // so tapping Connect, Stop, or Edit cannot open the details dialog.
+        Column(
+            Modifier.fillMaxWidth().clickable(onClick = onDetails),
+            verticalArrangement = Arrangement.spacedBy(LabV2.RowGap),
+        ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             LabV2ToolIcon(if (profile.endpointSource == WireGuardEndpointSource.STUN) Icons.Rounded.Key else Icons.Rounded.Public, accent, size = 34)
             Spacer(Modifier.width(9.dp))
@@ -1105,6 +1182,8 @@ private fun WireGuardProfileCard(
                 Text(profile.endpointSource.displayName, style = LabTypography.Caption.copy(color = accent), fontWeight = FontWeight.SemiBold)
             }
             if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = if (isHandshaked) WireGuardGreen else WireGuardAmber, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("详情 ›", style = LabTypography.Caption.copy(color = WireGuardBlue))
         }
         if (active && runtime != null) {
             // 发出去了却一个回包都没有 = 连不上，不是还在连；红叉比一直转圈诚实。
@@ -1175,6 +1254,7 @@ private fun WireGuardProfileCard(
         }
 
         profile.endpointUpdateError.takeIf { it.isNotBlank() }?.let { Text(it, style = LabTypography.Caption.copy(color = WireGuardAmber), maxLines = 2) }
+        }
         operation?.let { WireGuardOperationStatus(it, onDismiss = onDismissOperation) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
@@ -1225,6 +1305,63 @@ private fun WireGuardProfileCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun WireGuardProfileDetailsDialog(
+    profile: WireGuardProfile,
+    runtime: WireGuardRuntimeStatus?,
+    clientPublicKey: String,
+    homeLanRoutes: List<String>,
+    onDismiss: () -> Unit,
+) {
+    val handshaked = runtime != null && runtime.latestHandshakeAt > 0L &&
+        System.currentTimeMillis() - runtime.latestHandshakeAt < 180_000L
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 720.dp),
+            shape = LabV2.CardShape,
+            color = Color.White,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp),
+            ) {
+                Text("WireGuard 配置详情", style = LabTypography.PageTitle)
+                Text(profile.name, style = LabTypography.CardTitle)
+                WireGuardDetailItem("连接状态", when {
+                    runtime == null -> "未连接"
+                    handshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)}) · ${formatWireGuardBytes(runtime.receivedBytes)} 下行 / ${formatWireGuardBytes(runtime.sentBytes)} 上行"
+                    else -> "隧道已启动，等待服务端握手"
+                })
+                Text("本地 (Interface)", style = LabTypography.SectionTitle, color = LabV2.Ink)
+                WireGuardDetailItem("客户端隧道地址", profile.interfaceAddresses.joinToString(", "))
+                WireGuardDetailItem("客户端公钥", clientPublicKey)
+                WireGuardDetailItem("DNS", profile.dnsServers.joinToString(", "))
+                WireGuardDetailItem("MTU", profile.mtu.toString())
+                Text("远程 (Peer)", style = LabTypography.SectionTitle, color = LabV2.Ink)
+                WireGuardDetailItem("来源", profile.endpointSource.displayName)
+                WireGuardDetailItem("服务端公钥", profile.serverPublicKey)
+                WireGuardDetailItem("路由网段 (AllowedIPs)", wireGuardEffectiveAllowedIps(profile, homeLanRoutes).joinToString(", "))
+                WireGuardDetailItem("服务器地址", profile.endpoint)
+                WireGuardDetailItem("保活间隔", if (profile.persistentKeepalive > 0) "${profile.persistentKeepalive} 秒" else "关闭")
+                if (profile.endpointSource == WireGuardEndpointSource.STUN) {
+                    WireGuardDetailItem("STUN 绑定", profile.endpointBindingId)
+                }
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = LabCoreSurface.InnerShape) {
+                    Text("关闭", style = LabTypography.Button)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WireGuardDetailItem(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = LabTypography.Caption.copy(color = LabV2.InkMuted))
+        Text(value.ifBlank { "未设置" }, style = LabTypography.Value.copy(color = LabV2.Ink, fontFamily = FontFamily.Monospace))
     }
 }
 
@@ -1464,9 +1601,10 @@ private fun WireGuardEditorDialog(
                         FilterChip(
                             selected = !isFullTunnel,
                             onClick = {
-                                if (isFullTunnel) allowedIps = (listOf("10.77.0.0/24") + homeLanRoutes).distinct().joinToString(", ")
+                                if (isFullTunnel) allowedIps = if (source == WireGuardEndpointSource.MANUAL) "" else
+                                    (listOf("10.77.0.0/24") + homeLanRoutes).distinct().joinToString(", ")
                             },
-                            label = { Text("内网分流 (推荐)", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
+                            label = { Text(if (source == WireGuardEndpointSource.MANUAL) "自定义分流" else "内网分流 (推荐)", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                             colors = FilterChipDefaults.filterChipColors(selectedContainerColor = WireGuardBlue.copy(alpha = .12f), selectedLabelColor = LabV2.Ink),
                         )
@@ -1482,8 +1620,12 @@ private fun WireGuardEditorDialog(
                     }
 
                 }
-                WireGuardField(allowedIps, { allowedIps = it }, if (isFullTunnel) "路由网段（全局接管：0.0.0.0/0, ::/0）" else "路由网段，例如 10.77.0.0/24, 192.168.5.0/24")
-                if (homeLanRoutes.isNotEmpty()) {
+                WireGuardField(allowedIps, { allowedIps = it }, when {
+                    isFullTunnel -> "路由网段（全局接管：0.0.0.0/0, ::/0）"
+                    source == WireGuardEndpointSource.MANUAL -> "路由网段，例如 10.8.0.0/24"
+                    else -> "路由网段，例如 10.77.0.0/24, 192.168.5.0/24"
+                })
+                if (source != WireGuardEndpointSource.MANUAL && homeLanRoutes.isNotEmpty()) {
                     Text(
                         "连接时自动加入家庭内网：${homeLanRoutes.joinToString("、")}",
                         style = LabTypography.Caption.copy(color = LabV2.InkMuted),

@@ -179,7 +179,7 @@ class DiagnosisProbes(
     private suspend fun wireGuard(): DiagnosisItem {
         val profiles = withContext(Dispatchers.IO) { WireGuardProfileStore(context, prefs).load() }
         if (profiles.isEmpty()) return item(DiagnosisCheck.WIREGUARD, HealthStatus.UNKNOWN, "未配置", "尚未配置 WireGuard", "观测点：手机 WireGuard；不会自动建立隧道")
-        val runtime = WireGuardTunnelController.get(context, prefs).status()
+        val runtime = WireGuardTunnelController.get(context).status(prefs)
         if (!runtime.running) return item(DiagnosisCheck.WIREGUARD,
             if (runtime.lastError.isBlank()) HealthStatus.UNKNOWN else HealthStatus.WARNING, "未连接",
             if (runtime.lastError.isBlank()) "WireGuard 当前未启用" else "WireGuard 状态读取异常",

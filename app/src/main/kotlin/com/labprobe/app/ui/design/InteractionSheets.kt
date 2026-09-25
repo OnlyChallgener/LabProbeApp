@@ -137,7 +137,10 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                     if (isValidMac(clean)) {
                         val existing = state.wolDevices.firstOrNull { it.mac.equals(clean, ignoreCase = true) }
                         if (existing != null) {
-                            state.addOrUpdateWolDevice(existing.copy(remark = remark.trim(), typeId = savedType, enabled = selectedWol))
+                            state.addOrUpdateWolDevice(
+                                existing.copy(remark = remark.trim(), typeId = savedType, enabled = selectedWol),
+                                syncDeviceOverride = false,
+                            )
                         } else if (selectedWol) {
                             state.addOrUpdateWolDevice(
                                 WolDeviceConfig(
@@ -146,7 +149,8 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                                     remark = remark.trim().ifBlank { device.name.ifBlank { clean } },
                                     typeId = savedType,
                                     enabled = true
-                                )
+                                ),
+                                syncDeviceOverride = false,
                             )
                         }
                     }

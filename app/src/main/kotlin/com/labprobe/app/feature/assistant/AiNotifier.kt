@@ -157,8 +157,19 @@ object AiNotifier {
         route: String = "ai_chat",
         notificationId: Int = 0,
         hubIdentity: String = "",
+        alreadyStored: Boolean = false,
     ): Boolean {
         return try {
+            // The inbox is independent of Android's notification permission.
+            if (!alreadyStored) {
+                val inbox = AiNotificationInboxStore(context)
+                val inserted = try {
+                    inbox.save(hubIdentity, listOf(AiNotification(notificationId, "message", title, content)))
+                } finally {
+                    inbox.close()
+                }
+                if (inserted.isEmpty()) return false
+            }
             if (
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

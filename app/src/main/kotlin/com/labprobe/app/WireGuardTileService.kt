@@ -27,7 +27,11 @@ class WireGuardTileService : TileService() {
     }
 
     override fun onClick() {
-        val prefs = AppPrefs(applicationContext)
+        if (previouslySelectedRouterNeedsConfirmation()) {
+            collapse(launchApp())
+            return
+        }
+        val prefs = AppPrefs.current(applicationContext)
         scope.launch {
             val outcome = toggleWireGuardShortcut(applicationContext, prefs)
             render()
@@ -43,7 +47,13 @@ class WireGuardTileService : TileService() {
 
     private fun render() {
         val tile = qsTile ?: return
-        val prefs = AppPrefs(applicationContext)
+        if (previouslySelectedRouterNeedsConfirmation()) {
+            tile.state = Tile.STATE_INACTIVE
+            tile.label = "打开 App 选择路由"
+            tile.updateTile()
+            return
+        }
+        val prefs = AppPrefs.current(applicationContext)
         scope.launch {
             val tunnelState = wireGuardShortcutState(applicationContext, prefs)
             tile.state = if (tunnelState.tunnelUp) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
@@ -54,6 +64,12 @@ class WireGuardTileService : TileService() {
             }
             tile.updateTile()
         }
+    }
+
+    private fun previouslySelectedRouterNeedsConfirmation(): Boolean {
+        if (RouterWorkspaceStore.activeWorkspaceId(applicationContext) != DEFAULT_ROUTER_WORKSPACE_ID) return false
+        val hubRoot = AppPrefs(applicationContext).hubRoot
+        return RouterWorkspaceStore.remembered(applicationContext, hubRoot) != DEFAULT_ROUTER_WORKSPACE_ID
     }
 
     private fun launchApp(): Intent? = packageManager.getLaunchIntentForPackage(packageName)
