@@ -440,7 +440,18 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                 RouterWorkspaceStore.hubConnectionChanged()
             }
         }
-    var hub: String get() = workspaceHubUrl(hubRoot, workspaceId)
+    var routerHubId: String
+        get() = if (workspaceId.startsWith("local_")) sp.getString("router_hub_id_v1", "").orEmpty()
+            else workspaceId
+        set(v) {
+            if (workspaceId.startsWith("local_")) sp.edit().putString("router_hub_id_v1", v.trim()).apply()
+        }
+    var hub: String get() = if (workspaceId == DEFAULT_ROUTER_WORKSPACE_ID) {
+            val legacyId = RouterWorkspaceStore.legacyServerId(appContext, hubRoot)
+            val currentId = RouterWorkspaceStore.serverDefaultId(appContext, hubRoot)
+            if (legacyId.isNotBlank() && currentId.isNotBlank() && legacyId != currentId)
+                normalizeHubBaseUrl(hubRoot) + "/r/" + legacyId else hubRoot
+        } else routerHubId.takeIf { it.isNotBlank() }?.let { workspaceHubUrl(hubRoot, it) } ?: ""
         set(v) { hubRoot = v }
     var token: String get() = if (usesLegacyDefault())
         secureTokenStore.get().ifBlank { DEFAULT_TOKEN } else workspaceTokenStore().get()
@@ -2370,16 +2381,29 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         clearPortMappingWorkspaceCache()
         mutableStateOf(DEFAULT_ROUTER_WORKSPACE_ID)
     }
-    var workspaces by remember { mutableStateOf(listOf(defaultRouterWorkspace())) }
+    var workspaces by remember { mutableStateOf(loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot,
+        RouterWorkspaceStore.cachedList(context, rootPrefs.hubRoot))) }
     var listingConfirmed by remember { mutableStateOf(false) }
     var listLoading by remember { mutableStateOf(false) }
     var listError by remember { mutableStateOf("") }
     var showPicker by remember { mutableStateOf(false) }
+    var showAddRouter by remember { mutableStateOf(false) }
     var editingWorkspace by remember { mutableStateOf<RouterWorkspace?>(null) }
     // 本机改过路由器名字之后要重算显示出来的那一列 —— 偏好不是 State，读不出变化。
     var workspaceNamesEpoch by remember { mutableIntStateOf(0) }
-    val visibleWorkspaces = remember(workspaces, workspaceNamesEpoch, connectionEpoch) {
-        workspaces.map { it.withLocalRouterName(context) }
+    var followedOnlineCounts by remember { mutableStateOf<Map<String, Int?>>(emptyMap()) }
+    LaunchedEffect(showPicker, workspaces, connectionEpoch) {
+        if (showPicker) while (true) {
+            val ids = workspaces.map { it.routerId }
+            followedOnlineCounts = withContext(Dispatchers.Default) {
+                ids.associateWith { workspaceFollowedOnlineCount(context, it) }
+            }
+            delay(2_000L)
+        }
+    }
+    val visibleWorkspaces = remember(workspaces, workspaceNamesEpoch, connectionEpoch, followedOnlineCounts) {
+        workspaces.map { it.withLocalRouterName(context).copy(
+            followedOnlineCount = followedOnlineCounts[it.routerId]) }
     }
 
     fun switchWorkspace(id: String) {
@@ -2396,22 +2420,26 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         val requestedEpoch = RouterWorkspaceStore.connectionEpoch
         listLoading = true
         listError = ""
-        val result = runCatching { RouterWorkspaceApi(rootPrefs).list() }
+        val result = runCatching { RouterWorkspaceApi(context, rootPrefs).list() }
         result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
         if (RouterWorkspaceStore.connectionEpoch != requestedEpoch) return
         result
             .onSuccess { rows ->
-                workspaces = rows
+                workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot, rows)
                 listingConfirmed = true
                 val target = if (restoreSavedSelection) {
-                    selectableWorkspaceId(rows, RouterWorkspaceStore.remembered(context, rootPrefs.hubRoot), true)
-                } else selectableWorkspaceId(rows, workspaceId, true)
+                    workspaces.firstOrNull { it.isDefault }?.routerId ?: DEFAULT_ROUTER_WORKSPACE_ID
+                } else selectableWorkspaceId(workspaces, workspaceId, true)
                 if (target != workspaceId) switchWorkspace(target)
             }
             .onFailure { failure ->
                 if (!listingConfirmed) {
-                    workspaces = listOf(defaultRouterWorkspace())
-                    if (workspaceId != DEFAULT_ROUTER_WORKSPACE_ID) switchWorkspace(DEFAULT_ROUTER_WORKSPACE_ID)
+                    workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot,
+                        RouterWorkspaceStore.cachedList(context, rootPrefs.hubRoot))
+                    val saved = if (restoreSavedSelection)
+                        workspaces.firstOrNull { it.isDefault }?.routerId ?: DEFAULT_ROUTER_WORKSPACE_ID else workspaceId
+                    val localTarget = selectableWorkspaceId(workspaces, saved, false)
+                    if (localTarget != workspaceId) switchWorkspace(localTarget)
                 }
                 listError = "路由器列表暂不可用：${uiMessageZh(failure.message)}"
             }
@@ -2423,7 +2451,8 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         RouterConnectionStore.reset()
         clearPortMappingWorkspaceCache()
         workspaceId = DEFAULT_ROUTER_WORKSPACE_ID
-        workspaces = listOf(defaultRouterWorkspace())
+        workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot,
+            RouterWorkspaceStore.cachedList(context, rootPrefs.hubRoot))
         listingConfirmed = false
         listError = ""
         showPicker = false
@@ -2435,8 +2464,10 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
     // 足够直接开跑 —— 让 /api/routers 慢、404 或只有多路由 Hub 才有这个接口时，
     // 首页陪着转圈是不可接受的。
     LaunchedEffect(prefs) {
-        AgentUpdateCoordinator.bind(prefs)
-        RouterRepositoryRegistry.get(prefs).start()
+        if (workspaces.none { it.routerId == workspaceId && it.localDraft && prefs.token.isBlank() }) {
+            AgentUpdateCoordinator.bind(prefs)
+            RouterRepositoryRegistry.get(prefs).start()
+        }
     }
     val currentWorkspace = visibleWorkspaces.firstOrNull { it.routerId == workspaceId }
         ?: defaultRouterWorkspace().withLocalRouterName(context)
@@ -2449,10 +2480,20 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
             error = listError,
             onSelect = ::switchWorkspace,
             onEdit = { editingWorkspace = it },
+            onAdd = { showPicker = false; showAddRouter = true },
             onRefresh = { scope.launch { loadWorkspaces(restoreSavedSelection = false) } },
             onDismiss = { showPicker = false },
         )
     }
+    if (showAddRouter) AddRouterWorkspaceDialog(
+        onDismiss = { showAddRouter = false },
+        onAdd = { name ->
+            val item = LocalRouterWorkspaceRegistry.add(context, rootPrefs.hubRoot, name)
+            workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot, workspaces)
+            showAddRouter = false
+            switchWorkspace(item.routerId)
+        },
+    )
     editingWorkspace?.let { target ->
         RouterWorkspaceEditDialog(
             target = target,
@@ -2462,13 +2503,33 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
             onDeleted = {
                 editingWorkspace = null
                 showPicker = false
+                workspaces = workspaces.filterNot { it.routerId == target.routerId }
+                switchWorkspace(workspaces.firstOrNull { it.isDefault }?.routerId ?: DEFAULT_ROUTER_WORKSPACE_ID)
                 workspaceNamesEpoch++
-                scope.launch { loadWorkspaces(restoreSavedSelection = true) }
+                scope.launch { loadWorkspaces(restoreSavedSelection = false) }
+            },
+            onSetDefault = {
+                val serverId = target.serverRouterId.takeIf { !target.localDraft }
+                    ?: AppPrefs(context, target.routerId).routerHubId.takeIf { it.isNotBlank() }
+                    ?: error("请先完成这台路由器的 Hub 配置")
+                val targetPrefs = AppPrefs(context, target.routerId)
+                require(targetPrefs.hub.isNotBlank() && targetPrefs.token.isNotBlank()) {
+                    "请先完成这台路由器的 Hub 地址和令牌配置"
+                }
+                RouterWorkspaceApi(context, rootPrefs).setDefault(serverId)
+                val rows = runCatching { RouterWorkspaceApi(context, rootPrefs).list() }
+                    .getOrElse { RouterWorkspaceStore.cachedList(context, rootPrefs.hubRoot) }
+                workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot, rows)
+                switchWorkspace(target.routerId)
             },
         )
     }
+    var setupOpen by remember(workspaceId) { mutableStateOf(false) }
     key(workspaceId, RouterWorkspaceStore.activationVersion()) {
-        LabProbeWorkspaceApp(
+        if (currentWorkspace.localDraft && (prefs.token.isBlank() || prefs.hub.isBlank()) && !setupOpen) {
+            RouterWorkspaceSetupScreen(currentWorkspace.name,
+                onOpenSettings = { setupOpen = true }, onOpenSwitch = { showPicker = true })
+        } else LabProbeWorkspaceApp(
             prefs = prefs,
             routerWorkspace = currentWorkspace,
             onOpenRouterWorkspaces = { showPicker = true },
@@ -11874,6 +11935,7 @@ fun SettingsScreen(
     // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.5.46`
     // 会被显示成 `192.168.5.46`，看着像把用户输入吃掉了。
     var hub by remember { mutableStateOf(prefs.hubRoot) }
+    var hubRouteId by remember { mutableStateOf(prefs.routerHubId) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var routerName by remember { mutableStateOf(prefs.routerDisplayName) }
@@ -11929,6 +11991,11 @@ fun SettingsScreen(
                 modifier = Modifier.weight(1f),
             )
         }
+        if (prefs.workspaceId.startsWith("local_")) {
+            LabeledInput("Hub 路由标识", "例如：be50", hubRouteId, { hubRouteId = it })
+            Text("填写 NAS Hub 中这台路由器的标识和专属令牌。",
+                style = LabTypography.Supporting, color = LabV2.InkMuted)
+        }
         LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -11979,11 +12046,20 @@ fun SettingsScreen(
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
                 val cleanAppToken = appToken.trim()
-                val connectionChanged = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
+                val routeIdValid = !prefs.workspaceId.startsWith("local_") ||
+                    (validRouterWorkspaceId(hubRouteId.trim()) && hubRouteId.trim() != DEFAULT_ROUTER_WORKSPACE_ID)
+                if (!routeIdValid) { msg = "请填写有效的 Hub 路由标识"; return@Button }
+                val connectionChanged = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken ||
+                    prefs.hubDns != dns.trim() || prefs.routerHubId != hubRouteId.trim()
                 hub = cleanHub
                 prefs.hubRoot = cleanHub
+                prefs.routerHubId = hubRouteId
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
+                if (prefs.workspaceId.startsWith("local_")) {
+                    AgentUpdateCoordinator.bind(prefs)
+                    RouterRepositoryRegistry.get(prefs).start()
+                }
                 // 地址要等真连上才进「可用地址」列表：以前一保存就写进去，
                 // 连不上的地址会一直留在下拉里，看着像可用。
                 if (connectionChanged) state.markHubChanged() else state.markHubSavedWithoutConnectionChange()
@@ -12009,11 +12085,20 @@ fun SettingsScreen(
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
                 val cleanAppToken = appToken.trim()
-                val changed = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken || prefs.hubDns != dns.trim()
+                val routeIdValid = !prefs.workspaceId.startsWith("local_") ||
+                    (validRouterWorkspaceId(hubRouteId.trim()) && hubRouteId.trim() != DEFAULT_ROUTER_WORKSPACE_ID)
+                if (!routeIdValid) { msg = "请填写有效的 Hub 路由标识"; return@Button }
+                val changed = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken ||
+                    prefs.hubDns != dns.trim() || prefs.routerHubId != hubRouteId.trim()
                 hub = cleanHub
                 prefs.hubRoot = cleanHub
+                prefs.routerHubId = hubRouteId
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
+                if (prefs.workspaceId.startsWith("local_")) {
+                    AgentUpdateCoordinator.bind(prefs)
+                    RouterRepositoryRegistry.get(prefs).start()
+                }
                 prefs.addHistory("hub", cleanHub)
                 if (changed) state.markHubChanged()
                 scope.launch {
@@ -12067,9 +12152,9 @@ private class HubAuthInterceptor(private val tokenProvider: () -> String) : Inte
     }
 }
 
-class HubApi(private val prefs: AppPrefs) {
+class HubApi(private val prefs: AppPrefs, hubOverride: String? = null) {
     // A request started before a workspace switch must keep its original target.
-    private val targetHub = prefs.hub
+    private val targetHub = hubOverride ?: prefs.hub
     private val targetToken = prefs.token
     private val client = OkHttpClient.Builder()
         .dns(CustomDns(prefs.hubDns))

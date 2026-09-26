@@ -32,6 +32,26 @@ class RouterWorkspaceTest {
     }
 
     @Test
+    fun localDraftSurvivesOfflineAndCanBindItsOwnHubRoute() {
+        val hub = "http://192.168.5.46:58443"
+        AppPrefs(context).hubRoot = hub
+        val draft = LocalRouterWorkspaceRegistry.add(context, hub, "第二台锐捷")
+        val offline = mergeRouterWorkspaces(listOf(defaultRouterWorkspace()),
+            LocalRouterWorkspaceRegistry.list(context, hub))
+        assertEquals(draft.routerId, selectableWorkspaceId(offline, draft.routerId, listingConfirmed = false))
+        assertTrue(offline.last().localDraft)
+        val prefs = AppPrefs(context, draft.routerId)
+        assertEquals("", prefs.hub)
+        prefs.routerHubId = "north"
+        assertEquals("$hub/r/north", prefs.hub)
+        assertEquals(hub, AppPrefs(context).hub)
+        LocalRouterWorkspaceRegistry.rename(context, hub, draft.routerId, "书房")
+        assertEquals("书房", LocalRouterWorkspaceRegistry.list(context, "http://other.example:58443").single().name)
+        LocalRouterWorkspaceRegistry.remove(context, hub, draft.routerId)
+        assertTrue(LocalRouterWorkspaceRegistry.list(context, hub).isEmpty())
+    }
+
+    @Test
     fun defaultKeepsLegacyDataAndOtherRoutersCannotReadIt() {
         context.getSharedPreferences("labprobe", Context.MODE_PRIVATE).edit()
             .putString("hub", "http://192.168.5.46:58443")
@@ -212,6 +232,87 @@ class RouterWorkspaceTest {
         assertEquals("路由器在线 · 设备数待同步", routerWorkspaceCountsLine(defaultRouterWorkspace().copy(online = true)))
         assertEquals("路由器在线 · 在线 0 / 共 0 台", routerWorkspaceCountsLine(
             defaultRouterWorkspace().copy(online = true, deviceCount = 0, onlineDeviceCount = 0)))
+    }
+
+    @Test
+    fun changingDefaultPreservesOriginalWorkspaceIdentityAndRoutes() {
+        val hub = "http://192.168.5.46:58443"
+        AppPrefs(context).hubRoot = hub
+        RouterWorkspaceStore.recordServerDefault(context, hub, "default")
+        AppPrefs(context).cacheStatus = """{"router":"original"}"""
+        val before = JSONObject("""{"defaultRouterId":"default","routers":[
+            {"routerId":"default","name":"客厅","basePath":""},
+            {"routerId":"north","name":"书房","basePath":"/r/north","deviceCount":8,"onlineDeviceCount":3}
+        ]}""")
+        assertEquals("default", parseRouterWorkspaces(before, "default").first().routerId)
+        RouterWorkspaceStore.recordServerDefault(context, hub, "north")
+        val after = JSONObject("""{"defaultRouterId":"north","routers":[
+            {"routerId":"default","name":"客厅","basePath":"/r/default"},
+            {"routerId":"north","name":"书房","basePath":""}
+        ]}""")
+        val rows = parseRouterWorkspaces(after, RouterWorkspaceStore.legacyServerId(context, hub))
+        assertEquals(listOf("north", "default"), rows.map { it.routerId })
+        assertTrue(rows.first().isDefault)
+        assertFalse(rows.last().isDefault)
+        assertEquals("$hub/r/default", AppPrefs(context).hub)
+        assertEquals("""{"router":"original"}""", AppPrefs(context).cacheStatus)
+        assertEquals(hub, AppPrefs(context, "north").hubRoot)
+        assertEquals("$hub/r/north", AppPrefs(context, "north").hub)
+    }
+
+    @Test
+    fun deletedRemoteCardStaysHiddenWithoutChangingHubList() {
+        val hub = "http://192.168.5.46:58443"
+        val remote = listOf(defaultRouterWorkspace(), RouterWorkspace(
+            "north", "书房", "", "", true, "/r/north", deviceCount = 8, onlineDeviceCount = 3))
+        assertEquals(2, loadVisibleRouterWorkspaces(context, hub, remote).size)
+        forgetRouterWorkspace(context, hub, "north")
+        assertEquals(listOf("default"), loadVisibleRouterWorkspaces(context, hub, remote).map { it.routerId })
+        assertEquals(2, remote.size)
+    }
+
+    @Test
+    fun deletingBoundLocalCardDoesNotResurrectItsRemoteWorker() {
+        val hub = "http://192.168.5.46:58443"
+        AppPrefs(context).hubRoot = hub
+        val draft = LocalRouterWorkspaceRegistry.add(context, hub, "办公室")
+        AppPrefs(context, draft.routerId).routerHubId = "north"
+        val remote = listOf(defaultRouterWorkspace(), RouterWorkspace(
+            "north", "办公室", "", "", true, "/r/north"))
+        assertEquals(listOf("default", draft.routerId),
+            loadVisibleRouterWorkspaces(context, hub, remote).map { it.routerId })
+        forgetRouterWorkspace(context, hub, draft.routerId)
+        assertEquals(listOf("default"),
+            loadVisibleRouterWorkspaces(context, hub, remote).map { it.routerId })
+    }
+
+    @Test
+    fun routerCardFormatsTotalBeforeOnline() {
+        val item = defaultRouterWorkspace().copy(deviceCount = 25, onlineDeviceCount = 9)
+        assertEquals("25台设备，9台在线", routerWorkspaceDeviceCountsLine(item))
+        assertEquals("设备数待同步", routerWorkspaceDeviceCountsLine(item.copy(deviceCount = null, onlineDeviceCount = null)))
+    }
+
+    @Test
+    fun followedOnlineCountUsesEachWorkspaceDeviceCacheAndOverrides() {
+        val defaultPrefs = AppPrefs(context)
+        val north = AppPrefs(context, "north")
+        assertEquals(null, workspaceFollowedOnlineCount(context, "north"))
+        defaultPrefs.cacheOnlineDevices = """[{"mac":"AA:BB:CC:DD:EE:01","name":"手机","online":true}]"""
+        defaultPrefs.deviceOverridesJson = """[{"mac":"AA:BB:CC:DD:EE:01","followed":true}]"""
+        north.cacheOnlineDevices = """[
+            {"mac":"AA:BB:CC:DD:EE:02","name":"平板","online":true},
+            {"mac":"AA:BB:CC:DD:EE:03","name":"电脑","online":true}
+        ]"""
+        north.deviceOverridesJson = """[
+            {"mac":"AA:BB:CC:DD:EE:02","followed":true},
+            {"mac":"AA:BB:CC:DD:EE:03","followed":false}
+        ]"""
+        assertEquals(1, workspaceFollowedOnlineCount(context, "default"))
+        assertEquals(1, workspaceFollowedOnlineCount(context, "north"))
+        north.cacheOnlineDevices = "[]"
+        assertEquals(0, workspaceFollowedOnlineCount(context, "north"))
+        assertEquals(1, workspaceFollowedOnlineCount(context, "default"))
     }
 
     @Test
