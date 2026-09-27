@@ -691,9 +691,8 @@ private fun RouterHeroCard(
                         )
                     }
                 }
-                val isBe50 = imageWorkspace.contains("be50", ignoreCase = true)
-                    || displayName.contains("be50", ignoreCase = true)
-                    || (state.status?.optJSONObject("router")?.optString("model").orEmpty().contains("BE50", ignoreCase = true))
+                val isBe50 = ui.model.contains("BE50", ignoreCase = true)
+                    || ui.name.contains("BE50", ignoreCase = true)
                 androidx.compose.foundation.Image(
                     painter = routerImage?.let { BitmapPainter(it.asImageBitmap()) }
                         ?: painterResource(if (isBe50) R.drawable.router_be50 else R.drawable.router_skeuomorphic_v3),
