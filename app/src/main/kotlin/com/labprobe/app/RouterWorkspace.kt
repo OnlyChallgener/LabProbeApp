@@ -288,15 +288,14 @@ fun workspaceFollowedOnlineCount(context: Context, routerId: String): Int? =
     workspaceDeviceCounts(context, routerId)?.followedOnlineCount
 
 
-private fun workspaceDigest(value: String): String {
+fun workspaceDigest(value: String): String {
     val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
     return bytes.take(12).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
 
-fun routerWorkspacePreferencesName(routerId: String, hubRoot: String): String {
+fun routerWorkspacePreferencesName(routerId: String, hubRoot: String = ""): String {
     require(validRouterWorkspaceId(routerId))
-    val identity = normalizeHubBaseUrl(hubRoot) + "|" + routerId
-    return "labprobe_workspace_${workspaceDigest(identity)}"
+    return "labprobe_workspace_${workspaceDigest(routerId)}"
 }
 
 /** The active ID is intentionally process-local until a Hub list confirms it. */
@@ -405,12 +404,12 @@ class RouterWorkspaceApi(private val context: Context, private val defaultPrefs:
 }
 
 /** Per-router Android Keystore storage for tokens and optional SSH passwords. */
-internal class SecureWorkspaceStringStore(context: Context, routerId: String, hubRoot: String, purpose: String) {
-    private val identity = normalizeHubBaseUrl(hubRoot) + "|" + routerId
+internal class SecureWorkspaceStringStore(context: Context, routerId: String, hubRoot: String = "", purpose: String) {
+    private val identity = routerId
     private val prefs = context.applicationContext.getSharedPreferences(
-        "labprobe_workspace_secure_${workspaceDigest(identity)}", Context.MODE_PRIVATE
+        "labprobe_ws_sec_${workspaceDigest(identity)}", Context.MODE_PRIVATE
     )
-    private val alias = "labprobe_workspace_${workspaceDigest(identity)}_${workspaceDigest(purpose)}"
+    private val alias = "labprobe_ws_${workspaceDigest(identity)}_${workspaceDigest(purpose)}"
     private val ivKey = "${purpose}_iv"
     private val cipherKey = "${purpose}_cipher"
     private var cachedCipher: String? = null
@@ -488,15 +487,15 @@ fun forgetRouterWorkspace(context: Context, hubRoot: String, routerId: String) {
     val boundServerId = AppPrefs(app, routerId).routerHubId.takeIf {
         it != routerId && validRouterWorkspaceId(it)
     }
-    val digest = workspaceDigest(normalizeHubBaseUrl(hubRoot) + "|" + routerId)
-    app.getSharedPreferences(routerWorkspacePreferencesName(routerId, hubRoot), Context.MODE_PRIVATE)
+    val digest = workspaceDigest(routerId)
+    app.getSharedPreferences(routerWorkspacePreferencesName(routerId), Context.MODE_PRIVATE)
         .edit().clear().commit()
-    app.getSharedPreferences("labprobe_workspace_secure_$digest", Context.MODE_PRIVATE)
+    app.getSharedPreferences("labprobe_ws_sec_$digest", Context.MODE_PRIVATE)
         .edit().clear().commit()
     runCatching {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         store.aliases().toList()
-            .filter { it.startsWith("labprobe_workspace_${digest}_") }
+            .filter { it.startsWith("labprobe_ws_${digest}_") }
             .forEach { runCatching { store.deleteEntry(it) } }
     }
     val selection = app.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
@@ -634,21 +633,108 @@ fun routerWorkspaceCountsLine(item: RouterWorkspace): String {
 @Composable
 fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加路由器") },
-        text = {
-            OutlinedTextField(name, { name = it }, label = { Text("路由器名称") },
-                singleLine = true, modifier = Modifier.fillMaxWidth())
-        },
-        shape = RoundedCornerShape(20.dp),
-        containerColor = Color.White,
-        confirmButton = {
-            TextButton(onClick = { if (name.trim().isNotEmpty()) onAdd(name.trim()) },
-                enabled = name.trim().isNotEmpty()) { Text("添加") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "添加路由器",
+                        style = LabTypography.SectionTitle.copy(fontSize = 18.sp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Close, "关闭", Modifier.size(18.dp), tint = LabV2.InkMuted)
+                    }
+                }
+
+                Text(
+                    "输入这台路由器的备注名称，添加后将直接进入连接配置。",
+                    style = LabTypography.Body.copy(fontSize = 12.5.sp),
+                    color = LabV2.InkMuted
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = LabV2.FieldSoft,
+                    border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = 0.78f)),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (name.isEmpty()) {
+                            Text(
+                                "例如：BE50、客厅路由",
+                                style = LabTypography.Body.copy(fontSize = 14.sp),
+                                color = LabV2.InkMuted.copy(alpha = 0.7f)
+                            )
+                        }
+                        BasicTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            singleLine = true,
+                            textStyle = LabTypography.CardTitle.copy(fontSize = 15.sp, color = LabV2.Ink),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(23.dp),
+                        border = BorderStroke(1.dp, LabV2.Border)
+                    ) {
+                        Text("取消", style = LabTypography.Button, color = LabV2.InkMuted)
+                    }
+                    Button(
+                        onClick = {
+                            val clean = name.trim()
+                            if (clean.isNotEmpty()) onAdd(clean)
+                        },
+                        enabled = name.trim().isNotEmpty(),
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(23.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = LabV2.Primary,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("添加", style = LabTypography.Button)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -795,26 +881,68 @@ fun RouterWorkspaceEditDialog(
             }
         }
     }
-    if (confirmDelete) AlertDialog(
+    if (confirmDelete) Dialog(
         onDismissRequest = { if (!busy) confirmDelete = false },
-        title = { Text("删除路由器？") },
-        text = { Text("仅从本机列表移除，Hub 上的数据与链路保留。") },
-        shape = RoundedCornerShape(20.dp),
-        containerColor = Color.White,
-        confirmButton = { TextButton(onClick = {
-            confirmDelete = false
-            operation = "正在删除…"
-            scope.launch {
-                try {
-                    withContext(Dispatchers.IO) { forgetRouterWorkspace(context, hubRoot, target.routerId) }
-                    finish(true, "已删除", onDeleted)
-                } catch (error: Exception) {
-                    finish(false, "删除失败：${error.message.orEmpty()}")
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            shadowElevation = 8.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("删除路由器？", style = LabTypography.SectionTitle.copy(fontSize = 18.sp))
+                Text(
+                    "仅从本机列表中移除该路由器，Hub 上的历史数据与链路保持不变。",
+                    style = LabTypography.Body.copy(fontSize = 13.sp),
+                    color = LabV2.InkMuted
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { confirmDelete = false },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(23.dp),
+                        border = BorderStroke(1.dp, LabV2.Border)
+                    ) {
+                        Text("取消", style = LabTypography.Button, color = LabV2.InkMuted)
+                    }
+                    Button(
+                        onClick = {
+                            confirmDelete = false
+                            operation = "正在删除…"
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { forgetRouterWorkspace(context, hubRoot, target.routerId) }
+                                    finish(true, "已删除", onDeleted)
+                                } catch (error: Exception) {
+                                    finish(false, "删除失败：${error.message.orEmpty()}")
+                                }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(23.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LabV2.Red, contentColor = Color.White)
+                    ) {
+                        Text("删除", style = LabTypography.Button)
+                    }
                 }
             }
-        }, enabled = !busy) { Text("删除", color = LabV2.Red) } },
-        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
-    )
+        }
+    }
 }
 
 @Composable

@@ -374,21 +374,12 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
     private var scopedSshRoot = ""
     private var scopedSshStore: SecureWorkspaceStringStore? = null
 
-    private fun legacyDefaultHubRoot(): String {
-        val stored = globalSp.getString("legacy_default_hub_root_v1", null)
-        if (stored != null) return stored
-        val original = normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
-        globalSp.edit().putString("legacy_default_hub_root_v1", original).commit()
-        return original
-    }
-
-    private fun usesLegacyDefault(): Boolean =
-        workspaceId == DEFAULT_ROUTER_WORKSPACE_ID && hubRoot == legacyDefaultHubRoot()
+    private fun usesLegacyDefault(): Boolean = workspaceId == DEFAULT_ROUTER_WORKSPACE_ID
 
     private val sp: SharedPreferences
         @Synchronized get() {
             if (usesLegacyDefault()) return globalSp
-            val name = routerWorkspacePreferencesName(workspaceId, hubRoot)
+            val name = routerWorkspacePreferencesName(workspaceId)
             if (scopedSpName != name || scopedSp == null) {
                 scopedSp = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
                 scopedSpName = name
@@ -398,20 +389,16 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
 
     @Synchronized
     private fun workspaceTokenStore(): SecureWorkspaceStringStore {
-        val root = hubRoot
-        if (scopedTokenRoot != root || scopedTokenStore == null) {
-            scopedTokenStore = SecureWorkspaceStringStore(appContext, workspaceId, root, "hub_token")
-            scopedTokenRoot = root
+        if (scopedTokenStore == null) {
+            scopedTokenStore = SecureWorkspaceStringStore(appContext, workspaceId, purpose = "hub_token")
         }
         return scopedTokenStore!!
     }
 
     @Synchronized
     private fun workspaceSshStore(): SecureWorkspaceStringStore {
-        val root = hubRoot
-        if (scopedSshRoot != root || scopedSshStore == null) {
-            scopedSshStore = SecureWorkspaceStringStore(appContext, workspaceId, root, "ssh_password")
-            scopedSshRoot = root
+        if (scopedSshStore == null) {
+            scopedSshStore = SecureWorkspaceStringStore(appContext, workspaceId, purpose = "ssh_password")
         }
         return scopedSshStore!!
     }
@@ -432,12 +419,26 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             if (sp.contains("ssh_password")) sp.edit().remove("ssh_password").apply()
         }
     }
-    var hubRoot: String get() = normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+    var hubRoot: String
+        get() {
+            if (usesLegacyDefault()) {
+                return normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+            }
+            val custom = sp.getString("hub_root", "").orEmpty().trim()
+            if (custom.isNotBlank()) return normalizeHubBaseUrl(custom)
+            val fullHub = sp.getString("hub", "").orEmpty().trim()
+            if (fullHub.isNotBlank()) return normalizeHubBaseUrl(fullHub)
+            return normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+        }
         set(v) {
             val clean = normalizeHubBaseUrl(v)
-            if (clean != hubRoot) {
-                globalSp.edit().putString("hub", clean).apply()
-                RouterWorkspaceStore.hubConnectionChanged()
+            if (usesLegacyDefault()) {
+                if (clean != hubRoot) {
+                    globalSp.edit().putString("hub", clean).apply()
+                    RouterWorkspaceStore.hubConnectionChanged()
+                }
+            } else {
+                sp.edit().putString("hub_root", clean).apply()
             }
         }
     var routerHubId: String
@@ -446,26 +447,50 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) {
             if (workspaceId.startsWith("local_")) sp.edit().putString("router_hub_id_v1", v.trim()).apply()
         }
-    var hub: String get() = if (workspaceId == DEFAULT_ROUTER_WORKSPACE_ID) {
-            val legacyId = RouterWorkspaceStore.legacyServerId(appContext, hubRoot)
-            val currentId = RouterWorkspaceStore.serverDefaultId(appContext, hubRoot)
-            if (legacyId.isNotBlank() && currentId.isNotBlank() && legacyId != currentId)
-                normalizeHubBaseUrl(hubRoot) + "/r/" + legacyId else hubRoot
-        } else routerHubId.takeIf { it.isNotBlank() }?.let { workspaceHubUrl(hubRoot, it) } ?: ""
-        set(v) { hubRoot = v }
-    var token: String get() = if (usesLegacyDefault())
-        secureTokenStore.get().ifBlank { DEFAULT_TOKEN } else workspaceTokenStore().get()
+    var hub: String
+        get() {
+            if (usesLegacyDefault()) {
+                val legacyId = RouterWorkspaceStore.legacyServerId(appContext, hubRoot)
+                val currentId = RouterWorkspaceStore.serverDefaultId(appContext, hubRoot)
+                return if (legacyId.isNotBlank() && currentId.isNotBlank() && legacyId != currentId)
+                    normalizeHubBaseUrl(hubRoot) + "/r/" + legacyId else hubRoot
+            }
+            val explicitHub = sp.getString("hub", "").orEmpty().trim()
+            if (explicitHub.isNotBlank()) return explicitHub
+            return if (routerHubId.isNotBlank()) workspaceHubUrl(hubRoot, routerHubId) else hubRoot
+        }
         set(v) {
-            val changed = v.trim() != token
-            if (usesLegacyDefault()) secureTokenStore.set(v) else workspaceTokenStore().set(v)
-            if (changed && workspaceId == DEFAULT_ROUTER_WORKSPACE_ID) {
-                RouterWorkspaceStore.hubConnectionChanged()
+            val clean = normalizeHubBaseUrl(v)
+            sp.edit().putString("hub", clean).apply()
+            if (usesLegacyDefault()) {
+                hubRoot = clean
             }
         }
-    var hubDns: String get() = globalSp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
+    var token: String
+        get() = if (usesLegacyDefault())
+            secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
+            else workspaceTokenStore().get().ifBlank { sp.getString("token", "").orEmpty() }
         set(v) {
             val clean = v.trim()
-            if (clean != hubDns) {
+            if (usesLegacyDefault()) {
+                val changed = clean != token
+                secureTokenStore.set(clean)
+                if (changed) RouterWorkspaceStore.hubConnectionChanged()
+            } else {
+                workspaceTokenStore().set(clean)
+                sp.edit().putString("token", clean).apply()
+            }
+        }
+    var hubDns: String
+        get() = if (usesLegacyDefault()) {
+            globalSp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
+        } else {
+            sp.getString("hub_dns", globalSp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1) ?: DEFAULT_DNS1
+        }
+        set(v) {
+            val clean = v.trim()
+            sp.edit().putString("hub_dns", clean).apply()
+            if (usesLegacyDefault()) {
                 globalSp.edit().putString("hub_dns", clean).apply()
                 RouterWorkspaceStore.hubConnectionChanged()
             }
@@ -510,6 +535,12 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) = sp.edit().putString("router_wan_url_v1", v.trim()).apply()
     var routerDisplayName: String get() = sp.getString("router_display_name_v1", "") ?: ""
         set(v) = sp.edit().putString("router_display_name_v1", v.trim()).apply()
+    var routerUsername: String get() = sp.getString("router_username_v1", "admin") ?: "admin"
+        set(v) = sp.edit().putString("router_username_v1", v.trim()).apply()
+    var routerPassword: String get() = sp.getString("router_password_v1", "") ?: ""
+        set(v) = sp.edit().putString("router_password_v1", v).apply()
+    var routerPasswordConfigured: Boolean get() = routerPassword.isNotBlank() || sp.getBoolean("router_pwd_configured_v1", false)
+        set(v) = sp.edit().putBoolean("router_pwd_configured_v1", v).apply()
     var certificateExpiryJson: String get() = sp.getString("certificate_expiry_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("certificate_expiry_v1", v).apply()
     var certificateReminderKeysJson: String get() = sp.getString("certificate_reminder_keys_v1", "[]") ?: "[]"
@@ -2497,7 +2528,11 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
     if (showAddRouter) AddRouterWorkspaceDialog(
         onDismiss = { showAddRouter = false },
         onAdd = { name ->
-            val item = LocalRouterWorkspaceRegistry.add(context, rootPrefs.hubRoot, name)
+            val clean = name.trim()
+            val item = LocalRouterWorkspaceRegistry.add(context, rootPrefs.hubRoot, clean)
+            val newPrefs = AppPrefs(context, item.routerId)
+            newPrefs.routerDisplayName = clean
+            newPrefs.routerUsername = "admin"
             workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot, workspaces)
             showAddRouter = false
             switchWorkspace(item.routerId)
@@ -2533,16 +2568,12 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
             },
         )
     }
-    var setupOpen by remember(workspaceId) { mutableStateOf(false) }
     key(workspaceId, RouterWorkspaceStore.activationVersion()) {
-        if (currentWorkspace.localDraft && (prefs.token.isBlank() || prefs.hub.isBlank()) && !setupOpen) {
-            RouterWorkspaceSetupScreen(currentWorkspace.name,
-                onOpenSettings = { setupOpen = true }, onOpenSwitch = { showPicker = true })
-        } else LabProbeWorkspaceApp(
+        LabProbeWorkspaceApp(
             prefs = prefs,
             routerWorkspace = currentWorkspace,
             onOpenRouterWorkspaces = { showPicker = true },
-            initialRoute = if (workspaceId != DEFAULT_ROUTER_WORKSPACE_ID && prefs.token.isBlank()) "settings" else "home",
+            initialRoute = if (workspaceId != DEFAULT_ROUTER_WORKSPACE_ID && (prefs.token.isBlank() || prefs.hub.isBlank())) "settings" else "home",
         )
     }
 }
@@ -11953,15 +11984,15 @@ fun SettingsScreen(
 ) {
     // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.5.46`
     // 会被显示成 `192.168.5.46`，看着像把用户输入吃掉了。
-    var hub by remember { mutableStateOf(prefs.hubRoot) }
+    var hub by remember { mutableStateOf(prefs.hub) }
     var hubRouteId by remember { mutableStateOf(prefs.routerHubId) }
     var appToken by remember { mutableStateOf(prefs.token) }
     var dns by remember { mutableStateOf(prefs.hubDns) }
     var routerName by remember { mutableStateOf(prefs.routerDisplayName) }
-    var routerUsername by remember { mutableStateOf("admin") }
+    var routerUsername by remember { mutableStateOf(prefs.routerUsername) }
     var routerAddress by remember { mutableStateOf(prefs.routerLanUrl) }
-    var routerPassword by remember { mutableStateOf("") }
-    var routerPasswordConfigured by remember { mutableStateOf(false) }
+    var routerPassword by remember { mutableStateOf(prefs.routerPassword) }
+    var routerPasswordConfigured by remember { mutableStateOf(prefs.routerPasswordConfigured) }
     var routerConfigLoading by remember { mutableStateOf(false) }
     var routerConfigSaving by remember { mutableStateOf(false) }
     var userEditedRouter by remember { mutableStateOf(false) }
@@ -11973,10 +12004,20 @@ fun SettingsScreen(
         routerConfigLoading = true
         runCatching { HubApi(prefs).getRouterConfig() }.onSuccess { config ->
             if (!userEditedRouter) {
-                if (config.name.isNotBlank() || routerName.isBlank()) routerName = config.name
-                if (config.username.isNotBlank() || routerUsername.isBlank()) routerUsername = config.username
-                if (config.address.isNotBlank() || routerAddress.isBlank()) routerAddress = config.address
+                if (config.name.isNotBlank() || routerName.isBlank()) {
+                    routerName = config.name
+                    prefs.routerDisplayName = config.name
+                }
+                if (config.username.isNotBlank() || routerUsername.isBlank()) {
+                    routerUsername = config.username
+                    prefs.routerUsername = config.username
+                }
+                if (config.address.isNotBlank() || routerAddress.isBlank()) {
+                    routerAddress = config.address
+                    prefs.routerLanUrl = config.address
+                }
                 routerPasswordConfigured = config.passwordConfigured
+                prefs.routerPasswordConfigured = config.passwordConfigured
             }
         }.onFailure { msg = "路由器配置读取失败：${uiMessageZh(it.message.orEmpty())}" }
         routerConfigLoading = false
@@ -11998,28 +12039,43 @@ fun SettingsScreen(
             CompactDropdown(
                 value = hubScheme,
                 options = listOf("http://", "https://"),
-                onSelect = { scheme -> hub = scheme + hubBody },
+                onSelect = { scheme ->
+                    hub = scheme + hubBody
+                    prefs.hub = hub
+                },
                 modifier = Modifier.width(94.dp),
             )
             Spacer(Modifier.width(6.dp))
             CompactTextField(
                 value = hubBody,
-                onValueChange = { hub = hubScheme + it },
+                onValueChange = {
+                    hub = hubScheme + it
+                    prefs.hub = hub
+                },
                 placeholder = "192.168.5.46:58443",
-                trailingIcon = { HistoryDropdown("hub", prefs) { picked -> hub = picked } },
+                trailingIcon = { HistoryDropdown("hub", prefs) { picked -> hub = picked; prefs.hub = picked } },
                 modifier = Modifier.weight(1f),
             )
         }
         if (prefs.workspaceId.startsWith("local_")) {
-            LabeledInput("Hub 路由标识", "例如：be50", hubRouteId, { hubRouteId = it })
+            LabeledInput("Hub 路由标识", "例如：be50", hubRouteId, {
+                hubRouteId = it
+                prefs.routerHubId = it
+            })
             Text("填写 NAS Hub 中这台路由器的标识和专属令牌。",
                 style = LabTypography.Supporting, color = LabV2.InkMuted)
         }
-        LabeledInput("APP Token", "Hub APP_TOKEN", appToken, { appToken = it }, password = true)
+        LabeledInput("APP Token", "Hub APP_TOKEN", appToken, {
+            appToken = it
+            prefs.token = it
+        }, password = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("DNS", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
-                CompactTextField(dns, { dns = it }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
+                CompactTextField(dns, {
+                    dns = it
+                    prefs.hubDns = it
+                }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("同步", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
@@ -12039,11 +12095,53 @@ fun SettingsScreen(
             }
         }
         Text("路由器配置", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
-        LabeledInput("名称", "例如：BE72", routerName, { routerName = it; userEditedRouter = true })
-        LabeledInput("管理地址", "例如：http://192.168.5.1", routerAddress, { routerAddress = it; userEditedRouter = true })
+        LabeledInput("名称", "例如：BE50", routerName, {
+            routerName = it
+            prefs.routerDisplayName = it.trim()
+            userEditedRouter = true
+        })
+        val routerScheme = if (routerAddress.trim().startsWith("https://", ignoreCase = true)) "https://" else "http://"
+        val routerBody = routerAddress.trim().removePrefix("http://").removePrefix("https://")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("管理地址", Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            CompactDropdown(
+                value = routerScheme,
+                options = listOf("http://", "https://"),
+                onSelect = { scheme ->
+                    routerAddress = scheme + routerBody
+                    prefs.routerLanUrl = routerAddress
+                    userEditedRouter = true
+                },
+                modifier = Modifier.width(94.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            CompactTextField(
+                value = routerBody,
+                onValueChange = {
+                    routerAddress = routerScheme + it
+                    prefs.routerLanUrl = routerAddress
+                    userEditedRouter = true
+                },
+                placeholder = "192.168.5.1",
+                trailingIcon = { HistoryDropdown("router_address", prefs) { picked -> routerAddress = picked; prefs.routerLanUrl = picked; userEditedRouter = true } },
+                modifier = Modifier.weight(1f),
+            )
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) { LabeledInput("账号", "路由器管理账号", routerUsername, { routerUsername = it; userEditedRouter = true }) }
-            Column(Modifier.weight(1f)) { LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, { routerPassword = it; userEditedRouter = true }, password = true) }
+            Column(Modifier.weight(1f)) {
+                LabeledInput("账号", "路由器管理账号", routerUsername, {
+                    routerUsername = it
+                    prefs.routerUsername = it.trim()
+                    userEditedRouter = true
+                })
+            }
+            Column(Modifier.weight(1f)) {
+                LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, {
+                    routerPassword = it
+                    if (it.isNotBlank()) prefs.routerPassword = it.trim()
+                    userEditedRouter = true
+                }, password = true)
+            }
         }
         if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
         val liveConnectionMessage = if (state.realtimeFallbackActive && state.realtimeDataFresh) "实时数据由备用链路更新，实时连接恢复中" else when (val realtime = state.mqttState) {
@@ -12065,16 +12163,24 @@ fun SettingsScreen(
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
                 val cleanAppToken = appToken.trim()
+                val cleanRouterName = routerName.trim()
+                val cleanRouterAddress = routerAddress.trim()
+                val cleanRouterUsername = routerUsername.trim()
+                val cleanRouterPassword = routerPassword.trim()
                 val routeIdValid = !prefs.workspaceId.startsWith("local_") ||
                     (validRouterWorkspaceId(hubRouteId.trim()) && hubRouteId.trim() != DEFAULT_ROUTER_WORKSPACE_ID)
                 if (!routeIdValid) { msg = "请填写有效的 Hub 路由标识"; return@Button }
-                val connectionChanged = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken ||
+                val connectionChanged = prefs.hub != cleanHub || prefs.token != cleanAppToken ||
                     prefs.hubDns != dns.trim() || prefs.routerHubId != hubRouteId.trim()
                 hub = cleanHub
-                prefs.hubRoot = cleanHub
+                prefs.hub = cleanHub
                 prefs.routerHubId = hubRouteId
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
+                prefs.routerDisplayName = cleanRouterName
+                prefs.routerLanUrl = cleanRouterAddress
+                prefs.routerUsername = cleanRouterUsername
+                if (cleanRouterPassword.isNotBlank()) prefs.routerPassword = cleanRouterPassword
                 if (prefs.workspaceId.startsWith("local_")) {
                     AgentUpdateCoordinator.bind(prefs)
                     RouterRepositoryRegistry.get(prefs).start()
@@ -12088,14 +12194,23 @@ fun SettingsScreen(
                 }
                 scope.launch {
                     routerConfigSaving = true
-                    runCatching { HubApi(prefs).putRouterConfig(RouterConfigUpdate(routerName.trim(), routerUsername.trim(), routerAddress.trim(), routerPassword.trim().takeIf { it.isNotBlank() })) }
-                        .onSuccess { config ->
-                            userEditedRouter = false
-                            routerName = config.name; routerUsername = config.username; routerAddress = config.address
-                            routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
-                            prefs.routerDisplayName = config.name; prefs.routerLanUrl = config.address
-                            msg = "路由器配置已同步到 Hub"; toast(ctx, "已保存并同步路由器配置")
-                        }.onFailure { msg = "路由器配置保存失败：${uiMessageZh(it.message.orEmpty())}" }
+                    runCatching {
+                        HubApi(prefs).putRouterConfig(
+                            RouterConfigUpdate(
+                                cleanRouterName,
+                                cleanRouterUsername,
+                                cleanRouterAddress,
+                                cleanRouterPassword.takeIf { it.isNotBlank() }
+                            )
+                        )
+                    }.onSuccess { config ->
+                        userEditedRouter = false
+                        routerName = config.name; routerUsername = config.username; routerAddress = config.address
+                        routerPassword = ""; routerPasswordConfigured = config.passwordConfigured
+                        prefs.routerDisplayName = config.name; prefs.routerLanUrl = config.address
+                        prefs.routerPasswordConfigured = config.passwordConfigured
+                        msg = "路由器配置已同步到 Hub"; toast(ctx, "已保存并同步路由器配置")
+                    }.onFailure { msg = "路由器配置保存失败：${uiMessageZh(it.message.orEmpty())}" }
                     routerConfigSaving = false
                 }
             }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint)) {
@@ -12104,16 +12219,24 @@ fun SettingsScreen(
             Button(onClick = {
                 val cleanHub = normalizeHubBaseUrl(hub)
                 val cleanAppToken = appToken.trim()
+                val cleanRouterName = routerName.trim()
+                val cleanRouterAddress = routerAddress.trim()
+                val cleanRouterUsername = routerUsername.trim()
+                val cleanRouterPassword = routerPassword.trim()
                 val routeIdValid = !prefs.workspaceId.startsWith("local_") ||
                     (validRouterWorkspaceId(hubRouteId.trim()) && hubRouteId.trim() != DEFAULT_ROUTER_WORKSPACE_ID)
                 if (!routeIdValid) { msg = "请填写有效的 Hub 路由标识"; return@Button }
-                val changed = prefs.hubRoot != cleanHub || prefs.token != cleanAppToken ||
+                val changed = prefs.hub != cleanHub || prefs.token != cleanAppToken ||
                     prefs.hubDns != dns.trim() || prefs.routerHubId != hubRouteId.trim()
                 hub = cleanHub
-                prefs.hubRoot = cleanHub
+                prefs.hub = cleanHub
                 prefs.routerHubId = hubRouteId
                 prefs.token = cleanAppToken
                 prefs.hubDns = dns
+                prefs.routerDisplayName = cleanRouterName
+                prefs.routerLanUrl = cleanRouterAddress
+                prefs.routerUsername = cleanRouterUsername
+                if (cleanRouterPassword.isNotBlank()) prefs.routerPassword = cleanRouterPassword
                 if (prefs.workspaceId.startsWith("local_")) {
                     AgentUpdateCoordinator.bind(prefs)
                     RouterRepositoryRegistry.get(prefs).start()
