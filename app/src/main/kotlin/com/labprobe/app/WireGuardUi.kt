@@ -371,7 +371,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 false
             }
             is WireGuardStartResult.Failed -> {
-                message = result.message
+                // 只由操作状态卡播报：再写 message 就会同一条失败出现两遍（卡片+底部红字）。
                 throw IllegalStateException(result.message)
             }
         }
@@ -1121,10 +1121,8 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (error: Throwable) {
-                            withContext(Dispatchers.IO) {
-                                store.markEndpointError(saved.id, saved.endpointSource, uiMessageZh(error.message).ifBlank { "Agent 同步失败" })
-                            }
-                            reload()
+                            // 不写 endpointUpdateError：操作卡已经播报同一条失败，
+                            // 琥珀行留给没有卡片可看的后台刷新路径（STUN 更新器等）。
                             throw IllegalStateException("配置已保存在本机，但 Agent 同步失败：${uiMessageZh(error.message)}", error)
                         }
                     }
