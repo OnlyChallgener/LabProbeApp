@@ -212,6 +212,8 @@ object LocalRouterWorkspaceRegistry {
         val wgSupported = isModelWireGuardSupported("", name, "")
         val item = RouterWorkspace("local_" + UUID.randomUUID().toString().replace("-", ""),
             name.trim(), "", "", false, "", localDraft = true, wireguardSupported = wgSupported)
+        // 草稿生在哪台 Hub 下就绑哪台：绑定为空时绝不回落全局 Hub（0.13.75 串数据的根因）。
+        RouterWorkspaceStore.bindHubRoot(context, item.routerId, hubRoot)
         save(context, hubRoot, list(context, hubRoot) + item)
         return item.copy(basePath = routerWorkspacePath(item.routerId))
     }
@@ -263,6 +265,12 @@ fun mergeRouterWorkspaces(
 }
 
 fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<RouterWorkspace>): List<RouterWorkspace> {
+    // 被哪台 Hub 列出来就绑哪台：远端 worker 的 hub 由列表来源决定，不由全局回落决定。
+    remote.forEach { row ->
+        if (row.routerId != DEFAULT_ROUTER_WORKSPACE_ID && !row.localDraft) {
+            RouterWorkspaceStore.bindHubRoot(context, row.routerId, hubRoot)
+        }
+    }
     val local = LocalRouterWorkspaceRegistry.list(context, hubRoot)
     val bound = local.associate { it.routerId to AppPrefs(context, it.routerId).routerHubId }
     return mergeRouterWorkspaces(remote, local, bound, LocalRouterWorkspaceRegistry.hidden(context, hubRoot))

@@ -27,6 +27,8 @@ class RouterWorkspaceTest {
                 context.getSharedPreferences(routerWorkspacePreferencesName(id, hub), Context.MODE_PRIVATE)
                     .edit().clear().commit()
             }
+            context.getSharedPreferences("labprobe_workspace_${workspaceDigest(id)}", Context.MODE_PRIVATE)
+                .edit().clear().commit()
         }
         RouterWorkspaceStore.resetActive()
     }
@@ -75,9 +77,16 @@ class RouterWorkspaceTest {
         assertEquals("""{"router":"south"}""", south.cacheStatus)
         assertEquals("旧锐捷", legacy.routerDisplayName)
         assertEquals("", south.routerDisplayName)
-        assertEquals("http://192.168.5.46:58443/r/north", north.hub)
-        assertEquals("http://192.168.5.46:58443/r/south", south.hub)
-        assertEquals(legacy.hubRoot, north.hubRoot)
+        // 未绑定的非默认工作区不许回落全局 Hub（0.13.75 把 BE72 数据套进 BE50 的根因）。
+        assertEquals("", north.hubRoot)
+        assertEquals("", north.hub)
+        assertEquals("", south.hub)
+        // 一次性迁移：旧版工作区文件名不含 hubRoot，里面的 hub 读回来落绑定。
+        context.getSharedPreferences("labprobe_workspace_${workspaceDigest("south")}", Context.MODE_PRIVATE)
+            .edit().putString("hub", "http://other.example:58443").commit()
+        assertEquals("http://other.example:58443", AppPrefs(context, "south").hubRoot)
+        // 非 local_ 的非默认 id 走网关模式路径（/r/<id>）；BE50 那种 local_ 草稿拿裸根地址。
+        assertEquals("http://other.example:58443/r/south", AppPrefs(context, "south").hub)
     }
 
     @Test
@@ -256,6 +265,8 @@ class RouterWorkspaceTest {
         assertFalse(rows.last().isDefault)
         assertEquals("$hub/r/default", AppPrefs(context).hub)
         assertEquals("""{"router":"original"}""", AppPrefs(context).cacheStatus)
+        // 远端 worker 被哪台 Hub 列出来就绑哪台（loadVisibleRouterWorkspaces 的副作用），这里模拟列表确认。
+        RouterWorkspaceStore.bindHubRoot(context, "north", hub)
         assertEquals(hub, AppPrefs(context, "north").hubRoot)
         assertEquals("$hub/r/north", AppPrefs(context, "north").hub)
     }
