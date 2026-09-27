@@ -2391,21 +2391,7 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
     var editingWorkspace by remember { mutableStateOf<RouterWorkspace?>(null) }
     // 本机改过路由器名字之后要重算显示出来的那一列 —— 偏好不是 State，读不出变化。
     var workspaceNamesEpoch by remember { mutableIntStateOf(0) }
-    var followedOnlineCounts by remember { mutableStateOf<Map<String, Int?>>(emptyMap()) }
-    LaunchedEffect(showPicker, workspaces, connectionEpoch) {
-        if (showPicker) while (true) {
-            val ids = workspaces.map { it.routerId }
-            followedOnlineCounts = withContext(Dispatchers.Default) {
-                ids.associateWith { workspaceFollowedOnlineCount(context, it) }
-            }
-            delay(2_000L)
-        }
-    }
-    val visibleWorkspaces = remember(workspaces, workspaceNamesEpoch, connectionEpoch, followedOnlineCounts) {
-        workspaces.map { it.withLocalRouterName(context).copy(
-            followedOnlineCount = followedOnlineCounts[it.routerId]) }
-    }
-
+    var workspaceCountsMap by remember { mutableStateOf<Map<String, WorkspaceDeviceCounts?>>(emptyMap()) }
     fun switchWorkspace(id: String) {
         val target = selectableWorkspaceId(workspaces, id, listingConfirmed)
         if (target == workspaceId) return
@@ -2444,6 +2430,29 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
                 listError = "路由器列表暂不可用：${uiMessageZh(failure.message)}"
             }
         listLoading = false
+    }
+
+    LaunchedEffect(showPicker, workspaces, connectionEpoch) {
+        if (showPicker) {
+            scope.launch { loadWorkspaces(restoreSavedSelection = false) }
+            while (true) {
+                val ids = workspaces.map { it.routerId }
+                workspaceCountsMap = withContext(Dispatchers.Default) {
+                    ids.associateWith { workspaceDeviceCounts(context, it) }
+                }
+                delay(2_000L)
+            }
+        }
+    }
+    val visibleWorkspaces = remember(workspaces, workspaceNamesEpoch, connectionEpoch, workspaceCountsMap) {
+        workspaces.map { item ->
+            val localCounts = workspaceCountsMap[item.routerId] ?: workspaceDeviceCounts(context, item.routerId)
+            item.withLocalRouterName(context).copy(
+                deviceCount = item.deviceCount ?: localCounts?.deviceCount,
+                onlineDeviceCount = item.onlineDeviceCount ?: localCounts?.onlineDeviceCount,
+                followedOnlineCount = localCounts?.followedOnlineCount ?: item.followedOnlineCount,
+            )
+        }
     }
 
     LaunchedEffect(connectionEpoch) {
@@ -4520,8 +4529,8 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = safeNasIpv6ForUi(nas, router)
-    val liveVpnRows = remember(state.status, nasV6, state.events) {
-        buildVpnRowsForHome(data, nasV6, state.events)
+    val liveVpnRows = remember(state.status, nasV6, state.events, routerWorkspace.wireguardSupported) {
+        buildVpnRowsForHome(data, nasV6, state.events, routerWorkspace.wireguardSupported)
     }
     var cachedVpnRows by remember { mutableStateOf(decodeHomeVpnRows(prefs.cacheVpnRowsJson)) }
     LaunchedEffect(liveVpnRows) {
@@ -4665,7 +4674,10 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         }
                         // 通栏开关放在这两张卡下面：在外面连不回 Hub 时，WireGuard 是唯一
                         // 自助的入站路径（家庭宽带在 CGNAT 后面），所以它要在首页一步可点。
-                        HomeWireGuardQuickRow(prefs = prefs, onOpenPage = { onNavigate("tool_wireguard") })
+                        // 当前路由不支持 WireGuard（例如 BE50 无内核）时动态隐藏
+                        if (routerWorkspace.wireguardSupported) {
+                            HomeWireGuardQuickRow(prefs = prefs, onOpenPage = { onNavigate("tool_wireguard") })
+                        }
                     }
                     "exit" -> HealthExitCard(
                         nas = nas,
@@ -4743,7 +4755,12 @@ fun resolveRouterExitIpv4(status: JSONObject?): String {
         .ifBlank { cleanApiText(data?.optString("exitIpv4")) }
 }
 
-fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem>): List<Pair<String, String>> {
+fun buildVpnRowsForHome(
+    data: JSONObject?,
+    nasV6: String,
+    events: List<EventItem>,
+    wireguardSupported: Boolean = true,
+): List<Pair<String, String>> {
     val rows = mutableListOf<Pair<String, String>>()
     fun addVpnRow(labelRaw: String?, addrRaw: String?) {
         val addr = cleanApiText(addrRaw)
@@ -4757,8 +4774,10 @@ fun buildVpnRowsForHome(data: JSONObject?, nasV6: String, events: List<EventItem
         if (rows.none { it.second == addr }) rows += label to addr
     }
 
-    val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
-    addVpnRow("WireGuard", wg)
+    if (wireguardSupported) {
+        val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
+        addVpnRow("WireGuard", wg)
+    }
 
     val list = data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses")
     if (list != null) {

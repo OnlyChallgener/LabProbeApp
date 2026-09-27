@@ -691,9 +691,12 @@ private fun RouterHeroCard(
                         )
                     }
                 }
+                val isBe50 = imageWorkspace.contains("be50", ignoreCase = true)
+                    || displayName.contains("be50", ignoreCase = true)
+                    || (state.status?.optJSONObject("router")?.optString("model").orEmpty().contains("BE50", ignoreCase = true))
                 androidx.compose.foundation.Image(
                     painter = routerImage?.let { BitmapPainter(it.asImageBitmap()) }
-                        ?: painterResource(R.drawable.router_skeuomorphic_v3),
+                        ?: painterResource(if (isBe50) R.drawable.router_be50 else R.drawable.router_skeuomorphic_v3),
                     contentDescription = "路由器，轻点打开后台",
                     modifier = Modifier.fillMaxSize().padding(7.dp),
                     contentScale = if (routerImage == null) ContentScale.Fit else ContentScale.Crop

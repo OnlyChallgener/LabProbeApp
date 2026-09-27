@@ -361,9 +361,12 @@ fun NetworkHealthScreen(
                 drawLine(Color(0x0F73A7FF), Offset(size.width * 0.16f, size.height * 0.34f), Offset(size.width * 0.30f, size.height * 0.34f), 1.6.dp.toPx())
                 drawLine(Color(0x0F73A7FF), Offset(size.width * 0.70f, size.height * 0.66f), Offset(size.width * 0.85f, size.height * 0.66f), 1.6.dp.toPx())
             }
+            val isBe50 = imageWorkspace.contains("be50", ignoreCase = true)
+                || prefs.routerDisplayName.contains("be50", ignoreCase = true)
+                || (state.status?.optJSONObject("router")?.optString("model").orEmpty().contains("BE50", ignoreCase = true))
             Image(
                 painter = routerImage?.let { BitmapPainter(it.asImageBitmap()) }
-                    ?: painterResource(R.drawable.router_skeuomorphic_v3),
+                    ?: painterResource(if (isBe50) R.drawable.router_be50 else R.drawable.router_skeuomorphic_v3),
                 contentDescription = "路由器，轻点打开后台",
                 modifier = Modifier
                     .size(104.dp)

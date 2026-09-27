@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -94,7 +98,15 @@ data class RouterWorkspace(
     val localDraft: Boolean = false,
     val isDefault: Boolean = false,
     val serverRouterId: String = routerId,
+    val wireguardSupported: Boolean = true,
 )
+
+fun isModelWireGuardSupported(model: String, name: String, routerId: String): Boolean {
+    val m = model.trim().lowercase()
+    val n = name.trim().lowercase()
+    val id = routerId.trim().lowercase()
+    return !m.contains("be50") && !n.contains("be50") && !id.contains("be50")
+}
 
 fun validRouterWorkspaceId(value: String): Boolean =
     value == DEFAULT_ROUTER_WORKSPACE_ID || Regex("[A-Za-z0-9_-]{1,64}").matches(value)
@@ -110,7 +122,7 @@ fun workspaceHubUrl(hubRoot: String, routerId: String): String {
 }
 
 fun defaultRouterWorkspace(): RouterWorkspace =
-    RouterWorkspace(DEFAULT_ROUTER_WORKSPACE_ID, "默认路由器", "", "", false, "", isDefault = true)
+    RouterWorkspace(DEFAULT_ROUTER_WORKSPACE_ID, "默认路由器", "", "", false, "", isDefault = true, wireguardSupported = true)
 
 fun parseRouterWorkspaces(root: JSONObject, legacyServerId: String? = null): List<RouterWorkspace> {
     val rows = root.optJSONArray("routers") ?: return listOf(defaultRouterWorkspace())
@@ -134,6 +146,11 @@ fun parseRouterWorkspaces(root: JSONObject, legacyServerId: String? = null): Lis
                 setOf("", canonicalPath)
             } else setOf(canonicalPath)
             if (suppliedPath !in acceptedPaths) continue
+            val wgSupported = if (item.has("wireguardSupported")) {
+                item.optBoolean("wireguardSupported")
+            } else {
+                isModelWireGuardSupported(item.optString("model"), item.optString("name"), serverId)
+            }
             add(
                 RouterWorkspace(
                     routerId = id,
@@ -146,6 +163,7 @@ fun parseRouterWorkspaces(root: JSONObject, legacyServerId: String? = null): Lis
                     onlineDeviceCount = count(item, "onlineDeviceCount"),
                     isDefault = if (defaultRouterId == null) id == DEFAULT_ROUTER_WORKSPACE_ID else serverId == defaultRouterId,
                     serverRouterId = serverId,
+                    wireguardSupported = wgSupported,
                 )
             )
         }
@@ -172,14 +190,20 @@ object LocalRouterWorkspaceRegistry {
                 val row = rows.optJSONObject(i) ?: continue
                 val id = row.optString("id")
                 if (!validRouterWorkspaceId(id) || id == DEFAULT_ROUTER_WORKSPACE_ID) continue
+                val wgSupported = if (row.has("wireguardSupported")) {
+                    row.optBoolean("wireguardSupported")
+                } else {
+                    isModelWireGuardSupported("", row.optString("name"), id)
+                }
                 add(RouterWorkspace(id, row.optString("name").ifBlank { id }, "", "", false,
-                    routerWorkspacePath(id), localDraft = true))
+                    routerWorkspacePath(id), localDraft = true, wireguardSupported = wgSupported))
             }
         }.distinctBy { it.routerId }
     }
     fun add(context: Context, hubRoot: String, name: String): RouterWorkspace {
+        val wgSupported = isModelWireGuardSupported("", name, "")
         val item = RouterWorkspace("local_" + UUID.randomUUID().toString().replace("-", ""),
-            name.trim(), "", "", false, "", localDraft = true)
+            name.trim(), "", "", false, "", localDraft = true, wireguardSupported = wgSupported)
         save(context, hubRoot, list(context, hubRoot) + item)
         return item.copy(basePath = routerWorkspacePath(item.routerId))
     }
@@ -236,15 +260,32 @@ fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<
     return mergeRouterWorkspaces(remote, local, bound, LocalRouterWorkspaceRegistry.hidden(context, hubRoot))
 }
 
-fun workspaceFollowedOnlineCount(context: Context, routerId: String): Int? {
+data class WorkspaceDeviceCounts(
+    val deviceCount: Int? = null,
+    val onlineDeviceCount: Int? = null,
+    val followedOnlineCount: Int? = null,
+)
+
+fun workspaceDeviceCounts(context: Context, routerId: String): WorkspaceDeviceCounts? {
     val prefs = AppPrefs(context.applicationContext, routerId)
     if (prefs.cacheDevices.isBlank() && prefs.cacheOnlineDevices.isBlank() && prefs.cacheOfflineDevices.isBlank()) return null
     val overrides = parseDeviceOverrides(prefs.deviceOverridesJson)
     val watched = applyDeviceOverrides(parseDeviceArray(prefs.cacheDevices), overrides)
     val online = applyDeviceOverrides(parseDeviceArray(prefs.cacheOnlineDevices), overrides)
     val offline = applyDeviceOverrides(parseDeviceArray(prefs.cacheOfflineDevices), overrides)
-    return followedDeviceList(mergeSharedDeviceState(watched + offline, online)).count { it.online }
+    val shared = mergeSharedDeviceState(watched + offline, online)
+    val total = shared.size.takeIf { it > 0 || prefs.cacheDevices.isNotBlank() || prefs.cacheOnlineDevices.isNotBlank() }
+    val onlineCount = online.size.takeIf { prefs.cacheOnlineDevices.isNotBlank() } ?: shared.count { it.online }
+    val followedOnline = followedDeviceList(shared).count { it.online }
+    return WorkspaceDeviceCounts(
+        deviceCount = total,
+        onlineDeviceCount = onlineCount,
+        followedOnlineCount = followedOnline,
+    )
 }
+
+fun workspaceFollowedOnlineCount(context: Context, routerId: String): Int? =
+    workspaceDeviceCounts(context, routerId)?.followedOnlineCount
 
 
 private fun workspaceDigest(value: String): String {
@@ -506,35 +547,46 @@ fun RouterWorkspacePickerDialog(
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     workspaces.forEachIndexed { index, item ->
                         if (index > 0) HorizontalDivider(color = LabV2.Border, thickness = 0.5.dp)
+                        val counts = remember(item.routerId) { workspaceDeviceCounts(context, item.routerId) }
+                        val effectiveItem = item.copy(
+                            deviceCount = item.deviceCount ?: counts?.deviceCount,
+                            onlineDeviceCount = item.onlineDeviceCount ?: counts?.onlineDeviceCount,
+                            followedOnlineCount = item.followedOnlineCount ?: counts?.followedOnlineCount,
+                        )
                         val selected = item.routerId == selectedId
+                        val isItemBe50 = !effectiveItem.wireguardSupported || !isModelWireGuardSupported(effectiveItem.model, effectiveItem.name, effectiveItem.routerId)
                         Row(
                             Modifier.fillMaxWidth().clickable {
                                 if (!selected) onSelect(item.routerId) else onDismiss()
                             }.padding(vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            Image(
+                                painter = painterResource(if (isItemBe50) R.drawable.router_be50 else R.drawable.router_skeuomorphic_v3),
+                                contentDescription = null,
+                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Fit
+                            )
+                            Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                Text(item.name, style = LabTypography.CardTitle,
+                                Text(effectiveItem.name, style = LabTypography.CardTitle,
                                     color = if (selected) Color(0xFF20B8B8) else LabV2.Ink,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                val prefs = if (item.localDraft) remember(item.routerId) { AppPrefs(context, item.routerId) } else null
+                                val prefs = if (effectiveItem.localDraft) remember(effectiveItem.routerId) { AppPrefs(context, effectiveItem.routerId) } else null
                                 val unconfigured = prefs != null && (prefs.hub.isBlank() || prefs.token.isBlank())
                                 if (unconfigured) {
                                     Text("未配置", style = LabTypography.Caption, color = LabV2.InkMuted)
                                 } else {
-                                    Text(routerWorkspaceDeviceCountsLine(item), style = LabTypography.Caption,
+                                    Text(routerWorkspaceSummaryLine(effectiveItem), style = LabTypography.Caption,
                                         color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(item.followedOnlineCount?.let { "关注设备在线 ${it} 台" } ?: "关注设备在线待同步",
-                                        style = LabTypography.Caption, color = LabV2.InkMuted,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                             Box(
                                 Modifier.size(38.dp).clip(CircleShape).clickable(
                                     interactionSource = remember { MutableInteractionSource() }, indication = null,
-                                ) { onEdit(item) },
+                                ) { onEdit(effectiveItem) },
                                 contentAlignment = Alignment.Center,
-                            ) { Icon(Icons.Rounded.Edit, "编辑${item.name}", Modifier.size(18.dp), tint = LabV2.InkMuted) }
+                            ) { Icon(Icons.Rounded.Edit, "编辑${effectiveItem.name}", Modifier.size(18.dp), tint = LabV2.InkMuted) }
                         }
                     }
                 }
@@ -556,7 +608,13 @@ fun routerWorkspaceDeviceCountsLine(item: RouterWorkspace): String = when {
         "${item.deviceCount}台设备，${item.onlineDeviceCount}台在线"
     item.deviceCount != null -> "${item.deviceCount}台设备，在线数待同步"
     item.onlineDeviceCount != null -> "设备数待同步，${item.onlineDeviceCount}台在线"
-    else -> "设备数待同步"
+    else -> "设备数待同步，在线数待同步"
+}
+
+fun routerWorkspaceSummaryLine(item: RouterWorkspace): String {
+    val devPart = routerWorkspaceDeviceCountsLine(item)
+    val followedPart = item.followedOnlineCount?.let { "关注设备在线 ${it} 台" } ?: "关注设备在线待同步"
+    return "$devPart · $followedPart"
 }
 
 /** 一行讲清「通不通 + 有几台」；缺字段时说「待同步」，绝不拿 0 冒充已知。 */
@@ -583,6 +641,8 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
             OutlinedTextField(name, { name = it }, label = { Text("路由器名称") },
                 singleLine = true, modifier = Modifier.fillMaxWidth())
         },
+        shape = RoundedCornerShape(20.dp),
+        containerColor = Color.White,
         confirmButton = {
             TextButton(onClick = { if (name.trim().isNotEmpty()) onAdd(name.trim()) },
                 enabled = name.trim().isNotEmpty()) { Text("添加") }
@@ -611,82 +671,125 @@ fun RouterWorkspaceEditDialog(
         operation = null
         result = success to message
         if (success) scope.launch {
-            kotlinx.coroutines.delay(1_350L)
+            kotlinx.coroutines.delay(1_100L)
             if (result == (true to message)) {
                 result = null
                 afterSuccess()
+            }
+        } else scope.launch {
+            kotlinx.coroutines.delay(2_000L)
+            if (result == (false to message)) {
+                result = null
             }
         }
     }
     Dialog(onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFFF4F5F8)) {
-            Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
-                    Text("编辑", style = LabTypography.SectionTitle)
-                    Box(Modifier.align(Alignment.CenterStart).size(40.dp).clip(CircleShape)
-                        .clickable(enabled = !busy, onClick = onDismiss), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink)
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-                Surface(shape = RoundedCornerShape(18.dp), color = Color.White) {
-                    Column(Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 18.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("路由器名称", style = LabTypography.FieldLabel, color = LabV2.InkMuted)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            BasicTextField(value = name, onValueChange = { if (!busy) name = it },
-                                singleLine = true, enabled = !busy,
-                                textStyle = LabTypography.CardTitle.copy(color = LabV2.Ink),
-                                modifier = Modifier.weight(1f))
-                            if (name.isNotEmpty()) Box(
-                                Modifier.size(30.dp).clip(CircleShape).clickable(enabled = !busy) { name = "" },
-                                contentAlignment = Alignment.Center,
-                            ) { Icon(Icons.Rounded.Close, "清空名称", Modifier.size(18.dp), tint = LabV2.InkMuted) }
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                    Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
+                        Text("编辑", style = LabTypography.PageTitle.copy(fontSize = 17.sp))
+                        Box(Modifier.align(Alignment.CenterStart).size(40.dp).clip(CircleShape)
+                            .clickable(enabled = !busy, onClick = onDismiss), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink)
                         }
                     }
-                }
-                Spacer(Modifier.weight(1f))
-                Button(onClick = {
-                    val clean = name.trim()
-                    if (clean.isBlank()) { result = false to "路由器名称不能为空"; return@Button }
-                    operation = "正在保存路由器名称"
-                    scope.launch {
-                        try {
-                            kotlinx.coroutines.delay(350L)
-                            AppPrefs(context, target.routerId).routerDisplayName = clean
-                            if (target.localDraft) LocalRouterWorkspaceRegistry.rename(context, hubRoot, target.routerId, clean)
-                            onNameSaved()
-                            finish(true, "路由器名称已保存", onDismiss)
-                        } catch (error: Exception) {
-                            finish(false, "保存失败：${error.message.orEmpty()}")
+                    Spacer(Modifier.height(14.dp))
+                    Surface(shape = RoundedCornerShape(18.dp), color = Color.White) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("路由器名称", style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp), color = LabV2.InkMuted)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                BasicTextField(value = name, onValueChange = { if (!busy) name = it },
+                                    singleLine = true, enabled = !busy,
+                                    textStyle = LabTypography.CardTitle.copy(fontSize = 17.5.sp, color = LabV2.Ink),
+                                    modifier = Modifier.weight(1f))
+                                if (name.isNotEmpty()) Box(
+                                    Modifier.size(30.dp).clip(CircleShape).clickable(enabled = !busy) { name = "" },
+                                    contentAlignment = Alignment.Center,
+                                ) { Icon(Icons.Rounded.Close, "清空名称", Modifier.size(18.dp), tint = LabV2.InkMuted) }
+                            }
                         }
                     }
-                }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary, contentColor = Color.White)) {
-                    Text("完成修改", style = LabTypography.Button)
-                }
-                if (!target.isDefault) {
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = {
-                        operation = "正在设置默认路由器"
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = {
+                        val clean = name.trim()
+                        if (clean.isBlank()) { result = false to "名称不能为空"; return@Button }
+                        operation = "正在保存…"
                         scope.launch {
                             try {
-                                onSetDefault()
-                                finish(true, "已设为默认路由器", onDismiss)
+                                kotlinx.coroutines.delay(300L)
+                                AppPrefs(context, target.routerId).routerDisplayName = clean
+                                if (target.localDraft) LocalRouterWorkspaceRegistry.rename(context, hubRoot, target.routerId, clean)
+                                onNameSaved()
+                                finish(true, "已保存", onDismiss)
                             } catch (error: Exception) {
-                                finish(false, "设置失败：${error.message.orEmpty()}")
+                                finish(false, "保存失败：${error.message.orEmpty()}")
                             }
                         }
                     }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp),
-                        shape = RoundedCornerShape(24.dp)) {
-                        Text("设为默认", style = LabTypography.Button, color = LabV2.Primary)
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary, contentColor = Color.White)) {
+                        Text("完成修改", style = LabTypography.Button)
                     }
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = { confirmDelete = true }, enabled = !busy,
-                        modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(24.dp)) {
-                        Text("删除路由器", style = LabTypography.Button, color = LabV2.Red)
+                    if (!target.isDefault) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = {
+                            operation = "正在设置…"
+                            scope.launch {
+                                try {
+                                    onSetDefault()
+                                    finish(true, "已设为默认", onDismiss)
+                                } catch (error: Exception) {
+                                    finish(false, "设置失败：${error.message.orEmpty()}")
+                                }
+                            }
+                        }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(24.dp)) {
+                            Text("设为默认", style = LabTypography.Button, color = LabV2.Primary)
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = { confirmDelete = true }, enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(24.dp)) {
+                            Text("删除路由器", style = LabTypography.Button, color = LabV2.Red)
+                        }
+                    }
+                }
+
+                val toastText = operation ?: result?.second
+                if (toastText != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xE6262626),
+                            shadowElevation = 4.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                if (busy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(15.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White
+                                    )
+                                }
+                                Text(
+                                    text = toastText,
+                                    color = Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -696,13 +799,15 @@ fun RouterWorkspaceEditDialog(
         onDismissRequest = { if (!busy) confirmDelete = false },
         title = { Text("删除路由器？") },
         text = { Text("仅从本机列表移除，Hub 上的数据与链路保留。") },
+        shape = RoundedCornerShape(20.dp),
+        containerColor = Color.White,
         confirmButton = { TextButton(onClick = {
             confirmDelete = false
-            operation = "正在移除本机路由器"
+            operation = "正在删除…"
             scope.launch {
                 try {
                     withContext(Dispatchers.IO) { forgetRouterWorkspace(context, hubRoot, target.routerId) }
-                    finish(true, "已从本机列表移除，Hub 数据保留", onDeleted)
+                    finish(true, "已删除", onDeleted)
                 } catch (error: Exception) {
                     finish(false, "删除失败：${error.message.orEmpty()}")
                 }
@@ -710,18 +815,6 @@ fun RouterWorkspaceEditDialog(
         }, enabled = !busy) { Text("删除", color = LabV2.Red) } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
     )
-    if (operation != null) AlertDialog(
-        onDismissRequest = {}, title = { Text(operation.orEmpty()) },
-        text = { CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 3.dp) },
-        confirmButton = {},
-    )
-    result?.let { (success, message) ->
-        AlertDialog(onDismissRequest = { if (!success) result = null },
-            title = { Text(if (success) "操作完成" else "操作失败") },
-            text = { Text(message) },
-            confirmButton = { if (!success) TextButton(onClick = { result = null }) { Text("关闭") } },
-        )
-    }
 }
 
 @Composable

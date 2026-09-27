@@ -288,9 +288,12 @@ class RouterWorkspaceTest {
 
     @Test
     fun routerCardFormatsTotalBeforeOnline() {
-        val item = defaultRouterWorkspace().copy(deviceCount = 25, onlineDeviceCount = 9)
+        val item = defaultRouterWorkspace().copy(deviceCount = 25, onlineDeviceCount = 9, followedOnlineCount = 2)
         assertEquals("25台设备，9台在线", routerWorkspaceDeviceCountsLine(item))
-        assertEquals("设备数待同步", routerWorkspaceDeviceCountsLine(item.copy(deviceCount = null, onlineDeviceCount = null)))
+        assertEquals("25台设备，9台在线 · 关注设备在线 2 台", routerWorkspaceSummaryLine(item))
+        val syncing = item.copy(deviceCount = null, onlineDeviceCount = null, followedOnlineCount = null)
+        assertEquals("设备数待同步，在线数待同步", routerWorkspaceDeviceCountsLine(syncing))
+        assertEquals("设备数待同步，在线数待同步 · 关注设备在线待同步", routerWorkspaceSummaryLine(syncing))
     }
 
     @Test
