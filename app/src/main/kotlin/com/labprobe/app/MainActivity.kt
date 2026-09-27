@@ -384,7 +384,17 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
      * 文件名正是由它决定的，从 `sp` 读就成了「先知道文件才能知道开哪个文件」。
      */
     private val boundHubRoot: String
-        get() = RouterWorkspaceStore.hubRootOf(appContext, workspaceId).ifBlank { globalHubRoot }
+        get() {
+            RouterWorkspaceStore.hubRootOf(appContext, workspaceId)
+                .takeIf { it.isNotBlank() }?.let { return it }
+            if (usesLegacyDefault()) return globalHubRoot
+            // 非默认工作区绑定为空 = 没配过 Hub，绝不能回落全局 Hub：
+            // 0.13.75 就是在这里把 BE72 的数据套进了 BE50 的壳。
+            // 一次性迁移：旧版工作区文件名不含 hubRoot，从那里把 hub 读回来落绑定。
+            val legacy = RouterWorkspaceStore.legacyFileHubRoot(appContext, workspaceId)
+            if (legacy.isNotBlank()) RouterWorkspaceStore.bindHubRoot(appContext, workspaceId, legacy)
+            return normalizeHubBaseUrl(legacy)
+        }
 
     private val sp: SharedPreferences
         @Synchronized get() {
@@ -2604,7 +2614,7 @@ private fun LabProbeWorkspaceApp(
     var childInternetOverviewOriginMac by rememberSaveable { mutableStateOf<String?>(null) }
     var toolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var nestedToolReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
-    var settingsReturnRoute by rememberSaveable { mutableStateOf("favorites") }
+    var settingsReturnRoute by rememberSaveable { mutableStateOf("home") }
     var dailyReturnRoute by rememberSaveable { mutableStateOf("events") }
     var aiChatReturnRoute by rememberSaveable { mutableStateOf("home") }
     var aiSettingsReturnRoute by rememberSaveable { mutableStateOf("home") }
@@ -2891,7 +2901,7 @@ private fun LabProbeWorkspaceApp(
             route == "wol" -> "devices"
             route == "device_traffic" || route == "device_detail" -> "devices"
             route == "child_internet_overview" || route == "child_internet_device" || route == "child_internet_picker" -> childInternetReturnRoute.takeIf { it in mainRoutes } ?: "devices"
-            route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "favorites"
+            route == "settings" -> settingsReturnRoute.takeIf { it in mainRoutes } ?: "home"
             route == "ai_settings" || route == "ai_chat" || route == "ai_usage" -> "home"
             else -> route
         }
@@ -2907,7 +2917,7 @@ private fun LabProbeWorkspaceApp(
                 childInternetOverviewReturnRoute = childInternetReturnRoute
                 childInternetOverviewOriginMac = null
             }
-            if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "favorites"
+            if (target == "settings") settingsReturnRoute = if (route in mainRoutes) route else "home"
             if (target == "daily") dailyReturnRoute = if (route in mainRoutes) route else normalized
             if (target == "ai_settings") aiSettingsReturnRoute = route
             if (target == "ai_chat") aiChatReturnRoute = route

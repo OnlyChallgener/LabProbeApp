@@ -136,6 +136,7 @@ private data class RouterDashboardUi(
     val cpu: Double = 0.0,
     val memory: Double = 0.0,
     val storage: Double = -1.0,
+    val frameEpochMs: Long = 0,
     val uptimeSeconds: Long = 0,
     val onlineDevices: Int = 0,
     val uploadBps: Long = 0,
@@ -398,8 +399,10 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         temperature = jsonNumber(telemetry, "temperatureC"),
         temperature2g = jsonNumber(telemetry, "temperature2gC"),
         temperature5g = jsonNumber(telemetry, "temperature5gC"),
-        cpu = jsonNumber(telemetry, "cpuPercent"),
-        memory = jsonNumber(telemetry, "memoryPercent"),
+        frameEpochMs = root.optLong("sampleEpochMs", 0),
+        // 没有真帧时 Hub 的空快照/App 合并层都会填 0.0；0% 是假数，按温度同款约定显示 --。
+        cpu = if (root.optLong("sampleEpochMs", 0) > 0 && telemetry.has("cpuPercent") && !telemetry.isNull("cpuPercent")) jsonNumber(telemetry, "cpuPercent") else -1.0,
+        memory = if (root.optLong("sampleEpochMs", 0) > 0 && telemetry.has("memoryPercent") && !telemetry.isNull("memoryPercent")) jsonNumber(telemetry, "memoryPercent") else -1.0,
         storage = if (telemetry.has("storagePercent") && !telemetry.isNull("storagePercent")) jsonNumber(telemetry, "storagePercent") else -1.0,
         uptimeSeconds = telemetry.optLong("uptimeSeconds", 0),
         onlineDevices = telemetry.optInt("onlineDeviceCount", 0),
@@ -745,12 +748,12 @@ private fun RouterHeroCard(
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SpeedValue(Icons.Rounded.South, ui.downloadBps, "下载速率", LabV2.Green, Modifier.weight(1f))
-                    SpeedValue(Icons.Rounded.North, ui.uploadBps, "上传速率", LabV2.Primary, Modifier.weight(1f))
+                    SpeedValue(if (ui.frameEpochMs > 0) ui.downloadBps else -1, "下载速率", LabV2.Green, Modifier.weight(1f), icon = Icons.Rounded.South)
+                    SpeedValue(if (ui.frameEpochMs > 0) ui.uploadBps else -1, "上传速率", LabV2.Primary, Modifier.weight(1f), icon = Icons.Rounded.North)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ConnectionCountChip("IPv4 连接数", ui.ipv4Connections, LabV2.Primary, Modifier.weight(1f))
-                    ConnectionCountChip("IPv6 连接数", ui.ipv6Connections, Color(0xFF0EA5E9), Modifier.weight(1f))
+                    ConnectionCountChip("IPv4 连接数", if (ui.frameEpochMs > 0) ui.ipv4Connections else -1, LabV2.Primary, Modifier.weight(1f))
+                    ConnectionCountChip("IPv6 连接数", if (ui.frameEpochMs > 0) ui.ipv6Connections else -1, Color(0xFF0EA5E9), Modifier.weight(1f))
                 }
                 if (ui.telemetryStale) {
                     Text("实时数据暂时未变化，已保留上次结果", fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
@@ -794,7 +797,7 @@ private fun RouterHeroCard(
 }
 
 @Composable
-private fun SpeedValue(icon: ImageVector, bps: Long, label: String, color: Color, modifier: Modifier) {
+private fun SpeedValue(bps: Long, label: String, color: Color, modifier: Modifier, icon: ImageVector) {
     val rate = bitRateParts(bps)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -832,7 +835,7 @@ private fun ConnectionCountChip(label: String, count: Long, color: Color, modifi
         ) {
             Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             Spacer(Modifier.width(4.dp))
-            Text(count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text(if (count < 0) "--" else count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
         }
     }
 }
@@ -1302,6 +1305,7 @@ private fun uptimeText(seconds: Long): String = when {
 }
 private fun compactDecimal(value: Double): String = String.format("%.2f", value).trimEnd('0').trimEnd('.')
 private fun bitRateParts(bps: Long): Pair<String, String> = when {
+    bps < 0 -> "--" to ""
     bps <= 0 -> "0" to "Kbps"
     bps < 1_000 -> bps.toString() to "bps"
     bps < 1_000_000 -> compactDecimal(bps / 1_000.0) to "Kbps"

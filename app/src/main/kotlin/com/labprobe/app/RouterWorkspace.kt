@@ -108,6 +108,14 @@ fun isModelWireGuardSupported(model: String, name: String, routerId: String): Bo
     return !m.contains("be50") && !n.contains("be50") && !id.contains("be50")
 }
 
+/** EG 线（BE50）固件没有 Web 端防火墙/WireGuard/NAT 诊断/Beta 升级，按型号/名称/工作区 id 判。 */
+fun isModelBe50(model: String, name: String, routerId: String): Boolean {
+    val m = model.trim().lowercase()
+    val n = name.trim().lowercase()
+    val id = routerId.trim().lowercase()
+    return m.contains("be50") || n.contains("be50") || id.contains("be50")
+}
+
 fun validRouterWorkspaceId(value: String): Boolean =
     value == DEFAULT_ROUTER_WORKSPACE_ID || Regex("[A-Za-z0-9_-]{1,64}").matches(value)
 
@@ -354,6 +362,12 @@ object RouterWorkspaceStore {
         context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
             .edit().remove(hubRootKey(routerId)).apply()
     }
+
+    /** 旧版（文件名不含 hubRoot）工作区文件里记的 hub；只用于一次性迁移绑定。 */
+    fun legacyFileHubRoot(context: Context, routerId: String): String =
+        context.applicationContext
+            .getSharedPreferences("labprobe_workspace_${workspaceDigest(routerId)}", Context.MODE_PRIVATE)
+            .getString("hub", "").orEmpty().trim()
 
     fun legacyServerId(context: Context, hubRoot: String): String =
         context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)

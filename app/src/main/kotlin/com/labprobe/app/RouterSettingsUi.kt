@@ -105,6 +105,9 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
         diagnostic = true
     )
 
+    // 这一页手上只有 /api/status，里面没有型号；isModelBe50 同时按显示名和工作区 id 判，传空 model 不改变语义。
+    val isBe50 = isModelBe50("", prefs.routerDisplayName, prefs.workspaceId)
+
     DetailShell(
         title = "路由设置",
         subtitle = "已预加载配置快照 · 页面打开不重复请求",
@@ -140,23 +143,27 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 color = SettingsCyan,
                 enabled = capabilities.configured
             ) { onOpen("tool_stun") }
-            RouterSettingsTile(
-                title = "防火墙",
-                subtitle = "入站、出站与转发规则",
-                icon = Icons.Rounded.Security,
-                color = SettingsGreen,
-                enabled = capabilities.firewall
-            ) { onOpen("tool_router_firewall") }
+            if (!isBe50) {
+                RouterSettingsTile(
+                    title = "防火墙",
+                    subtitle = "入站、出站与转发规则",
+                    icon = Icons.Rounded.Security,
+                    color = SettingsGreen,
+                    enabled = capabilities.firewall
+                ) { onOpen("tool_router_firewall") }
+            }
         }
 
         RouterSettingsSection("远程访问") {
-            RouterSettingsTile(
-                title = "WireGuard",
-                subtitle = "APP 客户端 · DDNS 与 STUN 独立配置",
-                icon = Icons.Rounded.Shield,
-                color = SettingsBlue,
-                enabled = capabilities.configured
-            ) { onOpen("tool_wireguard") }
+            if (!isBe50) {
+                RouterSettingsTile(
+                    title = "WireGuard",
+                    subtitle = "APP 客户端 · DDNS 与 STUN 独立配置",
+                    icon = Icons.Rounded.Shield,
+                    color = SettingsBlue,
+                    enabled = capabilities.configured
+                ) { onOpen("tool_wireguard") }
+            }
             RouterSettingsTile(
                 title = "DDNS",
                 subtitle = "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
@@ -189,21 +196,23 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 color = SettingsAmber,
                 enabled = capabilities.diagnostic
             ) { onOpen("tool_router_diag") }
-            RouterSettingsTile(
-                title = "路由 NAT 诊断",
-                subtitle = "路由器原生 RFC3489 / RFC5780 检测",
-                icon = Icons.Rounded.Radar,
-                color = SettingsCyan,
-                enabled = true
-            ) { onOpen("tool_router_nat") }
-            RouterSettingsTile(
-                title = "Beta 在线升级",
-                subtitle = "显示上次快照，点击后才检测",
-                icon = Icons.Rounded.SystemUpdateAlt,
-                glyph = RouterGlyph.Beta,
-                color = SettingsCyan,
-                enabled = true
-            ) { onOpen("tool_router_beta") }
+            if (!isBe50) {
+                RouterSettingsTile(
+                    title = "路由 NAT 诊断",
+                    subtitle = "路由器原生 RFC3489 / RFC5780 检测",
+                    icon = Icons.Rounded.Radar,
+                    color = SettingsCyan,
+                    enabled = true
+                ) { onOpen("tool_router_nat") }
+                RouterSettingsTile(
+                    title = "Beta 在线升级",
+                    subtitle = "显示上次快照，点击后才检测",
+                    icon = Icons.Rounded.SystemUpdateAlt,
+                    glyph = RouterGlyph.Beta,
+                    color = SettingsCyan,
+                    enabled = true
+                ) { onOpen("tool_router_beta") }
+            }
         }
     }
 }
