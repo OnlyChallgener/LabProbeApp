@@ -303,13 +303,13 @@ internal fun wireGuardPrivateKeyStorageId(
 /** Metadata lives in AppPrefs; only private keys use SecureWireGuardKeyStore. */
 class WireGuardProfileStore(context: Context, private val prefs: AppPrefs) {
     private val keyStore = SecureWireGuardKeyStore(context.applicationContext)
-    private val workspaceHubRoot = prefs.hubRoot
     private val legacyHubRoot = context.applicationContext
         .getSharedPreferences("labprobe", Context.MODE_PRIVATE)
         .getString("legacy_default_hub_root_v1", "").orEmpty()
 
+    // hubRoot 要现读：工作区绑定会在构造之后落盘，快照会让新旧实例对同一个 blob 算出不同键名。
     private fun secureKeyId(profileId: String): String =
-        wireGuardPrivateKeyStorageId(prefs.workspaceId, workspaceHubRoot, legacyHubRoot, profileId)
+        wireGuardPrivateKeyStorageId(prefs.workspaceId, prefs.hubRoot, legacyHubRoot, profileId)
 
     fun load(): List<WireGuardProfile> = runCatching {
         val array = JSONArray(prefs.wireGuardProfilesJson)
@@ -1013,7 +1013,8 @@ internal fun buildWireGuardServerPayload(
     replaceMatchingPublicKey: Boolean = true,
 ): JSONObject {
     require(profile.endpointSource != WireGuardEndpointSource.MANUAL) { "手动配置不会上传 Hub" }
-    require(clientPublicKey.isNotBlank()) { "客户端公钥不可用" }
+    // 公钥为空几乎总是私钥读不出来的衍生结果；报根因那句，用户才知道该做什么。
+    require(clientPublicKey.isNotBlank()) { wireGuardProfileError(profile, clientPublicKey).ifBlank { "客户端公钥不可用" } }
     require(profile.interfaceAddresses.isNotEmpty()) { "客户端隧道地址不能为空" }
     if (profile.endpointSource == WireGuardEndpointSource.DDNS) require(profile.endpointHost.isNotBlank()) { "请填写 DDNS 域名" }
     if (profile.endpointSource == WireGuardEndpointSource.STUN) require(profile.endpointBindingId.isNotBlank()) { "请先绑定 WireGuard UDP 穿透" }
@@ -1362,7 +1363,7 @@ internal fun buildWireGuardProfileTransitionPlan(
 ): WireGuardServerRemovalPlan {
     require(oldProfile.id == newProfile.id) { "配置身份已改变，不能作为同一事务提交" }
     require(oldProfile.endpointSource != WireGuardEndpointSource.MANUAL) { "旧配置不是自动配置" }
-    if (newProfile.endpointSource != WireGuardEndpointSource.MANUAL) require(clientPublicKey.isNotBlank()) { "客户端公钥不可用" }
+    if (newProfile.endpointSource != WireGuardEndpointSource.MANUAL) require(clientPublicKey.isNotBlank()) { wireGuardProfileError(newProfile, clientPublicKey).ifBlank { "客户端公钥不可用" } }
     val server = root.optJSONObject("server") ?: throw IllegalStateException("无法读取网关配置，未提交转换")
     val ownedId = wireGuardEndpointProfileId(oldProfile.id)
     fun withoutOwned(name: String): JSONArray {
