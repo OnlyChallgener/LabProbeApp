@@ -295,8 +295,13 @@ fun workspaceDigest(value: String): String {
 
 fun routerWorkspacePreferencesName(routerId: String, hubRoot: String = ""): String {
     require(validRouterWorkspaceId(routerId))
-    return "labprobe_workspace_${workspaceDigest(routerId)}"
+    // 文件名必须带上 Hub 根地址：同一个 routerId 在两台不同 Hub 下是两个互不相干的工作区。
+    // 只按 routerId 命名时，换一次 Hub 根地址会直接读到另一台 Hub 下的缓存、隧道和令牌。
+    return "labprobe_workspace_${workspaceDigest(normalizeHubBaseUrl(hubRoot) + "|" + routerId)}"
 }
+
+fun routerWorkspaceSecureDigest(routerId: String, hubRoot: String): String =
+    workspaceDigest(normalizeHubBaseUrl(hubRoot) + "|" + routerId)
 
 /** The active ID is intentionally process-local until a Hub list confirms it. */
 object RouterWorkspaceStore {
@@ -329,6 +334,26 @@ object RouterWorkspaceStore {
 
     private fun identityKey(prefix: String, hubRoot: String): String =
         "${prefix}_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}"
+
+    private fun hubRootKey(routerId: String) = "hub_root_${workspaceDigest(routerId)}"
+
+    /**
+     * 这个工作区绑在哪台 Hub 上。必须存在跨工作区那张表里，不能存在工作区自己的文件里 ——
+     * 「该打开哪个文件」正是要问它的事，写进文件就成了自己找自己。
+     */
+    fun hubRootOf(context: Context, routerId: String): String =
+        context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+            .getString(hubRootKey(routerId), "").orEmpty()
+
+    fun bindHubRoot(context: Context, routerId: String, hubRoot: String) {
+        context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+            .edit().putString(hubRootKey(routerId), normalizeHubBaseUrl(hubRoot)).apply()
+    }
+
+    fun unbindHubRoot(context: Context, routerId: String) {
+        context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+            .edit().remove(hubRootKey(routerId)).apply()
+    }
 
     fun legacyServerId(context: Context, hubRoot: String): String =
         context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
@@ -405,7 +430,7 @@ class RouterWorkspaceApi(private val context: Context, private val defaultPrefs:
 
 /** Per-router Android Keystore storage for tokens and optional SSH passwords. */
 internal class SecureWorkspaceStringStore(context: Context, routerId: String, hubRoot: String = "", purpose: String) {
-    private val identity = routerId
+    private val identity = normalizeHubBaseUrl(hubRoot) + "|" + routerId
     private val prefs = context.applicationContext.getSharedPreferences(
         "labprobe_ws_sec_${workspaceDigest(identity)}", Context.MODE_PRIVATE
     )
@@ -487,11 +512,14 @@ fun forgetRouterWorkspace(context: Context, hubRoot: String, routerId: String) {
     val boundServerId = AppPrefs(app, routerId).routerHubId.takeIf {
         it != routerId && validRouterWorkspaceId(it)
     }
-    val digest = workspaceDigest(routerId)
-    app.getSharedPreferences(routerWorkspacePreferencesName(routerId), Context.MODE_PRIVATE)
+    // 清的是它「真正绑在那台 Hub 下」的那份文件；绑定关系本身也要一起解掉。
+    val boundRoot = RouterWorkspaceStore.hubRootOf(app, routerId).ifBlank { hubRoot }
+    val digest = routerWorkspaceSecureDigest(routerId, boundRoot)
+    app.getSharedPreferences(routerWorkspacePreferencesName(routerId, boundRoot), Context.MODE_PRIVATE)
         .edit().clear().commit()
     app.getSharedPreferences("labprobe_ws_sec_$digest", Context.MODE_PRIVATE)
         .edit().clear().commit()
+    RouterWorkspaceStore.unbindHubRoot(app, routerId)
     runCatching {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         store.aliases().toList()

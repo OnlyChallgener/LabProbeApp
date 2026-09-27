@@ -376,10 +376,20 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
 
     private fun usesLegacyDefault(): Boolean = workspaceId == DEFAULT_ROUTER_WORKSPACE_ID
 
+    private val globalHubRoot: String
+        get() = normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
+
+    /**
+     * 这个工作区绑在哪台 Hub 上 —— 从跨工作区表里查，不能从 `sp` 里查：
+     * 文件名正是由它决定的，从 `sp` 读就成了「先知道文件才能知道开哪个文件」。
+     */
+    private val boundHubRoot: String
+        get() = RouterWorkspaceStore.hubRootOf(appContext, workspaceId).ifBlank { globalHubRoot }
+
     private val sp: SharedPreferences
         @Synchronized get() {
             if (usesLegacyDefault()) return globalSp
-            val name = routerWorkspacePreferencesName(workspaceId)
+            val name = routerWorkspacePreferencesName(workspaceId, boundHubRoot)
             if (scopedSpName != name || scopedSp == null) {
                 scopedSp = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
                 scopedSpName = name
@@ -389,16 +399,20 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
 
     @Synchronized
     private fun workspaceTokenStore(): SecureWorkspaceStringStore {
-        if (scopedTokenStore == null) {
-            scopedTokenStore = SecureWorkspaceStringStore(appContext, workspaceId, purpose = "hub_token")
+        val root = boundHubRoot
+        if (scopedTokenStore == null || scopedTokenRoot != root) {
+            scopedTokenStore = SecureWorkspaceStringStore(appContext, workspaceId, root, purpose = "hub_token")
+            scopedTokenRoot = root
         }
         return scopedTokenStore!!
     }
 
     @Synchronized
     private fun workspaceSshStore(): SecureWorkspaceStringStore {
-        if (scopedSshStore == null) {
-            scopedSshStore = SecureWorkspaceStringStore(appContext, workspaceId, purpose = "ssh_password")
+        val root = boundHubRoot
+        if (scopedSshStore == null || scopedSshRoot != root) {
+            scopedSshStore = SecureWorkspaceStringStore(appContext, workspaceId, root, purpose = "ssh_password")
+            scopedSshRoot = root
         }
         return scopedSshStore!!
     }
@@ -420,16 +434,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         }
     }
     var hubRoot: String
-        get() {
-            if (usesLegacyDefault()) {
-                return normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
-            }
-            val custom = sp.getString("hub_root", "").orEmpty().trim()
-            if (custom.isNotBlank()) return normalizeHubBaseUrl(custom)
-            val fullHub = sp.getString("hub", "").orEmpty().trim()
-            if (fullHub.isNotBlank()) return normalizeHubBaseUrl(fullHub)
-            return normalizeHubBaseUrl(globalSp.getString("hub", DEFAULT_HUB) ?: DEFAULT_HUB)
-        }
+        get() = if (usesLegacyDefault()) globalHubRoot else boundHubRoot
         set(v) {
             val clean = normalizeHubBaseUrl(v)
             if (usesLegacyDefault()) {
@@ -438,7 +443,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                     RouterWorkspaceStore.hubConnectionChanged()
                 }
             } else {
-                sp.edit().putString("hub_root", clean).apply()
+                RouterWorkspaceStore.bindHubRoot(appContext, workspaceId, clean)
             }
         }
     var routerHubId: String
@@ -457,6 +462,9 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             }
             val explicitHub = sp.getString("hub", "").orEmpty().trim()
             if (explicitHub.isNotBlank()) return explicitHub
+            // 本机刚新建、还没绑定到任何服务端 routerId 的草稿：它没有可连的地址。
+            // 让它继承全局 Hub 根地址的话，App 会拿着另一台路由的令牌往这个地址上打。
+            if (workspaceId.startsWith("local_") && routerHubId.isBlank()) return ""
             return if (routerHubId.isNotBlank()) workspaceHubUrl(hubRoot, routerHubId) else hubRoot
         }
         set(v) {
