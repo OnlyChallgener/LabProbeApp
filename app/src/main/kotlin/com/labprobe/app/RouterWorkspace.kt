@@ -641,7 +641,7 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             color = Color.White,
             shadowElevation = 8.dp,
         ) {
@@ -664,10 +664,11 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                         Modifier
                             .size(32.dp)
                             .clip(CircleShape)
+                            .background(Color(0xFFF3F4F6))
                             .clickable(onClick = onDismiss),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Rounded.Close, "关闭", Modifier.size(18.dp), tint = LabV2.InkMuted)
+                        Icon(Icons.Rounded.Close, "关闭", Modifier.size(16.dp), tint = LabV2.InkMuted)
                     }
                 }
 
@@ -678,20 +679,19 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                 )
 
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = LabV2.FieldSoft,
-                    border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = 0.78f)),
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color(0xFFF3F4F6),
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
                     Box(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (name.isEmpty()) {
                             Text(
                                 "例如：BE50、客厅路由",
                                 style = LabTypography.Body.copy(fontSize = 14.sp),
-                                color = LabV2.InkMuted.copy(alpha = 0.7f)
+                                color = LabV2.InkMuted.copy(alpha = 0.6f)
                             )
                         }
                         BasicTextField(
@@ -708,13 +708,17 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
+                    Button(
                         onClick = onDismiss,
                         modifier = Modifier.weight(1f).height(46.dp),
                         shape = RoundedCornerShape(23.dp),
-                        border = BorderStroke(1.dp, LabV2.Border)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFF3F4F6),
+                            contentColor = LabV2.Ink
+                        ),
+                        elevation = null
                     ) {
-                        Text("取消", style = LabTypography.Button, color = LabV2.InkMuted)
+                        Text("取消", style = LabTypography.Button)
                     }
                     Button(
                         onClick = {
@@ -727,7 +731,8 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                         colors = ButtonDefaults.buttonColors(
                             containerColor = LabV2.Primary,
                             contentColor = Color.White
-                        )
+                        ),
+                        elevation = null
                     ) {
                         Text("添加", style = LabTypography.Button)
                     }
@@ -821,23 +826,41 @@ fun RouterWorkspaceEditDialog(
                     }
                     if (!target.isDefault) {
                         Spacer(Modifier.height(10.dp))
-                        OutlinedButton(onClick = {
-                            operation = "正在设置…"
-                            scope.launch {
-                                try {
-                                    onSetDefault()
-                                    finish(true, "已设为默认", onDismiss)
-                                } catch (error: Exception) {
-                                    finish(false, "设置失败：${error.message.orEmpty()}")
+                        Button(
+                            onClick = {
+                                operation = "正在设置…"
+                                scope.launch {
+                                    try {
+                                        onSetDefault()
+                                        finish(true, "已设为默认", onDismiss)
+                                    } catch (error: Exception) {
+                                        finish(false, "设置失败：${error.message.orEmpty()}")
+                                    }
                                 }
-                            }
-                        }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(24.dp)) {
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(25.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE6F7F8),
+                                contentColor = LabV2.Primary
+                            ),
+                            elevation = null
+                        ) {
                             Text("设为默认", style = LabTypography.Button, color = LabV2.Primary)
                         }
                         Spacer(Modifier.height(10.dp))
-                        OutlinedButton(onClick = { confirmDelete = true }, enabled = !busy,
-                            modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(24.dp)) {
+                        Button(
+                            onClick = { confirmDelete = true },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(25.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFFEE2E2),
+                                contentColor = LabV2.Red
+                            ),
+                            elevation = null
+                        ) {
                             Text("删除路由器", style = LabTypography.Button, color = LabV2.Red)
                         }
                     }
@@ -889,7 +912,7 @@ fun RouterWorkspaceEditDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             color = Color.White,
             shadowElevation = 8.dp,
         ) {
@@ -905,19 +928,23 @@ fun RouterWorkspaceEditDialog(
                     style = LabTypography.Body.copy(fontSize = 13.sp),
                     color = LabV2.InkMuted
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
+                    Button(
                         onClick = { confirmDelete = false },
                         enabled = !busy,
                         modifier = Modifier.weight(1f).height(46.dp),
                         shape = RoundedCornerShape(23.dp),
-                        border = BorderStroke(1.dp, LabV2.Border)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFF3F4F6),
+                            contentColor = LabV2.Ink
+                        ),
+                        elevation = null
                     ) {
-                        Text("取消", style = LabTypography.Button, color = LabV2.InkMuted)
+                        Text("取消", style = LabTypography.Button)
                     }
                     Button(
                         onClick = {
@@ -935,7 +962,8 @@ fun RouterWorkspaceEditDialog(
                         enabled = !busy,
                         modifier = Modifier.weight(1f).height(46.dp),
                         shape = RoundedCornerShape(23.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = LabV2.Red, contentColor = Color.White)
+                        colors = ButtonDefaults.buttonColors(containerColor = LabV2.Red, contentColor = Color.White),
+                        elevation = null
                     ) {
                         Text("删除", style = LabTypography.Button)
                     }
