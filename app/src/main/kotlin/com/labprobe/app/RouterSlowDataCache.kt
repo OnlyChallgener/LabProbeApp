@@ -7,12 +7,10 @@ package com.labprobe.app
  * background. Reconnection, navigation and transient HTTP failures must never
  * replace usable data with empty placeholders.
  */
-internal object RouterSlowDataCache {
-    const val STATUS_TTL_MS = 15_000L
-    const val MAPPING_TTL_MS = 30_000L
-    const val SETTINGS_TTL_MS = 60_000L
-
-    private var scopeKey: String = ""
+internal class RouterSlowDataCache private constructor() {
+    val STATUS_TTL_MS = 15_000L
+    val MAPPING_TTL_MS = 30_000L
+    val SETTINGS_TTL_MS = 60_000L
 
     var hubStatus: RouterHubStatus? = null
     var hubStatusAt: Long = 0L
@@ -33,34 +31,13 @@ internal object RouterSlowDataCache {
     var ddnsLoaded: Boolean = false
     var ddnsAt: Long = 0L
 
-    fun ensureScope(hub: String, token: String) {
-        val next = hub.trim().trimEnd('/') + "|" + token.hashCode()
-        if (scopeKey == next) return
-        scopeKey = next
-        clearValues()
-    }
-
     fun isFresh(updatedAt: Long, ttlMs: Long, now: Long = System.currentTimeMillis()): Boolean =
         updatedAt > 0L && now - updatedAt in 0L..ttlMs
 
-    private fun clearValues() {
-        hubStatus = null
-        hubStatusAt = 0L
-        capabilities = null
-        capabilitiesAt = 0L
+    companion object {
+        private val scopes = java.util.concurrent.ConcurrentHashMap<String, RouterSlowDataCache>()
 
-        portMappings = emptyList()
-        portMappingsLoaded = false
-        portMappingsAt = 0L
-
-        upnpState = null
-        upnpAt = 0L
-
-        firewallState = null
-        firewallAt = 0L
-
-        ddnsRows = emptyList()
-        ddnsLoaded = false
-        ddnsAt = 0L
+        fun forScope(hub: String, token: String): RouterSlowDataCache =
+            scopes.computeIfAbsent(workspaceDigest(hub.trim().trimEnd('/') + "|" + token)) { RouterSlowDataCache() }
     }
 }

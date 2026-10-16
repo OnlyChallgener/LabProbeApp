@@ -127,7 +127,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = {
                     val selectedWol = wolOverride ?: recommendation.recommended
@@ -159,7 +159,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (polished) polishColors.accent else DEVICE_ICON_ACCENT)
-            ) { Text("保存", fontWeight = FontWeight.Black) }
+            ) { Text("保存", fontWeight = FontWeight.SemiBold) }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -228,7 +228,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { editing = true }, modifier = Modifier.weight(1f)) { Text("编辑", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = { editing = true }, modifier = Modifier.weight(1f)) { Text("编辑", fontWeight = FontWeight.SemiBold) }
             if (profile.wolCandidate && !wolManaged) {
                 Button(
                     onClick = {
@@ -248,7 +248,7 @@ fun LabDeviceDetailSheet(state: AppState, device: DeviceItem, onDismiss: () -> U
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(22.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
-                ) { Text("加入WOL", fontWeight = FontWeight.Black) }
+                ) { Text("加入WOL", fontWeight = FontWeight.SemiBold) }
             }
         }
         Spacer(Modifier.height(8.dp))

@@ -44,6 +44,7 @@ data class RouterResource<T>(
 internal fun isCurrentLabProbeDdnsGeneration(expected: Long, current: Long): Boolean = expected == current
 
 class RouterRepository internal constructor(private val prefs: AppPrefs) {
+    private val cache = RouterSlowDataCache.forScope(prefs.hub, prefs.token)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val commandScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val api = RouterControlApi(prefs)
@@ -59,19 +60,19 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private val configRevisions = ConcurrentHashMap<String, AtomicLong>()
 
     private val _status = MutableStateFlow(
-        RouterResource(value = RouterSlowDataCache.hubStatus, updatedAt = RouterSlowDataCache.hubStatusAt)
+        RouterResource(value = cache.hubStatus, updatedAt = cache.hubStatusAt)
     )
     val status: StateFlow<RouterResource<RouterHubStatus>> = _status.asStateFlow()
 
     private val _capabilities = MutableStateFlow(
-        RouterResource(value = RouterSlowDataCache.capabilities, updatedAt = RouterSlowDataCache.capabilitiesAt)
+        RouterResource(value = cache.capabilities, updatedAt = cache.capabilitiesAt)
     )
     val capabilities: StateFlow<RouterResource<RouterCapabilities>> = _capabilities.asStateFlow()
 
     private val _ddns = MutableStateFlow(
         RouterResource(
-            value = RouterSlowDataCache.ddnsRows.takeIf { RouterSlowDataCache.ddnsLoaded },
-            updatedAt = RouterSlowDataCache.ddnsAt,
+            value = cache.ddnsRows.takeIf { cache.ddnsLoaded },
+            updatedAt = cache.ddnsAt,
         )
     )
     val ddns: StateFlow<RouterResource<List<DdnsRecord>>> = _ddns.asStateFlow()
@@ -80,20 +81,20 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     val labProbeDdns: StateFlow<RouterResource<LabProbeDdnsSnapshot>> = _labProbeDdns.asStateFlow()
 
     private val _upnp = MutableStateFlow(
-        RouterResource(value = RouterSlowDataCache.upnpState, updatedAt = RouterSlowDataCache.upnpAt)
+        RouterResource(value = cache.upnpState, updatedAt = cache.upnpAt)
     )
     val upnp: StateFlow<RouterResource<UpnpState>> = _upnp.asStateFlow()
 
     private val _portMappings = MutableStateFlow(
         RouterResource(
-            value = RouterSlowDataCache.portMappings.takeIf { RouterSlowDataCache.portMappingsLoaded },
-            updatedAt = RouterSlowDataCache.portMappingsAt,
+            value = cache.portMappings.takeIf { cache.portMappingsLoaded },
+            updatedAt = cache.portMappingsAt,
         )
     )
     val portMappings: StateFlow<RouterResource<List<NativePortMapRule>>> = _portMappings.asStateFlow()
 
     private val _firewall = MutableStateFlow(
-        RouterResource(value = RouterSlowDataCache.firewallState, updatedAt = RouterSlowDataCache.firewallAt)
+        RouterResource(value = cache.firewallState, updatedAt = cache.firewallAt)
     )
     val firewall: StateFlow<RouterResource<FirewallState>> = _firewall.asStateFlow()
 
@@ -159,6 +160,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     }
 
     fun start() {
+        if (prefs.pendingHubIdentity) return
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
         if (!fallbackScheduled.compareAndSet(false, true)) return
         scope.launch {
@@ -170,6 +172,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     }
 
     fun onRealtimeReady(reconnect: Boolean) {
+        if (prefs.pendingHubIdentity) return
         if (prefs.hub.isBlank() || prefs.token.isBlank()) return
         if (!preloadStarted.get()) {
             beginInitialPreload()
@@ -191,6 +194,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     }
 
     private fun beginInitialPreload() {
+        if (prefs.pendingHubIdentity) return
         if (!preloadStarted.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
             delay(1_200L)
@@ -261,14 +265,14 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         val key = "status"
         val seq = sequence(key).incrementAndGet()
         val old = _status.value
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.STATUS_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.STATUS_TTL_MS)) return
         _status.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.hubStatus() } }
             .onSuccess { latest ->
                 if (sequence(key).get() != seq) return@onSuccess
                 val now = System.currentTimeMillis()
-                RouterSlowDataCache.hubStatus = latest
-                RouterSlowDataCache.hubStatusAt = now
+                cache.hubStatus = latest
+                cache.hubStatusAt = now
                 _status.value = RouterResource(latest, now, generation = seq)
             }
             .onFailure { failure ->
@@ -281,14 +285,14 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         val key = "capabilities"
         val seq = sequence(key).incrementAndGet()
         val old = _capabilities.value
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.SETTINGS_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _capabilities.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.capabilities() } }
             .onSuccess { latest ->
                 if (sequence(key).get() != seq) return@onSuccess
                 val now = System.currentTimeMillis()
-                RouterSlowDataCache.capabilities = latest
-                RouterSlowDataCache.capabilitiesAt = now
+                cache.capabilities = latest
+                cache.capabilitiesAt = now
                 _capabilities.value = RouterResource(latest, now, generation = seq)
             }
             .onFailure { failure ->
@@ -302,7 +306,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         if (_ddns.value.mutating) return
         val seq = sequence(key).incrementAndGet()
         val old = _ddns.value
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.SETTINGS_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _ddns.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.ddns(force) } }
             .onSuccess { latest ->
@@ -330,7 +334,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         val old = _labProbeDdns.value
         if (old.mutating && !force) return
         val seq = sequence(key).incrementAndGet()
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.SETTINGS_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _labProbeDdns.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.labProbeDdns(force) } }
             .onSuccess { latest ->
@@ -375,9 +379,9 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private fun applyDdnsRead(seq: Long, latest: List<DdnsRecord>) {
         if (sequence("ddns").get() != seq) return
         val now = System.currentTimeMillis()
-        RouterSlowDataCache.ddnsRows = latest
-        RouterSlowDataCache.ddnsLoaded = true
-        RouterSlowDataCache.ddnsAt = now
+        cache.ddnsRows = latest
+        cache.ddnsLoaded = true
+        cache.ddnsAt = now
         _ddns.value = RouterResource(latest, now, generation = seq)
     }
 
@@ -386,7 +390,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         if (_upnp.value.mutating) return
         val seq = sequence(key).incrementAndGet()
         val old = _upnp.value
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.MAPPING_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.MAPPING_TTL_MS)) return
         _upnp.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.upnp(force) } }
             .onSuccess { latest -> applyUpnp(seq, latest) }
@@ -396,8 +400,8 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private fun applyUpnp(seq: Long, latest: UpnpState) {
         if (sequence("upnp").get() != seq) return
         val now = System.currentTimeMillis()
-        RouterSlowDataCache.upnpState = latest
-        RouterSlowDataCache.upnpAt = now
+        cache.upnpState = latest
+        cache.upnpAt = now
         _upnp.value = RouterResource(latest, now, generation = seq)
     }
 
@@ -406,7 +410,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         if (_portMappings.value.mutating) return
         val seq = sequence(key).incrementAndGet()
         val old = _portMappings.value
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.MAPPING_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.MAPPING_TTL_MS)) return
         _portMappings.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.nativePortMappings(force) } }
             .onSuccess { latest -> applyPortMappings(seq, latest) }
@@ -416,9 +420,9 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private fun applyPortMappings(seq: Long, latest: List<NativePortMapRule>) {
         if (sequence("portMappings").get() != seq) return
         val now = System.currentTimeMillis()
-        RouterSlowDataCache.portMappings = latest
-        RouterSlowDataCache.portMappingsLoaded = true
-        RouterSlowDataCache.portMappingsAt = now
+        cache.portMappings = latest
+        cache.portMappingsLoaded = true
+        cache.portMappingsAt = now
         _portMappings.value = RouterResource(latest, now, generation = seq)
     }
 
@@ -427,7 +431,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         if (_firewall.value.mutating) return
         val seq = sequence(key).incrementAndGet()
         val old = _firewall.value
-        if (!force && old.value != null && RouterSlowDataCache.isFresh(old.updatedAt, RouterSlowDataCache.SETTINGS_TTL_MS)) return
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _firewall.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.firewall(force) } }
             .onSuccess { latest -> applyFirewall(seq, latest) }
@@ -437,8 +441,8 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private fun applyFirewall(seq: Long, latest: FirewallState) {
         if (sequence("firewall").get() != seq) return
         val now = System.currentTimeMillis()
-        RouterSlowDataCache.firewallState = latest
-        RouterSlowDataCache.firewallAt = now
+        cache.firewallState = latest
+        cache.firewallAt = now
         _firewall.value = RouterResource(latest, now, generation = seq)
     }
 
@@ -576,8 +580,7 @@ object RouterRepositoryRegistry {
 
     @Synchronized
     fun get(prefs: AppPrefs): RouterRepository {
-        RouterSlowDataCache.ensureScope(prefs.hub, prefs.token)
-        val next = prefs.hub.trim().trimEnd('/') + "|" + prefs.token.hashCode() + "|" + prefs.hubDns.trim()
+        val next = workspaceDigest(prefs.hub.trim().trimEnd('/') + "|" + prefs.token + "|" + prefs.hubDns.trim() + "|" + RouterWorkspaceStore.connectionEpoch)
         if (instance == null || key != next) {
             val previous = instance
             key = next

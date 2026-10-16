@@ -1,5 +1,6 @@
 package com.labprobe.app.feature.router.firewall
 
+import com.labprobe.app.LabGradientDialogSurface
 import androidx.compose.ui.draw.clip
 
 import androidx.activity.compose.BackHandler
@@ -281,7 +282,7 @@ fun FirewallAutomationPage(
                         }
                     },
                     enabled = !busy && modeValid,
-                    modifier = Modifier.fillMaxWidth().height(43.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
                     shape = RoundedCornerShape(13.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = FollowBlue),
                 ) {
@@ -391,7 +392,7 @@ private fun <T> TargetDialog(
     onPick: (T) -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
+        LabGradientDialogSurface(
             Modifier.fillMaxWidth().padding(horizontal = 18.dp),
             shape = RoundedCornerShape(20.dp),
             color = Color.White,

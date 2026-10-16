@@ -1452,7 +1452,7 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         .writeTimeout(4, TimeUnit.SECONDS)
         .callTimeout(5, TimeUnit.SECONDS)
         .addInterceptor { chain ->
-            val token = prefs.token.trim()
+            val token = connectionIdentity[1].trim()
             if (token.isBlank()) throw HubAuthenticationException(0, "Hub API认证失败：APP_TOKEN 为空")
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer " + token).build())
         }

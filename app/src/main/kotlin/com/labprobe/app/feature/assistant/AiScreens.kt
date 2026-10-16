@@ -2,6 +2,7 @@ package com.labprobe.app.feature.assistant
 
 import android.content.Context
 import com.labprobe.app.AppNavigator
+import com.labprobe.app.LabGradientDialogSurface
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -1233,7 +1234,7 @@ private fun AiUsageEditDialog(
     var usageText by remember { mutableStateOf(usage.totalTokens.toString()) }
     var quotaText by remember { mutableStateOf(usage.tokenQuota?.toString().orEmpty()) }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LabGradientDialogSurface(
             shape = RoundedCornerShape(18.dp),
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
@@ -1359,7 +1360,7 @@ private fun AiUsageDeleteDialog(
     onDelete: () -> Unit,
 ) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LabGradientDialogSurface(
             shape = RoundedCornerShape(18.dp),
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
@@ -2087,7 +2088,7 @@ private fun aiSelectedMessagesText(messages: List<AiMessage>): String = messages
 @Composable
 private fun AiPartialCopyDialog(message: AiMessage, onDismiss: () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
             shape = RoundedCornerShape(18.dp),
             color = AiTone.Surface,
@@ -2142,7 +2143,7 @@ private fun AiNotificationInboxDialog(
     var confirmDeleteIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val detail = entries.firstOrNull { it.id == highlightedId }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth().heightIn(max = 690.dp),
             shape = RoundedCornerShape(18.dp),
             color = AiTone.Surface,
@@ -2317,7 +2318,7 @@ private fun AiModelPickerDialog(
     onPick: (AiProviderConfig) -> Unit,
 ) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LabGradientDialogSurface(
             shape = RoundedCornerShape(18.dp),
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),

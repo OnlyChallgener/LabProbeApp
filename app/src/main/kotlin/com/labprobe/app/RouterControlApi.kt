@@ -30,6 +30,7 @@ data class RouterHubStatus(
     val connected: Boolean = false,
     val sessionConnected: Boolean = false,
     val dataAvailable: Boolean = false,
+    val source: String = "",
     val message: String = "正在准备路由控制数据",
     val errorCode: String = "",
     val lastSuccessAt: Long = 0L
@@ -57,8 +58,10 @@ object RouterConnectionStore {
     }
 
     fun apply(status: RouterHubStatus) {
-        val sessionConnected = status.sessionConnected || status.connected
+        val agentSample = status.source == "agent_dashboard_push"
+        val sessionConnected = status.sessionConnected || (status.connected && !agentSample)
         val localized = when {
+            agentSample && !sessionConnected -> "BE50 状态采样正常，管理连接待恢复"
             sessionConnected && status.dataAvailable -> "路由控制链路正常"
             sessionConnected -> "路由器会话正常，控制数据正在同步"
             status.state == "router_login_failed" -> "路由器连接异常，请检查密码或网络"
@@ -99,7 +102,8 @@ class RouterControlApi(private val prefs: AppPrefs) {
     private fun execute(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
         // A DDNS/firewall/UPnP read failure is a resource refresh failure, not a
         // global Hub/router disconnect. Only /status owns connection semantics.
-        val root = hubApi.requestJson(path, method, body)
+        val root = if (method.equals("GET", ignoreCase = true)) hubApi.requestJsonShort(path)
+        else hubApi.requestJson(path, method, body)
         if (root.has("ok") && !root.optBoolean("ok")) {
             val err = root.optString("error").ifBlank { root.optString("message") }.ifBlank { "Hub 在线，但没有路由器数据" }
             throw RouterStatusUnavailableException(err)
@@ -137,6 +141,7 @@ class RouterControlApi(private val prefs: AppPrefs) {
             connected = root.optBoolean("connected", false),
             sessionConnected = root.optBoolean("sessionConnected", root.optBoolean("connected", false)),
             dataAvailable = root.optBoolean("dataAvailable", root.optBoolean("connected", false)),
+            source = cleanApiText(root.optString("source", "")),
             message = cleanApiText(root.optString("message", "正在准备路由控制数据")),
             errorCode = cleanApiText(root.optString("errorCode", "")),
             lastSuccessAt = root.optLong("lastSuccessAt", 0L)

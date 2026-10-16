@@ -29,7 +29,7 @@ sealed interface HubRealtimeState {
  * Foreground Hub-native WebSocket client.
  *
  * One authenticated WSS connection carries router fast and terminal deltas.
- * Protocol pings, Hub application keepalives and a local frame watchdog prevent
+ * Protocol pings, Hub application keepalives and a local transport watchdog prevent
  * half-open connections from sitting idle. AppState uses the small authenticated
  * HTTP endpoint only while router frames are missing.
  */
@@ -55,7 +55,7 @@ class HubRealtimeWebSocketClient(
     @Volatile private var hasConnectedBefore = false
     @Volatile private var lastFrameAt = 0L
     @Volatile private var lastReadyAt = 0L
-    @Volatile private var lastRouterFrameAt = 0L
+    @Volatile private var openedAt = 0L
     private var reconnectJob: Job? = null
     private var watchdogJob: Job? = null
 
@@ -88,7 +88,7 @@ class HubRealtimeWebSocketClient(
         hasConnectedBefore = false
         lastFrameAt = 0L
         lastReadyAt = 0L
-        lastRouterFrameAt = 0L
+        openedAt = 0L
         activeUrl = ""
         activeToken = ""
         stopActiveSocket()
@@ -105,7 +105,7 @@ class HubRealtimeWebSocketClient(
         watchdogJob = null
         val currentSocket = socket
         socket = null
-        runCatching { currentSocket?.close(1000, "foreground stopped") }
+        runCatching { currentSocket?.cancel() }
         val currentClient = httpClient
         httpClient = null
         shutdown(currentClient)
@@ -113,6 +113,7 @@ class HubRealtimeWebSocketClient(
 
     private fun shutdown(client: OkHttpClient?) {
         if (client == null) return
+        runCatching { client.dispatcher.cancelAll() }
         runCatching { client.dispatcher.executorService.shutdown() }
         runCatching { client.connectionPool.evictAll() }
     }
@@ -138,7 +139,6 @@ class HubRealtimeWebSocketClient(
                 return@launch
             }
             if (!desired || run != generation) {
-                connecting = false
                 shutdown(transport)
                 return@launch
             }
@@ -155,16 +155,15 @@ class HubRealtimeWebSocketClient(
             val listener = object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     if (!desired || run != generation) {
-                        connecting = false
-                        webSocket.close(1000, "superseded")
+                        webSocket.cancel()
                         return
                     }
                     opened = true
                     connecting = false
                     socket = webSocket
                     lastFrameAt = SystemClock.elapsedRealtime()
+                    openedAt = lastFrameAt
                     lastReadyAt = 0L
-                    lastRouterFrameAt = 0L
                     startFrameWatchdog(run, webSocket)
                     reconnect = hasConnectedBefore
                     hasConnectedBefore = true
@@ -177,11 +176,12 @@ class HubRealtimeWebSocketClient(
                     val receivedAt = SystemClock.elapsedRealtime()
                     lastFrameAt = receivedAt
                     val root = runCatching { JSONObject(text) }.getOrNull() ?: return
+                    // Parsing can overlap a Hub change or a replacement socket.
+                    if (!desired || run != generation || socket !== webSocket) return
                     val type = root.optString("type")
                     val data = root.optJSONObject("data")
                     when (type) {
                         "router" -> if (data != null) {
-                            lastRouterFrameAt = receivedAt
                             onRouterRealtime(data.toString())
                         }
                         "devices" -> if (data != null) onDevicesRealtime(data.toString())
@@ -204,13 +204,13 @@ class HubRealtimeWebSocketClient(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    connecting = false
+                    if (run == generation) connecting = false
                     release(webSocket, transport)
                     scheduleReconnect(run, if (opened) 0 else attempt, closeReason(code, reason))
                 }
 
                 override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
-                    connecting = false
+                    if (run == generation) connecting = false
                     release(webSocket, transport)
                     scheduleReconnect(run, if (opened) 0 else attempt, failureReason(throwable, "WSS 连接中断"))
                 }
@@ -225,14 +225,10 @@ class HubRealtimeWebSocketClient(
             while (desired && run == generation && socket === webSocket) {
                 delay(WATCHDOG_INTERVAL_MS)
                 val now = SystemClock.elapsedRealtime()
-                val last = lastFrameAt
-                val ready = lastReadyAt
-                val router = lastRouterFrameAt
-                if (ready > 0L && now - (if (router > 0L) router else ready) >= ROUTER_FRAME_TIMEOUT_MS) {
-                    webSocket.cancel()
-                    return@launch
-                }
-                if (last > 0L && now - last >= SERVER_FRAME_TIMEOUT_MS) {
+                // Router collection may pause while Hub keepalives and terminal
+                // frames continue. AppState reports stale measurements and uses
+                // HTTP calibration; only an unresponsive transport is rebuilt.
+                if (hubRealtimeTransportTimedOut(openedAt, lastReadyAt, lastFrameAt, now)) {
                     webSocket.cancel()
                     return@launch
                 }
@@ -289,9 +285,11 @@ class HubRealtimeWebSocketClient(
         const val CONNECT_TIMEOUT_SECONDS = 6L
         const val PING_INTERVAL_SECONDS = 10L
         const val WATCHDOG_INTERVAL_MS = 1_000L
-        const val SERVER_FRAME_TIMEOUT_MS = 45_000L
-        const val ROUTER_FRAME_TIMEOUT_MS = 20_000L
         const val MAX_RETRY_ATTEMPT = 3
         const val REALTIME_PATH = "/api/realtime/ws"
     }
 }
+
+internal fun hubRealtimeTransportTimedOut(openedAt: Long, readyAt: Long, lastFrameAt: Long, now: Long): Boolean =
+    (openedAt > 0L && readyAt == 0L && now - openedAt >= 20_000L) ||
+        (lastFrameAt > 0L && now - lastFrameAt >= 45_000L)

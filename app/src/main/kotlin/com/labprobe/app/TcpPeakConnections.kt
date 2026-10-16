@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import androidx.compose.foundation.layout.heightIn
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -373,7 +374,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     controller.start(cfg)
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             shape = LabV2.CardShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (active) LabV2.Red else LabV2.Primary,

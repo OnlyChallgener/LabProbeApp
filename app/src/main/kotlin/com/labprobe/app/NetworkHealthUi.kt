@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -258,13 +259,13 @@ fun NetworkHealthScreen(
     }
 
     if (showCleanupConfirm) {
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { if (!agentBusy) showCleanupConfirm = false },
-            title = { Text("清理 Agent 文件", style = LabTypography.PageTitle, color = LabV2.Ink) },
+            title = { Text("清理 Agent 文件", style = LabTypography.DialogTitle, color = LabV2.Ink) },
             text = {
                 Text(
                     "将删除路由器上的所有 Agent 备份、更新/安装日志和已失效的临时安装文件。不会删除 Agent 配置、运行程序或当前状态数据。",
-                    style = LabTypography.Body.copy(color = LabV2.InkMuted)
+                    style = LabTypography.DialogBody.copy(color = LabV2.InkMuted)
                 )
             },
             confirmButton = {
@@ -515,7 +516,8 @@ fun NetworkHealthScreen(
         } else {
             Button(
                 onClick = onStart,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)
             ) {
@@ -703,7 +705,7 @@ fun NetworkHealthScreen(
         val item = visibleItems.find { it.check == check } ?: DiagnosisItem(check)
         val checkIcon = checkIcon(check)
         val checkAccent = checkColor(check)
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { selectedCheck = null },
             title = {
                 Row(
@@ -719,7 +721,7 @@ fun NetworkHealthScreen(
                             Icon(checkIcon, null, modifier = Modifier.size(16.dp), tint = checkAccent)
                         }
                     }
-                    Text(check.title, style = LabTypography.PageTitle, color = LabV2.Ink)
+                    Text(check.title, style = LabTypography.DialogTitle, color = LabV2.Ink)
                     Spacer(Modifier.weight(1f))
                     HealthStateLabel(item.status)
                 }
@@ -741,7 +743,7 @@ fun NetworkHealthScreen(
                                 Text(item.metric, style = LabTypography.CardTitle, color = LabV2.Ink)
                             }
                         }
-                        Text(item.explanation, style = LabTypography.Body, color = LabV2.Ink)
+                        Text(item.explanation, style = LabTypography.DialogBody, color = LabV2.Ink)
                         if (item.details.isNotEmpty()) {
                             HorizontalDivider(color = LabV2.Border)
                             Text("检测明细", style = LabTypography.SectionTitle, color = LabV2.Ink)
@@ -1014,9 +1016,9 @@ private fun RouterUrlDialog(
     onSave: () -> Unit,
     imageEntry: (@Composable () -> Unit)? = null,
 ) {
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("路由器后台地址", style = LabTypography.PageTitle, color = LabV2.Ink) },
+        title = { Text("路由器后台地址", style = LabTypography.DialogTitle, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1067,7 +1069,7 @@ private fun overallHealthLabel(status: HealthStatus) = when (status) {
     HealthStatus.GOOD -> "良好"
     HealthStatus.WARNING -> "存在异常"
     HealthStatus.ERROR -> "严重异常"
-    HealthStatus.UNKNOWN -> "待诊断"
+    HealthStatus.UNKNOWN -> "待确认"
 }
 
 private fun healthColor(status: HealthStatus): Color = when (status) {

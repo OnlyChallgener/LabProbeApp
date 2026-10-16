@@ -364,7 +364,7 @@ class ChildInternetRepositoryTest {
                 .put("apps", JSONArray()
                     .put(JSONObject().put("app", "抖音").put("minutes", 300).put("sessions", 11))))
 
-        val report = parseChildGuardUsageReport(root)
+        val report = parseChildGuardUsageReport(root, now = java.time.Instant.parse("2026-09-18T12:00:00Z"))
         assertEquals("hub", report.source)
         assertEquals("2026-09-18", report.stats.date)
 

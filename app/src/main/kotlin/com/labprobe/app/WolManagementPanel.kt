@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,7 +29,6 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Power
 import androidx.compose.material3.AlertDialog
@@ -406,7 +407,7 @@ private fun WolDeviceCard(
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Rounded.DeleteOutline, null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
+                    Icon(LabActionIcons.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("删除", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEF4444))
                 }
@@ -415,7 +416,7 @@ private fun WolDeviceCard(
     }
 
     if (showDeleteConfirm) {
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("删除 WOL 设备", fontWeight = FontWeight.Bold) },
             text = { Text("确认从 WOL 列表中移除「${item.config.remark.ifBlank { item.config.mac }}」？") },
@@ -468,7 +469,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 enabled = validMac,
                 onClick = {
@@ -488,7 +489,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
-            ) { Text("保存", fontWeight = FontWeight.Black) }
+            ) { Text("保存", fontWeight = FontWeight.SemiBold) }
         }
         Spacer(Modifier.heightIn(min = 8.dp))
     }

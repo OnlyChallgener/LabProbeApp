@@ -44,7 +44,7 @@ NAME_CATEGORY = {
     "豆包": "ainews", "DeepSeek": "ainews", "今日头条": "ainews", "夸克": "tools",
     "唯品会": "shopping", "饿了么": "shopping", "山姆会员商店": "shopping", "美团": "shopping",
     "菜鸟": "shopping", "顺丰速运": "shopping", "顺丰速递": "shopping",
-    "西瓜视频": "media", "番茄免费小说": "media", "醒图": "tools",
+    "西瓜视频": "media", "好看视频": "media", "番茄免费小说": "media", "醒图": "tools",
     "三角洲行动": "games",
     # UU远程是远程协助，360 那两款管的是手表/摄像头这类硬件，亲宝宝是全家相册，
     # 留在一号段默认的「其他」里家长翻不到。

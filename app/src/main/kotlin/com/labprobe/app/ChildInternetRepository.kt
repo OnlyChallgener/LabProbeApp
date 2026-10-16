@@ -7,9 +7,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -42,6 +45,7 @@ interface ChildInternetRepository {
     fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit)
     /** 单台设备的官方式上网报告：先回放缓存，再后台抓取。 */
     fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit)
+    fun loadDeviceSettings(deviceId: String) {}
     /** 「最近10天」点中某天时只要那一天的详情；缓存命中就不碰网络。 */
     fun loadUsageForDate(deviceId: String, date: String, onResult: (Result<Unit>) -> Unit = {})
 }
@@ -61,10 +65,27 @@ internal fun interface ChildGuardTransport {
 internal class ChildGuardPendingException(val commandId: String) :
     Exception("路由器仍在处理这条命令")
 
-private class HubChildGuardTransport(private val prefs: AppPrefs) : ChildGuardTransport {
-    /** 与旧实现一致：每次请求新建 HubApi，Hub 地址与 DNS 改动即时生效。 */
-    override fun request(path: String, method: String, body: JSONObject?): JSONObject =
-        HubApi(prefs).requestJson(path, method, body)
+private class ChildGuardConnectionGuard(private val prefs: AppPrefs) {
+    private val identity = listOf(prefs.hub, prefs.token, prefs.hubDns)
+
+    fun requireOriginalConnection() {
+        check(identity == listOf(prefs.hub, prefs.token, prefs.hubDns)) {
+            "Hub 连接已改变，请在原连接核对儿童上网操作结果"
+        }
+    }
+}
+
+internal class HubChildGuardTransport(prefs: AppPrefs) : ChildGuardTransport {
+    private val connection = ChildGuardConnectionGuard(prefs)
+    // Follow-up command polls must keep the Hub that accepted the command.
+    private val api = HubApi(prefs)
+
+    override fun request(path: String, method: String, body: JSONObject?): JSONObject {
+        connection.requireOriginalConnection()
+        val response = api.requestChildGuardJson(path, method, body)
+        connection.requireOriginalConnection()
+        return response
+    }
 }
 
 /**
@@ -99,15 +120,19 @@ private val CHILD_GUARD_DATE_SEGMENT = Regex("""\d{4}-\d{2}-\d{2}""")
 
 internal fun String.lastDatePart(): String? = substringAfterLast('|').takeIf { CHILD_GUARD_DATE_SEGMENT.matches(it) }
 
-private class SharedChildGuardCache(private val prefs: AppPrefs) : ChildGuardCache {
+internal class SharedChildGuardCache(private val prefs: AppPrefs) : ChildGuardCache {
+    private val connection = ChildGuardConnectionGuard(prefs)
+
     override fun read(key: String): String? = runCatching {
         JSONObject(prefs.childGuardUsageCacheJson).optString(key).takeIf { it.isNotBlank() }
     }.getOrNull()
 
     override fun write(key: String, value: String) {
+        connection.requireOriginalConnection()
         val today = childGuardStatisticsDate()
         val store = runCatching { JSONObject(prefs.childGuardUsageCacheJson) }.getOrElse { JSONObject() }
         store.put(key, value)
+        connection.requireOriginalConnection()
         prefs.childGuardUsageCacheJson = pruneChildGuardCache(store, today, USAGE_REPORT_WINDOW_DAYS).toString()
     }
 
@@ -135,14 +160,16 @@ internal fun pruneChildGuardCache(store: JSONObject, today: String, keepDays: In
 private const val PENDING_READ_RETRY_MS = 3_000L
 private const val PENDING_READ_ATTEMPTS = 5
 private const val COMMAND_POLL_MS = 2_000L
-private const val COMMAND_POLL_ATTEMPTS = 15
+internal const val CHILD_GUARD_OPERATION_TIMEOUT_MS = 45_000L
 
 /** Production repository: only confirmed router members and measured usage are shown. */
 class RealChildInternetRepository internal constructor(
     private val routerId: String,
     private val transport: ChildGuardTransport,
     private val cache: ChildGuardCache,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val operationTimeoutMs: Long = CHILD_GUARD_OPERATION_TIMEOUT_MS,
+    private val commandPollMs: Long = COMMAND_POLL_MS
 ) : ChildInternetRepository {
     constructor(
         prefs: AppPrefs,
@@ -152,6 +179,7 @@ class RealChildInternetRepository internal constructor(
 
     private val api get() = ChildGuardHubApi(transport, routerId)
     private var refreshJob: kotlinx.coroutines.Job? = null
+    private val offlineReportAttempts = mutableMapOf<String, String>()
     private var overviewJob: kotlinx.coroutines.Job? = null
     private var revision = 0L
     private val pending = mutableSetOf<String>()
@@ -159,10 +187,16 @@ class RealChildInternetRepository internal constructor(
     /** 缓存键快照，用来判断某天是否已经抓过报告，省掉一次磁盘扫。 */
     private var cacheKeys: List<String> = emptyList()
 
-    /** 补抓只发生一次/设备/统计日，轮询不会把它变成隐性轮播。 */
-    private val usageBackfilled = mutableSetOf<String>()
+    private val usageJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    // An uncertain acknowledgement is polled again, never submitted as another write.
+    private val unresolvedCommands = mutableMapOf<String, String>()
 
-    override var state by mutableStateOf(ChildInternetOverviewState(false, emptyList(), loading = true))
+    fun close() {
+        revision++
+        scope.cancel()
+    }
+
+    override var state by mutableStateOf(ChildInternetOverviewState(false, emptyList(), loading = true, masterKnown = false))
         private set
 
     init {
@@ -206,6 +240,7 @@ class RealChildInternetRepository internal constructor(
     }
 
     override fun refreshOverview() {
+        expirePreviousDay()
         overviewJob?.cancel()
         val expected = revision
         state = state.copy(refreshing = true, loading = state.devices.isEmpty(), error = "")
@@ -237,7 +272,7 @@ class RealChildInternetRepository internal constructor(
                 updateDevice(uid) { current -> if (current.usage != null) current else current.withUsage(report) }
             }
             state = state.copy(error = "")
-            backfillMissingUsage(expected)
+            refreshAggregateUsage(expected)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -248,25 +283,27 @@ class RealChildInternetRepository internal constructor(
     }
 
     /**
-     * 总览卡片上的数字归上网报告所有。缓存里没有这一天的设备才补抓一次，
-     * 每台每统计日最多一次，串行进行——绝不在 20 秒轮询里重演全量扇出。
+     * 前台轮询仅刷新 Hub 已有的报告聚合，不读取路由器计划或运行时。
      */
-    private suspend fun backfillMissingUsage(expected: Long) {
-        val today = childGuardStatisticsDate()
-        val missing = state.devices.filter { device ->
-            device.usage?.date != today && usageCacheKey(device.summary.deviceId, today) !in cacheKeys
-        }
-        for (device in missing) {
+    private suspend fun refreshAggregateUsage(expected: Long) {
+        val date = childGuardStatisticsDate()
+        offlineReportAttempts.keys.retainAll(state.devices.map { it.summary.deviceId }.toSet())
+        for (device in state.devices.toList()) {
             if (expected != revision) return
             val uid = device.summary.deviceId
-            val gate = usageCacheKey(uid, today)
-            if (!usageBackfilled.add(gate)) continue
+            val offline = device.presence?.online == false
+            if (!offline) offlineReportAttempts.remove(uid)
+            if (offline && offlineReportAttempts[uid] == date) continue
             try {
-                updateUsageFromReport(uid)
+                updateUsageFromReport(uid, expected)
+                if (expected == revision && offline) offlineReportAttempts[uid] = date
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                usageBackfilled.remove(gate)
+                if (offline) {
+                    if (expected == revision) offlineReportAttempts[uid] = date
+                    continue
+                }
                 // 一台补抓失败不能擦掉整屏：数字留在 `--`，错误只在总状态上示一次。
                 if (expected == revision && state.error.isBlank()) state = state.copy(error = error.userMessage())
             }
@@ -285,6 +322,7 @@ class RealChildInternetRepository internal constructor(
             cached?.let { available.remove(it) }
             (cached ?: newChildGuardDevice(row.uid, row.name, row.iconKey, row.macs)).copy(
                 summary = (cached?.summary ?: row.summary).copy(
+                    deviceId = row.uid,
                     // 新名字优先；路由器这一轮只给了占位串时，继承上一轮的真名字，
                     // 两者都没有才用 MAC 尾号 —— 名字不能随着轮询在两类回退间跳。
                     name = childGuardDisplayName(
@@ -306,6 +344,8 @@ class RealChildInternetRepository internal constructor(
         val kept = if (snapshot.hasDeviceRows) matched else previous.ifEmpty { matched }
         state = state.copy(
             devices = kept,
+            masterEnabled = snapshot.masterEnabled ?: state.masterEnabled,
+            masterKnown = snapshot.masterEnabled != null || state.masterKnown,
             generatedAtEpoch = snapshot.generatedAtEpoch ?: state.generatedAtEpoch,
             lastSampleAtEpoch = snapshot.lastSampleAtEpoch ?: state.lastSampleAtEpoch,
             stale = snapshot.stale,
@@ -345,7 +385,6 @@ class RealChildInternetRepository internal constructor(
                         else if (expected == revision) state = state.copy(error = error.userMessage())
                     }
                 }
-                updateMasterState()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -375,23 +414,16 @@ class RealChildInternetRepository internal constructor(
     }
 
     override fun setMasterEnabled(enabled: Boolean) {
-        // 一台设备一次调用，不是一条计划一次。每条写都要中继跑一轮
-        // `/etc/init.d/child_guard reload`（真机 40 秒以上，还会先拆 iptables 链），
-        // 逐条发就是让路由器连续 busy 一分多钟，期间所有 Hub 请求都卡住 —— 界面上
-        // 就是反复弹「儿童守护请求失败」。
-        val devices = state.devices.filter { d -> d.plans.any { it.id.isNotBlank() } }
-        if (devices.isEmpty()) return
-        mutate("*", {}, request = {
-            devices.forEach { device ->
-                api.setAllPlansEnabled(resolveRouterUid(device.summary.deviceId), enabled)
-            }
-            // 逐台各发一次写，`accepted` 不看响应，所以这里只交回「都发完了」。
-            JSONObject()
-        }, hudText = "配置中…", accepted = {
-            state = state.copy(devices = state.devices.map { d ->
-                withPlans(d, d.plans.map { it.copy(enabled = enabled) })
+        mutate("*", { result -> result.exceptionOrNull()?.let { state = state.copy(error = it.userMessage()) } },
+            recoverAdd = true, request = { api.setMasterEnabled(enabled) },
+            hudText = if (enabled) "正在恢复上网计划…" else "正在暂停上网计划…",
+            accepted = { result ->
+                val confirmed = result.data()
+                check(confirmed.has("masterEnabled") && !confirmed.isNull("masterEnabled")) {
+                    "路由器尚未确认总开关，请更新探针后重试"
+                }
+                state = state.copy(masterEnabled = confirmed.getBoolean("masterEnabled"), masterKnown = true)
             })
-        })
     }
 
     override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) {
@@ -465,37 +497,38 @@ class RealChildInternetRepository internal constructor(
 
     override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) =
         mutate(mac, onResult, request = { api.addDevice(listOf(mac), name) },
-            hudText = "加入中…", accepted = {})
+            hudText = "加入中…", recoverAdd = true, accepted = { response ->
+                val confirmedUid = response.data().text("uid")
+                if (confirmedUid.isNotBlank() && state.devices.none { it.summary.matchesChildGuardDevice(mac) }) {
+                    state = state.copy(devices = state.devices + newChildGuardDevice(confirmedUid, name, "unknown", setOf(mac)))
+                }
+            })
 
     override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) =
-        mutate(uid, onResult, request = { api.removeDevice(resolveRouterUid(uid)) },
+        mutate(uid, onResult, request = { api.removeDevice(resolveRouterUid(uid),
+            state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) }?.summary?.macAddresses.orEmpty().toList()) },
             hudText = "解除中…", accepted = {
             state = state.copy(devices = state.devices.filterNot { it.summary.matchesChildGuardDevice(uid) })
         })
 
     override fun loadUsageReport(deviceId: String, onResult: (Result<Unit>) -> Unit) {
+        expirePreviousDay()
         val expected = revision
         val uid = resolveRouterUid(deviceId)
-        scope.launch {
+        if (usageJobs[uid]?.isActive == true) return
+        usageJobs[uid] = scope.launch {
             setUsageLoading(uid, true)
             try {
                 applyCachedUsage(uid)
-                readDetails(uid, expected)
+                // Reports are Hub aggregates: never wait for router plans/runtime here.
+                updateUsageFromReport(uid, expected)
                 // 一次成功的读取就是这一屏的「新」，之前那条红色横幅该退了。
-                if (expected == revision) state = state.copy(error = "")
+                if (expected == revision) updateDevice(uid) { it.copy(usageError = "") }
                 onResult(Result.success(Unit))
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (error.needsASilentRetry()) {
-                    // 路由器还在处理，或这一秒手机解析不出 Hub：留着当前这一屏，
-                    // 几秒后自己再看一次，不弹红色横幅让用户再点一遍刷新。
-                    retryDetails(uid, expected, 0)
-                    onResult(Result.success(Unit))
-                } else {
-                    // 抓不到就继续显示缓存那一屏，只把失败状态显示出来。
-                    if (expected == revision) state = state.copy(error = error.userMessage())
-                    onResult(Result.failure(error))
-                }
+                if (expected == revision) updateDevice(uid) { it.copy(usageError = error.reportReadMessage()) }
+                onResult(Result.failure(error))
             } finally {
                 setUsageLoading(uid, false)
             }
@@ -507,8 +540,21 @@ class RealChildInternetRepository internal constructor(
      * 汇总会把「周三看了 2 小时抖音」摊成看不出顺序的一堆数字。缓存键本来就含日期，
      * 所以看过的天再点开零网络流量。
      */
+    override fun loadDeviceSettings(deviceId: String) {
+        val expected = revision
+        val uid = resolveRouterUid(deviceId)
+        scope.launch {
+            try { readDetails(uid, expected) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (expected == revision) state = state.copy(error = error.userMessage())
+            }
+        }
+    }
+
     override fun loadUsageForDate(deviceId: String, date: String, onResult: (Result<Unit>) -> Unit) {
         val uid = resolveRouterUid(deviceId)
+        val expected = revision
         if (date.isBlank()) return
         updateDevice(uid) { current ->
             current.copy(dayUsage = ChildGuardDayUsage(
@@ -520,7 +566,8 @@ class RealChildInternetRepository internal constructor(
                     runCatching { cache.read(usageCacheKey(uid, date)) }.getOrNull()
                         ?.let { raw -> runCatching { parseChildGuardUsageReport(JSONObject(raw)).today }.getOrNull() }
                 }
-                if (cached != null) {
+                if (expected != revision) return@launch
+                if (cached != null && date != childGuardStatisticsDate()) {
                     setDayUsage(uid, date, cached)
                     onResult(Result.success(Unit))
                     return@launch
@@ -530,9 +577,11 @@ class RealChildInternetRepository internal constructor(
                     api.usageReportPayload(uid, device?.summary?.macAddresses ?: emptySet(), date = date, days = 1)
                 }
                 val (usage, keys) = withContext(Dispatchers.IO) {
+                    check(parseChildGuardUsageReport(payload).stats.date == date) { "报告日期不匹配，请稍后刷新" }
                     cache.write(usageCacheKey(uid, date), payload.toString())
                     parseChildGuardUsageReport(payload).today to cacheKeyList()
                 }
+                if (expected != revision) return@launch
                 cacheKeys = keys
                 setDayUsage(uid, date, usage)
                 onResult(Result.success(Unit))
@@ -553,13 +602,14 @@ class RealChildInternetRepository internal constructor(
     private fun setDayUsage(uid: String, date: String, usage: InternetUsageSummary) {
         updateDevice(uid) { current ->
             val slot = current.dayUsage
-            if (slot != null && slot.date == date && !slot.loading) current
+            if (slot?.date != date) current
             else current.copy(dayUsage = ChildGuardDayUsage(date, usage))
         }
     }
 
     private suspend fun readDetails(uid: String, expected: Long) {
         val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return
+        updateUsageFromReport(uid, expected)
         val client = api
         val plans = withContext(Dispatchers.IO) { client.plans(uid) }
         val runtime = withContext(Dispatchers.IO) { client.runtime(uid) }
@@ -571,7 +621,6 @@ class RealChildInternetRepository internal constructor(
                 passUntilEpoch = runtime.passUntilEpoch
             ))
         }
-        updateUsageFromReport(uid)
     }
 
     /**
@@ -597,12 +646,12 @@ class RealChildInternetRepository internal constructor(
     }
 
     /** 上网报告 payload 的唯一抓取入口；写入状态的一律是 `applyUsage`。 */
-    internal suspend fun updateUsageFromReport(uid: String) {
+    internal suspend fun updateUsageFromReport(uid: String, expected: Long = revision) {
         val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return
         val payload = withContext(Dispatchers.IO) {
-            api.usageReportPayload(uid, device.summary.macAddresses, days = USAGE_REPORT_WINDOW_DAYS)
+            api.usageReportPayload(uid, device.summary.macAddresses, date = childGuardStatisticsDate(), days = USAGE_REPORT_WINDOW_DAYS)
         }
-        if (uid in pending) return
+        if (expected != revision || uid in pending) return
         applyUsage(uid, payload)
     }
 
@@ -636,7 +685,7 @@ class RealChildInternetRepository internal constructor(
 
     /** 找这台设备最近一份报告的原始 JSON；纯读，供 IO 线程调用。 */
     private fun readCachedUsagePayload(uid: String): JSONObject? {
-        val prefix = usageCacheKey(uid, "").dropLast(1)
+        val prefix = usageCacheKey(uid, "")
         val latestKey = cacheKeys.filter { it.startsWith(prefix) && it.lastDatePart() != null }
             .maxByOrNull { it.lastDatePart().orEmpty() } ?: return null
         val raw = runCatching { cache.read(latestKey) }.getOrNull() ?: return null
@@ -648,11 +697,26 @@ class RealChildInternetRepository internal constructor(
     private fun setUsageLoading(uid: String, loading: Boolean) =
         updateDevice(uid) { d -> if (d.usageLoading == loading) d else d.copy(usageLoading = loading) }
 
+    private fun expirePreviousDay() {
+        val today = childGuardStatisticsDate()
+        state = state.copy(devices = state.devices.map { device ->
+            if (device.usageDate.isBlank() || device.usageDate == today) device else device.copy(
+                todayUsage = InternetUsageSummary(null, emptyList(), emptyList()), usageReport = null,
+                usage = device.usage?.copy(onlineMinutes = null, lateNightMinutes = null,
+                    hasData = false, attention = ChildAttentionState.UNKNOWN, stale = true))
+        })
+    }
+
     private fun mutate(deviceId: String, onResult: (Result<Unit>) -> Unit,
-        request: () -> JSONObject, accepted: (JSONObject) -> Unit, hudText: String = "正在同步…") {
+        request: () -> JSONObject, accepted: (JSONObject) -> Unit, hudText: String = "正在同步…",
+        recoverAdd: Boolean = false) {
         val uid = resolveRouterUid(deviceId)
         if (pending.isNotEmpty()) {
             onResult(Result.failure(IllegalStateException("正在同步上一项操作，请稍候")))
+            return
+        }
+        if (!recoverAdd && uid in unresolvedCommands) {
+            onResult(Result.failure(IllegalStateException("上一项加入操作仍待确认，请先核对结果")))
             return
         }
         revision++
@@ -661,67 +725,49 @@ class RealChildInternetRepository internal constructor(
         state = state.copy(error = "", pendingHud = hudText, pendingDeviceIds = pending.toSet())
         scope.launch {
             try {
-                val response = withContext(Dispatchers.IO) { request() }
+                val response = withTimeout(operationTimeoutMs) {
+                    var commandId = unresolvedCommands[uid].takeIf { recoverAdd }
+                    if (commandId == null) {
+                        try { return@withTimeout withContext(Dispatchers.IO) { request() } }
+                        catch (accepted: ChildGuardPendingException) {
+                            check(accepted.commandId.isNotBlank()) { "操作已提交，稍后请核对结果" }
+                            commandId = accepted.commandId
+                            if (recoverAdd) unresolvedCommands[uid] = accepted.commandId
+                        }
+                    }
+                    awaitCommand(commandId!!)
+                }
+                unresolvedCommands.remove(uid)
                 accepted(response)
-                updateMasterState()
                 clearPending(uid)
-                // Acknowledgement is independent of the slower background read-back.
-                refreshAfterMutation(uid)
+                refreshAfterMutation(uid, reconcileMembers = recoverAdd)
                 onResult(Result.success(Unit))
-            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (stillRunning: ChildGuardPendingException) {
-                // 202 = Hub 已受理、路由器还在写。这不是失败：留着「同步中」，
-                // 轮询 commandId，等真正的结果回来再落状态。
-                awaitCommand(stillRunning.commandId, uid, onResult, accepted)
-            }
-            catch (error: Exception) {
+            } catch (timeout: TimeoutCancellationException) {
                 clearPending(uid)
-                // A timeout or a multi-device partial failure may still have changed router state.
-                refreshAfterMutation(uid)
+                refreshAfterMutation(uid, reconcileMembers = recoverAdd)
+                onResult(Result.failure(IllegalStateException("操作仍待确认，稍后会更新；再次点击只查询原操作")))
+            } catch (cancelled: CancellationException) {
+                clearPending(uid)
+                onResult(Result.failure(IllegalStateException("已停止等待，请在原路由器核对操作结果")))
+                throw cancelled
+            } catch (error: Exception) {
+                if (error is HubHttpException && error.statusCode in listOf(404, 409)) unresolvedCommands.remove(uid)
+                clearPending(uid)
+                refreshAfterMutation(uid, reconcileMembers = recoverAdd)
                 state = state.copy(error = error.userMessage())
                 onResult(Result.failure(error))
             }
         }
     }
 
-    /**
-     * 轮询 Hub 的命令结果；成功/失败/超时三条路都会把「同步中」摘掉。
-     *
-     * 拿到最终结果时必须补做同步路径那份 `accepted`：Hub 回 202 时 `accepted` 一次
-     * 都没跑，界面上「解除儿童守护」成功了设备却还在列表里，就是因为这一份状态
-     * 只落在了「路由器同步返回」那条少数的快路上。
-     */
-    private fun awaitCommand(commandId: String, uid: String,
-                             onResult: (Result<Unit>) -> Unit,
-                             accepted: (JSONObject) -> Unit,
-                             attempt: Int = 0) {
-        if (commandId.isBlank() || attempt >= COMMAND_POLL_ATTEMPTS) {
-            clearPending(uid)
-            // 问不到结果不等于成功：命令可能还在路由器上跑，也可能已经失败。
-            // 报成功会让界面弹「已解除儿童守护」并把那一行留在原地，所以这里
-            // 只说「还在处理」，把判断交给读回来的真实状态。
-            refreshAfterMutation(uid)
-            onResult(Result.failure(IllegalStateException(
-                "路由器还在处理，稍后会自动更新，不用重复操作")))
-            return
-        }
-        scope.launch {
-            delay(COMMAND_POLL_MS)
+    private suspend fun awaitCommand(commandId: String): JSONObject {
+        while (true) {
+            delay(commandPollMs)
             try {
-                val result = withContext(Dispatchers.IO) { api.commandResult(commandId) }
-                accepted(result)
-                clearPending(uid)
-                updateMasterState()
-                refreshAfterMutation(uid)
-                onResult(Result.success(Unit))
-            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                return withContext(Dispatchers.IO) { api.commandResult(commandId) }
+            } catch (cancelled: CancellationException) { throw cancelled }
             catch (stillRunning: ChildGuardPendingException) {
-                awaitCommand(commandId, uid, onResult, accepted, attempt + 1)
-            } catch (error: Exception) {
-                clearPending(uid)
-                refreshAfterMutation(uid)
-                state = state.copy(error = error.userMessage())
-                onResult(Result.failure(error))
+                // Same command, bounded by the operation's overall deadline.
             }
         }
     }
@@ -738,18 +784,37 @@ class RealChildInternetRepository internal constructor(
      * 写操作后要读回真实状态：单机只补这一台的细节，全设备开关才付得起整轮扇出。
      * `resolveRouterUid` 把 `*` 原样带回，所以这里只会用一次重刷。
      */
-    private fun refreshAfterMutation(uid: String) {
+    private fun refreshAfterMutation(uid: String, reconcileMembers: Boolean = false) {
         if (uid == "*") {
-            refresh()
+            refreshOverview()
             return
         }
-        refreshOverview()
+        val expected = revision
         scope.launch {
-            try { readDetails(uid, revision) }
+            try {
+                if (reconcileMembers) {
+                    val members = withTimeout(operationTimeoutMs) {
+                        try { withContext(Dispatchers.IO) { api.devices() } }
+                        catch (waiting: ChildGuardPendingException) {
+                            parseChildGuardDevices(awaitCommand(waiting.commandId))
+                        }
+                    }
+                    if (expected != revision) return@launch
+                    state = state.copy(devices = mergeChildGuardDeviceList(state.devices, members, state.capabilities))
+                    // A real membership read confirms an add even if its original ack was lost.
+                    if (members.any { it.summary.matchesChildGuardDevice(uid) }) unresolvedCommands.remove(uid)
+                } else {
+                    readDetails(uid, expected)
+                }
+            }
+            catch (timeout: TimeoutCancellationException) {
+                if (expected == revision) state = state.copy(error = "成员状态仍待确认，请稍后刷新")
+            }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (error.needsASilentRetry()) retryDetails(uid, revision, 0)
-                else state = state.copy(error = error.userMessage())
+                if (expected == revision) state = state.copy(error = error.userMessage())
+            } finally {
+                if (expected == revision) refreshOverview()
             }
         }
     }
@@ -758,11 +823,6 @@ class RealChildInternetRepository internal constructor(
         state = state.copy(devices = state.devices.map {
             if (it.summary.matchesChildGuardDevice(id)) transform(it) else it
         })
-    }
-
-    private fun updateMasterState() {
-        val plans = state.devices.flatMap { it.plans }
-        state = state.copy(masterEnabled = plans.any { it.enabled })
     }
 
     private fun withPlans(device: ChildInternetDeviceState, plans: List<DeviceGuardPlan>) =
@@ -785,10 +845,18 @@ internal fun guardStatus(blocked: Boolean, plans: List<DeviceGuardPlan>): GuardS
  * 上网报告写入设备状态的唯一入口：缓存回放与实时抓取都走这里，
  * 所以同一份 payload 无论来自磁盘还是网络，界面长成一个样。
  */
-internal fun ChildInternetDeviceState.withUsage(report: ChildGuardUsageReport): ChildInternetDeviceState = copy(
-    todayUsage = report.today, recentUsage = report.recent, usage = report.stats,
-    attentionEntries = report.attention, usageReport = report.traffic, usageSource = report.source
-)
+internal fun ChildInternetDeviceState.withUsage(report: ChildGuardUsageReport): ChildInternetDeviceState {
+    val currentDay = report.stats.date == report.currentDate
+    return copy(
+        todayUsage = if (currentDay) report.today else InternetUsageSummary(null, emptyList(), emptyList()),
+        recentUsage = report.recent,
+        usage = if (currentDay) report.stats else report.stats.copy(
+            onlineMinutes = null, lateNightMinutes = null, hasData = false,
+            attention = ChildAttentionState.UNKNOWN, stale = true),
+        attentionEntries = report.attention,
+        usageReport = report.traffic.takeIf { currentDay }, usageSource = report.source
+    )
+}
 
 /** 总览/成员表里新出现的设备：只带身份，统计一律留空等上网报告来写。 */
 internal fun newChildGuardDevice(
@@ -800,6 +868,7 @@ internal fun newChildGuardDevice(
             name = childGuardDisplayName(listOf(name), uid, macs),
             iconKey = iconKey.ifBlank { "unknown" },
             accentArgb = 0xFF64748B.toInt(),
+            macAddresses = macs.ifEmpty { setOf(uid) },
             status = GuardStatus.UNRESTRICTED
         ),
         plan = DeviceGuardPlan(categories = childInternetCatalogCategories())
@@ -841,6 +910,7 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
      * 总览聚合。Hub 读的是 router_usage_minute 里已经算好的行，
      * 所以这个 GET 本身不会要求路由器重扫，可以放心 20 秒轮一次。
      */
+    fun setMasterEnabled(enabled: Boolean) = write("$base/master$routerQuery", "POST", JSONObject().put("enabled", enabled))
     fun overview() = get("$base/overview$routerQuery")
 
     /** 202 之后的结果查询：路由器 ack 了才回 payload，还在处理就继续抛 pending。 */
@@ -876,7 +946,8 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
         put("macs", JSONArray(macs))
         name?.takeIf { it.isNotBlank() }?.let { put("deviceName", it) }
     })
-    fun removeDevice(uid: String) = write("$base/devices/${pathPart(uid)}$routerQuery", "DELETE")
+    fun removeDevice(uid: String, macs: List<String> = emptyList()) = write("$base/devices/${pathPart(uid)}$routerQuery", "DELETE",
+        JSONObject().put("macs", JSONArray(macs.filter { it.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) })))
 
     /**
      * Official-style 上网统计. `macs` is passed straight through so the Hub can
@@ -1024,7 +1095,8 @@ internal data class ChildGuardOverviewSnapshot(
     /** payload 里根本没有 devices 数组 ≠ 一台都没守护；前者不许清空上一屏。 */
     val hasDeviceRows: Boolean = false,
     /** 换天后回放的聚合只剩名单：在离线一律不写，界面宁可不画徽章。 */
-    val presenceKnown: Boolean = true
+    val presenceKnown: Boolean = true,
+    val masterEnabled: Boolean? = null
 ) {
     fun withoutPresence(): ChildGuardOverviewSnapshot = copy(presenceKnown = false)
 }
@@ -1037,6 +1109,7 @@ internal fun parseChildGuardOverview(root: JSONObject): ChildGuardOverviewSnapsh
         generatedAtEpoch = d.longOrNull("generatedAt"),
         lastSampleAtEpoch = d.longOrNull("lastSampleAt"),
         stale = d.bool("stale", default = false),
+        masterEnabled = if (d.has("masterEnabled") && !d.isNull("masterEnabled")) d.optBoolean("masterEnabled") else null,
         hasDeviceRows = d.optJSONArray("devices") != null
     )
 }
@@ -1153,6 +1226,7 @@ internal fun childGuardZone(payloadTimezone: String?): ZoneId =
 
 internal data class ChildGuardUsageReport(
     val today: InternetUsageSummary,
+    val currentDate: String = childGuardStatisticsDate(),
     val recent: InternetUsageSummary,
     val stats: ChildUsageStats,
     val attention: List<ParentAttentionEntry> = emptyList(),
@@ -1175,10 +1249,11 @@ internal data class ChildGuardUsageReport(
  * 这是全场唯一解析上网报告的地方：`onlineMinutes`、`lateNightMinutes`、提醒状态
  * 只从这里写出去，总览聚合永远只读，所以不会出现两个写入者互相覆盖。
  */
-internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "今天"): ChildGuardUsageReport {
+internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "今天", now: Instant = Instant.now()): ChildGuardUsageReport {
     val d = root.data()
     val zone = childGuardZone(d.text("timezone", "tz").takeIf { it.isNotBlank() })
-    val date = d.text("date").ifBlank { childGuardStatisticsDate(zone) }
+    val currentDate = now.atZone(zone).toLocalDate().toString()
+    val date = d.text("date").ifBlank { currentDate }
     val hasRecords = childGuardHasRecords(d)
     // 没有记录就没有「零分钟」可言：整块退回未知，界面显示 `--` 而不是 0分钟。
     val todayBars = if (hasRecords) parseHourBars(d.optJSONArray("hourly")) else emptyList()
@@ -1191,7 +1266,7 @@ internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "
     val rangeDays = range?.optJSONArray("days") ?: JSONArray()
     val dayCount = rangeDays.length()
     val recentBars = (0 until dayCount).mapNotNull { index ->
-        rangeDays.optJSONObject(index)?.let { childGuardDayBar(it, isToday = index == dayCount - 1, todayLabel = todayLabel, zone = zone) }
+        rangeDays.optJSONObject(index)?.let { childGuardDayBar(it, isToday = it.text("date") == currentDate, todayLabel = todayLabel, zone = zone) }
     }
     val recentEntries = parseUsageEntries(range?.optJSONArray("apps"), zone)
     val recentTotal = recentBars.filter { it.hasData }.sumOf { it.minutes }.takeIf { recentBars.isNotEmpty() }
@@ -1207,6 +1282,7 @@ internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "
     )
     return ChildGuardUsageReport(
         today = InternetUsageSummary(todayMinutes, todayBars, todayEntries),
+        currentDate = currentDate,
         recent = InternetUsageSummary(recentTotal, recentBars, recentEntries),
         stats = stats,
         attention = childGuardAttentionEntries(stats, recentBars, parseLateNightWindows(d.optJSONArray("lateNightRanges"), zone)),
@@ -1285,7 +1361,7 @@ private fun childGuardAttentionEntries(
 ): List<ParentAttentionEntry> {
     val history = days.filter { it.date.isNotBlank() && it.date != stats.date }
     val today = UsageBar(
-        label = "今天",
+        label = childUsageDayLabel(stats.date, isToday = stats.date == childGuardStatisticsDate(), fallback = "日期未知"),
         minutes = stats.onlineMinutes ?: 0,
         date = stats.date,
         lateNightMinutes = stats.lateNightMinutes,
@@ -1506,6 +1582,13 @@ internal fun Throwable.isUnresolvedHubHost(): Boolean =
 internal fun Throwable.needsASilentRetry(): Boolean =
     this is ChildGuardPendingException || isUnresolvedHubHost()
 
+internal fun Throwable.reportReadMessage(): String = when {
+    this is java.net.SocketTimeoutException || this is java.io.InterruptedIOException ||
+        message.orEmpty().contains("timeout", ignoreCase = true) ||
+        message.orEmpty().contains("timed out", ignoreCase = true) -> "读取上网报告超时，请检查手机到 Hub 的连接"
+    else -> userMessage()
+}
+
 internal fun Throwable.userMessage(): String {
     val raw = stripMarkupForDisplay(message.orEmpty())
     val lower = raw.lowercase()
@@ -1671,7 +1754,7 @@ private fun dashboardIconKey(rawName: String): String {
     // 没有内置图就不要写进映射表 —— 见 ChildInternetRepositoryTest.everyMappedIconKeyShipsBundledArtwork。
     "微信" -> "wechat"; "企业微信" -> "wecom"; "微信读书" -> "weread"; "微信视频号" -> "wechat-channels"
     "QQ" -> "qq"; "QQ音乐" -> "qq-music"; "QQ浏览器" -> "qq-browser"; "腾讯会议" -> "tencent-meeting"
-    "腾讯视频" -> "tencent-video"; "哔哩哔哩" -> "bilibili";
+    "腾讯视频" -> "tencent-video"; "哔哩哔哩" -> "bilibili"; "好看视频" -> "haokan-video"
     "抖音" -> "douyin"; "抖音系列" -> "douyin"; "快手" -> "kuaishou"; "小红书" -> "rednote"
     "爱奇艺" -> "iqiyi"; "优酷" -> "youku"; "优酷视频" -> "youku"; "芒果TV" -> "mango-tv"; "咪咕视频" -> "migu-video"
     "网易云音乐" -> "netease-music"; "酷我音乐" -> "kuwo-music"

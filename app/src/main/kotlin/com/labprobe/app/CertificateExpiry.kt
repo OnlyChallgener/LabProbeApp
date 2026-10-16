@@ -1,5 +1,8 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
+import androidx.compose.foundation.layout.heightIn
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -27,7 +30,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Badge
-import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInNew
@@ -312,7 +314,7 @@ private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Uni
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(17.dp), tint = LabV2.InkMuted) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(15.dp), containerColor = LabV2.Field) {
                         DropdownMenuItem(text = { Text("编辑", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp)) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text("删除", fontSize = 12.sp, color = LabV2.Red, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(16.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
+                        DropdownMenuItem(text = { Text("删除", fontSize = 12.sp, color = LabV2.Red, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(16.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
                     }
                 }
             }
@@ -365,7 +367,7 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
         }
         if (error.isNotBlank()) Text(error, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Red)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = {
                     val normalizedApplied = if (appliedOn.isBlank()) "" else normalizeCertificateDate(appliedOn)
@@ -391,9 +393,9 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
                         )
                     }
                 },
-                modifier = Modifier.weight(1f).height(46.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                 shape = LabV2.ButtonShape
-            ) { Text("保存", fontWeight = FontWeight.Black) }
+            ) { Text("保存", fontWeight = FontWeight.SemiBold) }
         }
     }
 }

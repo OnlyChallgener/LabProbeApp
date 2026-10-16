@@ -193,11 +193,13 @@ object LabTypography {
         fontWeight = FontWeight.SemiBold,
         color = LabV2.InkMuted
     )
+    val DialogTitle = CardTitle.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
+    val DialogBody = Body.copy(fontSize = 13.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal)
     val Button = TextStyle(
         fontFamily = FontFamily.Default,
-        fontSize = 14.sp,
+        fontSize = 13.sp,
         lineHeight = 18.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         color = Color.Unspecified
     )
     val CompactButton = TextStyle(
@@ -485,10 +487,8 @@ fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> U
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .then(
-                    if (LabMaterialPolish.enabled) Modifier.labStaticFrostedSurface(shape)
-                    else Modifier.clip(shape).background(LabV2.CardTop).border(1.dp, LabV2.Border, shape)
-                )
+                .clip(shape)
+                .background(Brush.verticalGradient(listOf(Color(0xFFF7FAFF), Color(0xFFEEF9FB), Color.White)))
         ) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
         }

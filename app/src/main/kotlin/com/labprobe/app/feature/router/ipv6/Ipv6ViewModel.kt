@@ -31,7 +31,7 @@ data class Dhcpv6ClientUiState(
     val error: String = "",
 )
 
-class Ipv6ViewModel(private val repository: Ipv6Repository) {
+class Ipv6ViewModel(private val repository: Ipv6Repository, private val supportsRelay: Boolean = true) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var generation = 0L
 
@@ -83,6 +83,10 @@ class Ipv6ViewModel(private val repository: Ipv6Repository) {
 
     fun save() {
         val old = _state.value
+        if (!supportsRelay && old.form.wanMode == WanIpv6Mode.RELAY) {
+            _state.value = old.copy(error = "当前路由器不支持 IPv6 中继模式")
+            return
+        }
         val validation = old.form.validationError
         if (!old.dirty || old.saving || validation != null) {
             if (validation != null) _state.value = old.copy(error = validation)

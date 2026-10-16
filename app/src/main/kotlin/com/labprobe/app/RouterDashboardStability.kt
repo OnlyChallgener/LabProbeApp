@@ -36,7 +36,58 @@ fun mergeRouterDashboardSnapshot(previous: JSONObject?, latest: JSONObject?): JS
 
     val merged = JSONObject(previous.toString())
     mergeRouterObject(merged, latest)
+    val previousSample = dashboardRealtimeSample(previous)
+    val latestSample = dashboardRealtimeSample(latest)
+    // Slow eWeb responses may finish after a new realtime frame. Merge their
+    // identity/details without rolling the current measured values backwards.
+    if (previousSample.optLong("sampleEpochMs") > latestSample.optLong("sampleEpochMs")) {
+        clearDashboardMeasurements(merged)
+        return mergeLiteRouterRealtime(merged, previousSample)
+    }
+    if (latestSample.optLong("sampleEpochMs") > 0L) {
+        return mergeLiteRouterRealtime(merged, latestSample)
+    }
     return merged
+}
+
+private fun clearDashboardMeasurements(root: JSONObject) {
+    val telemetry = root.optJSONObject("telemetry")
+    listOf("uploadBps", "downloadBps", "totalUploadBytes", "totalDownloadBytes").forEach {
+        root.remove(it)
+        telemetry?.optJSONObject("wan")?.remove(it)
+    }
+    listOf("cpuPercent", "memoryPercent", "temperatureC", "temperature2gC", "temperature5gC",
+        "storagePercent", "uptimeSeconds", "onlineDeviceCount").forEach {
+        root.remove(it)
+        telemetry?.remove(it)
+    }
+    listOf("ipv4Connections", "ipv6Connections", "ipv4HalfConnections", "ipv6HalfConnections", "cps").forEach(root::remove)
+    telemetry?.optJSONObject("connections")?.let { connections ->
+        listOf("ipv4", "ipv6", "ipv4Half", "ipv6Half", "cps").forEach(connections::remove)
+    }
+    listOf("sampleAgeMs", "source").forEach(root::remove)
+}
+
+private fun dashboardRealtimeSample(root: JSONObject): JSONObject {
+    val telemetry = root.optJSONObject("telemetry") ?: JSONObject()
+    val wan = telemetry.optJSONObject("wan") ?: JSONObject()
+    val connections = telemetry.optJSONObject("connections") ?: JSONObject()
+    val sample = JSONObject().put("sampleEpochMs", routerStatusTelemetry(root).sampleEpochMs)
+        .put("stale", root.optBoolean("telemetryStale", root.optBoolean("stale", false)))
+    listOf("source", "sampleAgeMs").forEach { if (root.has(it)) sample.put(it, root.opt(it)) }
+    fun copy(key: String, nested: JSONObject, nestedKey: String = key) {
+        val value = measuredRouterNumber(root, key) ?: measuredRouterNumber(nested, nestedKey) ?: return
+        sample.put(key, value)
+    }
+    listOf("uploadBps", "downloadBps", "totalUploadBytes", "totalDownloadBytes").forEach { copy(it, wan) }
+    listOf("cpuPercent", "memoryPercent", "temperatureC", "temperature2gC", "temperature5gC",
+        "storagePercent", "uptimeSeconds", "onlineDeviceCount").forEach { copy(it, telemetry) }
+    copy("ipv4Connections", connections, "ipv4")
+    copy("ipv6Connections", connections, "ipv6")
+    copy("ipv4HalfConnections", connections, "ipv4Half")
+    copy("ipv6HalfConnections", connections, "ipv6Half")
+    copy("cps", connections)
+    return sample
 }
 
 private fun mergeRouterObject(target: JSONObject, source: JSONObject) {

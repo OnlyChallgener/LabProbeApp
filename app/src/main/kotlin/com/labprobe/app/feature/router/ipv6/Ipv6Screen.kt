@@ -1,5 +1,6 @@
 package com.labprobe.app.feature.router.ipv6
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -62,11 +63,13 @@ import com.labprobe.app.LabCoreSurface
 import com.labprobe.app.LabInfoRow
 import com.labprobe.app.LabTypography
 import com.labprobe.app.LabV2
+import com.labprobe.app.isWorkspaceBe50
 
 @Composable
 fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
+    val supportsRelay = !isWorkspaceBe50(prefs)
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { Ipv6Repository(prefs) }
-    val viewModel = remember(repository) { Ipv6ViewModel(repository) }
+    val viewModel = remember(repository, supportsRelay) { Ipv6ViewModel(repository, supportsRelay) }
     var showingClients by remember { mutableStateOf(false) }
 
     DisposableEffect(viewModel) {
@@ -97,7 +100,7 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
         if (state.config == null && state.loading) {
             Ipv6LoadingCard()
         } else if (state.config != null) {
-            WanIpv6Card(form = state.form, onUpdate = viewModel::updateForm)
+            WanIpv6Card(form = state.form, supportsRelay = supportsRelay, onUpdate = viewModel::updateForm)
             LanIpv6Card(form = state.form, onUpdate = viewModel::updateForm)
             Dhcpv6ClientsEntry { showingClients = true }
             Ipv6MessageCard(error = state.error, notice = state.notice)
@@ -106,7 +109,7 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
             Ipv6MessageCard(error = state.error.ifBlank { "暂时无法读取 IPv6 配置" }, notice = "")
             Button(
                 onClick = { viewModel.load(force = true) },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
                 shape = LabV2.ButtonShape,
             ) {
                 Text("重新读取", style = LabTypography.Button)
@@ -159,7 +162,7 @@ private fun Ipv6StatusCard(state: Ipv6UiState, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun WanIpv6Card(form: Ipv6FormState, onUpdate: ((Ipv6FormState) -> Ipv6FormState) -> Unit) {
+private fun WanIpv6Card(form: Ipv6FormState, supportsRelay: Boolean, onUpdate: ((Ipv6FormState) -> Ipv6FormState) -> Unit) {
     Ipv6SectionCard(
         title = "WAN IPv6",
         subtitle = "上网连接与 DNS 服务",
@@ -167,13 +170,17 @@ private fun WanIpv6Card(form: Ipv6FormState, onUpdate: ((Ipv6FormState) -> Ipv6F
         accent = LabV2.Cyan,
     ) {
         Ipv6FieldLabel("连接模式")
-        CompactSegmentedControl(
-            options = WanIpv6Mode.entries.map { it.title },
-            selected = form.wanMode.title,
-            onSelect = { selected ->
-                onUpdate { it.copy(wanMode = WanIpv6Mode.entries.first { mode -> mode.title == selected }) }
-            },
-        )
+        if (supportsRelay) {
+            CompactSegmentedControl(
+                options = WanIpv6Mode.entries.map { it.title },
+                selected = form.wanMode.title,
+                onSelect = { selected ->
+                    onUpdate { it.copy(wanMode = WanIpv6Mode.entries.first { mode -> mode.title == selected }) }
+                },
+            )
+        } else {
+            Text(form.wanMode.title, style = LabTypography.Body.copy(color = LabV2.Ink))
+        }
         Text(
             if (form.wanMode == WanIpv6Mode.RELAY) "中继模式会将上游 IPv6 配置转发到局域网。" else "DHCPv6 会自动向上游获取 IPv6 地址和前缀。",
             style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
@@ -307,7 +314,7 @@ private fun Ipv6SaveArea(state: Ipv6UiState, onSave: () -> Unit, onReset: () -> 
         Button(
             onClick = onSave,
             enabled = state.canSave,
-            modifier = Modifier.weight(1f).height(48.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 40.dp),
             shape = LabV2.ButtonShape,
             colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary),
         ) {

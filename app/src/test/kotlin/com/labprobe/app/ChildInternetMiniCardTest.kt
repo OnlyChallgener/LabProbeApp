@@ -27,7 +27,7 @@ class ChildInternetMiniCardTest {
     @Test
     fun aSwitchedOffMasterIsNotReportedAsProtecting() {
         val state = overview(false, device("a", "blocked"), device("b", "unrestricted"))
-        assertEquals("总开关已关", childGuardMiniSubtitle(state))
+        assertEquals("上网计划已暂停", childGuardMiniSubtitle(state))
     }
 
     @Test

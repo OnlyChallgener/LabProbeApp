@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -29,7 +31,6 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -1317,7 +1318,7 @@ private fun WireGuardProfileDetailsDialog(
     val handshaked = runtime != null && runtime.latestHandshakeAt > 0L &&
         System.currentTimeMillis() - runtime.latestHandshakeAt < 180_000L
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 720.dp),
             shape = LabV2.CardShape,
             color = Color.White,
@@ -1411,7 +1412,7 @@ private fun WireGuardEnableServerDialog(
     onConfirm: () -> Unit,
 ) {
     Dialog(onDismissRequest = onCancel) {
-        Surface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
+        LabGradientDialogSurface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
             Column(
                 Modifier.fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1493,7 +1494,7 @@ private fun WireGuardEditorDialog(
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 720.dp),
             shape = LabV2.CardShape,
             color = Color.White,
@@ -1694,7 +1695,7 @@ private fun WireGuardEditorDialog(
                         modifier = Modifier.align(Alignment.CenterHorizontally),
                         colors = ButtonDefaults.textButtonColors(contentColor = WireGuardRed),
                     ) {
-                        Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(15.dp))
+                        Icon(LabActionIcons.Delete, null, Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("删除配置", style = LabTypography.CompactButton)
                     }
@@ -1746,7 +1747,7 @@ private fun WireGuardRouterPeersDialog(
         }.getOrNull()
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 640.dp),
             shape = LabV2.CardShape,
             color = Color.White,
@@ -1967,7 +1968,7 @@ private fun WireGuardServerSettingsDialog(
     }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
+        LabGradientDialogSurface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
             Column(
                 Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)

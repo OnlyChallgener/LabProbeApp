@@ -159,6 +159,8 @@ internal fun taskMessageZh(raw: String?): String {
     val lower = text.lowercase()
     return when {
         text.isBlank() -> ""
+        "router login retry paused" in lower || "router login failed" in lower -> uiMessageZh(text)
+        "unable to connect to router login page" in lower -> uiMessageZh(text)
         "no new version" in lower || "no update" in lower || "latest version" in lower -> "暂无可用的新版本"
         "new version" in lower || "update available" in lower -> "发现可用的新版本"
         "timeout" in lower || "timed out" in lower -> "任务执行超时"

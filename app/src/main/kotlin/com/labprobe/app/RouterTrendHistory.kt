@@ -12,7 +12,7 @@ internal data class RouterTrendSample(
     val ipv4: Long,
     val ipv6: Long,
 ) {
-    val sessions: Long get() = ipv4 + ipv6
+    val sessions: Long get() = ipv4 + ipv6.coerceAtLeast(0)
 }
 
 /** Bounded, raw telemetry history owned by the app state, never by a screen. */
@@ -34,19 +34,22 @@ internal class RouterTrendHistory {
         val previous = mutableSamples.value
         if (epoch <= 0L || epoch <= (previous.lastOrNull()?.epochMs ?: 0L)) return
         if (age > GAP_MS || payload.optBoolean("stale", false)) return
-        val fields = listOf("uploadBps", "downloadBps", "ipv4Connections", "ipv6Connections")
+        val fields = listOf("uploadBps", "downloadBps", "ipv4Connections")
         // Missing telemetry is unknown, not a zero-valued measurement.
         val values = fields.map { key ->
             payload.opt(key)?.toString()?.toDoubleOrNull()
                 ?.takeIf { it.isFinite() && it >= 0 && it < Long.MAX_VALUE.toDouble() }
                 ?.toLong() ?: return
         }
-        if (values[2] > Long.MAX_VALUE - values[3]) return
+        val ipv6 = payload.opt("ipv6Connections")?.toString()?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() && it >= 0 && it < Long.MAX_VALUE.toDouble() }
+            ?.toLong() ?: -1L
+        if (values[2] > Long.MAX_VALUE - ipv6.coerceAtLeast(0L)) return
         val elapsed = receivedElapsedMs - age
         if (elapsed <= (previous.lastOrNull()?.elapsedMs ?: Long.MIN_VALUE)) return
         val upload = if (values[0] > MAX_VALID_SPEED_BPS) previous.lastOrNull()?.uploadBps ?: 0L else values[0]
         val download = if (values[1] > MAX_VALID_SPEED_BPS) previous.lastOrNull()?.downloadBps ?: 0L else values[1]
-        val point = RouterTrendSample(epoch, elapsed, upload, download, values[2], values[3])
+        val point = RouterTrendSample(epoch, elapsed, upload, download, values[2], ipv6)
         mutableSamples.value = (previous.dropWhile { it.elapsedMs < elapsed - RETENTION_MS } + point)
             .takeLast(MAX_SAMPLES)
     }

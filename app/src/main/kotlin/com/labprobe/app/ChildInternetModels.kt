@@ -238,7 +238,8 @@ data class ChildInternetDeviceState(
     /** 「最近10天」里选中那一天的逐日详情；日期不符就是还没抓到。 */
     val dayUsage: ChildGuardDayUsage? = null,
     /** A usage refresh is in flight; the page keeps showing cached data meanwhile. */
-    val usageLoading: Boolean = false
+    val usageLoading: Boolean = false,
+    val usageError: String = ""
 ) {
     /** 报告覆盖的那一天；没有报告就没有日期可谈。 */
     val usageDate: String get() = usage?.date.orEmpty()
@@ -258,7 +259,8 @@ data class ChildInternetOverviewState(
     val refreshing: Boolean = false,
     val generatedAtEpoch: Long? = null,
     val lastSampleAtEpoch: Long? = null,
-    val stale: Boolean = false
+    val stale: Boolean = false,
+    val masterKnown: Boolean = true
 )
 
 /**

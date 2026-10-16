@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import androidx.compose.ui.draw.clip
 
 import android.content.ClipData
@@ -32,7 +34,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.History
@@ -1099,7 +1100,7 @@ fun StunPenetrationScreen(
     }
 }
 
-@Composable private fun StunRuleCard(
+@Composable internal fun StunRuleCard(
     rule: StunRule,
     agentOnline: Boolean,
     wireGuardManaged: Boolean,
@@ -1137,21 +1138,23 @@ fun StunPenetrationScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text("${rule.serviceType} · ${rule.transportProtocol}", style = LabTypography.Supporting, color = LabV2.InkMuted)
-                }
-                if (wireGuardManaged) {
-                    Surface(shape = RoundedCornerShape(99.dp), color = StunBlue.copy(alpha = .10f)) {
-                        Text(
-                            "WireGuard 自动管理",
-                            color = StunBlue,
-                            style = LabTypography.Caption,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                      Text(
+                        when {
+                            wireGuardManaged -> "${rule.transportProtocol} · 自动管理"
+                            rule.serviceType.equals("WireGuard", true) -> rule.transportProtocol
+                            else -> "${rule.serviceType} · ${rule.transportProtocol}"
+                        },
+                        style = LabTypography.Supporting,
+                        modifier = Modifier.weight(1f),
+                        color = LabV2.InkMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                      Surface(shape = RoundedCornerShape(99.dp), color = stateColor.copy(alpha = .10f)) {
+                        Text(stateText, color = stateColor, style = LabTypography.Caption, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                      }
                     }
-                }
-                Surface(shape = RoundedCornerShape(99.dp), color = stateColor.copy(alpha = .10f)) {
-                    Text(stateText, color = stateColor, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
                 }
                 Box {
                     IconButton(onClick = onMenu, enabled = !deleting && operationLabel == null, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted, modifier = Modifier.size(18.dp)) }
@@ -1179,7 +1182,7 @@ fun StunPenetrationScreen(
                         )
                         DropdownMenuItem(
                             text = { Text("删除", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, color = StunRed) },
-                            leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, tint = StunRed) },
+                            leadingIcon = { Icon(LabActionIcons.Delete, null, tint = StunRed) },
                             onClick = onDelete,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
@@ -1282,10 +1285,12 @@ fun StunPenetrationScreen(
 }
 
 @Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
-    var draft by remember(initial.id) { mutableStateOf(initial) }
-    val cachedDevices = remember(prefs.cacheDevices, prefs.cacheOnlineDevices) {
+    val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
+    val deviceApi = remember(mappingCache, prefs.hubDns) { HubApi(prefs) }
+    var draft by remember(initial.id, mappingCache) { mutableStateOf(initial) }
+    val cachedDevices = remember(mappingCache, prefs.cacheDevices, prefs.cacheOnlineDevices) {
         val overrides = parseDeviceOverrides(prefs.deviceOverridesJson)
-        val mem = PortMappingMemoryCache.devices
+        val mem = mappingCache.devices
         if (mem.isNotEmpty()) {
             mem.filter { it.ip.isNotBlank() }
         } else {
@@ -1294,9 +1299,9 @@ fun StunPenetrationScreen(
             (online + all).distinctBy { it.mac.ifBlank { "${it.name}-${it.ip}" } }.filter { it.ip.isNotBlank() }
         }
     }
-    var devices by remember { mutableStateOf(cachedDevices) }
-    var devicesLoading by remember { mutableStateOf(cachedDevices.isEmpty()) }
-    var showDevicePicker by remember { mutableStateOf(false) }
+    var devices by remember(mappingCache) { mutableStateOf(cachedDevices) }
+    var devicesLoading by remember(mappingCache) { mutableStateOf(cachedDevices.isEmpty()) }
+    var showDevicePicker by remember(mappingCache) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val template = stunTemplate(draft.serviceType)
     val selectedDevice = if (draft.targetType != "device" || draft.targetIpv4.isBlank()) null else devices.firstOrNull { it.ip.isNotBlank() && it.ip == draft.targetIpv4.trim() }
@@ -1305,7 +1310,8 @@ fun StunPenetrationScreen(
             if (devices.isEmpty() || force) {
                 devicesLoading = true
             }
-            val loaded = runCatching { loadCanonicalPortMappingDevices(HubApi(prefs), forceRefresh = force) }.getOrDefault(emptyList())
+            val loaded = runCatching { loadCanonicalPortMappingDevices(deviceApi, mappingCache, forceRefresh = force) }.getOrDefault(emptyList())
+            if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@launch
             if (loaded.isNotEmpty()) {
                 devices = loaded
             }

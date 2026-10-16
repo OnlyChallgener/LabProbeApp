@@ -1,9 +1,15 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collectLatest
@@ -55,7 +61,6 @@ import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.EditCalendar
 import androidx.compose.material.icons.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.NotificationImportant
@@ -64,6 +69,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Workspaces
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
@@ -147,10 +153,20 @@ fun ChildInternetDeviceScreen(
     val iconKey = profile?.iconKey ?: fallback?.iconKey ?: "unknown"
     val accentArgb = profile?.accent?.toArgb() ?: fallback?.accentArgb ?: 0xFF2563EB.toInt()
 
-    LaunchedEffect(resolvedId, resolvedName, iconKey, accentArgb) {
+    LaunchedEffect(repository, resolvedId, resolvedName, iconKey, accentArgb) {
         if (resolvedId.isNotBlank()) {
             repository.ensureDevice(resolvedId, resolvedName, iconKey, accentArgb)
-            repository.loadUsageReport(resolvedId) {}
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val reportOnline = matchingGuardDevice?.presence?.online ?: appDevice?.online
+    LaunchedEffect(repository, resolvedId, lifecycleOwner, reportOnline) {
+        if (resolvedId.isNotBlank()) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                repository.loadUsageReport(resolvedId) {}
+                if (reportOnline == false) break
+                delay(20_000L)
+            }
         }
     }
 
@@ -189,6 +205,9 @@ fun ChildInternetDeviceScreen(
         stateSaver = deviceGuardPlanSaver(draftBase)
     ) { mutableStateOf(draftBase) }
     val selectedTab = ChildInternetTab.valueOf(selectedTabName)
+    LaunchedEffect(repository, resolvedId, selectedTab) {
+        if (selectedTab == ChildInternetTab.PLAN) repository.loadDeviceSettings(resolvedId)
+    }
     val selectedCategory = draftPlan.categories.firstOrNull { it.id == selectedCategoryId }
 
     BackHandler(enabled = selectedCategory != null || editingPlanId != null) {
@@ -214,33 +233,21 @@ fun ChildInternetDeviceScreen(
     var confirmRemoveGuard by rememberSaveable(resolvedId) { mutableStateOf(false) }
     var showUsageLog by rememberSaveable(resolvedId) { mutableStateOf(false) }
     if (showUsageLog) {
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { showUsageLog = false },
             title = { Text("今日上网记录") },
             text = {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val entries = deviceState.todayUsage.entries.filter { it.sessions.isNotEmpty() }
-                    if (entries.isEmpty()) Text("暂无真实时段记录。更新采集服务后，新记录会在这里显示。")
-                    entries.forEach { entry ->
-                        Text(entry.appName, style = LabTypography.CardTitle)
-                        entry.sessions.forEach { session ->
-                            Text("${session.timeRange}\n${session.durationText}", style = LabTypography.Supporting)
-                        }
-                    }
-                }
+                ChildUsageLogContent(deviceState.todayUsage.entries)
             },
             confirmButton = { TextButton(onClick = { showUsageLog = false }) { Text("关闭") } }
         )
     }
     if (confirmRemoveGuard) {
         val context = LocalContext.current
-        AlertDialog(
+        ChildRemoveGuardDialog(
             onDismissRequest = { confirmRemoveGuard = false },
-            title = { Text("解除儿童上网守护？", style = LabTypography.CardTitle) },
-            text = { Text("确定把「${deviceState.summary.name}」移出儿童守护列表吗？解除后所有上网计划与管控规则将立即失效。", style = LabTypography.Body.copy(color = LabV2.InkMuted)) },
-            confirmButton = {
-                TextButton(onClick = {
+            deviceName = deviceState.summary.name,
+            onConfirm = {
                     confirmRemoveGuard = false
                     repository.removeGuardDevice(deviceState.summary.deviceId) { result ->
                         result.onSuccess {
@@ -250,15 +257,7 @@ fun ChildInternetDeviceScreen(
                             toast(context, it.userMessage())
                         }
                     }
-                }) {
-                    Text("解除守护", color = LabV2.Red, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmRemoveGuard = false }) { Text("取消") }
-            },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = LabCoreSurface.Card
+            }
         )
     }
 
@@ -288,7 +287,8 @@ fun ChildInternetDeviceScreen(
                 .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                 .background(ChildInternetSheet)
         ) {
-            if (repository.state.error.isNotBlank()) {
+            val pageError = if (selectedTab == ChildInternetTab.PLAN) repository.state.error else deviceState.usageError
+            if (pageError.isNotBlank() && selectedTab != ChildInternetTab.REPORT) {
                 // 之前是一行裸红字飘在背景上，和页面没有任何关系；做成和总览
                 // 「更新失败」那颗一样调子的软色条。
                 Surface(
@@ -304,7 +304,7 @@ fun ChildInternetDeviceScreen(
                     ) {
                         Text("❗", style = LabTypography.Caption.copy(color = Color(0xFFEF4444), fontSize = 12.sp))
                         Text(
-                            repository.state.error,
+                            pageError,
                             modifier = Modifier.weight(1f),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
@@ -390,7 +390,28 @@ fun ChildInternetDeviceScreen(
 }
 
 @Composable
-private fun ChildDeviceHeader(
+internal fun ChildUsageLogContent(entries: List<InternetUsageEntry>) {
+    val recorded = entries.filter { it.sessions.isNotEmpty() }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (recorded.isEmpty()) Text("暂无真实时段记录", style = LabTypography.DialogBody)
+        recorded.forEach { entry ->
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(entry.appName, style = LabTypography.CardTitle.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier.padding(bottom = 2.dp))
+                entry.sessions.forEach { session ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(session.timeRange, modifier = Modifier.weight(1f), style = LabTypography.Body.copy(color = LabV2.InkMuted))
+                        Text(session.durationText, style = LabTypography.Body.copy(fontWeight = FontWeight.Medium))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ChildDeviceHeader(
     summary: ProtectedDeviceSummary,
     onBack: () -> Unit,
     onRemoveGuard: () -> Unit = {},
@@ -399,45 +420,44 @@ private fun ChildDeviceHeader(
     val accent = Color(summary.accentArgb)
     // 官方那版：设备名居中，返回键和右侧两个操作浮在同一条蓝带上。这里刻意不再
     // 自己刷背景 —— 头部再盖一层平色就会把外层那道渐变切断。
-    Box(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+    Box(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink)
+                Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink, modifier = Modifier.size(22.dp))
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onRemoveGuard, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Rounded.DeleteOutline, "解除儿童守护", tint = LabV2.InkMuted)
+                Icon(LabActionIcons.Delete, "解除儿童守护", tint = LabV2.InkMuted, modifier = Modifier.size(18.dp))
             }
             IconButton(onClick = onOpenLog, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Rounded.FormatListBulleted, "上网日志", tint = LabV2.InkMuted)
+                Icon(Icons.Rounded.FormatListBulleted, "上网日志", tint = LabV2.InkMuted, modifier = Modifier.size(20.dp))
             }
         }
         // 设备名要在自己那一行的正中：左右居中靠 Arrangement.Center，上下居中靠
         // align(Center) —— 少了后者，它会贴着 Box 顶部，看起来整体偏上。
         Row(
-            Modifier.fillMaxWidth().align(Alignment.Center),
+            Modifier.fillMaxWidth().padding(horizontal = 84.dp).align(Alignment.Center),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(accent.copy(alpha = 0.12f)),
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(5.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                LabMiniDeviceIcon(summary.iconKey, accent, sizeDp = 20)
+                LabMiniDeviceIcon(summary.iconKey, accent, sizeDp = 24)
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
                 text = summary.name,
-                style = LabTypography.PageTitle.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
+                style = LabTypography.PageTitle.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 210.dp)
+                modifier = Modifier.weight(1f, fill = false)
             )
         }
     }
@@ -601,7 +621,7 @@ internal fun childGuardMiniSubtitle(state: ChildInternetOverviewState): String {
             else -> "还没添加守护设备"
         }
     }
-    if (!state.masterEnabled) return "总开关已关"
+    if (state.masterKnown && !state.masterEnabled) return "上网计划已暂停"
     val blocked = state.devices.count { it.schedule.state == "blocked" }
     val free = state.devices.count { it.schedule.state in setOf("unrestricted", "allowed") }
     return when {
@@ -680,7 +700,7 @@ private fun ChildUsagePeriodToggle(
 }
 
 @Composable
-private fun ChildInternetReportScreen(
+internal fun ChildInternetReportScreen(
     device: ChildInternetDeviceState,
     period: String,
     onPeriodChange: (String) -> Unit,
@@ -694,7 +714,7 @@ private fun ChildInternetReportScreen(
     var selectedAppForTimeline by remember { mutableStateOf<InternetUsageEntry?>(null) }
     var showExplanation by remember { mutableStateOf(false) }
     if (showExplanation) {
-        AlertDialog(onDismissRequest = { showExplanation = false },
+        LabCompactAlertDialog(onDismissRequest = { showExplanation = false },
             title = { Text(USAGE_REPORT_EXPLAINER_TITLE) },
             text = { Text(USAGE_REPORT_EXPLAINER) },
             confirmButton = { TextButton(onClick = { showExplanation = false }) { Text("知道了") } })
@@ -731,9 +751,22 @@ private fun ChildInternetReportScreen(
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = LabV2.PageHorizontal).padding(top = 8.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = LabV2.PageHorizontal).padding(top = 2.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+              if (device.usageError.isNotBlank()) Text(device.usageError,
+                  style = LabTypography.Caption.copy(color = LabV2.Red))
+              Text(
+                if (device.usageDate.isNotBlank() && device.usageDate != childGuardStatisticsDate())
+                    "上次记录：${device.usageDate} · 今日数据待更新"
+                else childReportFreshnessLabel(device),
+                style = LabTypography.Caption.copy(color = LabV2.InkMuted)
+              )
+            }
+            TextButton(onClick = onRefresh, enabled = !device.usageLoading) { Text("刷新") }
+        }
         ChildUsagePeriodToggle(
             options = listOf("今日", "最近10天"),
             selected = period,
@@ -757,7 +790,11 @@ private fun ChildInternetReportScreen(
                 // 里最大的那天，选中周日却显示别的数字，读起来是错的。
                 FormattedDurationText(if (period == "今日") usage.totalMinutes else selectedBar?.minutes)
             }
-            UsageBarsWithGrid(
+            if (currentBars.isEmpty()) {
+                Text(if (device.usageLoading) "正在读取上网记录…" else if (device.usageError.isNotBlank()) "暂未读到记录，请重试" else "当日暂无上网记录",
+                    Modifier.fillMaxWidth().padding(vertical = 18.dp), textAlign = TextAlign.Center,
+                    style = LabTypography.Body.copy(color = LabV2.InkMuted))
+            } else UsageBarsWithGrid(
                 bars = currentBars,
                 selectedIndex = safeIndex,
                 onSelectBar = { selectedBarIndex = it }
@@ -810,7 +847,7 @@ private fun ChildInternetReportScreen(
             Spacer(Modifier.height(2.dp))
             if (currentEntries.isEmpty()) {
                 Column(
-                    Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -867,6 +904,37 @@ private fun ChildInternetReportScreen(
             )
         }
     }
+}
+
+@Composable
+internal fun ChildRemoveGuardDialog(deviceName: String, onDismissRequest: () -> Unit, onConfirm: () -> Unit) {
+    LabCompactAlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("解除儿童上网守护？") },
+        text = {
+            Text(
+                "确定把「$deviceName」移出儿童守护列表吗？解除后所有上网计划与管控规则将立即失效。",
+                style = LabTypography.DialogBody.copy(color = LabV2.InkMuted),
+            )
+        },
+        dismissButton = { TextButton(onClick = onDismissRequest) { Text("取消") } },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("解除守护", color = LabV2.Red, fontWeight = FontWeight.SemiBold)
+            }
+        },
+    )
+}
+
+internal fun childReportFreshnessLabel(device: ChildInternetDeviceState): String {
+    if (device.presence?.online == false && device.usage == null && device.usageError.isBlank()) {
+        return "设备离线 · 暂无统计记录"
+    }
+    if (!device.usageLoading && device.usageError.isBlank() && device.usage != null && !device.usageHasData) {
+        return if (device.usage!!.stale) "当日暂无记录 · 采集状态待更新" else "当日暂无上网记录"
+    }
+    return childGuardFreshnessLabel(device.usage?.lastSampleAtEpoch,
+        device.usage?.stale ?: true, device.usageLoading, device.usageError.isNotBlank())
 }
 
 @Composable
@@ -1194,7 +1262,7 @@ private fun AppUsageTimelineDialog(
     entry: InternetUsageEntry,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             // 放进气泡自己的按钮栏，正文底部就不会再留一整条空白；官方那里是紧贴的。
@@ -1204,10 +1272,9 @@ private fun AppUsageTimelineDialog(
                 shape = RoundedCornerShape(21.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
             ) {
-                Text("知道了", style = LabTypography.Body.copy(color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp))
+                Text("知道了", style = LabTypography.Button.copy(color = Color.White))
             }
         },
-        dismissButton = {},
         containerColor = LabCoreSurface.Card,
         shape = RoundedCornerShape(20.dp),
         text = {
@@ -1265,13 +1332,13 @@ private fun AppUsageTimelineDialog(
                             Text(
                                 session.timeRange,
                                 modifier = Modifier.width(120.dp),
-                                style = LabTypography.Body.copy(fontSize = 15.sp, color = LabV2.Ink),
+                                style = LabTypography.DialogBody.copy(fontSize = 15.sp, color = LabV2.Ink),
                                 maxLines = 1,
                                 softWrap = false
                             )
                             Text(
                                 "使用${session.durationText}",
-                                style = LabTypography.Body.copy(fontSize = 15.sp, color = LabV2.Ink)
+                                style = LabTypography.DialogBody.copy(fontSize = 15.sp, color = LabV2.Ink)
                             )
                         }
                     }
@@ -1312,7 +1379,7 @@ private fun ChildInternetPlanEmptyState(onOpen: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         Text("设置允许上网的时段，并选择时段内允许使用的应用。", style = LabTypography.Body.copy(color = LabV2.InkMuted), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth(.70f).height(48.dp), shape = RoundedCornerShape(50), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
+        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth(.70f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp), shape = RoundedCornerShape(50), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
             Text("去开启", style = LabTypography.Button)
         }
     }
@@ -1418,7 +1485,8 @@ private fun ChildInternetPlanOverview(
         }
         Button(
             onClick = onAddRule,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
             shape = RoundedCornerShape(50),
             colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
         ) { Text("添加上网时段", style = LabTypography.Button) }
@@ -1518,7 +1586,7 @@ private fun ChildInternetPlanEditor(
         // 官方的确认框很紧：居中标题 + 一行问句 + 两枚等宽胶囊。确认按钮仍写「删除」
         // 而不是照抄官方的「提交」—— 这是不可撤销的操作，按钮就该说它要干什么。
         Dialog(onDismissRequest = { confirmDelete = false }) {
-            Surface(
+            LabGradientDialogSurface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 30.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = LabCoreSurface.Card
@@ -1626,7 +1694,8 @@ private fun ChildInternetPlanEditor(
                     // 忙时照样禁双击，但不许变灰：官方点「完成配置」是按钮保持原样、
                     // 由页面级「配置中…」报状态；变灰会让人以为没点上而反复点。
                     enabled = !saving && plan.repeatDays.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = LabV2.Cyan,
@@ -1634,12 +1703,12 @@ private fun ChildInternetPlanEditor(
                         disabledContainerColor = LabV2.Cyan,
                         disabledContentColor = Color.White
                     )
-                ) { Text("完成配置", style = LabTypography.Button.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold)) }
+                ) { Text("完成配置", style = LabTypography.Button) }
                 if (plan.configured && plan.id.isNotBlank()) {
                     Surface(
                         onClick = { if (!saving) confirmDelete = true },
                         enabled = true,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
                         shape = RoundedCornerShape(50),
                         color = LabCoreSurface.Card,
                         border = androidx.compose.foundation.BorderStroke(1.dp, LabV2.Border)
@@ -1647,7 +1716,8 @@ private fun ChildInternetPlanEditor(
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 "删除时段",
-                                style = LabTypography.Button.copy(color = LabV2.Red, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                modifier = Modifier.padding(vertical = 10.dp),
+                                style = LabTypography.Button.copy(color = LabV2.Red)
                             )
                         }
                     }
@@ -1862,7 +1932,8 @@ private fun ChildInternetAppSelectionScreen(
                 }
                 Button(
                     onClick = { onDone(category.apps.map { it.copy(selected = it.id in selectedIds) }) },
-                    modifier = Modifier.width(148.dp).height(48.dp),
+                    modifier = Modifier.width(148.dp).heightIn(min = 40.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)
                 ) { Text("完成", style = LabTypography.Button) }
@@ -2253,7 +2324,7 @@ private fun LabTimeWheelDialog(
         var minute by remember { mutableStateOf(initialMinute) }
 
         Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(
+            LabGradientDialogSurface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = LabCoreSurface.Card

@@ -108,6 +108,7 @@ internal val rdpiCatalogApps: List<RdpiCatalogEntry> = listOf(
     RdpiCatalogEntry("华为视频", "media", setOf("10-154-1-0")),
     RdpiCatalogEntry("南瓜电影", "media", setOf("10-153-1-0")),
     RdpiCatalogEntry("哔哩哔哩", "media", setOf("10-141-1-0", "10-141-1-14")),
+    RdpiCatalogEntry("好看视频", "media", setOf("9-234-1-0")),
     RdpiCatalogEntry("喜马拉雅", "media", setOf("8-91-1-0", "8-91-1-14")),
     RdpiCatalogEntry("影视大全", "media", setOf("10-147-1-0")),
     RdpiCatalogEntry("微信视频号", "media", setOf("10-1-2-0", "10-1-2-14")),

@@ -1,0 +1,91 @@
+package com.labprobe.app
+
+import android.content.Context
+import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.CancellationException
+import okhttp3.OkHttpClient
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import java.net.InetSocketAddress
+import java.util.concurrent.*
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
+class ConnectionSettingsSaveTest {
+    private val context: Context get() = RuntimeEnvironment.getApplication()
+    private lateinit var prefs: AppPrefs
+    private val id = "local_save_test"
+    @Before fun setup() {
+        RouterWorkspaceStore.resetActive()
+        context.getSharedPreferences("labprobe", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences(routerWorkspacePreferencesName(id, ""), Context.MODE_PRIVATE)
+            .edit().clear().putString("token", "test-token").commit()
+        prefs = AppPrefs(context, id)
+        prefs.hub = "http://100.66.1.4:58443"
+    }
+
+    @Test fun offlineSaveSurvivesNewPageAndDoesNotChangeOtherRouter() {
+        val other = AppPrefs(context, "local_other_save_test")
+        other.hub = "http://100.66.1.4:58444"
+        prefs.saveConnectionSettings("http://192.168.5.46:58443", "test-token", "223.5.5.5", "",
+            RouterConfigUpdate("BE72", "admin", "http://192.168.5.1", "test-password"), "BE72")
+        val reopened = AppPrefs(context, id)
+        assertEquals("http://192.168.5.46:58443", reopened.hub)
+        assertEquals("http://192.168.5.1", reopened.routerLanUrl)
+        assertEquals("test-password", reopened.routerPassword)
+        assertTrue(reopened.pendingHubIdentity)
+        assertTrue(reopened.pendingRouterSettings)
+        assertEquals("http://100.66.1.4:58444", other.hub)
+    }
+
+    @Test fun pendingIdentityBlocksWritesBeforeOpeningANetworkConnection() {
+        prefs.pendingHubIdentity = true
+        assertThrows(java.io.IOException::class.java) {
+            HubApi(prefs).requestText("/api/router/child-guard/devices/uid", "DELETE")
+        }
+    }
+
+    @Test fun addressChangeCancelsInFlightReadAndRejectsLateResponse() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            entered.countDown()
+            release.await(3, TimeUnit.SECONDS)
+            runCatching {
+                val body = "{\"old\":true}".toByteArray()
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            exchange.close()
+        }
+        server.start()
+        try {
+            prefs.hub = "http://127.0.0.1:${server.address.port}"
+            val api = HubApi(prefs)
+            val pending = executor.submit<Throwable?> { runCatching { api.requestText("/slow") }.exceptionOrNull() }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            prefs.saveConnectionSettings("http://192.168.5.46:58443", "test-token", "223.5.5.5", "", null, "BE72")
+            assertTrue(pending.get(2, TimeUnit.SECONDS) is CancellationException)
+        } finally { release.countDown(); server.stop(0); executor.shutdownNow() }
+    }
+
+    @Test fun transportTimeoutIsNotMistakenForAnExplicitConnectionSwitch() {
+        val client = OkHttpClient()
+        val call = client.newCall(okhttp3.Request.Builder().url("http://localhost/").build())
+        val key = HubConnectionRequests.key(id, "timeout", "test")
+        HubConnectionRequests.register(key, HubConnectionRequests.generation(key), call)
+        call.cancel()
+        assertFalse(HubConnectionRequests.wasCancelled(call))
+        HubConnectionRequests.cancel(key, invalidate = false)
+        assertTrue(HubConnectionRequests.wasCancelled(call))
+        HubConnectionRequests.remove(key, call)
+    }
+}

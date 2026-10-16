@@ -153,7 +153,7 @@ fun RouterWebhookScreen(
     }
 
     if (showPortDialog && targetPortItem != null) {
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { showPortDialog = false },
             title = { Text("编辑端口", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink) },
             text = {
@@ -231,7 +231,7 @@ fun RouterWebhookScreen(
     }
 
     if (showRemarkDialog && targetRemarkItem != null) {
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { showRemarkDialog = false },
             title = { Text("修改备注", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink) },
             text = {

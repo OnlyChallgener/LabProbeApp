@@ -40,7 +40,7 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 @Composable
-internal fun RouterTrendPanel(history: StateFlow<List<RouterTrendSample>>) {
+internal fun RouterTrendPanel(history: StateFlow<List<RouterTrendSample>>, showIpv6: Boolean = true) {
     val allSamples by history.collectAsState()
     val context = LocalContext.current
     val lifecycle = (context.findActivity() as? ComponentActivity)?.lifecycle
@@ -87,7 +87,7 @@ internal fun RouterTrendPanel(history: StateFlow<List<RouterTrendSample>>) {
             Text("↑ 上传 ${reading?.let { trendRate(it.uploadBps) } ?: "--"}",
                 Modifier.weight(1f), style = LabTypography.Value, color = LabV2.Primary)
         }
-        Text(reading?.let { "会话 ${it.sessions}  ·  IPv4 ${it.ipv4} / IPv6 ${it.ipv6}" } ?: "会话 --  ·  IPv4 -- / IPv6 --",
+        Text(reading?.let { "会话 ${it.sessions}  ·  IPv4 ${it.ipv4} / IPv6 ${if (showIpv6 && it.ipv6 >= 0) it.ipv6 else "不支持"}" } ?: "会话 --  ·  IPv4 -- / IPv6 --",
             style = LabTypography.Supporting, color = LabV2.InkMuted)
 
         val status = when {
@@ -100,6 +100,7 @@ internal fun RouterTrendPanel(history: StateFlow<List<RouterTrendSample>>) {
         TrendCanvas(
             samples = visible,
             selected = selected,
+            showIpv6 = showIpv6,
             onSelect = { point -> selected = point },
             onRelease = { selected = null }
         )
@@ -111,6 +112,7 @@ internal fun RouterTrendPanel(history: StateFlow<List<RouterTrendSample>>) {
 private fun TrendCanvas(
     samples: List<RouterTrendSample>,
     selected: RouterTrendSample?,
+    showIpv6: Boolean,
     onSelect: (RouterTrendSample?) -> Unit,
     onRelease: () -> Unit,
 ) {
@@ -161,7 +163,7 @@ private fun TrendCanvas(
 
         fun text(value: String, x: Float, y: Float) { drawContext.canvas.nativeCanvas.drawText(value, x, y, paint) }
         text("网速 · ${unit.second}", 0f, 12.dp.toPx())
-        text("会话 · IPv4 (蓝) / IPv6 (青)", 0f, 134.dp.toPx())
+        text(if (showIpv6) "会话 · IPv4 (蓝) / IPv6 (青)" else "会话 · IPv4 (蓝)", 0f, 134.dp.toPx())
 
         fun grid(top: Float, bottom: Float, max: Double, divisor: Double) {
             for (i in 0..2) {
@@ -233,7 +235,8 @@ private fun TrendCanvas(
             series(speedTop, speedBottom, speedMax, LabV2.Green) { it.downloadBps }
             series(speedTop, speedBottom, speedMax, LabV2.Primary) { it.uploadBps }
             series(sessionsTop, sessionsBottom, sessionMax, LabV2.Primary) { it.ipv4 }
-            series(sessionsTop, sessionsBottom, sessionMax, Color(0xFF0EA5E9)) { it.ipv6 }
+            if (showIpv6 && samples.all { it.ipv6 >= 0 })
+                series(sessionsTop, sessionsBottom, sessionMax, Color(0xFF0EA5E9)) { it.ipv6 }
 
             selected?.let { sel ->
                 val selIndex = samples.indexOf(sel).takeIf { it >= 0 } ?: (count - 1)

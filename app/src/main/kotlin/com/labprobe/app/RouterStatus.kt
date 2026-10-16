@@ -117,7 +117,7 @@ import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private data class RouterPortUi(
+internal data class RouterPortUi(
     val name: String,
     val connected: Boolean,
     val isWan: Boolean,
@@ -126,21 +126,21 @@ private data class RouterPortUi(
     val speedLabel: String = ""
 )
 
-private data class RouterDashboardUi(
+internal data class RouterDashboardUi(
     val name: String = "路由器",
     val model: String = "--",
     val online: Boolean = false,
     val temperature: Double = 0.0,
     val temperature2g: Double = 0.0,
     val temperature5g: Double = 0.0,
-    val cpu: Double = 0.0,
-    val memory: Double = 0.0,
+    val cpu: Double = -1.0,
+    val memory: Double = -1.0,
     val storage: Double = -1.0,
     val frameEpochMs: Long = 0,
     val uptimeSeconds: Long = 0,
     val onlineDevices: Int = 0,
-    val uploadBps: Long = 0,
-    val downloadBps: Long = 0,
+    val uploadBps: Long = -1,
+    val downloadBps: Long = -1,
     val totalUploadBytes: Long = 0,
     val totalDownloadBytes: Long = 0,
     val ipv4Connections: Long = 0,
@@ -301,6 +301,7 @@ private fun connectionType(network: JSONObject): String {
 private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = null): RouterDashboardUi {
     if (root == null) return RouterDashboardUi()
     val telemetry = root.obj("telemetry")
+    val realtime = routerStatusTelemetry(root)
     val wanTelemetry = telemetry.obj("wan")
     val connections = telemetry.obj("connections")
     val details = root.obj("details")
@@ -399,19 +400,18 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         temperature = jsonNumber(telemetry, "temperatureC"),
         temperature2g = jsonNumber(telemetry, "temperature2gC"),
         temperature5g = jsonNumber(telemetry, "temperature5gC"),
-        frameEpochMs = root.optLong("sampleEpochMs", 0),
-        // 没有真帧时 Hub 的空快照/App 合并层都会填 0.0；0% 是假数，按温度同款约定显示 --。
-        cpu = if (root.optLong("sampleEpochMs", 0) > 0 && telemetry.has("cpuPercent") && !telemetry.isNull("cpuPercent")) jsonNumber(telemetry, "cpuPercent") else -1.0,
-        memory = if (root.optLong("sampleEpochMs", 0) > 0 && telemetry.has("memoryPercent") && !telemetry.isNull("memoryPercent")) jsonNumber(telemetry, "memoryPercent") else -1.0,
+        frameEpochMs = realtime.sampleEpochMs,
+        cpu = realtime.cpuPercent,
+        memory = realtime.memoryPercent,
         storage = if (telemetry.has("storagePercent") && !telemetry.isNull("storagePercent")) jsonNumber(telemetry, "storagePercent") else -1.0,
         uptimeSeconds = telemetry.optLong("uptimeSeconds", 0),
         onlineDevices = telemetry.optInt("onlineDeviceCount", 0),
-        uploadBps = wanTelemetry.optLong("uploadBps", 0),
-        downloadBps = wanTelemetry.optLong("downloadBps", 0),
+        uploadBps = realtime.uploadBps,
+        downloadBps = realtime.downloadBps,
         totalUploadBytes = wanTelemetry.optLong("totalUploadBytes", 0),
         totalDownloadBytes = wanTelemetry.optLong("totalDownloadBytes", 0),
         ipv4Connections = connections.optLong("ipv4", 0),
-        ipv6Connections = connections.optLong("ipv6", 0),
+        ipv6Connections = if (connections.has("ipv6") && !connections.isNull("ipv6")) connections.optLong("ipv6", -1) else -1,
         // WAN must use dev_sta ipinfo normalized by LabRelay.
         wanIpv4 = wan.optString("ipv4").ifBlank { "--" },
         wanGateway = wan.optString("gateway").ifBlank { fallbackGateway }.ifBlank { "--" },
@@ -491,6 +491,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
     val displayName = prefs.routerDisplayName.ifBlank { rawUi.name }
     val maskedWan = if (prefs.privacyMode) maskAddressForUi(rawUi.wanIpv4, true) else rawUi.wanIpv4
     val ui = rawUi.copy(name = displayName, wanIpv4 = maskedWan)
+    val be50 = isWorkspaceBe50(prefs, ui.model, ui.name)
 
     LaunchedEffect(Unit) {
         state.refreshRouterDashboard(silent = true)
@@ -567,6 +568,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
         if (state.routerDashboardError.isNotBlank()) RouterHubStatusError(state.routerDashboardError)
         RouterHeroCard(
             ui = ui,
+            isBe50 = be50,
             routerImage = routerImage,
             refreshing = refreshing,
             onRefresh = ::refresh,
@@ -574,7 +576,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
             onEdit = { showRouterEditor = true },
             onOpenRouter = ::openRouterUrl
         )
-        RouterRealtimeCard(ui, state)
+        RouterRealtimeCard(ui, state, isBe50 = be50)
         RouterNetworkCard(ui)
         RouterPortsCard(ui, onShowLegend = { showPortLegend = true })
         Spacer(Modifier.height(4.dp))
@@ -625,8 +627,9 @@ private fun RouterHubStatusError(error: String) {
     }
 }
 @Composable
-private fun RouterHeroCard(
+internal fun RouterHeroCard(
     ui: RouterDashboardUi,
+    isBe50: Boolean,
     routerImage: Bitmap?,
     refreshing: Boolean,
     onRefresh: () -> Unit,
@@ -640,7 +643,7 @@ private fun RouterHeroCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.weight(.98f).height(160.dp).clip(RoundedCornerShape(20.dp)).clickable(onClick = onOpenRouter),
+                Modifier.weight(.85f).height(136.dp).clip(RoundedCornerShape(20.dp)).clickable(onClick = onOpenRouter),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(Modifier.fillMaxSize()) {
@@ -694,8 +697,7 @@ private fun RouterHeroCard(
                         )
                     }
                 }
-                val isBe50 = ui.model.contains("BE50", ignoreCase = true)
-                    || ui.name.contains("BE50", ignoreCase = true)
+                val isBe50 = isModelBe50(ui.model, ui.name, "")
                 androidx.compose.foundation.Image(
                     painter = routerImage?.let { BitmapPainter(it.asImageBitmap()) }
                         ?: painterResource(if (isBe50) R.drawable.router_be50 else R.drawable.router_skeuomorphic_v3),
@@ -704,7 +706,7 @@ private fun RouterHeroCard(
                     contentScale = if (routerImage == null) ContentScale.Fit else ContentScale.Crop
                 )
             }
-            Column(Modifier.weight(1.02f).padding(start = 1.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(Modifier.weight(1.15f).padding(start = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(shape = CircleShape, color = LabV2.Green, modifier = Modifier.size(25.dp)) {
                         Box(contentAlignment = Alignment.Center) {
@@ -747,18 +749,18 @@ private fun RouterHeroCard(
                         )
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SpeedValue(if (ui.frameEpochMs > 0) ui.downloadBps else -1, "下载速率", LabV2.Green, Modifier.weight(1f), icon = Icons.Rounded.South)
-                    SpeedValue(if (ui.frameEpochMs > 0) ui.uploadBps else -1, "上传速率", LabV2.Primary, Modifier.weight(1f), icon = Icons.Rounded.North)
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ConnectionCountChip("IPv4 连接数", if (ui.frameEpochMs > 0) ui.ipv4Connections else -1, LabV2.Primary, Modifier.weight(1f))
-                    ConnectionCountChip("IPv6 连接数", if (ui.frameEpochMs > 0) ui.ipv6Connections else -1, Color(0xFF0EA5E9), Modifier.weight(1f))
-                }
-                if (ui.telemetryStale) {
-                    Text("实时数据暂时未变化，已保留上次结果", fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber, fontWeight = FontWeight.SemiBold)
-                }
+                SpeedValue(if (ui.frameEpochMs > 0) ui.downloadBps else -1, "下载速率", LabV2.Green, Modifier.fillMaxWidth(), icon = Icons.Rounded.South)
+                SpeedValue(if (ui.frameEpochMs > 0) ui.uploadBps else -1, "上传速率", LabV2.Primary, Modifier.fillMaxWidth(), icon = Icons.Rounded.North)
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ConnectionCountChip("IPv4 连接数", if (ui.frameEpochMs > 0) ui.ipv4Connections else -1, LabV2.Primary, Modifier.weight(1f))
+            if (!isBe50) {
+                ConnectionCountChip("IPv6 连接数", if (ui.frameEpochMs > 0) ui.ipv6Connections else -1, Color(0xFF0EA5E9), Modifier.weight(1f))
+            }
+        }
+        if (ui.telemetryStale) {
+            Text("数据暂未更新，已保留上次结果", Modifier.padding(horizontal = 12.dp), fontSize = LabTypography.Caption.fontSize, color = LabV2.Amber)
         }
         Box(
             Modifier
@@ -782,14 +784,13 @@ private fun RouterHeroCard(
                 )
                 HeroDivider()
                 Row(
-                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled = !refreshing, onClick = onRefresh),
+                    Modifier.width(58.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).clickable(enabled = !refreshing, onClick = onRefresh),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
                     if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LabV2.Primary)
                     else Icon(Icons.Rounded.Refresh, null, Modifier.size(22.dp), tint = LabV2.Primary)
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (refreshing) "刷新中" else "刷新", fontSize = (LabTypography.Value.fontSize.value - 1f).sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+                    Text(if (refreshing) "刷新中" else "刷新", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
                 }
             }
         }
@@ -812,41 +813,36 @@ private fun SpeedValue(bps: Long, label: String, color: Color, modifier: Modifie
                 }
             }
             Spacer(Modifier.width(2.dp))
-            Text(rate.first, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
-            Spacer(Modifier.width(1.dp))
-            Text(rate.second, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text("${rate.first} ${rate.second}".trim(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color)
         }
         Text(label, Modifier.padding(start = 21.dp), fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
     }
 }
 
 @Composable
-private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier) {
+private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier, unsupported: Boolean = false) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = color.copy(alpha = .065f),
         border = BorderStroke(1.dp, color.copy(alpha = .13f))
     ) {
-        Row(
+        Column(
             Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
-            Spacer(Modifier.width(4.dp))
-            Text(if (count < 0) "--" else count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text(if (unsupported) "不支持" else if (count < 0) "--" else count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
         }
     }
 }
 
 @Composable
 private fun HeroMetric(icon: ImageVector, label: String, value: String, color: Color, modifier: Modifier) {
-    Row(modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-        Icon(icon, null, Modifier.size(22.dp), tint = color)
-        Spacer(Modifier.width(6.dp))
-        Column {
-            Text(label, fontSize = (LabTypography.Caption.fontSize.value - .5f).sp, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
+    Column(modifier.padding(horizontal = 3.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, fontSize = LabTypography.Caption.fontSize, color = LabV2.InkMuted, maxLines = 1)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            Icon(icon, null, Modifier.size(16.dp), tint = color)
             Text(value, fontSize = (LabTypography.Value.fontSize.value - 1f).sp, color = Color(0xFF10264F), fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
@@ -857,7 +853,7 @@ private fun HeroDivider() = Box(Modifier.width(1.dp).height(38.dp).background(Co
 
 
 @Composable
-private fun RouterRealtimeCard(ui: RouterDashboardUi, state: AppState) {
+private fun RouterRealtimeCard(ui: RouterDashboardUi, state: AppState, isBe50: Boolean) {
     val hasRadioTemp = ui.temperature2g > 0.0 || ui.temperature5g > 0.0
     RouterGlassCard {
         SectionHeader(Icons.Rounded.MonitorHeart, "实时状态", LabV2.Primary, ui.updatedAt)
@@ -874,7 +870,7 @@ private fun RouterRealtimeCard(ui: RouterDashboardUi, state: AppState) {
             RealtimeMetric(Icons.Rounded.Storage, "存储", percentText(ui.storage), Color(0xFF0EA5E9), ui.storage.coerceAtLeast(0.0) / 100.0, Modifier.width(82.dp))
         }
         HorizontalDivider(color = LabCoreSurface.Border)
-        RouterTrendPanel(state.routerTrendSamples)
+        RouterTrendPanel(state.routerTrendSamples, showIpv6 = !isBe50)
     }
 }
 
@@ -1176,9 +1172,9 @@ private fun EthernetPortIcon(color: Color, active: Boolean) {
 
 @Composable
 private fun PortLegendDialog(onDismiss: () -> Unit) {
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("端口状态说明", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.PageTitle.fontSize, color = LabV2.Ink) },
+        title = { Text("端口状态说明", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.DialogTitle.fontSize, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 PortLegendRow(Color(0xFF9AA5B5), "灰色", "未连接 / 空闲端口")
@@ -1217,9 +1213,9 @@ private fun RouterIdentityDialog(
     var displayName by remember(name) { mutableStateOf(name) }
     var lan by remember(lanUrl) { mutableStateOf(lanUrl) }
     var wan by remember(wanUrl) { mutableStateOf(wanUrl) }
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("路由器备注与地址", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.PageTitle.fontSize, color = LabV2.Ink) },
+        title = { Text("路由器备注与地址", fontWeight = FontWeight.SemiBold, fontSize = LabTypography.DialogTitle.fontSize, color = LabV2.Ink) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 CompactTextField(
@@ -1313,6 +1309,7 @@ private fun bitRateParts(bps: Long): Pair<String, String> = when {
     else -> compactDecimal(bps / 1_000_000_000.0) to "Gbps"
 }
 private fun formatBitRate(bps: Long): String = when {
+    bps < 0 -> "--"
     bps <= 0 -> "0 Kbps"
     bps < 1_000 -> "$bps bps"
     bps < 1_000_000 -> "${compactDecimal(bps / 1_000.0)} Kbps"

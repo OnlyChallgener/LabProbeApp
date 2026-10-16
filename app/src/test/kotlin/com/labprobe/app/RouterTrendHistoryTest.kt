@@ -23,7 +23,7 @@ class RouterTrendHistoryTest {
         assertEquals(103L, raw.sessions)
     }
 
-    @Test fun skipsDuplicateOutOfOrderMissingAndStaleSamplesButKeepsZero() {
+    @Test fun acceptsMissingIpv6ButSkipsDuplicateOutOfOrderAndStaleSamples() {
         val history = RouterTrendHistory()
         history.record(sample(1_000, 0), 1_000)
         history.record(sample(1_000, 100), 2_000)
@@ -33,8 +33,11 @@ class RouterTrendHistoryTest {
         history.record(sample(4_000).put("stale", true), 4_000)
         history.record(sample(5_000).put("uploadBps", -1), 5_000)
         history.record(sample(6_000).put("ipv4Connections", 6e18).put("ipv6Connections", 6e18), 6_000)
-        assertEquals(1, history.samples.value.size)
-        assertEquals(0L, history.samples.value.single().uploadBps)
+        val points = history.samples.value
+        assertEquals(2, points.size)
+        assertEquals(0L, points.first().uploadBps)
+        assertEquals(-1L, points.last().ipv6)
+        assertEquals(65L, points.last().sessions)
     }
 
     @Test fun boundsRetentionAndKeepsRealGapInsteadOfInventingPoints() {

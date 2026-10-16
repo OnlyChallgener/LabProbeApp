@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -127,6 +128,7 @@ fun ChildInternetDevicePickerScreen(
     var selectedMacs by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var selectedCategory by rememberSaveable { mutableStateOf("全部") }
     var busy by remember { mutableStateOf(false) }
+    var addProgress by remember { mutableStateOf("") }
 
     fun reload() {
         if (candidates.isEmpty()) loading = true
@@ -246,19 +248,26 @@ fun ChildInternetDevicePickerScreen(
         busy = true
         val selected = selectable.toList()
         val failed = arrayListOf<String>()
+        val errors = arrayListOf<String>()
         fun addNext(index: Int) {
             if (index >= selected.size) {
                 busy = false
+                addProgress = ""
                 selectedMacs = failed
-                toast(context, if (failed.isEmpty()) "已加入 ${selected.size} 台设备" else "${failed.size} 台设备加入失败，请重试")
+                toast(context, if (failed.isEmpty()) "已加入 ${selected.size} 台设备"
+                    else "已确认 ${selected.size - failed.size} 台，${failed.size} 台未确认：${errors.firstOrNull().orEmpty()}")
                 reload()
                 return
             }
             val candidate = selected[index]
+            addProgress = "正在确认 ${index + 1}/${selected.size} 台"
             val matched = devices.firstOrNull { cleanMac(it.mac) == cleanMac(candidate.mac) }
             val name = matched?.let { deviceDisplayName(it) } ?: candidate.displayName
             repository.addGuardDevice(candidate.mac, name) { result ->
-                if (result.isFailure) failed.add(candidate.mac)
+                if (result.isFailure) {
+                    failed.add(candidate.mac)
+                    errors.add(result.exceptionOrNull()?.message ?: "请稍后核对结果")
+                }
                 addNext(index + 1)
             }
         }
@@ -403,13 +412,14 @@ fun ChildInternetDevicePickerScreen(
                 Button(
                     onClick = { commitSelection() },
                     enabled = selectable.isNotEmpty() && !busy,
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.heightIn(min = 40.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan, disabledContainerColor = LabV2.Field)
                 ) {
                     Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (busy) "处理中…" else "加入守护", style = LabTypography.Button)
+                    Text(if (busy) addProgress.ifBlank { "处理中…" } else "加入守护", style = LabTypography.Button)
                 }
             }
         }
@@ -417,7 +427,7 @@ fun ChildInternetDevicePickerScreen(
 }
 
 @Composable
-private fun CandidateDeviceRow(
+internal fun CandidateDeviceRow(
     candidate: ChildGuardDeviceCandidate,
     matchedDevice: DeviceItem?,
     selected: Boolean,
@@ -464,12 +474,16 @@ private fun CandidateDeviceRow(
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(displayName, style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (candidate.mac.length >= 5) {
-                        Text("(${candidate.mac.takeLast(5).uppercase()})", style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontSize = 11.sp))
-                    }
-                }
+                Text(displayName, modifier = Modifier.weight(1f),
+                    style = LabTypography.Body.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(candidate.ip.ifBlank { "暂无 IP 地址" },
+                style = LabTypography.Caption.copy(color = LabV2.InkMuted), maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(candidate.mac, style = LabTypography.Caption.copy(color = LabV2.InkMuted, fontSize = 11.sp),
+                maxLines = 1, softWrap = false)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (candidate.guarded) {
                     Surface(shape = RoundedCornerShape(20.dp), color = LabV2.Green.copy(alpha = .10f)) {
                         Row(
@@ -478,7 +492,7 @@ private fun CandidateDeviceRow(
                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Icon(Icons.Rounded.Check, null, tint = LabV2.Green, modifier = Modifier.size(12.dp))
-                            Text("已守护", style = LabTypography.Caption.copy(color = LabV2.Green, fontWeight = FontWeight.Bold))
+                            Text("已守护", maxLines = 1, softWrap = false, style = LabTypography.Caption.copy(color = LabV2.Green, fontWeight = FontWeight.Bold))
                         }
                     }
                 } else {
@@ -486,22 +500,17 @@ private fun CandidateDeviceRow(
                         Text(
                             if (isOnline) "在线" else "离线",
                             Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            maxLines = 1, softWrap = false,
                             style = LabTypography.Caption.copy(color = if (isOnline) LabV2.Green else LabV2.InkMuted, fontWeight = FontWeight.SemiBold)
                         )
                     }
                 }
-            }
-            Text(
-                listOfNotNull(
-                    candidate.ip.takeIf { it.isNotBlank() },
-                    candidate.mac.takeIf { it.isNotBlank() },
-                    profile.label.takeIf { it.isNotBlank() },
-                    connectionLabel
-                ).joinToString(" · "),
+                Text(connectionLabel,
                 style = LabTypography.Caption.copy(color = LabV2.InkMuted),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            }
         }
         if (candidate.guarded) {
             TextButton(onClick = onRemove, enabled = enabled) {

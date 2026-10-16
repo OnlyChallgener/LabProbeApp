@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -465,9 +467,8 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
     val failed = rows.count { it.status.contains("error", true) || it.status.contains("fail", true) }
     HealthMiniCard(
         title = "DDNS",
-        // 大字给「启用数」——家长真正关心的是有没有在跑；总数和异常交给副标题说，
-        // 免得「2 条」和「启用 2」在同一张卡上写两遍。
-        value = if (resource.value == null) "--" else "$enabled",
+        // 数量只在大字显示一次；副标题只描述运行状态。
+        value = if (resource.value == null) "--" else "${rows.size}",
         unit = "条",
         icon = Icons.Rounded.CloudSync,
         glyph = RouterGlyph.Ddns,
@@ -476,9 +477,11 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
             resource.value == null -> "后台预加载中"
             resource.error.isNotBlank() -> "已保留上次快照"
             rows.isEmpty() -> "还没有 DDNS 记录"
-            failed > 0 -> "共 ${rows.size} 条 · $failed 条异常"
-            enabled < rows.size -> "共 ${rows.size} 条 · ${rows.size - enabled} 条停用"
-            else -> "共 ${rows.size} 条全部生效"
+            failed == rows.size -> "全部异常"
+            failed > 0 -> "$failed 条异常"
+            enabled == 0 -> "全部停用"
+            enabled < rows.size -> "${rows.size - enabled} 条停用"
+            else -> "全部正常"
         },
         modifier = modifier,
         onClick = onClick
@@ -760,7 +763,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             },
                             modifier = Modifier.size(36.dp)
                         ) {
-                            Icon(Icons.Rounded.DeleteOutline, "删除检测记录", Modifier.size(18.dp), tint = NativeMuted)
+                            Icon(LabActionIcons.Delete, "删除检测记录", Modifier.size(18.dp), tint = NativeMuted)
                         }
                     }
                     if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)

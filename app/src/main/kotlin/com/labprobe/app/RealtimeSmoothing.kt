@@ -28,13 +28,13 @@ class RealtimeDisplaySmoother {
     }
 
     private data class RouterVector(
-        val uploadBps: Double = 0.0,
-        val downloadBps: Double = 0.0,
-        val cpuPercent: Double = 0.0,
-        val memoryPercent: Double = 0.0,
-        val temperatureC: Double = 0.0,
-        val temperature2gC: Double = 0.0,
-        val temperature5gC: Double = 0.0,
+        val uploadBps: Double = -1.0,
+        val downloadBps: Double = -1.0,
+        val cpuPercent: Double = -1.0,
+        val memoryPercent: Double = -1.0,
+        val temperatureC: Double = -1.0,
+        val temperature2gC: Double = -1.0,
+        val temperature5gC: Double = -1.0,
         val storagePercent: Double = -1.0,
     )
 
@@ -44,7 +44,7 @@ class RealtimeDisplaySmoother {
         val uptimeSeconds: Long = 0L,
         val onlineDeviceCount: Int = 0,
         val ipv4Connections: Long = 0L,
-        val ipv6Connections: Long = 0L,
+        val ipv6Connections: Long = -1L,
         val ipv4HalfConnections: Long = 0L,
         val ipv6HalfConnections: Long = 0L,
         val cps: Long = 0L,
@@ -78,6 +78,7 @@ class RealtimeDisplaySmoother {
     private var routerDiscrete = RouterDiscrete()
     private var routerDirty = false
     private var routerSampleEpochMs = 0L
+    private var routerSource = ""
     private var routerInitialAgeMs = Long.MAX_VALUE
     private var routerReceivedAt = 0L
     private var lastRouterRender: RouterRenderKey? = null
@@ -97,7 +98,7 @@ class RealtimeDisplaySmoother {
         val ageMs = payload.optLong("sampleAgeMs", 0L).coerceAtLeast(0L)
 
         if (epochMs == routerSampleEpochMs) {
-            routerInitialAgeMs = ageMs
+            routerInitialAgeMs = max(effectiveAge(routerInitialAgeMs, routerReceivedAt, now), ageMs)
             routerReceivedAt = now
             return
         }
@@ -106,14 +107,14 @@ class RealtimeDisplaySmoother {
         trendHistory.record(payload, now)
 
         val target = RouterVector(
-            uploadBps = payload.optDouble("uploadBps", 0.0).coerceAtLeast(0.0),
-            downloadBps = payload.optDouble("downloadBps", 0.0).coerceAtLeast(0.0),
-            cpuPercent = payload.optDouble("cpuPercent", 0.0).coerceAtLeast(0.0),
-            memoryPercent = payload.optDouble("memoryPercent", 0.0).coerceAtLeast(0.0),
-            temperatureC = payload.optDouble("temperatureC", 0.0),
-            temperature2gC = payload.optDouble("temperature2gC", routerTarget.temperature2gC),
-            temperature5gC = payload.optDouble("temperature5gC", routerTarget.temperature5gC),
-            storagePercent = payload.optDouble("storagePercent", routerTarget.storagePercent),
+            uploadBps = measuredRouterNumber(payload, "uploadBps") ?: routerTarget.uploadBps,
+            downloadBps = measuredRouterNumber(payload, "downloadBps") ?: routerTarget.downloadBps,
+            cpuPercent = measuredRouterNumber(payload, "cpuPercent") ?: routerTarget.cpuPercent,
+            memoryPercent = measuredRouterNumber(payload, "memoryPercent") ?: routerTarget.memoryPercent,
+            temperatureC = measuredRouterNumber(payload, "temperatureC") ?: routerTarget.temperatureC,
+            temperature2gC = measuredRouterNumber(payload, "temperature2gC") ?: routerTarget.temperature2gC,
+            temperature5gC = measuredRouterNumber(payload, "temperature5gC") ?: routerTarget.temperature5gC,
+            storagePercent = measuredRouterNumber(payload, "storagePercent") ?: routerTarget.storagePercent,
         )
         if (!routerInitialized) {
             routerDisplayed = target
@@ -122,6 +123,7 @@ class RealtimeDisplaySmoother {
         routerTarget = target
         routerDirty = true
         routerSampleEpochMs = epochMs
+        routerSource = payload.optString("source").trim().ifBlank { routerSource }
         routerInitialAgeMs = ageMs
         routerReceivedAt = now
         routerDiscrete = RouterDiscrete(
@@ -130,7 +132,7 @@ class RealtimeDisplaySmoother {
             uptimeSeconds = payload.optLong("uptimeSeconds", 0L).coerceAtLeast(0L),
             onlineDeviceCount = payload.optInt("onlineDeviceCount", 0).coerceAtLeast(0),
             ipv4Connections = payload.optLong("ipv4Connections", 0L).coerceAtLeast(0L),
-            ipv6Connections = payload.optLong("ipv6Connections", 0L).coerceAtLeast(0L),
+            ipv6Connections = if (payload.has("ipv6Connections") && !payload.isNull("ipv6Connections")) payload.optLong("ipv6Connections", -1L).coerceAtLeast(0L) else -1L,
             ipv4HalfConnections = payload.optLong("ipv4HalfConnections", 0L).coerceAtLeast(0L),
             ipv6HalfConnections = payload.optLong("ipv6HalfConnections", 0L).coerceAtLeast(0L),
             cps = payload.optLong("cps", 0L).coerceAtLeast(0L),
@@ -143,7 +145,7 @@ class RealtimeDisplaySmoother {
         val ageMs = payload.optLong("sampleAgeMs", 0L).coerceAtLeast(0L)
 
         if (epochMs == devicesSampleEpochMs) {
-            devicesInitialAgeMs = ageMs
+            devicesInitialAgeMs = max(effectiveAge(devicesInitialAgeMs, devicesReceivedAt, now), ageMs)
             devicesReceivedAt = now
             return
         }
@@ -227,23 +229,28 @@ class RealtimeDisplaySmoother {
             .put("sampleEpochMs", routerSampleEpochMs)
             .put("sampleAgeMs", ageMs)
             .put("stale", stale)
-            .put("uploadBps", rounded.uploadBps.toLong())
-            .put("downloadBps", rounded.downloadBps.toLong())
-            .put("cpuPercent", rounded.cpuPercent)
-            .put("memoryPercent", rounded.memoryPercent)
-            .put("temperatureC", rounded.temperatureC)
-            .put("temperature2gC", rounded.temperature2gC)
-            .put("temperature5gC", rounded.temperature5gC)
-            .put("storagePercent", rounded.storagePercent)
             .put("totalUploadBytes", discrete.totalUploadBytes)
             .put("totalDownloadBytes", discrete.totalDownloadBytes)
             .put("uptimeSeconds", discrete.uptimeSeconds)
             .put("onlineDeviceCount", discrete.onlineDeviceCount)
             .put("ipv4Connections", discrete.ipv4Connections)
-            .put("ipv6Connections", discrete.ipv6Connections)
             .put("ipv4HalfConnections", discrete.ipv4HalfConnections)
             .put("ipv6HalfConnections", discrete.ipv6HalfConnections)
             .put("cps", discrete.cps)
+        listOf(
+            "uploadBps" to rounded.uploadBps,
+            "downloadBps" to rounded.downloadBps,
+            "cpuPercent" to rounded.cpuPercent,
+            "memoryPercent" to rounded.memoryPercent,
+            "temperatureC" to rounded.temperatureC,
+            "temperature2gC" to rounded.temperature2gC,
+            "temperature5gC" to rounded.temperature5gC,
+            "storagePercent" to rounded.storagePercent,
+        ).forEach { (field, value) ->
+            if (value >= 0.0) sample.put(field, value)
+        }
+        if (discrete.ipv6Connections >= 0L) sample.put("ipv6Connections", discrete.ipv6Connections)
+        if (routerSource.isNotBlank()) sample.put("source", routerSource)
         return mergeLiteRouterRealtime(base, sample).also {
             it.put("realtimeSampleAgeMs", ageMs)
             it.put("realtimeSmoothing", !stale)
@@ -307,6 +314,7 @@ class RealtimeDisplaySmoother {
         routerDiscrete = RouterDiscrete()
         routerDirty = false
         routerSampleEpochMs = 0L
+        routerSource = ""
         routerInitialAgeMs = Long.MAX_VALUE
         routerReceivedAt = 0L
         lastRouterRender = null
@@ -321,12 +329,13 @@ class RealtimeDisplaySmoother {
     }
 
     private fun blend(previous: Double, target: Double, weight: Double): Double {
-        if (!previous.isFinite() || previous == 0.0) return target
-        if (!target.isFinite()) return previous
+        if (!target.isFinite() || target < 0.0) return previous
+        if (!previous.isFinite() || previous <= 0.0) return target
         return previous + (target - previous) * weight
     }
 
     private fun blendRate(previous: Double, target: Double, baseWeight: Double): Double {
+        if (target < 0.0) return previous
         if (!previous.isFinite() || previous <= 0.0) return target.coerceAtLeast(0.0)
         if (!target.isFinite()) return previous.coerceAtLeast(0.0)
         if (target <= 0.0) return previous * 0.28

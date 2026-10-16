@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -923,7 +925,8 @@ fun FavoritesScreen(
         BackHandler { onBack() }
     }
     val context = LocalContext.current
-    var mappingRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
+    val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
+    var mappingRules by remember(mappingCache, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val mappingApi = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
@@ -934,8 +937,8 @@ fun FavoritesScreen(
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val ddnsSnapshot = ddnsResource.value
-    var mappingDevices by remember(prefs.hub, prefs.hubDns) { mutableStateOf(emptyList<DeviceItem>()) }
-    var stunRules by remember(prefs.hub, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
+    var mappingDevices by remember(mappingCache, prefs.hubDns) { mutableStateOf(emptyList<DeviceItem>()) }
+    var stunRules by remember(mappingCache, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
     val scope = rememberCoroutineScope()
     var mode by rememberSaveable { mutableStateOf(if (prefs.favoriteNetworkMode == "wan") "wan" else "lan") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -947,26 +950,29 @@ fun FavoritesScreen(
     LaunchedEffect(routerRepository) {
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
-        mappingDevices = runCatching { deviceApi.getDevices(false) }.getOrDefault(mappingDevices)
+        val loaded = runCatching { deviceApi.getDevices(false) }.getOrDefault(mappingDevices)
+        if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@LaunchedEffect
+        mappingDevices = loaded
     }
     LaunchedEffect(mappingApi) {
         val persisted = PortMappingRuleStore.load(context, prefs)
-        val currentRules = PortMappingMemoryCache.rules.ifEmpty { persisted.rules }
-        val currentRulesRevision = maxOf(PortMappingMemoryCache.rulesRevision, persisted.revision)
+        val currentRules = mappingCache.rules.ifEmpty { persisted.rules }
+        val currentRulesRevision = maxOf(mappingCache.rulesRevision, persisted.revision)
         runCatching { kotlinx.coroutines.withTimeout(4_000L) { mappingApi.list() } }.getOrNull()?.let { snapshot ->
+            if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@LaunchedEffect
             if (shouldAcceptPortMapSnapshot(
                     snapshot = snapshot,
                     currentRules = currentRules,
                     currentRulesRevision = currentRulesRevision,
-                    currentSnapshotRevision = PortMappingMemoryCache.snapshotRevision,
+                    currentSnapshotRevision = mappingCache.snapshotRevision,
                     hasPersistedDocument = persisted.hasDocument,
                 )
             ) {
                 mappingRules = snapshot.rules
-                PortMappingMemoryCache.rules = snapshot.rules
-                PortMappingMemoryCache.rulesRevision = snapshot.rulesRevision
-                PortMappingMemoryCache.rulesUpdatedAt = snapshot.rulesUpdatedAt
-                PortMappingMemoryCache.snapshotRevision = snapshot.revision
+                mappingCache.rules = snapshot.rules
+                mappingCache.rulesRevision = snapshot.rulesRevision
+                mappingCache.rulesUpdatedAt = snapshot.rulesUpdatedAt
+                mappingCache.snapshotRevision = snapshot.revision
                 PortMappingRuleStore.save(context, prefs, snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt)
                 if (snapshot.rulesLoaded) {
                     removeMissingMappingFavorites(prefs, snapshot.rules.mapTo(hashSetOf()) { it.id })
@@ -1006,6 +1012,7 @@ fun FavoritesScreen(
             } catch (_: Throwable) {
                 null
             }
+            if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@LaunchedEffect
             val after = latestOperationState
             if (after?.running == true || after?.completedVersion != before?.completedVersion) {
                 delay(400L)
@@ -1401,7 +1408,7 @@ private fun FavoriteShortcutCard(
                     if (shortcut.mappingId != null) {
                         DropdownMenuItem(text = { Text("查看关联映射", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.SwapHoriz, null, Modifier.size(17.dp)) }, onClick = { menu = false; onViewMapping() })
                     }
-                    DropdownMenuItem(text = { Text("删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(17.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
+                    DropdownMenuItem(text = { Text("删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(17.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -1415,7 +1422,7 @@ private fun FavoriteEmptyState(hasSearch: Boolean, onAction: () -> Unit) {
             LabV2ToolIcon(if (hasSearch) Icons.Rounded.SearchOff else Icons.Rounded.Bookmarks, LabV2.Primary, size = 48)
             Text(if (hasSearch) "没有匹配的收藏" else "还没有收藏", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
             Text(if (hasSearch) "清除搜索后继续浏览" else "添加常用服务或网页入口", fontSize = 10.5.sp, color = LabV2.InkMuted)
-            TextButton(onClick = onAction) { Text(if (hasSearch) "清除并添加" else "添加收藏", fontWeight = FontWeight.Black) }
+            TextButton(onClick = onAction) { Text(if (hasSearch) "清除并添加" else "添加收藏", fontWeight = FontWeight.SemiBold) }
         }
     }
 }
@@ -1670,8 +1677,8 @@ private fun FavoriteEditorSheet(
         when (draft.iconType) {
             "local" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 FavoriteIcon(draft.iconType, draft.iconValue, 46)
-                OutlinedButton(onClick = { imagePicker.launch("image/*") }, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) {
-                    Icon(Icons.Rounded.Image, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("选择 PNG / JPG / WEBP", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                OutlinedButton(onClick = { imagePicker.launch("image/*") }, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) {
+                    Icon(Icons.Rounded.Image, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("选择 PNG / JPG / WEBP", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             "url" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1693,7 +1700,7 @@ private fun FavoriteEditorSheet(
 
         if (error.isNotBlank()) Text(error, color = LabV2.Red, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onDismiss, Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.Black) }
+            OutlinedButton(onClick = onDismiss, Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = {
                     val lan = normalizeFavoriteUrl(draft.localEndpoint)
@@ -1733,12 +1740,12 @@ private fun FavoriteEditorSheet(
                         )
                     }
                 },
-                modifier = Modifier.weight(1f).height(46.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                 shape = LabV2.ButtonShape,
                 enabled = draft.title.trim().isNotBlank() &&
                     (draft.localEndpoint.trim().isNotBlank() || draft.remoteEndpoint.trim().isNotBlank()) &&
                     !(draft.iconType in setOf("local", "url") && draft.iconValue.trim().isBlank())
-            ) { Text("保存", fontWeight = FontWeight.Black) }
+            ) { Text("保存", fontWeight = FontWeight.SemiBold) }
         }
     }
 }

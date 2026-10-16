@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -105,7 +106,7 @@ fun isModelWireGuardSupported(model: String, name: String, routerId: String): Bo
     val m = model.trim().lowercase()
     val n = name.trim().lowercase()
     val id = routerId.trim().lowercase()
-    return !m.contains("be50") && !n.contains("be50") && !id.contains("be50")
+    return listOf(m, n, id).none { it.contains("be50") || it.contains("be5100") }
 }
 
 /** EG 线（BE50）固件没有 Web 端防火墙/WireGuard/NAT 诊断/Beta 升级，按型号/名称/工作区 id 判。 */
@@ -113,11 +114,61 @@ fun isModelBe50(model: String, name: String, routerId: String): Boolean {
     val m = model.trim().lowercase()
     val n = name.trim().lowercase()
     val id = routerId.trim().lowercase()
-    return m.contains("be50") || n.contains("be50") || id.contains("be50")
+    return listOf(m, n, id).any { it.contains("be50") || it.contains("be5100") }
+}
+
+fun isWorkspaceBe50(prefs: AppPrefs, model: String = "", name: String = ""): Boolean =
+    prefs.routerFirmwareFamily.equals("BE50", ignoreCase = true) ||
+        isModelBe50(model, name.ifBlank { prefs.routerDisplayName }, prefs.workspaceId)
+
+/** A saved workspace must never write router credentials to the other model's Hub. */
+internal fun workspaceMatchesRouterConfig(
+    workspaceId: String, model: String, workspaceName: String,
+    savedName: String, hubRouterName: String,
+): Boolean {
+    val identity = listOf(model, workspaceName, workspaceId).joinToString(" ").lowercase()
+    val expected = if ("be50" in identity || "be5100" in identity || "be72" in identity) identity else savedName.lowercase()
+    val actual = hubRouterName.lowercase()
+    return when {
+        "be50" in expected || "be5100" in expected -> "be50" in actual || "be5100" in actual
+        "be72" in expected -> "be72" in actual
+        else -> true
+    }
 }
 
 fun validRouterWorkspaceId(value: String): Boolean =
     value == DEFAULT_ROUTER_WORKSPACE_ID || Regex("[A-Za-z0-9_-]{1,64}").matches(value)
+
+/**
+ * Hub 说了自己是哪台通道时，就以它为准 —— 这是唯一能挡住「把 BE72 的数据装进 BE50 的壳」
+ * 的判据。名字比对只能算旧 Hub 的兜底：两台都叫「客厅路由」时它毫无分辨力。
+ *
+ * 任何一侧为空都返回 true（退到名字校验），所以单路由 Hub 的行为不会变。
+ */
+internal fun workspaceRouterIdMatches(expectedServerId: String, hubReportedRouterId: String): Boolean {
+    val expected = expectedServerId.trim()
+    val actual = hubReportedRouterId.trim()
+    if (expected.isBlank() || actual.isBlank()) return true
+    return expected.equals(actual, ignoreCase = true)
+}
+
+/**
+ * 换到同一 Hub 根下的另一条通道时，目标还没有令牌就沿用当前这把。
+ *
+ * 只在 Hub 真的自报多通道时启用：网关的钥匙本来就只有一把，而**改造前的每台 worker
+ * 各有自己的 APP_TOKEN**，在没有网关的地方继承只会把界面上的「请填写该路由访问令牌」
+ * 变成一次莫名其妙的认证失败。
+ */
+internal fun workspaceTokenForSwitch(
+    targetHasOwnToken: Boolean, hubIsMultiChannel: Boolean, currentToken: String,
+): String = when {
+    targetHasOwnToken || !hubIsMultiChannel -> ""
+    else -> currentToken.trim()
+}
+
+/** 列表里出现过多行且带 /r/ 前缀，才算这个 Hub 是多通道前端。 */
+internal fun hubIsMultiChannel(rows: List<RouterWorkspace>): Boolean =
+    rows.size > 1 && rows.any { it.basePath.isNotBlank() }
 
 fun routerWorkspacePath(routerId: String): String {
     require(validRouterWorkspaceId(routerId)) { "无效的路由器标识" }
@@ -186,6 +237,26 @@ fun selectableWorkspaceId(workspaces: List<RouterWorkspace>, requested: String, 
     if (workspaces.any { it.routerId == requested && (listingConfirmed || it.localDraft) }) requested
     else workspaces.firstOrNull { it.isDefault }?.routerId ?: DEFAULT_ROUTER_WORKSPACE_ID
 
+/** Missing/background metadata cannot replace the router the user is using. */
+internal fun preserveSelectedRouterWorkspace(
+    rows: List<RouterWorkspace>, selectedId: String, previousSelection: RouterWorkspace?,
+): List<RouterWorkspace> {
+    if (rows.any { it.routerId == selectedId }) return rows
+    val selected = previousSelection?.takeIf { it.routerId == selectedId }
+        ?: defaultRouterWorkspace().copy(
+            routerId = selectedId, name = selectedId,
+            localDraft = selectedId.startsWith("local_"),
+            isDefault = selectedId == DEFAULT_ROUTER_WORKSPACE_ID,
+            serverRouterId = selectedId,
+        )
+    return rows + selected
+}
+
+internal fun workspaceSelectionAfterDeletion(
+    selectedId: String, deletedId: String, remaining: List<RouterWorkspace>,
+): String = if (deletedId != selectedId) selectedId
+else remaining.firstOrNull { it.isDefault }?.routerId ?: DEFAULT_ROUTER_WORKSPACE_ID
+
 /** New cards live on the phone until a Hub worker with the same ID is registered. */
 object LocalRouterWorkspaceRegistry {
     private fun key(hubRoot: String) = "local_router_cards_v1"
@@ -198,7 +269,10 @@ object LocalRouterWorkspaceRegistry {
                 val row = rows.optJSONObject(i) ?: continue
                 val id = row.optString("id")
                 if (!validRouterWorkspaceId(id) || id == DEFAULT_ROUTER_WORKSPACE_ID) continue
-                val wgSupported = if (row.has("wireguardSupported")) {
+                val firmwareFamily = AppPrefs(context, id).routerFirmwareFamily
+                val wgSupported = if (firmwareFamily.equals("BE50", ignoreCase = true)) {
+                    false
+                } else if (row.has("wireguardSupported")) {
                     row.optBoolean("wireguardSupported")
                 } else {
                     isModelWireGuardSupported("", row.optString("name"), id)
@@ -272,7 +346,11 @@ fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<
         }
     }
     val local = LocalRouterWorkspaceRegistry.list(context, hubRoot)
-    val bound = local.associate { it.routerId to AppPrefs(context, it.routerId).routerHubId }
+    val bound = local.mapNotNull { draft ->
+        val prefs = AppPrefs(context, draft.routerId)
+        val sameHub = normalizeHubBaseUrl(prefs.hub) == normalizeHubBaseUrl(hubRoot)
+        prefs.routerHubId.takeIf { sameHub && it.isNotBlank() }?.let { draft.routerId to it }
+    }.toMap()
     return mergeRouterWorkspaces(remote, local, bound, LocalRouterWorkspaceRegistry.hidden(context, hubRoot))
 }
 
@@ -319,10 +397,15 @@ fun routerWorkspacePreferencesName(routerId: String, hubRoot: String = ""): Stri
 fun routerWorkspaceSecureDigest(routerId: String, hubRoot: String): String =
     workspaceDigest(normalizeHubBaseUrl(hubRoot) + "|" + routerId)
 
-/** The active ID is intentionally process-local until a Hub list confirms it. */
+/** Only an explicit user selection changes the active router; metadata never does. */
 object RouterWorkspaceStore {
+    private const val SELECTED_LOCAL_CARD_KEY = "selected_local_router_card_v1"
     @Volatile private var activeId = DEFAULT_ROUTER_WORKSPACE_ID
     @Volatile private var activation = 0L
+    private var settingsRestoreWorkspace: String? = null
+    fun restoreSettingsAfterConnectionChange(workspaceId: String) { settingsRestoreWorkspace = workspaceId }
+    fun consumeSettingsRestore(workspaceId: String): Boolean =
+        (settingsRestoreWorkspace == workspaceId).also { if (it) settingsRestoreWorkspace = null }
     var connectionEpoch by mutableIntStateOf(0)
         private set
 
@@ -333,8 +416,7 @@ object RouterWorkspaceStore {
 
     @Synchronized
     fun hubConnectionChanged() {
-        // Invalidate the old route immediately, before Compose reloads the Hub list.
-        activeId = DEFAULT_ROUTER_WORKSPACE_ID
+        // Invalidate requests immediately while keeping the user's selected card.
         activation += 1L
         connectionEpoch += 1
     }
@@ -344,8 +426,26 @@ object RouterWorkspaceStore {
         require(validRouterWorkspaceId(routerId))
         if (activeId != routerId) activation += 1L
         activeId = routerId
-        context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
-            .edit().putString("selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}", routerId).apply()
+        rememberStartupSelection(context, hubRoot, routerId)
+    }
+
+    fun rememberStartupSelection(context: Context, hubRoot: String, routerId: String) {
+        require(validRouterWorkspaceId(routerId))
+        val editor = context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+            .edit().putString("selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}", routerId)
+        if (routerId.startsWith("local_")) editor.putString(SELECTED_LOCAL_CARD_KEY, routerId)
+        else editor.remove(SELECTED_LOCAL_CARD_KEY)
+        editor.apply()
+    }
+
+    @Synchronized
+    fun restoreActive(context: Context, hubRoot: String, rows: List<RouterWorkspace>): String {
+        val saved = remembered(context, hubRoot)
+        val restored = saved.takeIf { rows.any { row -> row.routerId == it } }
+            ?: DEFAULT_ROUTER_WORKSPACE_ID
+        if (activeId != restored) activation += 1L
+        activeId = restored
+        return restored
     }
 
     private fun identityKey(prefix: String, hubRoot: String): String =
@@ -415,10 +515,23 @@ object RouterWorkspaceStore {
     }
 
     fun remembered(context: Context, hubRoot: String): String {
-        val id = context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
-            .getString("selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}", DEFAULT_ROUTER_WORKSPACE_ID)
+        val preferences = context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+        // Independent phone cards belong to their own Hub, even when the list Hub changes.
+        val local = preferences.getString(SELECTED_LOCAL_CARD_KEY, "").orEmpty()
+        if (local.startsWith("local_") && validRouterWorkspaceId(local) &&
+            LocalRouterWorkspaceRegistry.list(context, hubRoot).any { it.routerId == local }) return local
+        val id = preferences.getString("selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}", DEFAULT_ROUTER_WORKSPACE_ID)
             .orEmpty()
         return id.takeIf(::validRouterWorkspaceId) ?: DEFAULT_ROUTER_WORKSPACE_ID
+    }
+
+    fun forgetRememberedSelection(context: Context, hubRoot: String, routerId: String) {
+        val preferences = context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+        val key = "selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}"
+        val editor = preferences.edit()
+        if (preferences.getString(key, "") == routerId) editor.putString(key, DEFAULT_ROUTER_WORKSPACE_ID)
+        if (preferences.getString(SELECTED_LOCAL_CARD_KEY, "") == routerId) editor.remove(SELECTED_LOCAL_CARD_KEY)
+        editor.apply()
     }
 
     @Synchronized
@@ -429,25 +542,65 @@ object RouterWorkspaceStore {
 }
 
 class RouterWorkspaceApi(private val context: Context, private val defaultPrefs: AppPrefs) {
+    private val targetHubRoot = defaultPrefs.hubRoot
+    private val targetToken = defaultPrefs.token
+    private val targetDns = defaultPrefs.hubDns
+    private val api = HubApi(defaultPrefs, targetHubRoot, targetToken)
+
+    private fun requireOriginalConnection() {
+        check(defaultPrefs.hubRoot == targetHubRoot && defaultPrefs.token == targetToken && defaultPrefs.hubDns == targetDns) {
+            "Hub 连接已改变，请重新读取路由器列表"
+        }
+    }
+
     suspend fun list(): List<RouterWorkspace> = withContext(Dispatchers.IO) {
-        val root = HubApi(defaultPrefs, defaultPrefs.hubRoot).requestJson("/api/routers")
+        requireOriginalConnection()
+        val root = api.requestJson("/api/routers")
+        requireOriginalConnection()
         val serverDefault = root.optString("defaultRouterId").trim().takeIf(::validRouterWorkspaceId)
-        val previousLegacy = RouterWorkspaceStore.legacyServerId(context, defaultPrefs.hubRoot)
+        val previousLegacy = RouterWorkspaceStore.legacyServerId(context, targetHubRoot)
         val parsed = parseRouterWorkspaces(root, previousLegacy.ifBlank { serverDefault })
-        if (serverDefault != null) RouterWorkspaceStore.recordServerDefault(context, defaultPrefs.hubRoot, serverDefault)
-        RouterWorkspaceStore.cacheList(context, defaultPrefs.hubRoot, root)
+        if (serverDefault != null) RouterWorkspaceStore.recordServerDefault(context, targetHubRoot, serverDefault)
+        RouterWorkspaceStore.cacheList(context, targetHubRoot, root)
         parsed
     }
 
     suspend fun setDefault(serverRouterId: String) = withContext(Dispatchers.IO) {
         require(validRouterWorkspaceId(serverRouterId))
-        val root = HubApi(defaultPrefs, defaultPrefs.hubRoot).requestJson(
+        requireOriginalConnection()
+        val root = api.requestJson(
             "/api/routers/default", "POST", JSONObject().put("routerId", serverRouterId))
+        requireOriginalConnection()
         if (!root.optBoolean("ok") || root.optString("defaultRouterId") != serverRouterId)
             error("Hub 未确认默认路由器变更")
-        RouterWorkspaceStore.recordServerDefault(context, defaultPrefs.hubRoot, serverRouterId)
-        RouterWorkspaceStore.updateCachedDefault(context, defaultPrefs.hubRoot, serverRouterId)
+        RouterWorkspaceStore.recordServerDefault(context, targetHubRoot, serverRouterId)
+        RouterWorkspaceStore.updateCachedDefault(context, targetHubRoot, serverRouterId)
     }
+}
+
+/** An independent phone card has no worker to promote on the list Hub. */
+internal suspend fun setRouterWorkspaceStartupDefault(
+    context: Context, listPrefs: AppPrefs, target: RouterWorkspace,
+): Boolean {
+    val listHubRoot = listPrefs.hubRoot
+    val targetPrefs = AppPrefs(context, target.routerId)
+    val sameHub = normalizeHubBaseUrl(targetPrefs.hubRoot) == normalizeHubBaseUrl(listHubRoot)
+    if ((target.localDraft || target.routerId.startsWith("local_")) && (!sameHub || targetPrefs.hub.isBlank())) {
+        RouterWorkspaceStore.rememberStartupSelection(context, listHubRoot, target.routerId)
+        return false
+    }
+    require(sameHub) { "这台路由器属于另一台 Hub，请在它自己的连接中设置默认路由器" }
+    val api = RouterWorkspaceApi(context, listPrefs)
+    val serverId = target.serverRouterId.takeIf { !target.localDraft }
+        ?: targetPrefs.routerHubId.takeIf { it.isNotBlank() }
+        ?: error("请先完成这台路由器的 Hub 配置")
+    require(targetPrefs.hub.isNotBlank() && targetPrefs.token.isNotBlank()) {
+        "请先完成这台路由器的 Hub 地址和令牌配置"
+    }
+    // A changed root must not turn a previously same-Hub action into a write to another Hub.
+    check(listPrefs.hubRoot == listHubRoot) { "Hub 连接已改变，请重新设置默认路由器" }
+    api.setDefault(serverId)
+    return true
 }
 
 /** Per-router Android Keystore storage for tokens and optional SSH passwords. */
@@ -531,11 +684,15 @@ fun forgetRouterWorkspace(context: Context, hubRoot: String, routerId: String) {
         LocalRouterWorkspaceRegistry.hide(app, hubRoot, routerId)
         return
     }
-    val boundServerId = AppPrefs(app, routerId).routerHubId.takeIf {
-        it != routerId && validRouterWorkspaceId(it)
+    val targetPrefs = AppPrefs(app, routerId)
+    val sameHub = normalizeHubBaseUrl(targetPrefs.hub) == normalizeHubBaseUrl(hubRoot)
+    val boundServerId = targetPrefs.routerHubId.takeIf {
+        sameHub && it != routerId && validRouterWorkspaceId(it)
     }
     // 清的是它「真正绑在那台 Hub 下」的那份文件；绑定关系本身也要一起解掉。
-    val boundRoot = RouterWorkspaceStore.hubRootOf(app, routerId).ifBlank { hubRoot }
+    val boundRoot = RouterWorkspaceStore.hubRootOf(app, routerId).let {
+        if (routerId.startsWith("local_")) it else it.ifBlank { hubRoot }
+    }
     val digest = routerWorkspaceSecureDigest(routerId, boundRoot)
     app.getSharedPreferences(routerWorkspacePreferencesName(routerId, boundRoot), Context.MODE_PRIVATE)
         .edit().clear().commit()
@@ -548,14 +705,10 @@ fun forgetRouterWorkspace(context: Context, hubRoot: String, routerId: String) {
             .filter { it.startsWith("labprobe_ws_${digest}_") }
             .forEach { runCatching { store.deleteEntry(it) } }
     }
-    val selection = app.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
-    val key = "selected_${workspaceDigest(normalizeHubBaseUrl(hubRoot))}"
     LocalRouterWorkspaceRegistry.remove(context, hubRoot, routerId)
     LocalRouterWorkspaceRegistry.hide(context, hubRoot, routerId)
     boundServerId?.let { LocalRouterWorkspaceRegistry.hide(context, hubRoot, it) }
-    if (selection.getString(key, "") == routerId) {
-        selection.edit().putString(key, DEFAULT_ROUTER_WORKSPACE_ID).apply()
-    }
+    RouterWorkspaceStore.forgetRememberedSelection(app, hubRoot, routerId)
 }
 
 
@@ -687,7 +840,7 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
@@ -760,7 +913,7 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                 ) {
                     Button(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f).height(46.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(23.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFFF3F4F6),
@@ -776,7 +929,7 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                             if (clean.isNotEmpty()) onAdd(clean)
                         },
                         enabled = name.trim().isNotEmpty(),
-                        modifier = Modifier.weight(1f).height(46.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(23.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = LabV2.Primary,
@@ -869,7 +1022,8 @@ fun RouterWorkspaceEditDialog(
                                 finish(false, "保存失败：${error.message.orEmpty()}")
                             }
                         }
-                    }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp),
+                    }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                         shape = RoundedCornerShape(24.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary, contentColor = Color.White)) {
                         Text("完成修改", style = LabTypography.Button)
@@ -889,7 +1043,8 @@ fun RouterWorkspaceEditDialog(
                                 }
                             },
                             enabled = !busy,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                             shape = RoundedCornerShape(25.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color(0xFFE6F7F8),
@@ -903,7 +1058,8 @@ fun RouterWorkspaceEditDialog(
                         Button(
                             onClick = { confirmDelete = true },
                             enabled = !busy,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                             shape = RoundedCornerShape(25.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color(0xFFFEE2E2),
@@ -958,7 +1114,7 @@ fun RouterWorkspaceEditDialog(
         onDismissRequest = { if (!busy) confirmDelete = false },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
@@ -986,7 +1142,7 @@ fun RouterWorkspaceEditDialog(
                     Button(
                         onClick = { confirmDelete = false },
                         enabled = !busy,
-                        modifier = Modifier.weight(1f).height(46.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(23.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFFF3F4F6),
@@ -1010,7 +1166,7 @@ fun RouterWorkspaceEditDialog(
                             }
                         },
                         enabled = !busy,
-                        modifier = Modifier.weight(1f).height(46.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(23.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LabV2.Red, contentColor = Color.White),
                         elevation = null

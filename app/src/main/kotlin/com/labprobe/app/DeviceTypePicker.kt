@@ -85,7 +85,7 @@ fun EditableDeviceTypeField(
             onDismissRequest = { expanded = false },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            Surface(
+            LabGradientDialogSurface(
                 shape = RoundedCornerShape(28.dp),
                 color = if (polished) polishColors.surface else LAB_POPUP_SURFACE,
                 tonalElevation = 0.dp,

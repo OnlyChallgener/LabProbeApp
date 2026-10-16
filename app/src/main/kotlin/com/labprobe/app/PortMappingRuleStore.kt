@@ -21,14 +21,17 @@ data class PersistedPortMapSnapshot(
 object PortMappingRuleStore {
     private const val STORE_NAME = "labprobe_port_mapping_rules_v1"
 
-    private fun scopeKey(prefs: AppPrefs): String {
-        val scope = listOf(prefs.hub.trim(), prefs.hubDns.trim()).joinToString("|")
-        return "scope_${scope.hashCode().toUInt().toString(16)}"
+    private fun scopeKey(hub: String, token: String): String {
+        val scope = normalizeHubBaseUrl(hub) + "|" + token.trim()
+        return "scope_v2_${workspaceDigest(scope)}"
     }
 
-    fun load(context: Context, prefs: AppPrefs): PersistedPortMapSnapshot {
+    fun load(context: Context, prefs: AppPrefs): PersistedPortMapSnapshot =
+        load(context, prefs.hub, prefs.token)
+
+    internal fun load(context: Context, hub: String, token: String): PersistedPortMapSnapshot {
         val raw = context.getSharedPreferences(STORE_NAME, Context.MODE_PRIVATE)
-            .getString(scopeKey(prefs), null)
+            .getString(scopeKey(hub, token), null)
             ?: return PersistedPortMapSnapshot()
         return runCatching {
             val root = JSONObject(raw)
@@ -51,6 +54,15 @@ object PortMappingRuleStore {
         rules: List<PortMapRule>,
         revision: Long,
         updatedAt: String,
+    ) = save(context, prefs.hub, prefs.token, rules, revision, updatedAt)
+
+    internal fun save(
+        context: Context,
+        hub: String,
+        token: String,
+        rules: List<PortMapRule>,
+        revision: Long,
+        updatedAt: String,
     ) {
         val root = JSONObject()
             .put("version", 1)
@@ -60,7 +72,7 @@ object PortMappingRuleStore {
             .put("rules", JSONArray().apply { rules.forEach { put(encodeRule(it)) } })
         context.getSharedPreferences(STORE_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putString(scopeKey(prefs), root.toString())
+            .putString(scopeKey(hub, token), root.toString())
             .apply()
     }
 

@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -374,13 +376,14 @@ private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
 
 @Composable
 private fun NativePortMappingPage(prefs: AppPrefs) {
+    val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val resource by repository.portMappings.collectAsState()
     val rules = resource.value.orEmpty()
     val scope = repository.commandScope
-    var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
-    var devicesLoading by remember { mutableStateOf(false) }
+    var devices by remember(mappingCache) { mutableStateOf(mappingCache.devices) }
+    var devicesLoading by remember(mappingCache) { mutableStateOf(false) }
     var actionError by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<NativePortMapRule?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -390,15 +393,16 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     suspend fun refreshDevices(force: Boolean = false): List<DeviceItem> {
         if (devices.isNotEmpty() && !force) return devices
         devicesLoading = true
-        return runCatching { loadCanonicalPortMappingDevices(deviceApi, forceRefresh = force) }
+        return runCatching { loadCanonicalPortMappingDevices(deviceApi, mappingCache, forceRefresh = force) }
             .getOrElse { devices }
             .also {
+                if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return emptyList()
                 if (it.isNotEmpty()) devices = it
                 devicesLoading = false
             }
     }
 
-    LaunchedEffect(Unit) { refreshDevices() }
+    LaunchedEffect(mappingCache) { refreshDevices() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -493,7 +497,7 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
                     shadowElevation = 9.dp
                 ) {
                     DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
+                    DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -565,7 +569,7 @@ private fun NativePortEditorSheet(
                 CompactField("内部设备 / IP", draft.destIp, "192.168.5.46", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
                 OutlinedButton(
                     onClick = { showDevicePicker = true },
-                    modifier = Modifier.height(50.dp),
+                    modifier = Modifier.heightIn(min = 40.dp),
                     shape = RoundedCornerShape(13.dp),
                     contentPadding = PaddingValues(horizontal = 11.dp),
                     border = BorderStroke(1.dp, RouterBlue.copy(alpha = .35f)),
@@ -635,7 +639,7 @@ private fun NativePortDevicePickerDialog(
             .sortedWith(compareByDescending<DeviceItem> { it.online }.thenBy { it.name.ifBlank { it.hostName }.lowercase(Locale.ROOT) })
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
             shape = RoundedCornerShape(26.dp),
             color = Color.White,
@@ -1141,7 +1145,7 @@ private fun FirewallRuleCard(
                         }
                     }
                     Switch(checked = rule.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.74f), colors = SwitchDefaults.colors(checkedTrackColor = accent))
-                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.DeleteOutline, "删除", Modifier.size(15.dp), tint = RouterMuted) }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) { Icon(LabActionIcons.Delete, "删除", Modifier.size(15.dp), tint = RouterMuted) }
                 }
             }
         }
@@ -1256,19 +1260,23 @@ private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean,
 
 @Composable
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 3 })
+    val isBe50 = isWorkspaceBe50(prefs)
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { if (isBe50) 2 else 3 })
     val scope = rememberCoroutineScope()
-    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, "LabProbe DDNS · 路由器原生 DDNS · 证书监控") }) { padding ->
+    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, if (isBe50) "LabProbe DDNS · 证书监控" else "LabProbe DDNS · 路由器原生 DDNS · 证书监控") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactSegment("LabProbe DDNS", pagerState.currentPage == 0, Modifier.weight(1f)) {
                     scope.launch { pagerState.animateScrollToPage(0) }
                 }
-                CompactSegment("路由器原生 DDNS", pagerState.currentPage == 1, Modifier.weight(1f)) {
-                    scope.launch { pagerState.animateScrollToPage(1) }
+                if (!isBe50) {
+                    CompactSegment("路由器原生 DDNS", pagerState.currentPage == 1, Modifier.weight(1f)) {
+                        scope.launch { pagerState.animateScrollToPage(1) }
+                    }
                 }
-                CompactSegment("证书监控", pagerState.currentPage == 2, Modifier.weight(1f)) {
-                    scope.launch { pagerState.animateScrollToPage(2) }
+                val certificatePage = if (isBe50) 1 else 2
+                CompactSegment("证书监控", pagerState.currentPage == certificatePage, Modifier.weight(1f)) {
+                    scope.launch { pagerState.animateScrollToPage(certificatePage) }
                 }
             }
             androidx.compose.foundation.pager.HorizontalPager(
@@ -1278,7 +1286,7 @@ fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     when (page) {
                         0 -> LabProbeDdnsSection(prefs)
-                        1 -> DdnsRecordsSection(prefs)
+                        1 -> if (isBe50) CertificateExpirySection(prefs) else DdnsRecordsSection(prefs)
                         else -> CertificateExpirySection(prefs)
                     }
                     Spacer(Modifier.height(12.dp))
@@ -2077,8 +2085,10 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit, onOpenSettings: (
     val resource by repository.status.collectAsState()
     val status = resource.value
     val scope = repository.commandScope
+    val agentSample = status?.source == "agent_dashboard_push"
     val sessionConnected = status?.sessionConnected == true || status?.connected == true
     val headline = when {
+        agentSample -> "BE50 状态采样正常"
         sessionConnected && status?.dataAvailable == true -> "路由控制链路正常"
         sessionConnected -> "路由器会话正常"
         status == null -> "正在准备 Hub 状态"
@@ -2086,6 +2096,7 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit, onOpenSettings: (
         else -> "路由控制暂不可用"
     }
     val detail = when {
+        agentSample && status?.sessionConnected != true -> "状态数据来自 Relay，路由器管理连接待恢复"
         status == null -> "状态已在 APP 启动后预加载，页面不会重新建立连接"
         resource.error.isNotBlank() -> "后台同步较慢，已保留上次状态"
         sessionConnected && status.dataAvailable != true -> "路由器会话正常，控制快照正在同步"
@@ -2316,9 +2327,9 @@ private fun ConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title, fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk) },
+        title = { Text(title, fontSize = LabTypography.DialogTitle.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk) },
         text = { Text(text, fontSize = LabTypography.Value.fontSize, color = RouterMuted) },
         confirmButton = { TextButton(onClick = onConfirm) { Text(confirmText, color = RouterRed, fontWeight = FontWeight.SemiBold) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消", color = RouterMuted) } },

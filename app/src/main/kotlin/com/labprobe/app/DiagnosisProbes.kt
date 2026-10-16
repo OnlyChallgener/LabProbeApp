@@ -47,25 +47,15 @@ class DiagnosisProbes(
         if (prefs.hub.isBlank()) return noHub(DiagnosisCheck.ROUTER)
         val snapshot = RouterControlApi(prefs).hubStatus()
         val connected = snapshot.connected || snapshot.sessionConnected
+        val be50 = isWorkspaceBe50(prefs)
         // lastSuccessAt can be a session creation time on compatible Hubs.
         // Verify freshness with the existing realtime sample, not the login time.
-        val sample = if (connected) try {
+        val sample = if (connected || be50) try {
             LiteRealtimeApi(prefs).router()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) { null } else null
-        val age = sample?.optLong("sampleAgeMs", -1L)
-        val evidence = sample != null && sample.optLong("sampleEpochMs", 0L) > 0L && age != null && age >= 0L
-        val fresh = evidence && age!! <= 10_000L && !sample!!.optBoolean("stale", false)
-        val good = connected && snapshot.dataAvailable && fresh
-        val unconfigured = snapshot.state in setOf("checking", "unconfigured", "not_configured", "disabled")
-        val insufficient = connected && (!snapshot.dataAvailable || !evidence)
-        return item(DiagnosisCheck.ROUTER,
-            if (good) HealthStatus.GOOD else if (unconfigured || insufficient) HealthStatus.UNKNOWN else HealthStatus.WARNING,
-            if (good) "在线" else "待确认",
-            if (good) "Hub 与 Router 控制链路正常" else if (connected) "Router 会话在线，控制数据仍待确认" else "Hub 暂未确认 Router 在线",
-            "观测点：Hub → Router", "会话已连接：$connected", "控制数据可用：${snapshot.dataAvailable}",
-            "实时采样年龄：${age ?: -1L} ms", "实时数据新鲜度已确认：$fresh")
+        return routerDiagnosisItem(snapshot, sample, be50)
     }
 
     private suspend fun gateway(): DiagnosisItem {

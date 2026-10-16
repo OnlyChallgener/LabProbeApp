@@ -34,7 +34,7 @@ class RouterWorkspaceTest {
     }
 
     @Test
-    fun localDraftSurvivesOfflineAndCanBindItsOwnHubRoute() {
+    fun localDraftUsesOnlyItsOwnHubUrl() {
         val hub = "http://192.168.5.46:58443"
         AppPrefs(context).hubRoot = hub
         val draft = LocalRouterWorkspaceRegistry.add(context, hub, "第二台锐捷")
@@ -45,12 +45,42 @@ class RouterWorkspaceTest {
         val prefs = AppPrefs(context, draft.routerId)
         assertEquals("", prefs.hub)
         prefs.routerHubId = "north"
-        assertEquals("$hub/r/north", prefs.hub)
+        assertEquals("", prefs.hub)
+        prefs.hub = "http://other.example:58444"
+        prefs.cacheStatus = """{"router":"other"}"""
+        assertEquals("http://other.example:58444", prefs.hub)
         assertEquals(hub, AppPrefs(context).hub)
+        assertEquals("", AppPrefs(context).cacheStatus)
+        assertEquals("""{"router":"other"}""", AppPrefs(context, draft.routerId).cacheStatus)
         LocalRouterWorkspaceRegistry.rename(context, hub, draft.routerId, "书房")
         assertEquals("书房", LocalRouterWorkspaceRegistry.list(context, "http://other.example:58443").single().name)
         LocalRouterWorkspaceRegistry.remove(context, hub, draft.routerId)
         assertTrue(LocalRouterWorkspaceRegistry.list(context, hub).isEmpty())
+    }
+
+    @Test
+    fun routerConfigMustIdentifyTheSelectedModelFamily() {
+        assertTrue(workspaceMatchesRouterConfig("local_123", "", "BE50", "BE50", "BE50"))
+        assertTrue(workspaceMatchesRouterConfig("local_123", "", "BE50", "BE50", "BE5100"))
+        assertFalse(workspaceMatchesRouterConfig("local_123", "", "BE50", "BE50", "BE72"))
+        assertFalse(workspaceMatchesRouterConfig("default", "", "BE72-PRO", "BE72", "BE50"))
+        assertTrue(workspaceMatchesRouterConfig("default", "", "BE72-PRO", "BE72", "BE72"))
+        assertTrue(isModelBe50("BE5100", "书房", "local_123"))
+        assertFalse(isModelWireGuardSupported("BE5100", "书房", "local_123"))
+    }
+
+    @Test
+    fun be50CapabilityDoesNotChangeWhenDisplayNameIsRenamed() {
+        val hub = "http://192.168.5.46:58443"
+        AppPrefs(context).hubRoot = hub
+        val draft = LocalRouterWorkspaceRegistry.add(context, hub, "BE50")
+        val prefs = AppPrefs(context, draft.routerId)
+        prefs.routerFirmwareFamily = "BE50"
+        prefs.routerDisplayName = "书房"
+        LocalRouterWorkspaceRegistry.rename(context, hub, draft.routerId, "书房")
+
+        assertTrue(isWorkspaceBe50(prefs))
+        assertFalse(LocalRouterWorkspaceRegistry.list(context, hub).single().wireguardSupported)
     }
 
     @Test
@@ -283,10 +313,44 @@ class RouterWorkspaceTest {
     }
 
     @Test
+    fun separateHubCardDoesNotHideAnotherHubsMatchingRouterId() {
+        val listHub = "http://192.168.5.46:58443"
+        val ownHub = "http://100.66.1.4:58444"
+        AppPrefs(context).hubRoot = listHub
+        val draft = LocalRouterWorkspaceRegistry.add(context, listHub, "办公室")
+        AppPrefs(context, draft.routerId).hubRoot = ownHub
+        AppPrefs(context, draft.routerId).hub = ownHub
+        AppPrefs(context, draft.routerId).routerHubId = "north"
+        val remote = listOf(defaultRouterWorkspace(), RouterWorkspace(
+            "north", "书房", "", "", true, "/r/north"))
+        assertEquals(listOf("default", "north", draft.routerId),
+            loadVisibleRouterWorkspaces(context, listHub, remote).map { it.routerId })
+        forgetRouterWorkspace(context, listHub, draft.routerId)
+        assertEquals(listOf("default", "north"),
+            loadVisibleRouterWorkspaces(context, listHub, remote).map { it.routerId })
+    }
+
+    @Test
+    fun deletingUnsavedLocalCardClearsOnlyItsUnboundPreferences() {
+        val hub = "http://192.168.5.46:58443"
+        AppPrefs(context).hubRoot = hub
+        AppPrefs(context).cacheStatus = "root-status"
+        val draft = LocalRouterWorkspaceRegistry.add(context, hub, "未绑定")
+        AppPrefs(context, draft.routerId).cacheStatus = "draft-status"
+
+        forgetRouterWorkspace(context, hub, draft.routerId)
+
+        assertEquals("", AppPrefs(context, draft.routerId).cacheStatus)
+        assertEquals("root-status", AppPrefs(context).cacheStatus)
+    }
+
+    @Test
     fun deletingBoundLocalCardDoesNotResurrectItsRemoteWorker() {
         val hub = "http://192.168.5.46:58443"
         AppPrefs(context).hubRoot = hub
         val draft = LocalRouterWorkspaceRegistry.add(context, hub, "办公室")
+        AppPrefs(context, draft.routerId).hubRoot = hub
+        AppPrefs(context, draft.routerId).hub = hub
         AppPrefs(context, draft.routerId).routerHubId = "north"
         val remote = listOf(defaultRouterWorkspace(), RouterWorkspace(
             "north", "办公室", "", "", true, "/r/north"))
@@ -330,17 +394,58 @@ class RouterWorkspaceTest {
     }
 
     @Test
-    fun activePrefsFollowConfirmedSelectionAndResetSafely() {
+    fun activePrefsKeepUserSelectionWhenConnectionChanges() {
         assertEquals("default", AppPrefs.current(context).workspaceId)
         RouterWorkspaceStore.activate(context, "http://hub.example:58443", "north")
         assertEquals("north", AppPrefs.current(context).workspaceId)
         assertEquals("north", RouterWorkspaceStore.remembered(context, "http://hub.example:58443"))
+        val oldActivation = RouterWorkspaceStore.activationVersion()
         RouterWorkspaceStore.hubConnectionChanged()
-        assertEquals("default", AppPrefs.current(context).workspaceId)
+        assertEquals("north", AppPrefs.current(context).workspaceId)
+        assertFalse(RouterWorkspaceStore.isActive("north", oldActivation))
         assertEquals("north", RouterWorkspaceStore.remembered(context, "http://hub.example:58443"))
         RouterWorkspaceStore.activate(context, "http://hub.example:58443", "north")
         RouterWorkspaceStore.resetActive()
         assertEquals("default", AppPrefs.current(context).workspaceId)
         assertEquals("north", RouterWorkspaceStore.remembered(context, "http://hub.example:58443"))
     }
+
+    @Test
+    fun hubRouterIdIsTheAuthorityWhenBothSidesKnowIt() {
+        assertTrue(workspaceRouterIdMatches("be50", "BE50"))
+        assertFalse(workspaceRouterIdMatches("be50", "be72"))
+        // 老 Hub 不报身份、或本机还没有期望值时退回名字校验 —— 单路由行为不能变。
+        assertTrue(workspaceRouterIdMatches("", "be50"))
+        assertTrue(workspaceRouterIdMatches("be50", ""))
+    }
+
+    @Test
+    fun multiChannelIsOnlyClaimedWhenTheHubActuallyListsChannels() {
+        assertFalse(hubIsMultiChannel(listOf(channelRow("default", ""))))
+        assertFalse(hubIsMultiChannel(listOf(channelRow("default", ""), channelRow("be50", ""))))
+        assertTrue(hubIsMultiChannel(listOf(channelRow("default", "", "be72"), channelRow("be50", "/r/be50"))))
+    }
+
+    @Test
+    fun tokenIsInheritedOnlyOnAGatewayFront() {
+        // 没有网关的时候每台 worker 各有自己的令牌，继承只会把「请填写令牌」变成认证失败。
+        assertEquals("", workspaceTokenForSwitch(false, false, "front-token"))
+        assertEquals("", workspaceTokenForSwitch(true, true, "front-token"))
+        assertEquals("", workspaceTokenForSwitch(false, true, "   "))
+        assertEquals("front-token", workspaceTokenForSwitch(false, true, "front-token"))
+    }
+
+    @Test
+    fun routerConfigReadsTheChannelIdentity() {
+        assertEquals("", RouterConfigSnapshot.fromJson(JSONObject().put("name", "BE72")).routerId)
+        assertEquals("be50",
+            RouterConfigSnapshot.fromJson(JSONObject().put("name", "BE50").put("routerId", "be50")).routerId)
+    }
 }
+
+// ---- G5：通道身份，以及网关前端下的一次登录切换 ----
+
+private fun channelRow(id: String, base: String, serverId: String = id) = RouterWorkspace(
+    routerId = id, name = id, site = "", model = "", online = true, basePath = base,
+    serverRouterId = serverId,
+)

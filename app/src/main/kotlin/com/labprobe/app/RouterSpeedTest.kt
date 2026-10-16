@@ -280,11 +280,11 @@ fun RouterToolsScreen(
     onOpen: (String) -> Unit
 ) {
     ScreenShell("路由工具", "路由器原生能力 · 与官方网页端同源接口", topNav = topNav) {
-        SpeedTestCard(prefs)
+        if (!isWorkspaceBe50(prefs)) SpeedTestCard(prefs)
         // 儿童上网是家长天天用的入口，排在特征库上面；特征库是低频运维页。
         ChildGuardQuickSection(onOpen)
         RdpiSignatureCard(prefs)
-        RouterToolsQuickSection(onOpen)
+        RouterToolsQuickSection(prefs, onOpen)
     }
 }
 
@@ -323,7 +323,8 @@ private data class RouterToolEntry(
 )
 
 @Composable
-private fun RouterToolsQuickSection(onOpen: (String) -> Unit) {
+private fun RouterToolsQuickSection(prefs: AppPrefs, onOpen: (String) -> Unit) {
+    val isBe50 = isWorkspaceBe50(prefs)
     // 儿童上网和特征库都已经有自己独立的卡片了，这里别再重复列一遍入口。
     val settingSection = listOf(
         RouterToolEntry("映射与 UPnP", "IPv6 映射 · 原生端口映射 · UPnP", "tool_portmap"),
@@ -331,10 +332,10 @@ private fun RouterToolsQuickSection(onOpen: (String) -> Unit) {
         RouterToolEntry("网络自检", "物理接线与协商速率检测", "tool_router_diag"),
         RouterToolEntry("路由 NAT 诊断", "RFC3489 / RFC5780 原生检测", "tool_router_nat"),
         RouterToolEntry("IPv6 设置", "WAN · LAN · DHCPv6 客户端", "tool_router_ipv6"),
-        RouterToolEntry("DDNS", "LabProbe · 路由器原生 · 证书监控", "tool_router_ddns"),
+        RouterToolEntry("DDNS", if (isBe50) "LabProbe · 证书监控" else "LabProbe · 路由器原生 · 证书监控", "tool_router_ddns"),
         RouterToolEntry("WireGuard", "APP 客户端 · DDNS 与 STUN 联动", "tool_wireguard"),
         RouterToolEntry("Webhook", "自定义服务推送与公网地址", "tool_router_webhook")
-    )
+    ).filterNot { isBe50 && it.route in setOf("tool_router_firewall", "tool_router_nat", "tool_wireguard") }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text("路由设置与诊断", style = LabTypography.SectionTitle.copy(color = SpeedInk))
         settingSection.forEach { entry ->
@@ -519,7 +520,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                         enabled = !running && !preparing && !starting,
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SpeedBlue, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
                     ) {
                         Text(
                             when {
@@ -529,7 +530,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                                 else -> "开始测速"
                             },
                             color = if (running || preparing || starting) LabV2.InkMuted else Color.White,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }

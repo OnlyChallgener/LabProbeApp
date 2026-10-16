@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -490,12 +492,12 @@ private fun RdpiTemplateDialog(
     onDismiss: () -> Unit,
     onCopy: (String) -> Unit
 ) {
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Rounded.DataObject, null, tint = LabV2.Cyan)
-                Text("锐捷 RDPI 标准特征模板", style = LabTypography.CardTitle)
+                Text("锐捷 RDPI 标准特征模板", style = LabTypography.DialogTitle)
             }
         },
         text = {
@@ -562,12 +564,12 @@ private fun RdpiImportDialog(
         }
     }
 
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Rounded.UploadFile, null, tint = LabV2.Cyan)
-                Text("导入自定义特征规则", style = LabTypography.CardTitle)
+                Text("导入自定义特征规则", style = LabTypography.DialogTitle)
             }
         },
         text = {
@@ -643,12 +645,12 @@ private fun RdpiCustomRulesDialog(
     onDismiss: () -> Unit,
     onDelete: (RdpiCustomApp) -> Unit
 ) {
-    AlertDialog(
+    LabCompactAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Rounded.ListAlt, null, tint = LabV2.Primary)
-                Text("已注入自定义特征 (${customApps.size})", style = LabTypography.CardTitle)
+                Text("已注入自定义特征 (${customApps.size})", style = LabTypography.DialogTitle)
             }
         },
         text = {
@@ -657,7 +659,7 @@ private fun RdpiCustomRulesDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (customApps.isEmpty()) {
-                    Text("暂无自定义规则", style = LabTypography.Body.copy(color = LabV2.InkMuted))
+                    Text("暂无自定义规则", style = LabTypography.DialogBody.copy(color = LabV2.InkMuted))
                 } else {
                     customApps.forEach { app ->
                         Surface(
@@ -673,7 +675,7 @@ private fun RdpiCustomRulesDialog(
                                         Text("Index: ${app.index}", style = LabTypography.Caption.copy(color = LabV2.InkMuted))
                                     }
                                     IconButton(onClick = { onDelete(app) }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Rounded.DeleteOutline, "删除", tint = LabV2.Red)
+                                        Icon(LabActionIcons.Delete, "删除", tint = LabV2.Red)
                                     }
                                 }
                                 app.rules.forEach { r ->

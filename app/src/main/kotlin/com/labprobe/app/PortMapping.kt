@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import com.labprobe.app.ui.design.LabActionIcons
+
 import androidx.compose.ui.draw.clip
 
 import androidx.activity.compose.BackHandler
@@ -522,7 +524,7 @@ internal fun portMapValidationField(message: String): String = when {
     else -> "general"
 }
 
-internal object PortMappingMemoryCache {
+internal class PortMappingMemoryCache private constructor() {
     var rules: List<PortMapRule> = emptyList()
     var rulesRevision: Long = 0L
     var rulesUpdatedAt: String = ""
@@ -542,6 +544,15 @@ internal object PortMappingMemoryCache {
             devicesUpdatedAt = System.currentTimeMillis()
         }
     }
+
+    companion object {
+        private val scopes = java.util.concurrent.ConcurrentHashMap<String, PortMappingMemoryCache>()
+
+        fun forScope(hub: String, token: String): PortMappingMemoryCache =
+            scopes.computeIfAbsent(workspaceDigest(normalizeHubBaseUrl(hub) + "|" + token.trim())) {
+                PortMappingMemoryCache()
+            }
+    }
 }
 
 /**
@@ -549,9 +560,9 @@ internal object PortMappingMemoryCache {
  * the IPv6 mapping picker. Reuses warm memory cache for 0ms load time and
  * queries single-snapshot fast path when network refresh is needed.
  */
-internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, forceRefresh: Boolean = false): List<DeviceItem> = coroutineScope {
-    if (!forceRefresh && PortMappingMemoryCache.isDevicesFresh()) {
-        return@coroutineScope PortMappingMemoryCache.devices
+internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, cache: PortMappingMemoryCache, forceRefresh: Boolean = false): List<DeviceItem> = coroutineScope {
+    if (!forceRefresh && cache.isDevicesFresh()) {
+        return@coroutineScope cache.devices
     }
 
     // Fast-path: 1 single snapshot HTTP request to fetch status + watched + online + offline devices.
@@ -561,8 +572,8 @@ internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, forceRefresh: 
         val syncOnline = mergeIpv6NeighborsFromStatus(snapshot.statusRoot, snapshot.onlineDevices)
         val syncMerged = mergeSharedDeviceState(syncWatched, syncOnline).ifEmpty { snapshot.offlineDevices }
         if (syncMerged.isNotEmpty()) {
-            PortMappingMemoryCache.devices = syncMerged
-            PortMappingMemoryCache.devicesUpdatedAt = System.currentTimeMillis()
+            cache.devices = syncMerged
+            cache.devicesUpdatedAt = System.currentTimeMillis()
             return@coroutineScope syncMerged
         }
     }
@@ -580,11 +591,11 @@ internal suspend fun loadCanonicalPortMappingDevices(api: HubApi, forceRefresh: 
     val online = mergeIpv6NeighborsFromStatus(status, onlineList)
     val merged = mergeSharedDeviceState(watched, online)
     if (merged.isNotEmpty()) {
-        PortMappingMemoryCache.devices = merged
-        PortMappingMemoryCache.devicesUpdatedAt = System.currentTimeMillis()
+        cache.devices = merged
+        cache.devicesUpdatedAt = System.currentTimeMillis()
         merged
     } else {
-        PortMappingMemoryCache.devices
+        cache.devices
     }
 }
 
@@ -600,6 +611,12 @@ fun PortMappingScreen(
     onOpenFavorites: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val pageHub = prefs.hub
+    val pageToken = prefs.token
+    val cache = remember(pageHub, pageToken) { PortMappingMemoryCache.forScope(pageHub, pageToken) }
+    val workspaceActivation = remember(cache) { RouterWorkspaceStore.activationVersion() }
+    fun ownsPage(): Boolean = prefs.hub == pageHub && prefs.token == pageToken &&
+        RouterWorkspaceStore.isActive(prefs.workspaceId, workspaceActivation)
     val api = remember(prefs.hub, prefs.token, prefs.hubDns) { PortMapApi(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
@@ -608,37 +625,38 @@ fun PortMappingScreen(
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
     val liveAgent by presenceStore.state.collectAsState()
-    val initialRules = remember(prefs.hub, prefs.hubDns) {
-        PortMappingMemoryCache.rules
+    val initialRules = remember(cache) {
+        cache.rules
     }
     val scope = rememberCoroutineScope()
-    var rules by remember(prefs.hub, prefs.hubDns) { mutableStateOf(initialRules) }
-    var rulesRevision by remember(prefs.hub, prefs.hubDns) {
-        mutableLongStateOf(PortMappingMemoryCache.rulesRevision)
+    var rules by remember(cache) { mutableStateOf(initialRules) }
+    var rulesRevision by remember(cache) {
+        mutableLongStateOf(cache.rulesRevision)
     }
-    var rulesUpdatedAt by remember(prefs.hub, prefs.hubDns) {
-        mutableStateOf(PortMappingMemoryCache.rulesUpdatedAt)
+    var rulesUpdatedAt by remember(cache) {
+        mutableStateOf(cache.rulesUpdatedAt)
     }
-    var snapshotRevision by remember(prefs.hub, prefs.hubDns) {
-        mutableLongStateOf(PortMappingMemoryCache.snapshotRevision)
+    var snapshotRevision by remember(cache) {
+        mutableLongStateOf(cache.snapshotRevision)
     }
-    var devices by remember { mutableStateOf(PortMappingMemoryCache.devices) }
-    var agent by remember { mutableStateOf(PortMappingMemoryCache.agent ?: PortMapAgentInfo(false, "Router", "", 20000, 20020)) }
-    var canonicalDevicesLoaded by remember { mutableStateOf(false) }
-    var hasPersistedDocument by remember(prefs.hub, prefs.hubDns) {
-        mutableStateOf(PortMappingMemoryCache.rules.isNotEmpty())
+    var devices by remember(cache) { mutableStateOf(cache.devices) }
+    var agent by remember(cache) { mutableStateOf(cache.agent ?: PortMapAgentInfo(false, "Router", "", 20000, 20020)) }
+    var canonicalDevicesLoaded by remember(cache) { mutableStateOf(false) }
+    var hasPersistedDocument by remember(cache) {
+        mutableStateOf(cache.rules.isNotEmpty())
     }
-    var loading by remember { mutableStateOf(PortMappingMemoryCache.agent == null && initialRules.isEmpty()) }
-    var refreshInFlight by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf("全部") }
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    var editDraft by remember { mutableStateOf<PortMapDraft?>(null) }
+    var loading by remember(cache) { mutableStateOf(cache.agent == null && initialRules.isEmpty()) }
+    var refreshInFlight by remember(cache) { mutableStateOf(false) }
+    var message by remember(cache) { mutableStateOf("") }
+    var filter by remember(cache) { mutableStateOf("全部") }
+    var selectedId by remember(cache) { mutableStateOf<String?>(null) }
+    var editDraft by remember(cache) { mutableStateOf<PortMapDraft?>(null) }
 
-    LaunchedEffect(prefs.hub, prefs.hubDns) {
+    LaunchedEffect(cache) {
         val persistent = withContext(Dispatchers.IO) {
             PortMappingRuleStore.load(context, prefs)
         }
+        if (!ownsPage()) return@LaunchedEffect
         hasPersistedDocument = persistent.hasDocument
         if (rules.isEmpty() && persistent.rules.isNotEmpty()) {
             rules = persistent.rules
@@ -652,7 +670,8 @@ fun PortMappingScreen(
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
     }
-    LaunchedEffect(ddnsResource.updatedAt, nativeDdnsResource.updatedAt, rulesRevision) {
+    LaunchedEffect(cache, ddnsResource.updatedAt, nativeDdnsResource.updatedAt, rulesRevision) {
+        if (!ownsPage()) return@LaunchedEffect
         if (rules.isNotEmpty()) {
             rules.forEach {
                 syncExistingMappingFavorite(
@@ -667,19 +686,21 @@ fun PortMappingScreen(
     }
 
     fun commitRulesLocally(next: List<PortMapRule>, revision: Long = rulesRevision, updatedAt: String = rulesUpdatedAt, sourceRevision: Long = snapshotRevision) {
+        if (!ownsPage()) return
         rules = next
         rulesRevision = revision.coerceAtLeast(rulesRevision)
         snapshotRevision = sourceRevision.coerceAtLeast(snapshotRevision)
         rulesUpdatedAt = updatedAt.ifBlank { rulesUpdatedAt }
         hasPersistedDocument = true
-        PortMappingMemoryCache.rules = next
-        PortMappingMemoryCache.rulesRevision = rulesRevision
-        PortMappingMemoryCache.snapshotRevision = snapshotRevision
-        PortMappingMemoryCache.rulesUpdatedAt = rulesUpdatedAt
+        cache.rules = next
+        cache.rulesRevision = rulesRevision
+        cache.snapshotRevision = snapshotRevision
+        cache.rulesUpdatedAt = rulesUpdatedAt
         PortMappingRuleStore.save(context, prefs, next, rulesRevision, rulesUpdatedAt)
     }
 
     fun markSyncing(rule: PortMapRule, action: String) {
+        if (!ownsPage()) return
         rules = rules.map {
             if (it.id == rule.id) it.copy(
                 desiredState = if (action == "start") "running" else "stopped",
@@ -689,7 +710,7 @@ fun PortMappingScreen(
     }
 
     suspend fun refresh(silent: Boolean = false) {
-        if (refreshInFlight) return
+        if (refreshInFlight || !ownsPage()) return
         refreshInFlight = true
         if (!silent) loading = true
         try {
@@ -697,6 +718,7 @@ fun PortMappingScreen(
                 ?: agent.router.takeIf { it.isNotBlank() && it.lowercase() != "router" }
                 ?: ""
             val snapshot = kotlinx.coroutines.withTimeout(4_000L) { api.list(routerArg) }
+            if (!ownsPage()) return
             val newAgent = snapshot.agent
             val mayAccept = shouldAcceptPortMapSnapshot(
                 snapshot = snapshot,
@@ -723,14 +745,16 @@ fun PortMappingScreen(
                 currentBestAgent
             }
             agent = resolvedAgent
-            PortMappingMemoryCache.agent = resolvedAgent
+            cache.agent = resolvedAgent
             if (!canonicalDevicesLoaded) {
-                runCatching { loadCanonicalPortMappingDevices(deviceApi) }.onSuccess {
-                    devices = it
+                val loaded = runCatching { loadCanonicalPortMappingDevices(deviceApi, cache) }.getOrNull()
+                if (!ownsPage()) return
+                if (loaded != null) {
+                    devices = loaded
                     canonicalDevicesLoaded = true
                 }
             }
-            PortMappingMemoryCache.devices = devices
+            cache.devices = devices
             if (mayAccept) snapshot.rules.forEach {
                 syncExistingMappingFavorite(
                     prefs,
@@ -746,12 +770,15 @@ fun PortMappingScreen(
             message = if (!mayAccept && snapshot.rules.isEmpty() && rules.isNotEmpty()) {
                 "Hub 本次未返回规则，已保留 APP 中的映射设置"
             } else ""
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
+            if (!ownsPage()) return
             val agentKnownOnline = liveAgent?.online == true || agent.online
             if (rules.isNotEmpty() && agentKnownOnline) {
                 val staleRules = rules.map { it.copy(syncState = "stale") }
                 rules = staleRules
-                PortMappingMemoryCache.rules = staleRules
+                cache.rules = staleRules
             }
             message = if (rules.isNotEmpty()) {
                 if (agentKnownOnline) "Agent 在线，正在重新获取映射运行状态" else "映射状态暂未同步，已保留全部设置"
@@ -762,16 +789,17 @@ fun PortMappingScreen(
         }
     }
 
-    LaunchedEffect(Unit) { refresh(silent = rules.isNotEmpty() || PortMappingMemoryCache.agent != null) }
-    LaunchedEffect(liveAgent?.lastSeenAt) {
+    LaunchedEffect(cache) { refresh(silent = rules.isNotEmpty() || cache.agent != null) }
+    LaunchedEffect(cache, liveAgent?.lastSeenAt) {
+        if (!ownsPage()) return@LaunchedEffect
         liveAgent?.let {
             agent = it
-            PortMappingMemoryCache.agent = it
+            cache.agent = it
             loading = false
             if (it.online) refresh(true)
         }
     }
-    LaunchedEffect(agent.online) {
+    LaunchedEffect(cache, agent.online) {
         while (true) {
             kotlinx.coroutines.delay(if (agent.online) 3_000L else 8_000L)
             refresh(true)
@@ -815,21 +843,24 @@ fun PortMappingScreen(
                 val action = if (selected.shouldStop) "stop" else "start"
                 markSyncing(selected, action)
                 scope.launch {
+                    if (!ownsPage()) return@launch
                     runCatching { api.action(selected.id, action) }
-                        .onFailure { message = uiMessageZh(it.message).ifBlank { "操作失败" } }
+                        .onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "操作失败" } }
                     refresh(true)
                 }
             },
             onDelete = {
                 scope.launch {
+                    if (!ownsPage()) return@launch
                     runCatching { api.delete(selected.id) }
                         .onSuccess {
+                            if (!ownsPage()) return@onSuccess
                             val removedFavorites = removeMappingFavorites(prefs, selected.id)
                             commitRulesLocally(rules.filterNot { it.id == selected.id })
                             selectedId = null
                             if (removedFavorites > 0) message = "已同时删除 $removedFavorites 个关联收藏"
                         }
-                        .onFailure { message = uiMessageZh(it.message).ifBlank { "删除失败" } }
+                        .onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "删除失败" } }
                     refresh(true)
                 }
             }
@@ -897,8 +928,9 @@ fun PortMappingScreen(
                         val action = if (rule.shouldStop) "stop" else "start"
                         markSyncing(rule, action)
                         scope.launch {
+                            if (!ownsPage()) return@launch
                             runCatching { api.action(rule.id, action) }
-                                .onFailure { message = uiMessageZh(it.message).ifBlank { "操作失败" } }
+                                .onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "操作失败" } }
                             refresh(true)
                         }
                     }
@@ -912,14 +944,16 @@ fun PortMappingScreen(
             initial = editDraft!!,
             devices = devices,
             portRange = agent.portMin..agent.portMax,
-            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi, forceRefresh = true) },
+            refreshDevices = { loadCanonicalPortMappingDevices(deviceApi, cache, forceRefresh = true) },
             onDismiss = { editDraft = null },
             onSave = { draft ->
                 val saveDraft = portMapDraftForSave(draft)
                 scope.launch {
+                    if (!ownsPage()) return@launch
                     runCatching {
                         if (saveDraft.id.isBlank()) api.create(saveDraft) else api.update(saveDraft.id, saveDraft)
                     }.onSuccess { saved ->
+                        if (!ownsPage()) return@onSuccess
                         val next = if (rules.any { it.id == saved.id }) {
                             rules.map { if (it.id == saved.id) saved else it }
                         } else rules + saved
@@ -933,7 +967,7 @@ fun PortMappingScreen(
                         )
                         editDraft = null
                         refresh(true)
-                    }.onFailure { message = uiMessageZh(it.message).ifBlank { "保存失败" } }
+                    }.onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "保存失败" } }
                 }
             }
         )
@@ -1358,7 +1392,7 @@ private fun PortMapEditorSheet(
                 }
                 Button(
                     onClick = ::submit,
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
                     shape = LabV2.ButtonShape,
                     colors = ButtonDefaults.buttonColors(containerColor = LabV2.Primary)
                 ) { Text(if (isNew) "保存并启动" else "保存修改", style = LabTypography.Button) }
@@ -1634,7 +1668,7 @@ private fun PortMapDevicePickerDialog(
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
+        LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.94f).wrapContentHeight().heightIn(min = 260.dp, max = 680.dp),
             shape = RoundedCornerShape(28.dp),
             color = Color(0xFFFAFCFF),
@@ -1936,7 +1970,7 @@ private fun PortMapDetailPage(
                     }
                     onOpenFavorites()
                 },
-                modifier = Modifier.weight(1f).height(46.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                 shape = LabV2.ButtonShape,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = PortBlue)
             ) {
@@ -1944,26 +1978,26 @@ private fun PortMapDetailPage(
                 Spacer(Modifier.width(5.dp))
                 Text(if (isFavorited) "查看收藏" else "加入收藏", style = LabTypography.Button)
             }
-            Button(onClick = onToggle, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.shouldStop) PortRed else PortBlue)) {
+            Button(onClick = onToggle, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = if (rule.shouldStop) PortRed else PortBlue)) {
                 Icon(if (rule.shouldStop) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null)
                 Spacer(Modifier.width(5.dp))
                 Text(if (rule.shouldStop) "停止映射" else "启动映射", style = LabTypography.Button)
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f).height(46.dp), shape = LabV2.ButtonShape) {
+            OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) {
                 Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(5.dp))
                 Text("编辑", style = LabTypography.Button)
             }
             OutlinedButton(
                 onClick = { confirmDelete = true },
-                modifier = Modifier.weight(1f).height(46.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                 shape = LabV2.ButtonShape,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = PortRed),
                 border = androidx.compose.foundation.BorderStroke(1.dp, PortRed.copy(alpha = .55f)),
             ) {
-                Icon(Icons.Rounded.Delete, null, Modifier.size(17.dp))
+                Icon(LabActionIcons.Delete, null, Modifier.size(17.dp))
                 Spacer(Modifier.width(5.dp))
                 Text("删除", style = LabTypography.Button.copy(color = PortRed))
             }
@@ -1972,10 +2006,10 @@ private fun PortMapDetailPage(
     }
 
     if (confirmDelete) {
-        AlertDialog(
+        LabCompactAlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除端口映射？", style = LabTypography.CardTitle.copy(color = LabV2.Ink)) },
-            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.Body.copy(color = LabV2.InkMuted)) },
+            title = { Text("删除端口映射？", style = LabTypography.DialogTitle.copy(color = LabV2.Ink)) },
+            text = { Text("删除后会通知路由器停止并移除该规则。", style = LabTypography.DialogBody.copy(color = LabV2.InkMuted)) },
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("删除", style = LabTypography.CompactButton.copy(color = PortRed)) } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消", style = LabTypography.CompactButton.copy(color = LabV2.InkMuted)) } },
             shape = RoundedCornerShape(24.dp),

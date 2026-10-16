@@ -50,7 +50,7 @@ private fun routerSettingsStatusMessage(status: RouterHubStatus): String = when 
 }
 
 @Composable
-fun RouterSettingsHomeCard(onClick: () -> Unit) {
+fun RouterSettingsHomeCard(isBe50: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
     Surface(
         modifier = Modifier.fillMaxWidth().clip(shape).clickable(onClick = onClick),
@@ -75,7 +75,7 @@ fun RouterSettingsHomeCard(onClick: () -> Unit) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("路由设置", style = LabTypography.CardTitle.copy(color = SettingsInk))
                 Text(
-                    "防火墙 · NAT诊断 · DDNS · Beta升级",
+                    if (isBe50) "映射与 UPnP · DDNS · 网络自检" else "防火墙 · NAT诊断 · DDNS · Beta升级",
                     style = LabTypography.Supporting.copy(color = SettingsMuted),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -106,7 +106,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
     )
 
     // 这一页手上只有 /api/status，里面没有型号；isModelBe50 同时按显示名和工作区 id 判，传空 model 不改变语义。
-    val isBe50 = isModelBe50("", prefs.routerDisplayName, prefs.workspaceId)
+    val isBe50 = isWorkspaceBe50(prefs)
 
     DetailShell(
         title = "路由设置",
@@ -166,7 +166,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
             }
             RouterSettingsTile(
                 title = "DDNS",
-                subtitle = "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
+                subtitle = if (isBe50) "LabProbe DDNS · 证书监控" else "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
                 icon = Icons.Rounded.CloudSync,
                 glyph = RouterGlyph.Ddns,
                 color = SettingsCyan,
@@ -220,15 +220,18 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
 @Composable
 private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatus>, onClick: () -> Unit) {
     val status = resource.value
+    val agentSample = status?.source == "agent_dashboard_push"
     val sessionConnected = status?.sessionConnected == true || status?.connected == true
     val accent = if (sessionConnected) SettingsGreen else SettingsAmber
     val title = when {
+        agentSample -> "BE50 状态采样正常"
         sessionConnected && status?.dataAvailable == true -> "路由控制链路正常"
         sessionConnected -> "路由器会话正常"
         resource.value == null -> "正在准备路由设置"
         else -> "路由控制暂不可用"
     }
     val detail = when {
+        agentSample && status?.sessionConnected != true -> "路由器管理连接待恢复；状态数据来自 Relay"
         resource.value == null -> "APP 已在后台预加载，不需要进入页面后再等待"
         resource.error.isNotBlank() -> "后台同步较慢，已保留上次状态"
         sessionConnected && status?.dataAvailable != true -> "控制数据正在静默同步，实时 WSS 不受影响"

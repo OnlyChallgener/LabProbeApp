@@ -13,6 +13,14 @@ fun uiMessageZh(raw: String?): String {
     val lower = text.lowercase()
     val httpCode = Regex("""\b([45]\d\d)\b""").find(lower)?.groupValues?.getOrNull(1)
     return when {
+        "router login retry paused" in lower -> {
+            val seconds = Regex("""paused for (\d+)s""").find(lower)?.groupValues?.getOrNull(1)
+            if (seconds == null) "路由器登录暂缓，请稍后重试" else "路由器登录暂缓，约 $seconds 秒后重试"
+        }
+        "router login failed" in lower || "router authentication" in lower ->
+            "Hub 登录路由器失败，请检查管理连接"
+        "unable to connect to router login page" in lower ->
+            "Hub 无法连接路由器管理页面"
         "connection closed" in lower || "socket closed" in lower || "closed channel" in lower ->
             "连接已关闭，正在尝试恢复"
         "connection reset" in lower || "reset by peer" in lower ->
