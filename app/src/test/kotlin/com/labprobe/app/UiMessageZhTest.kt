@@ -22,6 +22,16 @@ class UiMessageZhTest {
     }
 
     @Test
+    fun multiRouterPathErrorSaysWhatToFillInInsteadOfBlamingTheToken() {
+        // 网关在根路径 API 上回 400 multi_router_path_required；这句话以前会掉进
+        // "请求失败（HTTP 400）"，用户只能去怀疑钥匙。
+        val text = uiMessageZh("""{"ok": false, "error": "multi_router_path_required"}""")
+        assertTrue(text.contains("路由标识"))
+        assertFalse(text.contains("multi_router_path_required"))
+        assertFalse(text.contains("凭据"))
+    }
+
+    @Test
     fun wireGuardMutationMessagesTranslateTheUnderlyingReason() {
         val waiting = wireGuardMutationFailureMessage(
             WireGuardMutationStage.WAIT_AGENT,

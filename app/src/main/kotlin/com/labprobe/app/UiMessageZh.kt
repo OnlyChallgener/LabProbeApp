@@ -48,6 +48,11 @@ fun uiMessageZh(raw: String?): String {
             "安全连接握手失败"
         "certificate" in lower || "certpath" in lower ->
             "证书校验失败"
+        // 合并前端按 /r/<路由标识> 分通道。标识留空时请求落在根路径，那里说不出调用者要哪台
+        // 路由器，网关宁可回 400 也不静默把人送到默认那台的数据上 —— 所以这里必须告诉他填什么，
+        // 而不是让他去猜钥匙。
+        "multi_router_path_required" in lower ->
+            "这台 Hub 是多路由前端，请在「Hub 路由标识」里填写路由器标识（例如 be72 或 be50）"
         "unauthorized" in lower || httpCode == "401" ->
             "认证失败，请检查凭据"
         "forbidden" in lower || httpCode == "403" ->
