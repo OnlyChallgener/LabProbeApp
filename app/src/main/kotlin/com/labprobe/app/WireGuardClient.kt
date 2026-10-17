@@ -1242,9 +1242,22 @@ internal fun wireGuardStunDependents(root: JSONObject, ruleId: String): List<Str
     }.distinct()
 }
 
+/**
+ * The Hub's WireGuard document, or null when this router has no WireGuard at all.
+ *
+ * A router without WireGuard answers `ok:true` with a null `server`. That is a
+ * complete answer - nothing can depend on a penetration rule - so it must not
+ * block deleting or editing that rule. Only a document that is not a Hub WireGuard
+ * answer (an error shell, an unauthorized body) still counts as unreadable.
+ */
+internal fun wireGuardServerOrNull(root: JSONObject): JSONObject? {
+    root.optJSONObject("server")?.let { return it }
+    if (root.optBoolean("ok", false)) return null
+    throw IllegalStateException("无法读取 WireGuard 网关配置")
+}
+
 internal fun parseWireGuardStunDependencySnapshot(root: JSONObject): WireGuardStunDependencySnapshot {
-    val server = root.optJSONObject("server")
-        ?: throw IllegalStateException("无法读取 WireGuard 网关配置")
+    val server = wireGuardServerOrNull(root) ?: return WireGuardStunDependencySnapshot(emptyList())
     val endpoints = server.optJSONArray("endpointProfiles") ?: JSONArray()
     val references = buildList {
         for (index in 0 until endpoints.length()) {
@@ -1510,8 +1523,8 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
 
     suspend fun stunRuleDependents(ruleId: String): List<String> = withContext(Dispatchers.IO) {
         val root = getServer()
-        require(root.optJSONObject("server") != null) { "无法核实 WG 依赖，暂不修改穿透目标" }
-        wireGuardStunDependents(root, ruleId)
+        if (wireGuardServerOrNull(root) == null) emptyList()
+        else wireGuardStunDependents(root, ruleId)
     }
 
     suspend fun loadStunDependencySnapshot(): WireGuardStunDependencySnapshot = withContext(Dispatchers.IO) {

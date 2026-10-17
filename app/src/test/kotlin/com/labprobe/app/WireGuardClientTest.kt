@@ -257,6 +257,28 @@ class WireGuardClientTest {
     }
 
     @Test
+    fun routerWithoutWireGuardLeavesThePenetrationRuleUntouched() {
+        // A router with no WireGuard answers ok:true and a null server. Nothing can
+        // depend on the rule there, so the guard must not block deleting or editing it.
+        val nullServer = JSONObject().put("ok", true).put("revision", 0).put("server", JSONObject.NULL)
+        assertTrue(parseWireGuardStunDependencySnapshot(nullServer).references.isEmpty())
+        assertTrue(parseWireGuardStunDependencySnapshot(
+            JSONObject().put("ok", true).put("revision", 0)).references.isEmpty())
+    }
+
+    @Test
+    fun aWireGuardAnswerThatIsNotFromTheHubStillBlocksTheRule() {
+        val denied = JSONObject().put("ok", false).put("error", "unauthorized")
+        val failure = try {
+            parseWireGuardStunDependencySnapshot(denied)
+            null
+        } catch (error: IllegalStateException) {
+            error
+        }
+        assertTrue("an unreadable WG document must not be read as 'no dependency'", failure != null)
+    }
+
+    @Test
     fun explicitRuleCleanupRemovesOnlyExactReferencesAndSameIdPeers() {
         val root = serverWithBindings()
         val plan = buildWireGuardRuleCleanupPlan(root, "shared-stun")
