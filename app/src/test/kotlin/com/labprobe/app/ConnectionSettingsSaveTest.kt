@@ -88,4 +88,14 @@ class ConnectionSettingsSaveTest {
         assertTrue(HubConnectionRequests.wasCancelled(call))
         HubConnectionRequests.remove(key, call)
     }
+
+    @Test fun blankTokenKeepsTheKeyThatIsAlreadyStored() {
+        // Moving a standalone Hub entry onto the merged front changes the workspace
+        // identity, not the secret. Clearing the field must not lose the key.
+        prefs.saveConnectionSettings("http://100.66.1.4:58443", "   ", "223.5.5.5", "be50", null, "BE50")
+        val reopened = AppPrefs(context, id)
+        assertEquals("test-token", reopened.token)
+        assertEquals("be50", reopened.routerHubId)
+        assertEquals("http://100.66.1.4:58443", reopened.hub)
+    }
 }

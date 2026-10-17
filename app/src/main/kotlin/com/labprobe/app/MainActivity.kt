@@ -760,19 +760,23 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
     fun saveConnectionSettings(address: String, appToken: String, dns: String, routeId: String,
                                router: RouterConfigUpdate?, expectedName: String) {
         val clean = validateHubTransportAddress(normalizeHubBaseUrl(address))
-        require(appToken.isNotBlank()) { "请填写 APP Token" }
+        // 令牌留空表示「这把钥匙不换」。工作区身份是按 hubRoot+路由标识 派生的，把一台
+        // 独立 Hub 迁到合并前端时身份必然改变，此时逼用户重打一次令牌没有安全收益：钥匙
+        // 没变，变的只是它挂在哪个键下。合并前端本来就接受任意一把 owner 级 APP 钥匙。
+        val effectiveToken = appToken.trim().ifBlank { token }
+        require(effectiveToken.isNotBlank()) { "请填写 APP Token" }
         val oldKey = HubConnectionRequests.key(workspaceId, hub, token)
-        val changed = hub != clean || token != appToken.trim() || hubDns != dns.trim() || routerHubId != routeId.trim()
+        val changed = hub != clean || token != effectiveToken || hubDns != dns.trim() || routerHubId != routeId.trim()
         // Keep the existing workspace storage when changing an access address.
         val storage = sp
-        if (appToken.trim() != token) {
-            if (usesLegacyDefault()) secureTokenStore.set(appToken.trim()) else workspaceTokenStore().set(appToken.trim())
+        if (effectiveToken != token) {
+            if (usesLegacyDefault()) secureTokenStore.set(effectiveToken) else workspaceTokenStore().set(effectiveToken)
         }
         val edit = storage.edit().putString("hub", clean).putString("hub_dns", dns.trim())
             .putString("router_hub_id_v1", routeId.trim())
             .putBoolean("pending_hub_identity_v1", changed || pendingHubIdentity)
             .putString("expected_hub_router_name_v1", expectedName)
-        if (!usesLegacyDefault()) edit.putString("token", appToken.trim())
+        if (!usesLegacyDefault()) edit.putString("token", effectiveToken)
         if (router != null) {
             edit.putBoolean("pending_router_settings_v1", true)
                 .putString("router_display_name_v1", router.name)
