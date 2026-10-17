@@ -12407,7 +12407,8 @@ fun SettingsScreen(
             is HubRealtimeState.Reconnecting -> realtimeFailureText(realtime.reason)
             else -> ""
         }
-        Text(uiMessageZh(connectionMessage), color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected || state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // 这一行以前锁死单行，合并前端那句"要哪一台"的说明被省略号切掉，等于没写。
+        Text(uiMessageZh(connectionMessage), color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected || state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (realtimeFailure.isNotBlank()) {
             Text("原因：$realtimeFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
