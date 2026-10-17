@@ -1467,10 +1467,12 @@ internal fun appErrorZh(raw: String?, fallback: String = "请求失败"): String
         "timeout" in lower || "timed out" in lower -> "请求超时，请稍后重试"
         "unable to resolve" in lower || "unknown host" in lower || "dns" in lower -> "域名解析失败"
         "failed to connect" in lower || "connection refused" in lower -> "无法连接 Hub"
-        // 合并前端的根路径缺路由标识：网关明确拒绝，就必须告诉他填什么，
+        // 合并前端的根路径缺通道身份：网关明确拒绝，就必须告诉他该做什么，
         // 否则用户唯一能猜的就是钥匙错了 —— 这正是这次踩到的。
+        // 只有「切换路由器」选出的服务端卡片会真的带上 /r/<id>；设置页的「Hub 路由标识」
+        // 框不参与请求地址拼接（basePath 没有请求侧消费者），指过去是误导。
         "multi_router_path_required" in lower ->
-            "这台 Hub 是多路由前端，请在「Hub 路由标识」里填写路由器标识（例如 be72 或 be50）"
+            "这台 Hub 把多台路由器合在同一个地址上，当前地址说不出要哪一台：请用「切换路由器」选到具体那一台"
         "unauthorized" in lower || "forbidden" in lower || "http 401" in lower || "http 403" in lower -> "Hub 认证失败"
         else -> text
     }

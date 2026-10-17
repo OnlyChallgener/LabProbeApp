@@ -49,10 +49,10 @@ fun uiMessageZh(raw: String?): String {
         "certificate" in lower || "certpath" in lower ->
             "证书校验失败"
         // 合并前端按 /r/<路由标识> 分通道。标识留空时请求落在根路径，那里说不出调用者要哪台
-        // 路由器，网关宁可回 400 也不静默把人送到默认那台的数据上 —— 所以这里必须告诉他填什么，
-        // 而不是让他去猜钥匙。
+        // 路由器，网关宁可回 400 也不静默把人送到默认那台的数据上 —— 所以必须告诉他该做什么，
+        // 而不是让他去猜钥匙。能带上 /r/<id> 的只有「切换路由器」选出的服务端卡片。
         "multi_router_path_required" in lower ->
-            "这台 Hub 是多路由前端，请在「Hub 路由标识」里填写路由器标识（例如 be72 或 be50）"
+            "这台 Hub 把多台路由器合在同一个地址上，当前地址说不出要哪一台：请用「切换路由器」选到具体那一台"
         "unauthorized" in lower || httpCode == "401" ->
             "认证失败，请检查凭据"
         "forbidden" in lower || httpCode == "403" ->
