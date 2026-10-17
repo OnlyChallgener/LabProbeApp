@@ -1455,7 +1455,9 @@ open class HubRouterNoDataException(message: String = "Hub 在线，但没有路
 class HubRouterLoginException(message: String = "Hub 登录路由器失败") : RuntimeException(message)
 class RouterStatusUnavailableException(message: String = "Hub 在线，但没有路由器数据") : HubRouterNoDataException(message)
 
-private fun appErrorZh(raw: String?, fallback: String = "请求失败"): String {
+// internal, not private: this file carries a second error table whose else-branch passed
+// server codes straight to the card, and it must be reachable from tests.
+internal fun appErrorZh(raw: String?, fallback: String = "请求失败"): String {
     val text = raw.orEmpty().trim()
     val lower = text.lowercase()
     return when {
@@ -1465,6 +1467,10 @@ private fun appErrorZh(raw: String?, fallback: String = "请求失败"): String 
         "timeout" in lower || "timed out" in lower -> "请求超时，请稍后重试"
         "unable to resolve" in lower || "unknown host" in lower || "dns" in lower -> "域名解析失败"
         "failed to connect" in lower || "connection refused" in lower -> "无法连接 Hub"
+        // 合并前端的根路径缺路由标识：网关明确拒绝，就必须告诉他填什么，
+        // 否则用户唯一能猜的就是钥匙错了 —— 这正是这次踩到的。
+        "multi_router_path_required" in lower ->
+            "这台 Hub 是多路由前端，请在「Hub 路由标识」里填写路由器标识（例如 be72 或 be50）"
         "unauthorized" in lower || "forbidden" in lower || "http 401" in lower || "http 403" in lower -> "Hub 认证失败"
         else -> text
     }

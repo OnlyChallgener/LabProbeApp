@@ -22,6 +22,15 @@ class UiMessageZhTest {
     }
 
     @Test
+    fun savedSettingsCardAlsoTranslatesTheMultiRouterPathCode() {
+        // MainActivity keeps a second error table of its own; its else-branch used to echo the
+        // raw server code onto the card, which is exactly what the user saw on the settings page.
+        val text = appErrorZh("""HTTP 400 {"ok": false, "error": "multi_router_path_required"}""")
+        assertTrue(text.contains("路由标识"))
+        assertFalse(text.contains("multi_router_path_required"))
+    }
+
+    @Test
     fun multiRouterPathErrorSaysWhatToFillInInsteadOfBlamingTheToken() {
         // 网关在根路径 API 上回 400 multi_router_path_required；这句话以前会掉进
         // "请求失败（HTTP 400）"，用户只能去怀疑钥匙。
