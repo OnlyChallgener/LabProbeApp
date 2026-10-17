@@ -48,7 +48,9 @@ class RouterWorkspaceTest {
         assertEquals("", prefs.hub)
         prefs.hub = "http://other.example:58444"
         prefs.cacheStatus = """{"router":"other"}"""
-        assertEquals("http://other.example:58444", prefs.hub)
+        // 填了路由标识就说明这台草稿挂在合并前端的某条通道上，它自己的地址必须带上 /r/<id>；
+        // 这条用例要保证的仍是"只用它自己的地址，绝不继承全局 Hub"。
+        assertEquals("http://other.example:58444/r/north", prefs.hub)
         assertEquals(hub, AppPrefs(context).hub)
         assertEquals("", AppPrefs(context).cacheStatus)
         assertEquals("""{"router":"other"}""", AppPrefs(context, draft.routerId).cacheStatus)
@@ -168,6 +170,18 @@ class RouterWorkspaceTest {
         assertEquals("", rows.first().basePath)
         assertEquals("http://hub.example:58443", workspaceHubUrl("http://hub.example:58443", rows.first().routerId))
         assertEquals("http://hub.example:58443/r/office", workspaceHubUrl("http://hub.example:58443", rows.last().routerId))
+    }
+
+    @Test
+    fun hubChannelIsLowerCasedIdempotentAndDroppable() {
+        // 网关的 routerId 只允许小写（ID_PATTERN），nginx 的 location 又区分大小写，
+        // 所以大写标识必须在客户端就归一化，否则拼出来的通道必然 404。
+        assertEquals("http://nas:58453/r/be50", withHubChannel("http://nas:58453", "BE50"))
+        assertEquals("http://nas:58453/r/be50", withHubChannel("http://nas:58453/r/be50", "be50"))
+        assertEquals("http://nas:58453", hubChannelRoot("http://nas:58453/r/be50"))
+        assertEquals("http://nas:58453", withHubChannel("http://nas:58453/r/be50", ""))
+        assertEquals("http://nas:58453", withHubChannel("http://nas:58453", "default"))
+        assertEquals("", withHubChannel("", "be50"))
     }
 
     @Test

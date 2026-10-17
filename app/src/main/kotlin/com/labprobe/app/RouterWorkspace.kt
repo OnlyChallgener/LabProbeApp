@@ -348,7 +348,8 @@ fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<
     val local = LocalRouterWorkspaceRegistry.list(context, hubRoot)
     val bound = local.mapNotNull { draft ->
         val prefs = AppPrefs(context, draft.routerId)
-        val sameHub = normalizeHubBaseUrl(prefs.hub) == normalizeHubBaseUrl(hubRoot)
+        // 比根地址：卡片读出来的 hub 自带 /r/<id>，列表的 hubRoot 是前端根地址。
+        val sameHub = hubChannelRoot(prefs.hub) == hubChannelRoot(hubRoot)
         prefs.routerHubId.takeIf { sameHub && it.isNotBlank() }?.let { draft.routerId to it }
     }.toMap()
     return mergeRouterWorkspaces(remote, local, bound, LocalRouterWorkspaceRegistry.hidden(context, hubRoot))
@@ -685,7 +686,7 @@ fun forgetRouterWorkspace(context: Context, hubRoot: String, routerId: String) {
         return
     }
     val targetPrefs = AppPrefs(app, routerId)
-    val sameHub = normalizeHubBaseUrl(targetPrefs.hub) == normalizeHubBaseUrl(hubRoot)
+    val sameHub = hubChannelRoot(targetPrefs.hub) == hubChannelRoot(hubRoot)
     val boundServerId = targetPrefs.routerHubId.takeIf {
         sameHub && it != routerId && validRouterWorkspaceId(it)
     }

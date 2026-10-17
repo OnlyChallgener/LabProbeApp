@@ -44,8 +44,32 @@ class ConnectionSettingsSaveTest {
         assertEquals("http://100.66.1.4:58444", other.hub)
     }
 
-    @Test fun pendingIdentityBlocksWritesBeforeOpeningANetworkConnection() {
-        prefs.pendingHubIdentity = true
+    @Test fun routeIdRewiresTheCardOntoItsChannel() {
+        // 合并前端的根路径说不出要哪一台路由器，网关会直接 400。填了标识就必须真的带上
+        // /r/<id>，否则这台卡片永远连不上 —— 用户看到的正是"一直连接待恢复"。
+        prefs.saveConnectionSettings("http://192.168.5.46:58453", "test-token", "223.5.5.5", "BE50",
+            null, "BE50")
+        assertEquals("http://192.168.5.46:58453/r/be50", AppPrefs(context, id).hub)
+    }
+
+    @Test fun resavingTheShownAddressNeitherStacksTheChannelNorLooksLikeAChange() {
+        prefs.saveConnectionSettings("http://192.168.5.46:58453", "test-token", "223.5.5.5", "be50", null, "BE50")
+        val reopened = AppPrefs(context, id)
+        reopened.pendingHubIdentity = false
+        reopened.saveConnectionSettings(reopened.hub, "test-token", "223.5.5.5", "be50", null, "BE50")
+        val saved = AppPrefs(context, id)
+        assertEquals("http://192.168.5.46:58453/r/be50", saved.hub)
+        assertFalse("照显示的原样再保存一次不该被判成连接变更", saved.pendingHubIdentity)
+    }
+
+    @Test fun clearingTheRouteIdDropsTheChannelBackToTheRoot() {
+        prefs.saveConnectionSettings("http://192.168.5.46:58453", "test-token", "223.5.5.5", "be50", null, "BE50")
+        val withChannel = AppPrefs(context, id)
+        withChannel.saveConnectionSettings(withChannel.hub, "test-token", "223.5.5.5", "", null, "BE50")
+        assertEquals("http://192.168.5.46:58453", AppPrefs(context, id).hub)
+    }
+
+    @Test fun pendingIdentityBlocksWritesBeforeOpeningANetworkConnection() {        prefs.pendingHubIdentity = true
         assertThrows(java.io.IOException::class.java) {
             HubApi(prefs).requestText("/api/router/child-guard/devices/uid", "DELETE")
         }
@@ -96,6 +120,6 @@ class ConnectionSettingsSaveTest {
         val reopened = AppPrefs(context, id)
         assertEquals("test-token", reopened.token)
         assertEquals("be50", reopened.routerHubId)
-        assertEquals("http://100.66.1.4:58443", reopened.hub)
+        assertEquals("http://100.66.1.4:58443/r/be50", reopened.hub)
     }
 }

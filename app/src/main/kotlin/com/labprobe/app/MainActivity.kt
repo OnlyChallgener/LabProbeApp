@@ -473,9 +473,10 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) = sp.edit().putString("hub_server_router_id_v1", v.trim()).apply()
     var hub: String
         get() {
-            // A phone-created card represents an independent Hub. Its server's
-            // single router is reached at the root, never under the first Hub's /r/ path.
-            if (workspaceId.startsWith("local_")) return sp.getString("hub", "").orEmpty().trim()
+            // 本机自建卡片代表一台独立 Hub：没填路由标识时就走根地址（单路由 Hub 就在根上）；
+            // 填了就必须带上 /r/<id>，否则合并前端说不出这台卡片要哪一台，只会收到 400。
+            if (workspaceId.startsWith("local_"))
+                return withHubChannel(sp.getString("hub", "").orEmpty(), routerHubId)
             if (usesLegacyDefault()) {
                 val legacyId = RouterWorkspaceStore.legacyServerId(appContext, hubRoot)
                 val currentId = RouterWorkspaceStore.serverDefaultId(appContext, hubRoot)
@@ -483,14 +484,15 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                     normalizeHubBaseUrl(hubRoot) + "/r/" + legacyId else hubRoot
             }
             val explicitHub = sp.getString("hub", "").orEmpty().trim()
-            if (explicitHub.isNotBlank()) return explicitHub
+            if (explicitHub.isNotBlank()) return withHubChannel(explicitHub, routerHubId)
             // 本机刚新建、还没绑定到任何服务端 routerId 的草稿：它没有可连的地址。
             // 让它继承全局 Hub 根地址的话，App 会拿着另一台路由的令牌往这个地址上打。
             if (workspaceId.startsWith("local_") && routerHubId.isBlank()) return ""
-            return if (routerHubId.isNotBlank()) workspaceHubUrl(hubRoot, routerHubId) else hubRoot
+            return if (routerHubId.isNotBlank()) withHubChannel(hubRoot, routerHubId) else hubRoot
         }
         set(v) {
-            val clean = normalizeHubBaseUrl(v)
+            // 存的一律是根地址：通道段由 routerHubId 在读的时候现拼，填两次不会叠成 /r/a/r/a。
+            val clean = hubChannelRoot(v)
             sp.edit().putString("hub", clean).apply()
             if (usesLegacyDefault()) {
                 hubRoot = clean
@@ -766,13 +768,15 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         val effectiveToken = appToken.trim().ifBlank { token }
         require(effectiveToken.isNotBlank()) { "请填写 APP Token" }
         val oldKey = HubConnectionRequests.key(workspaceId, hub, token)
-        val changed = hub != clean || token != effectiveToken || hubDns != dns.trim() || routerHubId != routeId.trim()
+        // 比根地址：hub 读出来带着 /r/<id>，用户填的是根地址，直接比会把"什么都没改"判成变更。
+        val changed = hubChannelRoot(hub) != hubChannelRoot(clean) || token != effectiveToken ||
+            hubDns != dns.trim() || routerHubId != routeId.trim()
         // Keep the existing workspace storage when changing an access address.
         val storage = sp
         if (effectiveToken != token) {
             if (usesLegacyDefault()) secureTokenStore.set(effectiveToken) else workspaceTokenStore().set(effectiveToken)
         }
-        val edit = storage.edit().putString("hub", clean).putString("hub_dns", dns.trim())
+        val edit = storage.edit().putString("hub", hubChannelRoot(clean)).putString("hub_dns", dns.trim())
             .putString("router_hub_id_v1", routeId.trim())
             .putBoolean("pending_hub_identity_v1", changed || pendingHubIdentity)
             .putString("expected_hub_router_name_v1", expectedName)
