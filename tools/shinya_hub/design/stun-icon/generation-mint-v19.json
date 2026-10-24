@@ -1,0 +1,9 @@
+{
+  "tool": "image_gen.imagegen",
+  "reference": "C:/Users/admin/Downloads/1791558120439_temp.png",
+  "generatedSource": "C:\\Users\\admin\\.codex\\generated_images\\01a11ab0-915b-7272-a91f-80695a74b222\\exec-b02074ea-05b0-430d-baa5-27fb89dc2b33.png",
+  "runtimeAsset": "tools\\shinya_hub\\assets\\hub-ui\\stun-penetration.png",
+  "packing": "Trim transparent outer margins; resize to fit 176 px; retain transparency on a 192 px canvas. No repainting.",
+  "style": "Official tool icon reference: rounded geometric forms, light mint/cyan gradient, soft grounding shadow. One icon reused by all STUN rule cards.",
+  "prompt": "Create ONE original STUN/network penetration tool icon matching the attached official mobile tool icons. Match their exact restrained 2.5D visual language: clean geometric forms with softly rounded corners, light pastel-to-bright gradient, a very faint compact blurred grounding shadow, friendly and minimal, crisp at 44 dp. It must look as if it belongs beside the remote-desktop mint icon and the scheduled-restart blue icon in the reference. Design a compact diagonal network connection: two small rounded endpoint blocks, one upper left, one lower right, connected by two elegant open rounded corner paths forming a loose square network route. Main colors mint/aqua (#70EBDD to #00CDB8), with a small pale blue accent. Keep the negative center spacious and the silhouette balanced; very few shapes, no big arrow or doorway, no circular Steam-like logo. Soft graphic depth ONLY like the reference, not a rendered object: no metal, no gloss, no realistic equipment, no neon glow, no heavy bevels, no thick perspective. No text, no lettering, no labels, no switches, no background panel or app tile. Truly transparent background. Square centered composition with generous clear margin. Deliver a single polished icon, not a grid or choices. All STUN cards will use this same exact icon."
+}

@@ -29,3 +29,7 @@ __pycache__/
 # Anchored to the repo root on purpose: a bare `test/` would also swallow
 # `app/src/test/`, which is real source.
 /test/
+.superdesign/tmp/
+
+# Generated Hermes bundle from a patch run, not source.
+/tools/shinya_hub/*.bundle

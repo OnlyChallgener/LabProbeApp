@@ -1,0 +1,9 @@
+{
+  "tool": "image_gen.imagegen",
+  "reference": "C:/Users/admin/.codex/generated_images/01a11ab0-915b-7272-a91f-80695a74b222/exec-67cf3489-5020-474c-aa60-436e8125f884.png",
+  "generatedSource": "C:\\Users\\admin\\.codex\\generated_images\\01a11ab0-915b-7272-a91f-80695a74b222\\exec-00874815-b7dc-4d09-875b-990313dc9bf6.png",
+  "runtimeAsset": "tools\\shinya_hub\\assets\\hub-ui\\stun-penetration.png",
+  "packing": "Trim transparent outer margins; resize to fit 176 px; retain alpha on a 192 px canvas. No repainting.",
+  "style": "User-selected blue nodes and circular arcs, subtly refined; blue remains distinct from teal buttons. All cards reuse this icon.",
+  "prompt": "Use case: precise-object-edit. Input image 1 is the edit target, a blue circular STUN network icon chosen by the user. Refine this exact icon very slightly for a polished Android utility card. Preserve its two diagonal round nodes, smooth connecting curve, two open surrounding circular arcs, overall proportions, orientation, simplicity, and recognizable silhouette. Clean the edges and remove all stray speckles or ragged transparent halos. Make the arc stroke weights and round ends consistent and the circle nodes clean. Keep the cyan-blue color clearly distinct from turquoise-green UI buttons: cool blue #159DDF with only a very restrained blue variation if needed. Remain essentially flat and simple; no 3D, no metallic look, no bevels, no strong gloss, no shadow, no added elements or text, no Steam logo imitation. Preserve a truly transparent background with crisp clean alpha edges. One centered square icon with a compact silhouette and generous transparent margins, readable at 44 dp. Deliver the single refined icon, no options."
+}

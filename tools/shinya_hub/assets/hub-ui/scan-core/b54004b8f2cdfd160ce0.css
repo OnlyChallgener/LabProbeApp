@@ -1,0 +1,75 @@
+@font-face {
+  font-family: "iconfont"; /* Project id 4482163 */
+  src: url('iconfont.woff2?t=1720781915191') format('woff2'),
+       url('iconfont.woff?t=1720781915191') format('woff'),
+       url('iconfont.ttf?t=1720781915191') format('truetype');
+}
+
+.iconfont {
+  font-family: "iconfont" !important;
+  font-size: 16px;
+  font-style: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.icon-refresh:before {
+  content: "\e621";
+}
+
+.icon-circle-plus:before {
+  content: "\e620";
+}
+
+.icon-arrow:before {
+  content: "\e61f";
+}
+
+.icon-phone:before {
+  content: "\e61e";
+}
+
+.icon-zoom-fit:before {
+  content: "\e61d";
+}
+
+.icon-up-rate-arrow:before {
+  content: "\e61b";
+}
+
+.icon-down-rate-arrow:before {
+  content: "\e61c";
+}
+
+.icon-gengduo:before {
+  content: "\e77a";
+}
+
+.icon-warning:before {
+  content: "\e61a";
+}
+
+.icon-position:before {
+  content: "\e619";
+}
+
+.icon-a-Group427321814:before {
+  content: "\e618";
+}
+
+.icon-sta-black:before {
+  content: "\e617";
+}
+
+.icon-topo-arrow:before {
+  content: "\e614";
+}
+
+.icon-appliance:before {
+  content: "\e615";
+}
+
+.icon-camera:before {
+  content: "\e616";
+}
+
