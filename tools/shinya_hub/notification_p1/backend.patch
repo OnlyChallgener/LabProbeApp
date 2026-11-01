@@ -146,7 +146,38 @@
  ACTIVITY_THRESHOLD_MINUTES = 10
  PAYMENT_MERGE_SECONDS = 1800
  CONFIRMED_IDLE_SECONDS = 120
-@@ -217,6 +217,11 @@
+@@ -49,7 +49,9 @@
+         if self.cooldown is None or self.max_age is None or self.max_age <= 0:
+             raise ValueError('invalid notification timing')
+         if catalog_rows is None:
+-            catalog_rows = json.loads((Path(__file__).parent / 'resources/official_apps.json').read_text(encoding='utf-8'))['rows']
++            from .catalog import AppCatalog
++            catalog = AppCatalog()
++            catalog_rows = catalog.official + catalog.extra
+         self.by_id = {r['id']: dict(r) for r in catalog_rows if isinstance(r, dict) and isinstance(r.get('id'), str)}
+         names = {}
+         for row in self.by_id.values():
+@@ -90,7 +92,18 @@
+         if raw_id is not None:
+             return self.by_id.get(str(raw_id))
+         raw = row.get('app')
+-        return self.by_id.get(raw) or self.by_name.get(raw) if isinstance(raw, str) else None
++        if not isinstance(raw, str):
++            return None
++        direct = self.by_id.get(raw) or self.by_name.get(raw)
++        if direct is not None:
++            return direct
++        # Reuse child-report's verified firmware alias/metadata mapping.
++        # Never guess a category or replace a declared unknown app ID.
++        from .children import ChildrenService
++        mapped = ChildrenService.report_app(raw, self.by_name)
++        if not mapped or not isinstance(mapped.get('id'), str):
++            return None
++        return self.by_id.get(mapped['id']) or {**mapped, 'showName': raw}
+ 
+     def _samples(self, report, observed, now):
+         result = {c: [] for c in CATEGORIES}
+@@ -217,6 +230,11 @@
          Only that evidence can confirm a >=2 minute inactive break. Without it,
          missing samples pause an episode; they cannot invent a new episode.
          """

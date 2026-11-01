@@ -26,6 +26,18 @@ class Tests(unittest.TestCase):
             {'id':'18-1-1-0','type':'0006','showName':'微信支付'}])
         self.now=1793502000//60*60
 
+    def test_child_report_verified_alias_is_shared(self):
+        self.engine.by_id['douyin']={'id':'douyin','type':'0002','showName':'抖音系列'}
+        self.engine.by_name['抖音系列']=self.engine.by_id['douyin']
+        self.assertEqual(self.engine._app({'app':'抖音'})['id'],'douyin')
+        self.assertIsNone(self.engine._app({'appId':'unknown','app':'抖音'}))
+
+    def test_default_catalog_reuses_child_supplemental_entries(self):
+        from shinya_hub.catalog import AppCatalog
+        actual=AssistantNotifications(self.store)
+        for row in AppCatalog().extra:
+            self.assertEqual(actual._app({'appId':row['id']})['id'],row['id'])
+
     def tearDown(self):self.temp.cleanup()
 
     def rule(self,**values):return merge_rule({},values,self.now)
