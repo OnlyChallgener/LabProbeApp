@@ -41,6 +41,9 @@ def save(engine, db, key, device, kind, category, token, payload, now):
     value = {**payload, 'eventId': token, 'eventKey': token, 'recordKind': kind,
              'category': category, 'projectScope': key.project, 'sn': key.sn,
              'deviceId': device, 'schemaVersion': 2}
+    if kind == 'activity' and old and old.get('endConfirmed') is True and not value.get('endConfirmed'):
+        # A later incomplete snapshot cannot reopen a confirmed ended source event.
+        return None
     if old and all(old.get(name) == val for name, val in value.items()): return None
     created = payload.get('startTime' if kind == 'activity' else 'triggeredAt', int(now*1000))/1000
     value.update(createTime=old.get('createTime') if old else int(created*1000),
@@ -85,14 +88,18 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
             ranges.append({'appId':app['id'],'appName':app['showName'],'category':category,
                 'start':start,'end':end,'active':active,'located':active==end-start and report.get('basis')=='minutes',
                 'sourceEventId':session.get('eventId') or session.get('sessionId'),
-                'endConfirmed':session.get('endConfirmed') is True})
+                'endConfirmed':session.get('endConfirmed') is True,
+                'ongoing':session.get('ongoing') is True and session.get('endConfirmed') is not True})
     ranges.sort(key=lambda sample:(sample['start'],sample['end'],sample['appId']))
     emitted=[];scope=(key.tenant,key.project,key.sn)
     with engine.store.atomic(), engine.store.connect() as db:
+        from .notification_trigger_rules import revise_ended
+        revise_ended(engine,db,key,device,now)
         # Source activity and reminder delivery state use different identities.
         for sample in ranges:
             token=identity(*scope,device,'activity',sample['appId'],sample['sourceEventId'] or sample['start'])
-            ongoing=not sample['endConfirmed'] and fresh and 0 <= observed-sample['end'] <= 120
+            # Recency is not proof of an ongoing application session.
+            ongoing=sample['ongoing'] and not sample['endConfirmed'] and fresh and 0 <= observed-sample['end'] <= 120
             time_kind='confirmedSession' if sample['endConfirmed'] and sample['sourceEventId'] else 'observedRange'
             payload={'projectId':project_id or key.project,'deviceName':name,
                 'appId':sample['appId'],'appName':sample['appName'],
@@ -100,7 +107,7 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
                     {'startTime':int(sample['start']*1000),'lastActivityTime':int(sample['end']*1000),
                      'endTime':int(sample['end']*1000) if time_kind=='confirmedSession' else None,'timeKind':time_kind}]}],
                 'startTime':int(sample['start']*1000),'lastActivityTime':int(sample['end']*1000),
-                'ongoing':ongoing,'timeKind':time_kind,'sourceEventId':sample['sourceEventId'],
+                'ongoing':ongoing,'ongoingSourceConfirmed':sample['ongoing'],'endConfirmed':sample['endConfirmed'],'timeKind':time_kind,'sourceEventId':sample['sourceEventId'],
                 'source':'children.report.sessionRanges'}
             save(engine,db,key,device,'activity',sample['category'] or 'activity',token,payload,now)
         if not unused.get('history_only'):

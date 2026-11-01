@@ -74,10 +74,19 @@ final class HubNotifySettings {
         input.setBackground(bg(a,0xfff0f4f6,8));input.setPadding(dp(a,12),dp(a,7),dp(a,12),dp(a,7));body.addView(input,new LinearLayout.LayoutParams(dp(a,88),dp(a,40)));body.addView(text(a,"  分钟",14,INK));
         HubDialog.show(a,"提醒时长",body,"取消","保存",dialog->{String raw=input.getText().toString();if(!raw.matches("[0-9]{1,4}")||Integer.parseInt(raw)<1||Integer.parseInt(raw)>1440){Toast.makeText(a,"请输入1—1440的整数分钟",0).show();return;}try{draft.put(field,Integer.parseInt(raw));label.setText(raw+"分钟 ›");dialog.dismiss();}catch(Exception ignored){}});
     }
+    static final class AppSelection {
+        final Set<String> available=new LinkedHashSet<>(),chosen=new LinkedHashSet<>();
+        boolean all;
+        AppSelection(boolean selectAll,Collection<String> ids,Collection<String> saved){available.addAll(ids);chosen.addAll(saved);setAll(selectAll);}
+        void setAll(boolean value){all=value;if(value)chosen.addAll(available);}
+        void select(String id,boolean value){if(!available.contains(id))return;if(value)chosen.add(id);else{chosen.remove(id);all=false;}}
+        boolean selected(String id){return all||chosen.contains(id);}
+        Set<String> saved(){return all?Collections.emptySet():new TreeSet<>(chosen);}
+    }
     private static void applications(Activity a,int category,JSONObject draft,JSONArray catalog,Icon icons,TextView count){
         String allKey=category==3?"allServices":"allApps";final JSONObject edit;
         try{edit=new JSONObject(draft.toString());}catch(Exception bad){return;}
-        LinearLayout content=col(a);LinearLayout all=row(a,category==3?"全部支付服务":"关注该类别全部应用","");toggle(a,all,edit,allKey,true);content.addView(all);
+        LinearLayout content=col(a);LinearLayout all=row(a,category==3?"全部支付服务":"关注该类别全部应用","");Switch allToggle=toggle(a,all,edit,allKey,true);content.addView(all);
         Set<String> chosen=new HashSet<>();JSONArray ids=edit.optJSONArray("appIds");if(ids!=null)for(int i=0;i<ids.length();i++)chosen.add(ids.optString(i));
         String type=category==1?"0003":category==2?"0002":"0005";int total=0;
         List<JSONObject> available=new ArrayList<>();
@@ -86,19 +95,24 @@ final class HubNotifySettings {
             if(category==3?!Arrays.asList("18-1-1-0","18-156-1-0").contains(id):!type.equals(app.optString("type")))continue;
             available.add(app);
         }
+        Set<String> availableIds=new LinkedHashSet<>();for(JSONObject app:available)availableIds.add(app.optString("id"));
+        AppSelection selection=new AppSelection(edit.optBoolean(allKey,true),availableIds,chosen);
+        Map<String,CheckBox> boxes=new LinkedHashMap<>();boolean[] painting={false};
+        Runnable repaint=()->{painting[0]=true;allToggle.setChecked(selection.all);for(Map.Entry<String,CheckBox> entry:boxes.entrySet())entry.getValue().setChecked(selection.selected(entry.getKey()));painting[0]=false;};
+        allToggle.setOnCheckedChangeListener((button,on)->{if(painting[0])return;selection.setAll(on);repaint.run();});
         final int[] shown={0};TextView more=action(a,"更多应用");content.addView(more);
         Runnable append=()->{
             int end=Math.min(available.size(),shown[0]+30);
             while(shown[0]<end){JSONObject app=available.get(shown[0]++);String id=app.optString("id");
                 LinearLayout r=row(a,app.optString("showName"),"");ImageView image=new ImageView(a);image.setImageDrawable(icons.get(id));image.setScaleType(ImageView.ScaleType.FIT_CENTER);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(a,30),dp(a,30));lp.rightMargin=dp(a,10);r.addView(image,0,lp);
                 icons.load(id,image);
-                CheckBox box=new CheckBox(a);box.setChecked(chosen.contains(id));r.addView(box);box.setOnCheckedChangeListener((button,on)->{if(on)chosen.add(id);else chosen.remove(id);});r.setOnClickListener(v->box.setChecked(!box.isChecked()));content.addView(r,content.indexOfChild(more));
+                CheckBox box=new CheckBox(a);box.setChecked(selection.selected(id));boxes.put(id,box);r.addView(box);box.setOnCheckedChangeListener((button,on)->{if(painting[0])return;selection.select(id,on);repaint.run();});r.setOnClickListener(v->box.setChecked(!box.isChecked()));content.addView(r,content.indexOfChild(more));
             }
             more.setVisibility(shown[0]<available.size()?View.VISIBLE:View.GONE);
         };more.setOnClickListener(v->append.run());append.run();
         if(available.isEmpty())content.addView(text(a,"暂无可选应用",14,MUTED));
         Dialog dialog=sheet(a,"关注应用",content);LinearLayout footer=new LinearLayout(a);TextView cancel=action(a,"取消"),save=action(a,"保存");footer.addView(cancel,new LinearLayout.LayoutParams(0,-2,1));footer.addView(save,new LinearLayout.LayoutParams(0,-2,1));content.addView(footer);
-        cancel.setOnClickListener(v->dialog.dismiss());save.setOnClickListener(v->{try{draft.put(allKey,edit.optBoolean(allKey,true));draft.put("appIds",new JSONArray(new TreeSet<>(chosen)));count.setText(draft.optBoolean(allKey,true)?"全部 ›":chosen.size()+"个 ›");dialog.dismiss();}catch(Exception ignored){}});
+        cancel.setOnClickListener(v->dialog.dismiss());save.setOnClickListener(v->{try{draft.put(allKey,selection.all);draft.put("appIds",new JSONArray(selection.saved()));count.setText(selection.all?"全部 ›":selection.saved().size()+"个 ›");dialog.dismiss();}catch(Exception ignored){}});
     }
     static void edit(Activity a,int category,JSONObject rule,JSONArray catalog,Icon icons,Save save){
         final JSONObject draft;try{JSONObject config=rule.optJSONObject("settings");draft=new JSONObject(config==null?"{}":config.optJSONObject(KEYS[category])==null?"{}":config.getJSONObject(KEYS[category]).toString());}catch(Exception invalid){return;}

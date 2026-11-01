@@ -7,6 +7,35 @@ from .daily import CHINA
 from .notification_preferences import configuration, selected
 
 
+def end_summary(first, last, active_seconds=None):
+    """Observed network interval, never screen time or the ten-minute grace period."""
+    start = datetime.fromtimestamp(first, CHINA)
+    end = datetime.fromtimestamp(last, CHINA)
+    pattern = '%H:%M' if start.date() == end.date() else '%m-%d %H:%M'
+    content = '用网时段 '+start.strftime(pattern)+'—'+end.strftime(pattern)
+    if active_seconds is not None:
+        content += '，累计网络活动 '+format(active_seconds/60, '.1f').rstrip('0').rstrip('.')+' 分钟'
+    return content
+
+
+def revise_ended(engine, db, key, device, now):
+    # Enrich an existing event in place. Do not merge episodes or enqueue a new reminder.
+    from .notification_activity import save, identity
+    rows = db.execute("SELECT event_key,payload FROM assistant_activity_events WHERE tenant=? AND project=? AND sn=? AND device=? AND category='usage'",
+                      (key.tenant,key.project,key.sn,device)).fetchall()
+    for row in rows:
+        old = json.loads(row['payload'])
+        first, last = old.get('startTime'), old.get('lastActivityTime')
+        if old.get('recordKind') != 'reminder' or old.get('ruleKind') != 'end': continue
+        if type(first) not in (int,float) or type(last) not in (int,float) or not 0 < first < last: continue
+        fields = ('eventId','eventKey','recordKind','category','projectScope','sn','deviceId','schemaVersion','createTime','updatedAt','newReminder','id','revisionSeq')
+        payload = {k:v for k,v in old.items() if k not in fields}
+        payload.update(content=end_summary(first/1000,last/1000,old.get('activeSeconds')),
+                       endTime=last, sessionId=identity(key.tenant,key.project,key.sn,device,'network-session',int(first/1000)),
+                       sessionIdentityBasis='observedIntervals')
+        save(engine,db,key,device,'reminder','usage',row['event_key'],payload,now)
+
+
 def night(intervals):
     for start, end in intervals:
         day = datetime.fromtimestamp(start, CHINA).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -54,8 +83,9 @@ def trigger(engine, db, key, device, name, rule, report, ranges, observed, onlin
             labels = {'start': '设备开始用网提醒', 'end': '设备结束用网提醒', 'night': '设备深夜用网提醒',
                       'long': '设备长时间用网提醒', 'duration': {'game': '游戏提醒', 'video': '视频提醒', 'social': '社交提醒'}.get(category),
                       'access': '支付类访问提醒'}
+            active_seconds = sum(b-a for a,b in episode.get('intervals', []))
             content = ('检测到设备连续网络活动' if kind == 'start' else
-                       '连续10分钟未检测到有效网络活动' if kind == 'end' else
+                       end_summary(episode['first'],episode['last'],active_seconds or None) if kind == 'end' else
                        '检测到22:00—06:00期间的网络活动' if kind == 'night' else
                        '连续网络活动累计达到'+str(settings['longMinutes'])+'分钟' if kind == 'long' else
                        '检测到'+app.get('appName', '')+'服务访问，不代表已完成付款' if kind == 'access' else
@@ -66,6 +96,10 @@ def trigger(engine, db, key, device, name, rule, report, ranges, observed, onlin
                        'startTime': int(episode['first']*1000), 'lastActivityTime': int(episode['last']*1000),
                        'triggeredAt': int((access if access is not None else episode['last']+600 if kind=='end' else episode['last'])*1000), 'accessTime': int(access*1000) if access is not None else None,
                        'source': 'children.report.sessionRanges', 'measurementBasis': 'observed-network-activity'}
+            if category == 'usage':
+                payload.update(sessionId=identity(*scope,device,'network-session',int(episode['first'])),
+                               sessionIdentityBasis='observedIntervals',activeSeconds=active_seconds,
+                               endTime=int(episode['last']*1000) if kind == 'end' else None)
             value = save(engine, db, key, device, 'reminder', category, token, payload, now)
             if value:
                 emitted.append(value)

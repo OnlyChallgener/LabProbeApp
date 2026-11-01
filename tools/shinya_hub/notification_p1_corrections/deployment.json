@@ -1,0 +1,13 @@
+{
+  "backup": "/data/notification-p1-corrections-backup-1793544380",
+  "files": {
+    "notification_trigger_rules.py": {
+      "before": "5e659c8dc0ec2545263cfadfb85957d4a191c2c86f24e3e0fa31d7a3163d788c",
+      "after": "f5efa68dc667117ce579c77688ae51cdee68ee633052735fb93ebaf20fe7d247"
+    },
+    "notification_activity.py": {
+      "before": "8e9732b9dba1ba3d7d027568ab575a780c8a790ceb7e2f31cc30bbc8e552a8ba",
+      "after": "c84879132521018650574de31aec3669e0590d8dc001196a2f4147610ab546ed"
+    }
+  }
+}
