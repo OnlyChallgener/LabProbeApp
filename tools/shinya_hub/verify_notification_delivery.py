@@ -63,6 +63,7 @@ public class ReceiverCheck {
   static void channels(Object c){}
  }
  static class Store {
+  /*CURRENT_INGEST*/
   long cursor;Map<String,JSONObject> rows=new LinkedHashMap<>();Set<String> posted=new HashSet<>();
   long footprintCursor(String scope){return cursor;}
   void ingestFootprints(String scope,JSONObject r,long cutoff)throws Exception {cursor=r.getLong("cursor");JSONArray a=r.getJSONArray("items");for(int i=0;i<a.length();i++){JSONObject e=a.getJSONObject(i);rows.put(e.getString("eventKey"),e);}}
@@ -94,6 +95,8 @@ public class ReceiverCheck {
   ReceiverCheck pages=new ReceiverCheck();session=new HubToolSession();run=new Run(session,1);
   session.responses.add(response(1,true,event("a")));session.responses.add(response(2,false,event("b")));
   pages.poll(run);check(pages.summaries==0);pages.poll(run);check(pages.summaries==1&&pages.lastCount==2);
+  ReceiverCheck stale=new ReceiverCheck();session=new HubToolSession();run=new Run(session,1);stale.store.cursor=5;
+  session.responses.add(response(4,false,event("old")));stale.poll(run);check(stale.store.cursor==5&&stale.store.rows.isEmpty()&&stale.summaries==0);
   ReceiverCheck logout=new ReceiverCheck();session=new HubToolSession();run=new Run(session,1);
   session.responses.add(response(1,false,event("private")));session.hook=()->logout.valid=false;logout.poll(run);check(logout.store.rows.isEmpty()&&logout.summaries==0);
   ReceiverCheck error=new ReceiverCheck();session=new HubToolSession();session.fail=true;run=new Run(session,1);
@@ -101,6 +104,9 @@ public class ReceiverCheck {
   System.out.println("PASS: actual receiver control flow / one catch-up summary / paging / revisions / permission / old session / backoff");
  }
 }'''
+
+store_source=(ROOT/'HubAssistantMessageStore.java').read_text(encoding='utf8')
+program=program.replace('/*CURRENT_INGEST*/',store_source[store_source.index('    synchronized boolean ingestFootprintsIfCurrent('):store_source.index('    synchronized void ingestFootprints(')])
 
 with tempfile.TemporaryDirectory(prefix='hub-receiver-jvm-') as temp:
     work=Path(temp)

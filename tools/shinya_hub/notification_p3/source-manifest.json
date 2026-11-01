@@ -9,11 +9,11 @@
   },
   "android/HubAssistantMessageStore.java": {
     "before": "95194d770c39088ea46b9a9d3c8368a63ad7b1d3849035e93236662482834e84",
-    "after": "ca28c7d2eecc5b5bbebf0277213016cf8d280ecbba90ba2d8023afe40ac612cc"
+    "after": "000fd6b681c9b9f2b0bcd71c05703d51fac249cbe4a65f058c0b01e63b191f98"
   },
   "android/HubAssistantNotifications.java": {
     "before": "2446d132abde8fbc7bab25b74d6bfade98636bb99dce079c5903416f10fbf2bf",
-    "after": "a38bdfd2df6d86425820719abfb70edefb47252344f6432e8536cb86a1557b5c"
+    "after": "928687cb972c6e0713e0a0d46fadeb826e1a91070088d975d34800ee2e14d2db"
   },
   "android/HubAssistantNotificationService.java": {
     "before": "f3342e8db9ec218712c800b77af85dbbb54c0853ac1e85e2d0e289209e003aef",
@@ -21,11 +21,11 @@
   },
   "android/HubNotifySettings.java": {
     "before": "9ca528627621271502c50cc99969cdfcb2e974259e1027a77b7a2e00ee45c666",
-    "after": "14deeeec2919d82d294fa4cc136ad6c76fa0acd437c8b36ffb68087901955b4e"
+    "after": "d97f8ee8f20b14953aa0437e1bf7da7aa8ed61774f24b7eaf7ae7897921a81b2"
   },
   "android/HubPages.java": {
     "before": "7880d8f9d521bda1370999c571d70b1c0c01f047d12141fc489bc23bd5864266",
-    "after": "739c8eb0e68acfe2bc2861ff35ce271027173aa0df3a9bb02913b222a561f6e2"
+    "after": "f4cbab230f1404048c76fe05a6280a18db9c534a7a522dbc2e4038de84344167"
   },
   "android/HubStationModule.java": {
     "before": "7906fbed25a781e83fa70825a33f0d5dd5c3b134a56a931e2dc6c9424024e68e",

@@ -58,7 +58,7 @@ final class HubNotificationReceiver {
                 call=pending;if(pending!=null&&!current(id,owner))pending.cancel();
             });
             if(!current(id,owner))return;
-            synchronized(store){if(response.getLong("cursor")>=store.footprintCursor(scope))store.ingestFootprints(scope,response,cutoff());}
+            store.ingestFootprintsIfCurrent(scope,response,cutoff());
             boolean more=response.optBoolean("hasMore",false);
             if(!more){run.firstPoll=false;
                 JSONArray pending=store.pendingNotices(scope,cutoff());

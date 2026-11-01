@@ -32,9 +32,9 @@ def trigger(engine, db, key, device, name, rule, report, ranges, observed, onlin
         field = 'enable' if category == 'usage' else category
         settings = config[field]
         enabled = rule.get(field) is True
-        version = versions.get(field) or rule.get('updatedAt') or now
         ident = (*scope, device, category)
         previous = db.execute('SELECT * FROM assistant_activity_baselines WHERE tenant=? AND project=? AND sn=? AND device=? AND category=?', ident).fetchone()
+        version = versions.get(field) or rule.get('updatedAt') or (previous['rule_version'] if previous else now)
         old = json.loads(previous['state']) if previous else {}
         reset = (previous is None or previous['rule_version'] != version or not previous['enabled']
                  or old.get('triggerVersion') != 3)

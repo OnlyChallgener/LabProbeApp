@@ -16,6 +16,25 @@ final class HubNotifySettings {
     static final int INK=0xff232529,MUTED=0xff92989e,TEAL=0xff26bcbf;
     interface Save { void run(JSONObject patch,Dialog dialog,TextView button); }
     interface Icon { Drawable get(String appId); }
+    interface Request { JSONObject run(JSONObject value)throws Exception; }
+    static final class Saved {
+        final JSONObject actual;final boolean reconciled;
+        Saved(JSONObject value,boolean readBack){actual=value;reconciled=readBack;}
+    }
+    private static JSONObject checkedRule(JSONObject value)throws Exception{
+        for(String key:KEYS)value.getBoolean(key);
+        value.getJSONObject("settings");return value;
+    }
+    static Saved saveRule(Request request,JSONObject patch){
+        try{return new Saved(checkedRule(request.run(new JSONObject(patch.toString()).put("action","save"))),false);}
+        catch(Exception uncertain){
+            try{
+                JSONObject read=new JSONObject().put("action","read").put("projectId",patch.getString("projectId"))
+                    .put("sn",patch.getString("sn")).put("mac",patch.getString("mac"));
+                return new Saved(checkedRule(request.run(read)),true);
+            }catch(Exception unavailable){return new Saved(null,true);}
+        }
+    }
     private static int dp(Activity a,int n){return HubDialog.dp(a,n);}
     private static TextView text(Activity a,String value,int size,int color){return HubDialog.text(a,value,size,color);}
     private static LinearLayout col(Activity a){LinearLayout v=new LinearLayout(a);v.setOrientation(1);return v;}

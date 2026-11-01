@@ -85,19 +85,59 @@
      }
      synchronized String chat(String owner,String scope){
          try(Cursor c=getReadableDatabase().rawQuery("SELECT payload FROM chats WHERE owner=? AND scope=?",new String[]{owner,scope})){
+@@ -57,6 +88,10 @@
+         try(Cursor c=getReadableDatabase().rawQuery("SELECT cursor FROM footprint_cursors WHERE owner=?",new String[]{owner})){
+             return c.moveToFirst()?c.getLong(0):0;
+         }
++    }
++    synchronized boolean ingestFootprintsIfCurrent(String owner,JSONObject response,long cutoff)throws Exception{
++        if(response.getLong("cursor")<footprintCursor(owner))return false;
++        ingestFootprints(owner,response,cutoff);return true;
+     }
+     synchronized void ingestFootprints(String owner,JSONObject response,long cutoff)throws Exception{
+         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+@@ -79,6 +114,17 @@
+             db.setTransactionSuccessful();
+         }finally{db.endTransaction();}
+     }
++    private final java.util.LinkedHashMap<String,String> footprintMemory=new java.util.LinkedHashMap<>(16,0.75f,true);
++    synchronized JSONArray peekFootprints(String owner,String project,long cutoff)throws Exception{
++        String raw=footprintMemory.get(owner+"\n"+project);if(raw==null)return null;
++        JSONArray result=new JSONArray(),rows=new JSONArray(raw);
++        for(int i=0;i<rows.length();i++){JSONObject item=rows.getJSONObject(i);if(item.optLong("createTime")>=cutoff)result.put(item);}
++        return result;
++    }
++    synchronized void rememberFootprints(String owner,String project,JSONArray rows){
++        footprintMemory.put(owner+"\n"+project,rows.toString());
++        while(footprintMemory.size()>16)footprintMemory.remove(footprintMemory.keySet().iterator().next());
++    }
+     synchronized JSONArray footprints(String owner,String project,long cutoff)throws Exception{
+         SQLiteDatabase db=getWritableDatabase();
+         db.execSQL("DELETE FROM footprints WHERE owner=? AND created<?",new Object[]{owner,cutoff});
+@@ -86,7 +132,7 @@
+         try(Cursor c=db.rawQuery("SELECT payload FROM footprints WHERE owner=? AND project=? AND created>=? ORDER BY created DESC,seq DESC",new String[]{owner,project,Long.toString(cutoff)})){
+             while(c.moveToNext())result.put(new JSONObject(c.getString(0)));
+         }
+-        return result;
++        rememberFootprints(owner,project,result);return result;
+     }
+     static String required(JSONObject item,String key)throws Exception {
+         Object raw=item.opt(key);
 --- a/HubAssistantNotifications.java
 +++ b/HubAssistantNotifications.java
-@@ -35,6 +35,9 @@
+@@ -34,7 +34,10 @@
+     private final SharedPreferences hubSettings;
      private final SharedPreferences.OnSharedPreferenceChangeListener settingsListener;
      private final Handler main=new Handler(Looper.getMainLooper());
-     private boolean disposed;
+-    private boolean disposed;
++    private volatile boolean disposed;
 +    private final HubNotificationReceiver receiver;
 +    void pages(HubPages pages){receiver.pages(pages);}
 +    static void sessionReady(){HubAssistantNotifications bridge=active.get();if(bridge!=null)bridge.main.postDelayed(()->{if(!bridge.disposed)resume(bridge.context,bridge.context.getCurrentActivity());},300);}
      private HubToolSession bannerSession, actionSession;
      private String bannerProject="";
      private JSONArray bannerItems=new JSONArray();
-@@ -83,7 +86,7 @@
+@@ -83,13 +86,14 @@
      }
      private static long lastStartAttempt;
      public HubAssistantNotifications(ReactApplicationContext context) {
@@ -106,7 +146,15 @@
          hubSettings=context.getSharedPreferences("labprobe_hub",0);
          settingsListener=(settings,key)->{
              if("base_url".equals(key)||"login_account".equals(key)||"tls_pin_sha256".equals(key)||key!=null&&key.startsWith("pin:"))stop(context);
-@@ -116,7 +119,7 @@
+         };
+         hubSettings.registerOnSharedPreferenceChangeListener(settingsListener);
+-        active=new WeakReference<>(this);context.addActivityEventListener(this);context.addLifecycleEventListener(this);
++        synchronized(HubAssistantNotifications.class){HubAssistantNotifications previous=active.get();if(previous!=null)previous.dispose();active=new WeakReference<>(this);}
++        context.addActivityEventListener(this);context.addLifecycleEventListener(this);
+     }
+     static HubToolSession selected()throws Exception {
+         HubToolSession session=HubToolSession.current();HubToolSession.requireCurrent(session);
+@@ -116,7 +120,7 @@
      static boolean permitted(Context context) {
          if(Build.VERSION.SDK_INT>=33&&context.checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED)return false;
          if(Build.VERSION.SDK_INT>=24&&!manager(context).areNotificationsEnabled())return false;
@@ -115,7 +163,7 @@
              NotificationChannel channel=manager(context).getNotificationChannel(id);
              if(channel!=null&&channel.getImportance()==NotificationManager.IMPORTANCE_NONE)return false;
          }
-@@ -125,7 +128,7 @@
+@@ -125,7 +129,7 @@
      static NotificationManager manager(Context context) { return (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE); }
      static void channels(Context context) {
          if(Build.VERSION.SDK_INT<26)return;
@@ -124,7 +172,7 @@
              NotificationChannel channel=new NotificationChannel(id,CHANNEL.equals(id)?"关注设备消息":"关注设备消息连接",NotificationManager.IMPORTANCE_LOW);
              channel.setDescription(CHANNEL.equals(id)?"关注设备的新活动通知":"按您的设置持续连接 HUB 接收消息");
              channel.setSound(null,null);channel.enableVibration(false);channel.setShowBadge(false);
-@@ -151,7 +154,6 @@
+@@ -151,7 +155,6 @@
              String key=HubSnapshotKey.hash(project.trim(),mac.replace(":","").replace("-","").toLowerCase(java.util.Locale.ROOT));
              if(on)rules.add(key);else rules.remove(key);
              prefs(context).edit().putStringSet("rules-"+scope,rules).commit();
@@ -132,7 +180,7 @@
              resume(context,activity);
          } catch(Exception unavailable) { /* No in-app event popup or silent scope fallback. */ }
      }
-@@ -192,17 +194,19 @@
+@@ -192,17 +195,19 @@
      }
      /** Restart only while the app is visibly foreground, never a boot receiver. */
      public static void resume(Context context,Activity activity) {
@@ -154,7 +202,7 @@
          manager(context).cancel(ONGOING_ID);
      }
      static void post(Context context,HubToolSession session,JSONObject item)throws Exception {
-@@ -273,7 +277,7 @@
+@@ -273,7 +278,7 @@
              return true;
          }catch(Exception ignored){return false;}
      }
@@ -163,7 +211,7 @@
      @Override public void onActivityResult(Activity activity,int request,int result,Intent data){}
      @Override public void onHostResume(){
          main.postDelayed(()->{
-@@ -285,5 +289,5 @@
+@@ -285,5 +290,5 @@
      }
      @Override public void onHostPause(){}
      @Override public void onHostDestroy(){}
@@ -249,7 +297,33 @@
  }
 --- a/HubNotifySettings.java
 +++ b/HubNotifySettings.java
-@@ -100,7 +100,7 @@
+@@ -16,6 +16,25 @@
+     static final int INK=0xff232529,MUTED=0xff92989e,TEAL=0xff26bcbf;
+     interface Save { void run(JSONObject patch,Dialog dialog,TextView button); }
+     interface Icon { Drawable get(String appId); }
++    interface Request { JSONObject run(JSONObject value)throws Exception; }
++    static final class Saved {
++        final JSONObject actual;final boolean reconciled;
++        Saved(JSONObject value,boolean readBack){actual=value;reconciled=readBack;}
++    }
++    private static JSONObject checkedRule(JSONObject value)throws Exception{
++        for(String key:KEYS)value.getBoolean(key);
++        value.getJSONObject("settings");return value;
++    }
++    static Saved saveRule(Request request,JSONObject patch){
++        try{return new Saved(checkedRule(request.run(new JSONObject(patch.toString()).put("action","save"))),false);}
++        catch(Exception uncertain){
++            try{
++                JSONObject read=new JSONObject().put("action","read").put("projectId",patch.getString("projectId"))
++                    .put("sn",patch.getString("sn")).put("mac",patch.getString("mac"));
++                return new Saved(checkedRule(request.run(read)),true);
++            }catch(Exception unavailable){return new Saved(null,true);}
++        }
++    }
+     private static int dp(Activity a,int n){return HubDialog.dp(a,n);}
+     private static TextView text(Activity a,String value,int size,int color){return HubDialog.text(a,value,size,color);}
+     private static LinearLayout col(Activity a){LinearLayout v=new LinearLayout(a);v.setOrientation(1);return v;}
+@@ -100,7 +119,7 @@
      }
      static final class Records {
          final Activity a;final Dialog dialog;final LinearLayout list;final ScrollView scroll;final Icon icons;
@@ -258,7 +332,7 @@
          Records(Activity activity,Icon icon,Runnable refresh){
              a=activity;icons=icon;dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);LinearLayout root=col(a);root.setPadding(dp(a,16),dp(a,8),dp(a,16),dp(a,12));root.setBackgroundColor(0xfff0f5f8);
              LinearLayout heading=row(a,"通知记录","");TextView back=action(a,"‹ 返回"),reload=action(a,"刷新");heading.addView(back,0);heading.addView(reload);root.addView(heading);back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
-@@ -122,6 +122,9 @@
+@@ -122,6 +141,9 @@
                  if(line==null){line=new LinearLayout(a);line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,12));line.setBackground(bg(a,-1,10));ImageView image=new ImageView(a);image.setScaleType(ImageView.ScaleType.FIT_CENTER);line.addView(image,new LinearLayout.LayoutParams(dp(a,32),dp(a,32)));LinearLayout words=col(a);words.setPadding(dp(a,10),0,dp(a,8),0);words.addView(text(a,"",14,INK));words.addView(text(a,"",12,MUTED));line.addView(words,new LinearLayout.LayoutParams(0,-2,1));line.addView(text(a,"",12,MUTED));views.put(key,line);}
                  ((ImageView)line.getChildAt(0)).setImageDrawable(icons.get(event.optString("appId")));LinearLayout words=(LinearLayout)line.getChildAt(1);((TextView)words.getChildAt(0)).setText(event.optString("title"));((TextView)words.getChildAt(1)).setText(event.optString("content"));((TextView)line.getChildAt(2)).setText(time.format(new Date(event.optLong("createTime"))));place(line,position++);
              }
@@ -270,7 +344,37 @@
          void place(View view,int index){view.setVisibility(View.VISIBLE);if(view.getParent()!=list)list.addView(view,index);else if(list.indexOfChild(view)!=index){list.removeView(view);list.addView(view,index);}}
 --- a/HubPages.java
 +++ b/HubPages.java
-@@ -457,7 +457,9 @@
+@@ -51,6 +51,20 @@
+             return match;
+         }catch(Exception ignored){return "";}
+     }
++    static String footprintStoredRange(JSONObject app,long eventTime){
++        if(app==null||eventTime<=0)return "";
++        JSONArray ranges=app.optJSONArray("sessionRanges");if(ranges==null)return "";
++        String result="";java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("MM-dd HH:mm",Locale.CHINA);
++        date.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
++        for(int i=0;i<ranges.length();i++){
++            JSONObject range=ranges.optJSONObject(i);if(range==null||range.optLong("startTime")!=eventTime)continue;
++            String kind=range.optString("timeKind");long finish="confirmedSession".equals(kind)?range.optLong("endTime"):"observedRange".equals(kind)?range.optLong("lastActivityTime"):0;
++            if(finish<=eventTime)continue;
++            String text=("observedRange".equals(kind)?"活动范围 ":"")+date.format(new Date(eventTime))+" - "+date.format(new Date(finish));
++            if(!result.isEmpty()&&!result.equals(text))return "";result=text;
++        }
++        return result;
++    }
+     static boolean footprintSuperseded(JSONObject old,JSONArray rows){
+         if(old.optInt("schemaVersion")==2)return false;
+         JSONArray apps=old.optJSONArray("apps");
+@@ -60,7 +74,7 @@
+         long stamp=old.optLong("startTime",old.optLong("accessTime",old.optLong("createTime",0)));
+         for(int i=0;i<rows.length();i++){
+             JSONObject current=rows.optJSONObject(i);if(current==null||!"activity".equals(current.optString("recordKind")))continue;
+-            if(old.optString("deviceId").equals(current.optString("deviceId"))&&app.equals(current.optString("appId"))
++            if(old.optString("sn").equals(current.optString("sn"))&&old.optString("deviceId").equals(current.optString("deviceId"))&&app.equals(current.optString("appId"))
+                 &&stamp>=current.optLong("startTime")&&stamp<=current.optLong("lastActivityTime"))return true;
+         }
+         return false;
+@@ -457,7 +471,9 @@
          return resolveProjectAndSn(owner,project,"");
      }
  
@@ -281,7 +385,30 @@
          ui.post(() -> {
              Activity a = context.getCurrentActivity();
              if (a == null || a.isFinishing()) return;
-@@ -557,6 +559,7 @@
+@@ -538,18 +554,16 @@
+             Runnable loadFootprints=()->{
+                 final long request=++footprintRequest[0];
+                 final boolean manual=footprintManual[0];footprintManual[0]=false;
+-                final String project=resolved[0], mac=resolved[2].replace(":","").replace("-","").toLowerCase(Locale.ROOT), uid=resolved[3];
++                final String project=resolved[0], footprintSerial=resolved[1], mac=resolved[2].replace(":","").replace("-","").toLowerCase(Locale.ROOT), uid=resolved[3];
+                 if(project.isEmpty()){if(manual){footprintBusy[0]=false;footprintRefresh.setEnabled(true);footprintRefresh.setText("刷新");toast("刷新失败，请重试");}return;}
+-                try{worker.execute(()->{
+-                    final String[] outcome={"刷新失败，请重试"};
+-                    try{
++                try{
+                         String scope=HubAssistantNotifications.owner(owner);
+                         if(!HubAssistantNotifications.sameLogin(owner,HubAssistantNotifications.selected()))return;
+                         Calendar day=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));
+                         day.set(Calendar.HOUR_OF_DAY,0);day.set(Calendar.MINUTE,0);day.set(Calendar.SECOND,0);day.set(Calendar.MILLISECOND,0);day.add(Calendar.DAY_OF_MONTH,-2);
+                         long cutoff=day.getTimeInMillis();HubAssistantMessageStore journal=HubAssistantMessageStore.get(context);
+-                        JSONArray cached=journal.footprints(scope,project,cutoff);
+-                        final JSONArray[] visibleRecords={cached};
++                        JSONArray remembered=journal.peekFootprints(scope,project,cutoff);
++                        final JSONArray[] visibleRecords={remembered==null?new JSONArray():remembered};
+                         Runnable draw=()->{
+                             if(!active(id)||request!=footprintRequest[0])return;
+                             String signature=visibleRecords[0].toString()+"/"+uid+"/"+footprintIconRevision[0]+"/"+(footprintReports[0]==null?"":footprintReports[0].toString());
+@@ -557,10 +571,11 @@
                              footprintRendered[0]=signature;
                              java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("MM-dd HH:mm",Locale.CHINA);date.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
                              noticeData[0]=visibleRecords[0];
@@ -289,6 +416,89 @@
                              if(recordsPage[0]!=null)recordsPage[0].update(noticeData[0],resolved[1],resolved[2],resolved[3]);
                              JSONArray snapshot=visibleRecords[0];List<Object[]> ordered=new ArrayList<>();
                              for(int i=0;i<snapshot.length();i++){
+-                                JSONObject event=snapshot.optJSONObject(i);if(event==null||footprintSuperseded(event,snapshot))continue;
++                                JSONObject event=snapshot.optJSONObject(i);if(event==null||!footprintSerial.equals(event.optString("sn"))||footprintSuperseded(event,snapshot))continue;
+                                 String device=event.optString("deviceId");String norm=device.replace(":","").replace("-","").toLowerCase(Locale.ROOT);
+                                 if(!(norm.equals("mac"+mac)||(!uid.isEmpty()&&device.equalsIgnoreCase("user:"+uid))))continue;
+                                 JSONArray apps=event.optJSONArray("apps");StringBuilder names=new StringBuilder();
+@@ -590,7 +605,8 @@
+                                 long start=event.optLong("startTime",0),end=event.optLong("endTime",0),created=event.optLong("accessTime",event.optLong("createTime",0));
+                                 JSONObject only=apps!=null&&apps.length()==1?apps.optJSONObject(0):null;
+                                 String observed=only==null?"":footprintActivityRange(footprintReports[0],only.optString("appId"),start);
+-                                String when=start>0&&only!=null?date.format(new Date(start))+(end>0?" - "+date.format(new Date(end)):!observed.isEmpty()?" · 应用活动范围 "+observed:" · 结束时间未确认"):created>0?date.format(new Date(created)):"";
++                                String storedRange=footprintStoredRange(only,start);
++                                String when=!storedRange.isEmpty()?storedRange:start>0&&only!=null?date.format(new Date(start))+(end>0?" - "+date.format(new Date(end)):!observed.isEmpty()?" · 应用活动范围 "+observed:" · 结束时间未确认"):created>0?date.format(new Date(created)):"";
+                                 ordered.add(new Object[]{created,label+(names.length()>0?" · "+names:""),(who.isEmpty()?"":who+" · ")+when,only==null?event.optString("appId"):only.optString("appId"),only==null?"":only.optString("appName"),device,category});
+                             }
+                             Collections.sort(ordered,(left,right)->Long.compare((Long)right[0],(Long)left[0]));
+@@ -609,12 +625,20 @@
+                                 if(!detail.getText().toString().equals(entry[2]))detail.setText((String)entry[2]);
+                             }
+                             while(footprintLines.size()>ordered.size()){int last=footprintLines.size()-1;footprintRows.removeView(footprintLines.remove(last));footprintIcons.remove(last);footprintTitles.remove(last);footprintDetails.remove(last);}
++                            footprintEmpty.setText("暂无上网足迹");
+                             footprintEmpty.setVisibility(ordered.isEmpty()?View.VISIBLE:View.GONE);
+                         };
++                        // Re-entry paints memory before queuing disk/network work.
++                        if(remembered!=null){draw.run();android.util.Log.d("HubNotifyTiming","footprints memory painted before refresh queue");}else footprintEmpty.setText("正在读取上网足迹");
++                    worker.execute(()->{
++                    final String[] outcome={"刷新失败，请重试"};
++                    try{
++                        JSONArray cached=journal.footprints(scope,project,cutoff);
++                        ui.post(()->{if(!active(id)||request!=footprintRequest[0])return;visibleRecords[0]=cached;draw.run();});
+                         JSONObject cachedCatalog=owner.pageSnapshot(project,"","footprint-catalog");
+                         if(cachedCatalog!=null){
+                             JSONArray catalogRows=cachedCatalog.optJSONArray("rows");Set<String> ids=new HashSet<>();
+-                            for(int i=0;i<cached.length();i++){JSONObject event=cached.optJSONObject(i);if(event==null)continue;
++                            for(int i=0;i<cached.length();i++){JSONObject event=cached.optJSONObject(i);if(event==null||!footprintSerial.equals(event.optString("sn")))continue;
+                                 String device=event.optString("deviceId");String norm=device.replace(":","").replace("-","").toLowerCase(Locale.ROOT);
+                                 if(!(norm.equals("mac"+mac)||(!uid.isEmpty()&&device.equalsIgnoreCase("user:"+uid))))continue;
+                                 if(!event.optString("appId").isEmpty())ids.add(event.optString("appId"));
+@@ -631,7 +655,7 @@
+                             long cursor=journal.footprintCursor(scope);
+                             JSONObject feed=owner.request("hub/xiaoxing/notificationFeed",new JSONObject().put("after",cursor).put("limit",100));
+                             if(!HubAssistantNotifications.sameLogin(owner,HubAssistantNotifications.selected()))return;
+-                            journal.ingestFootprints(scope,feed,cutoff);
++                            journal.ingestFootprintsIfCurrent(scope,feed,cutoff);
+                             if(!feed.optBoolean("hasMore")){complete=true;break;}
+                         }
+                         if(!complete)throw new java.io.IOException("Reminder feed incomplete");
+@@ -656,7 +680,7 @@
+                             JSONObject catalog=owner.request("netguard/appInfo/getAppList",new JSONObject().put("projectId",project));
+                             if(catalog.optJSONArray("rows")!=null)owner.savePageSnapshot(project,"","footprint-catalog",catalog);
+                             JSONArray catalogRows=catalog.optJSONArray("rows");Set<String> requested=new HashSet<>();
+-                            for(int i=0;i<updated.length();i++){JSONObject event=updated.optJSONObject(i);if(event==null)continue;
++                            for(int i=0;i<updated.length();i++){JSONObject event=updated.optJSONObject(i);if(event==null||!footprintSerial.equals(event.optString("sn")))continue;
+                                 String device=event.optString("deviceId");String norm=device.replace(":","").replace("-","").toLowerCase(Locale.ROOT);
+                                 if(!(norm.equals("mac"+mac)||(!uid.isEmpty()&&device.equalsIgnoreCase("user:"+uid))))continue;
+                                 if(!event.optString("appId").isEmpty())requested.add(event.optString("appId"));
+@@ -675,7 +699,7 @@
+                         }catch(Exception unavailable){android.util.Log.w("HubFootprints","Catalog unavailable: "+unavailable.getClass().getSimpleName());}
+                     }catch(Exception unavailable){android.util.Log.w("HubFootprints","History unavailable: "+unavailable.getClass().getSimpleName());}
+                     finally{if(manual)ui.post(()->{footprintBusy[0]=false;if(active(id)){footprintRefresh.setEnabled(true);footprintRefresh.setText("刷新");if(request==footprintRequest[0])toast(outcome[0]);}});}
+-                });}catch(RejectedExecutionException ignored){if(manual){footprintBusy[0]=false;footprintRefresh.setEnabled(true);footprintRefresh.setText("刷新");toast("刷新失败，请重试");}}
++                });}catch(Exception ignored){if(manual){footprintBusy[0]=false;footprintRefresh.setEnabled(true);footprintRefresh.setText("刷新");toast("刷新失败，请重试");}}
+             };
+             footprintRefresh.setOnClickListener(v->{if(footprintBusy[0])return;footprintBusy[0]=true;footprintRefresh.setEnabled(false);footprintRefresh.setText("刷新中…");footprintManual[0]=true;loadFootprints.run();});
+ 
+@@ -781,13 +805,13 @@
+                         if(saver.busy||!active(id))return;saver.busy=true;button.setEnabled(false);button.setText("保存中…");
+                         for(Switch control:allSwitches)control.setEnabled(false);
+                         try{worker.execute(()->{
+-                            JSONObject result=null;Exception error=null;
+-                            try{patch.put("action","save").put("projectId",resolved[0]).put("sn",resolved[1]).put("mac",resolved[2]);result=owner.request("hub/xiaoxing/notifyRule",patch);saver.values(result);}
+-                            catch(Exception failed){error=failed;}
+-                            final JSONObject actual=result;final Exception failure=error;
++                            HubNotifySettings.Saved result;
++                            try{patch.put("projectId",resolved[0]).put("sn",resolved[1]).put("mac",resolved[2]);result=HubNotifySettings.saveRule(value->owner.request("hub/xiaoxing/notifyRule",value),patch);}
++                            catch(Exception failed){result=new HubNotifySettings.Saved(null,true);}
++                            final JSONObject actual=result.actual;final boolean reconciled=result.reconciled;
+                             ui.post(()->{saver.busy=false;if(!active(id))return;
+                                 for(Switch control:allSwitches)control.setEnabled(true);button.setEnabled(true);button.setText("保存");
+-                                if(failure==null&&actual!=null){try{saver.loaded(actual);dialog.dismiss();toast("用网通知提醒已保存");}catch(Exception invalid){toast("保存结果无法确认，请重试");}}
++                                if(actual!=null){try{saver.loaded(actual);if(!reconciled)dialog.dismiss();toast(reconciled?"保存结果已重新同步，请核对设置":"用网通知提醒已保存");}catch(Exception invalid){toast("保存结果无法确认，请重试");}}
+                                 else toast("保存失败，请重试");
+                             });
+                         });}catch(RejectedExecutionException full){saver.busy=false;button.setEnabled(true);button.setText("保存");for(Switch control:allSwitches)control.setEnabled(true);toast("当前请求较多，请稍后重试");}
 --- a/HubStationModule.java
 +++ b/HubStationModule.java
 @@ -115,7 +115,7 @@

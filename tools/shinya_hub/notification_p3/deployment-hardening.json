@@ -1,0 +1,9 @@
+{
+  "backup": "/data/notification-p3-hardening-backup-1793508114",
+  "files": {
+    "notification_trigger_rules.py": {
+      "before": "71cc8bd38e2cafed8fedb945fbd8e2e23e4fbc9af6c3f4b9a4e860866f98ff05",
+      "after": "5e659c8dc0ec2545263cfadfb85957d4a191c2c86f24e3e0fa31d7a3163d788c"
+    }
+  }
+}

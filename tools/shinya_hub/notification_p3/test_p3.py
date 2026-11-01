@@ -116,6 +116,14 @@ class Tests(unittest.TestCase):
         self.assertFalse(night([[stamp(21,59),stamp(22,0)]]))
         self.assertTrue(night([[stamp(22,0),stamp(22,1)]]))
 
+    def test_p3_legacy_rule_without_timestamp_keeps_first_baseline(self):
+        rule={'schemaVersion':2,'game':True,'enable':False,'video':False,'social':False,'payment':False}
+        self.detect(rule,self.report('game',self.now-600,self.now),self.now)
+        emitted=[]
+        for minute in range(1,12):emitted+=self.detect(rule,self.report('game',self.now,self.now+minute*60),self.now+minute*60)
+        self.assertEqual(len(emitted),1)
+        self.assertEqual(emitted[0]['category'],'game')
+
     def test_p3_midnight_preserves_one_episode_and_default_long_threshold(self):
         from datetime import datetime
         from shinya_hub.daily import CHINA
