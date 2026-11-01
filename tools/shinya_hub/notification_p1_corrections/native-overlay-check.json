@@ -1,0 +1,10 @@
+{
+  "HubNotifySettings$AppSelection.smali": {
+    "copiedExactly": true,
+    "sha256": "2fd402be3a60d34f422fba888e7f87fad51a11ac5084c958829d81141398aea5"
+  },
+  "HubPages.smali": {
+    "copiedExactly": true,
+    "sha256": "f5db1e8e8410c97ee8ca26d8f15c7a38c446d02296febe90091c5e2ee2fb8f2a"
+  }
+}

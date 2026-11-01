@@ -1,0 +1,13 @@
+{
+  "endedEvents": 7,
+  "uniqueObservedSessions": 7,
+  "duplicateSessionGroups": 0,
+  "allHaveStartAndEnd": true,
+  "allHaveRangeSummary": true,
+  "allRevisionsNotNewReminders": true,
+  "sourceIdentityBasis": "observedIntervals; child minute source does not supply a device-level session ID",
+  "liveHashes": {
+    "notification_activity.py": "c84879132521018650574de31aec3669e0590d8dc001196a2f4147610ab546ed",
+    "notification_trigger_rules.py": "f5efa68dc667117ce579c77688ae51cdee68ee633052735fb93ebaf20fe7d247"
+  }
+}
