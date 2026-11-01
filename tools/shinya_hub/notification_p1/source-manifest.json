@@ -1,0 +1,18 @@
+{
+  "xiaoxing.py": {
+    "beforeSHA256": "170f88d1597f6e7d7214ee99765ba3e827639bceae525a7c74ca508795754b5d",
+    "afterSHA256": "c7101532f1422d7d9034ff0142fb3aa3356f77a4501cdfadc28751db6f6dd494"
+  },
+  "assistant_notifications.py": {
+    "beforeSHA256": "4591770b496eb96eeec9b4f649fdd96af3159fcb29db7fe090edf05a904df063",
+    "afterSHA256": "4c4512a4b699aa985b5a326a00eb3133311607414872cdc6f1738b153d46557a"
+  },
+  "api.py": {
+    "beforeSHA256": "6511cf962d2445ecec10d32209669cf3b17741529d26779da10118bd0abf9bc3",
+    "afterSHA256": "3590d89373f13901138177ae58b25b0a9d5e89bf30b6d4ea72858a6819c640b2"
+  },
+  "HubPages.java": {
+    "beforeSHA256": "581269743208c347c91a5af04df1655b863b8272adb44156fb2b8610ac4525a0",
+    "afterSHA256": "36ce1932de14b4817eec55f612bbb78bea905620b21fe7ac91579f3c3bcfc46a"
+  }
+}

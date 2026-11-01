@@ -1,0 +1,174 @@
+--- a/shinya_hub/xiaoxing.py
++++ b/shinya_hub/xiaoxing.py
+@@ -193,7 +193,7 @@
+         tracking = self.children is not None and (user_entry is not None or station is not None)
+         return {
+             "mac": app_mac(norm_mac) if norm_mac else "",
+-            "staId": (user_entry or {}).get("uid", ""),
++            "staId": (user_entry or {}).get("uid") or (self.children.station_report_id(key, norm_mac) if self.children is not None and norm_mac else ""),
+             "deviceName": dev_name,
+             "isChildGuarded": user_entry is not None,
+             "trackingAvailable": tracking,
+@@ -202,6 +202,9 @@
+             "game": bool(rule.get("game", False)),
+             "video": bool(rule.get("video", False)),
+             "payment": bool(rule.get("payment", False)),
++            "social": bool(rule.get("social", False)),
++            "schemaVersion": 2, "revision": int(rule.get("revision") or 0),
++            "categoryUpdatedAt": rule.get("categoryUpdatedAt") or {},
+             "updatedAt": int(rule.get("updatedAt") or int(time.time())),
+         }
+ 
+@@ -217,14 +220,9 @@
+             raise ValueError("终端 MAC 格式无效")
+         if not norm_mac and not sta_id:
+             raise ValueError("请指定目标设备")
+-        for name in ("enable", "game", "video", "payment"):
++        for name in ("enable", "game", "video", "payment", "social"):
+             if name in raw and not isinstance(raw[name], bool):
+                 raise ValueError("通知开关必须为布尔值")
+-
+-        enable = bool(raw.get("enable", True))
+-        game = bool(raw.get("game", enable))
+-        video = bool(raw.get("video", enable))
+-        payment = bool(raw.get("payment", enable))
+ 
+         stations = station_snapshots(self.store, key.tenant, project)
+         station = next((s for s in stations if mac_key(s.get('mac')) == norm_mac), None) if norm_mac else None
+@@ -250,23 +248,9 @@
+         if category and (not isinstance(category, str) or category not in {'phone', 'pc', 'pad'}):
+             raise ValueError('该设备类型不支持用网通知提醒')
+         rules = self._load(key, NOTIFY_RULES_KEY, {})
+-        entry = {
+-            "enable": enable,
+-            "game": game,
+-            "video": video,
+-            "payment": payment,
+-            "independentRules": True,
+-            "updatedAt": time.time(),
+-        }
++        from .notification_rules import merge_rule
+         previous = rules.get(sta_id) or rules.get(norm_mac) or {}
+-        old_versions = previous.get('categoryUpdatedAt') if isinstance(previous.get('categoryUpdatedAt'), dict) else {}
+-        entry['categoryUpdatedAt'] = {
+-            name: (old_versions.get(name) or previous.get('updatedAt') or entry['updatedAt'])
+-            if previous.get(name) is entry[name] else entry['updatedAt']
+-            for name in ('enable', 'game', 'video', 'payment')
+-        }
+-        if all(previous.get(name) is entry[name] for name in ('enable', 'game', 'video', 'payment')):
+-            entry['updatedAt'] = previous.get('updatedAt') or entry['updatedAt']
++        entry = merge_rule(previous, raw, time.time())
+         if norm_mac:
+             rules[norm_mac] = entry
+         if sta_id:
+@@ -274,7 +258,7 @@
+ 
+         # Also check if device is in child guard or add to watched devices list
+         watched = self._load(key, WATCH_EXTRA_KEY, {})
+-        if norm_mac and any((enable, game, video, payment)):
++        if norm_mac and any(entry[name] for name in ('enable','game','video','payment','social')):
+             watched[norm_mac] = {
+                 "mac": norm_mac,
+                 "name": (station or {}).get("remark") or (station or {}).get("name") or (station or {}).get("hostname") or app_mac(norm_mac),
+@@ -495,7 +479,7 @@
+             self._save(key, MSG_STORE_KEY, messages)
+             return True
+ 
+-    def sync_notifications(self, key: DeviceKey, project: dict) -> list[dict]:
++    def sync_notifications(self, key: DeviceKey, project: dict, *, target=None, strict=False) -> list[dict]:
+         """Collect opt-in activity from source observations, never today's backlog.
+ 
+         Router IO belongs to the existing bounded collectors. Reports here read
+@@ -508,6 +492,7 @@
+             return self._load(key, MSG_STORE_KEY, [])
+         today = datetime.now(CHINA).strftime('%Y-%m-%d')
+         for watched in self.watched_devices(key, project, fresh=True):
++            if target and mac_key(watched.get('primaryMac')) != mac_key(target): continue
+             address = mac_key(watched.get('primaryMac'))
+             rule = rules.get(watched.get('uid')) or rules.get(address) or {}
+             if not isinstance(rule, dict):
+@@ -516,16 +501,20 @@
+                 # Preserve the four saved values while moving old opt-ins to
+                 # the new independent interpretation; no history backfill.
+                 rule = {**rule, 'independentRules': True}
++            rule = {**rule, 'schemaVersion': 2}
+             user = watched.get('userObj')
+             report = {}
+-            if any(rule.get(name) is True for name in ('enable','game','video','payment')):
++            if strict or any(rule.get(name) is True for name in ('enable','game','video','payment','social')):
+                 try:
+                     if not user:
+                         user = self.children.report_user(key, {'mac': address})
+                     report = self.children.report(key, user, today)
+                     if not isinstance(report, dict):
+                         report = {}
++                    if strict and (report.get('stale') is True or (report.get('coverage') or {}).get('status') == 'unavailable'):
++                        raise LookupError('尚未取得最新活动数据')
+                 except Exception as error:
++                    if strict: raise LookupError('应用活动刷新失败，请重试') from error
+                     LOG.debug('Activity report unavailable for %s: %s', key.sn, type(error).__name__)
+             stable = ('user:' + str(user['uid'])) if user and user.get('uid') else ('mac:' + address)
+             self.notifications.detect(key, stable, watched['name'], rule, report,
+@@ -533,6 +522,25 @@
+                 online=watched.get('online') if report.get('stale') is not True else None,
+                 project_id=self.store.alias_for(key.tenant, key.project))
+         return self._load(key, MSG_STORE_KEY, [])
++
++    def refresh_notification_activity(self, key, project, target):
++        if self.children is None: raise LookupError('应用活动数据暂不可用')
++        rule = self.get_notify_rule(key, project, target)
++        user = self.children.report_user(key, {'mac': rule['mac']})
++        stable = 'user:' + str(user['uid'])
++        from .notification_activity import detect
++        self.notifications.payment_ids = __import__(__package__+'.assistant_notifications', fromlist=['PAYMENT_IDS']).PAYMENT_IDS
++        now = time.time()
++        today = datetime.now(CHINA)
++        for offset in range(3):
++            day = (today - timedelta(days=offset)).strftime('%Y-%m-%d')
++            report = self.children.report(key, user, day)
++            if not isinstance(report, dict) or report.get('error'):
++                raise LookupError('应用活动刷新失败，请重试')
++            detect(self.notifications, key, stable, rule['deviceName'], rule, report,
++                observed_at=report.get('lastSampleAt'), online=False, now=now,
++                project_id=project.get('accessId') or key.project, history_only=True)
++        self.sync_notifications(key, project, target=rule['mac'], strict=True)
+ 
+     def notification_feed(self, projects, *, after=0, limit=50):
+         """Non-consuming account feed. Reauthorize every project/router now."""
+--- a/shinya_hub/assistant_notifications.py
++++ b/shinya_hub/assistant_notifications.py
+@@ -14,7 +14,7 @@
+ from .daily import CHINA
+ from pathlib import Path
+ 
+-CATEGORIES = ('game', 'video', 'payment', 'usage')
++CATEGORIES = ('game', 'video', 'payment', 'usage', 'social')
+ ACTIVITY_THRESHOLD_MINUTES = 10
+ PAYMENT_MERGE_SECONDS = 1800
+ CONFIRMED_IDLE_SECONDS = 120
+@@ -217,6 +217,11 @@
+         Only that evidence can confirm a >=2 minute inactive break. Without it,
+         missing samples pause an episode; they cannot invent a new episode.
+         """
++        if rule.get('schemaVersion') == 2:
++            from .notification_activity import detect
++            self.payment_ids = PAYMENT_IDS
++            return detect(self, key, device_id, device_name, rule, report, observed_at=observed_at,
++                          online=online, now=time.time() if now is None else now, project_id=project_id)
+         scope = self._scope(key)
+         if not isinstance(device_id, str) or not device_id.strip() or len(device_id) > 256:
+             raise ValueError('stable observed device ID required')
+--- a/shinya_hub/api.py
++++ b/shinya_hub/api.py
+@@ -807,6 +807,11 @@
+                     return reply(xiaoxing.speedtest_start(key,project,raw))
+                 if resource == 'assistantChat/speedtest/status':
+                     return reply(xiaoxing.speedtest_status(key,project))
++                if resource == 'hub/xiaoxing/notificationRefresh':
++                    if request.method != 'POST': return reply(code=405,message='刷新请求方式无效')
++                    rule = xiaoxing.get_notify_rule(key, project, raw.get('mac') or '')
++                    xiaoxing.refresh_notification_activity(key, project, rule['mac'])
++                    return reply({'refreshed': True})
+                 if resource == 'hub/xiaoxing/notifyRule':
+                     action = str(raw.get('action') or ('read' if request.method == 'GET' else 'save'))
+                     if action == 'read':
