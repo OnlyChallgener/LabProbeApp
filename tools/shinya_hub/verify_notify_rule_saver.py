@@ -40,6 +40,7 @@ public final class RuleSaverCheck {
   static class Fixture {
     Object context=new Object(),a=new Object();long id=1;boolean alive=true;
     Owner owner=new Owner();Queue worker=new Queue(),ui=new Queue();List<String> toasts=new ArrayList<>();
+    JSONObject[] confirmedRule={null};
     boolean[] updating={false};String[] resolved={"P","R","aa:bb:cc:dd:ee:ff"};
     String ruleProject="P",ruleSerial="R",ruleResource="notify-rule/aabbccddeeff";
     Switch swMaster=new Switch(),swGame=new Switch(),swVideo=new Switch(),swPay=new Switch(),swSocial=new Switch();

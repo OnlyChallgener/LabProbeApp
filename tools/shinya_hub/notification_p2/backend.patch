@@ -1,0 +1,68 @@
+--- a/shinya_hub/xiaoxing.py
++++ b/shinya_hub/xiaoxing.py
+@@ -203,6 +203,7 @@
+             "video": bool(rule.get("video", False)),
+             "payment": bool(rule.get("payment", False)),
+             "social": bool(rule.get("social", False)),
++            "settings": __import__(__package__+".notification_preferences", fromlist=["configuration"]).configuration(rule.get("settings")),
+             "schemaVersion": 2, "revision": int(rule.get("revision") or 0),
+             "categoryUpdatedAt": rule.get("categoryUpdatedAt") or {},
+             "updatedAt": int(rule.get("updatedAt") or int(time.time())),
+--- a/shinya_hub/notification_rules.py
++++ b/shinya_hub/notification_rules.py
+@@ -9,9 +9,14 @@
+             raise ValueError('通知开关必须为布尔值')
+     values = {name: raw.get(name, previous.get(name, False)) is True for name in CATEGORIES}
+     versions = previous.get('categoryUpdatedAt') or {}
+-    changed = any(values[name] != (previous.get(name) is True) for name in CATEGORIES)
++    from .notification_preferences import configuration, validate_apps
++    configs = configuration(previous.get('settings'), raw.get('settings'))
++    if 'settings' in raw: validate_apps(configs)
++    old_configs = configuration(previous.get('settings'))
++    changed_categories = {name for name in CATEGORIES if values[name] != (previous.get(name) is True) or configs[name] != old_configs[name]}
++    changed = any(values[name] != (previous.get(name) is True) for name in CATEGORIES) or bool(changed_categories)
+     return {**previous, **values, 'schemaVersion': 2, 'independentRules': True,
+-            'revision': int(previous.get('revision') or 0) + int(changed),
++            'settings': configs, 'revision': int(previous.get('revision') or 0) + int(changed),
+             'updatedAt': now if changed else previous.get('updatedAt') or now,
+-            'categoryUpdatedAt': {name: now if values[name] != (previous.get(name) is True)
++            'categoryUpdatedAt': {name: now if name in changed_categories
+                 else versions.get(name) or previous.get('updatedAt') or now for name in CATEGORIES}}
+--- a/shinya_hub/notification_activity.py
++++ b/shinya_hub/notification_activity.py
+@@ -103,6 +103,8 @@
+                 'ongoing':ongoing,'timeKind':time_kind,'sourceEventId':sample['sourceEventId'],
+                 'source':'children.report.sessionRanges'}
+             save(engine,db,key,device,'activity',sample['category'] or 'activity',token,payload,now)
++        from .notification_preferences import configuration, selected
++        settings = configuration(rule.get('settings'))
+         versions=rule.get('categoryUpdatedAt') or {}
+         for category in (() if unused.get('history_only') else LABELS):
+             rule_name='enable' if category=='usage' else category
+@@ -110,6 +112,9 @@
+             ident=(*scope,device,category)
+             previous=db.execute('SELECT * FROM assistant_activity_baselines WHERE tenant=? AND project=? AND sn=? AND device=? AND category=?',ident).fetchone()
+             enabled=rule.get(rule_name) is True
++            config=settings[rule_name]
++            if category=='usage': enabled = enabled and config['start']
++            elif category!='payment': enabled = enabled and config['durationEnabled']
+             saved=json.loads(previous['state']) if previous else {}
+             reset=(previous is None or previous['rule_version']!=version or not previous['enabled']
+                    or saved.get('schemaVersion')!=2)
+@@ -119,6 +124,7 @@
+             elif fresh and not reset:
+                 candidates=[s for s in ranges if (category=='usage' and s['located']) or s['category']==category]
+                 for sample in candidates:
++                    if category!='usage' and not selected(settings,rule_name,sample['appId']): continue
+                     if sample['end']<=blocked: continue
+                     app_id='' if category=='usage' else sample['appId']
+                     sessions=state.setdefault('sessions',{})
+@@ -134,7 +140,7 @@
+                     first=current.get('first',begin)
+                     intervals=union(current.get('intervals',[])+[[begin,end]])
+                     minutes=sum(b-a for a,b in intervals)/60
+-                    threshold=5 if category=='usage' else 30 if category=='social' else 10
++                    threshold=5 if category=='usage' else config.get('minutes',0)
+                     token=current.get('token') or identity(*scope,device,'reminder',category,app_id,first)
+                     if (category=='payment' and sample['start']>=blocked) or minutes>=threshold:
+                         payload={'projectId':project_id or key.project,'deviceName':name,

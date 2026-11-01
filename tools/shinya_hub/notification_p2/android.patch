@@ -1,0 +1,173 @@
+--- a/tools/shinya_hub/HubPages.java
++++ b/tools/shinya_hub/HubPages.java
+@@ -475,61 +475,29 @@
+             scroll.addView(body);
+ 
+ 
+-            LinearLayout masterCard = new LinearLayout(a);
+-            masterCard.setOrientation(LinearLayout.HORIZONTAL);
+-            masterCard.setGravity(Gravity.CENTER_VERTICAL);
+-            masterCard.setBackground(surface(0xffffffff, 14));
+-            masterCard.setPadding(dp(18), dp(18), dp(18), dp(18));
+-            LinearLayout masterTextCol = col(a);
+-            TextView masterTitle = text(a, "设备用网提醒", 16, INK);
+-            masterTitle.setTypeface(null, Typeface.BOLD);
+-            masterTextCol.addView(masterTitle);
+-            masterCard.addView(masterTextCol, new LinearLayout.LayoutParams(0, -2, 1));
+-            final Switch swMaster = new Switch(a);
+-            swMaster.setThumbTintList(android.content.res.ColorStateList.valueOf(0xffffffff));
+-            swMaster.setTrackTintList(android.content.res.ColorStateList.valueOf(TEAL));
+-            masterCard.addView(swMaster);
+-            LinearLayout settingsCard = col(a);
+-            settingsCard.setBackground(surface(0xffffffff, 14));
+-            settingsCard.addView(masterCard);
++            final LinearLayout settingsCard=col(a);
++            settingsCard.setBackground(surface(0xffffffff,14));settingsCard.setPadding(dp(18),dp(4),dp(18),dp(4));
+             body.addView(settingsCard);
+-
+-            final LinearLayout subCard = col(a);
+-            subCard.setBackground(surface(0xffffffff, 14));
+-            subCard.setPadding(dp(18), dp(6), dp(18), dp(6));
+-            subCard.setVisibility(View.VISIBLE);
+-            final Switch swGame = new Switch(a);
+-            final Switch swVideo = new Switch(a);
+-            final Switch swPay = new Switch(a);
+-            final Switch swSocial = new Switch(a);
+-            String[][] items = {
+-                {"游戏提醒", "游戏类活动累计满10分钟时提醒"},
+-                {"视频提醒", "视频类活动累计满10分钟时提醒"},
+-                {"支付类访问提醒", "识别到支付服务访问时提醒"},
+-                {"社交提醒", "社交类网络活动达到时长时提醒"}
+-            };
+-            Switch[] switches = {swGame, swVideo, swPay, swSocial};
+-            for (int i = 0; i < switches.length; i++) {
+-                if (i > 0) {
+-                    View div = new View(a);
+-                    div.setBackgroundColor(0xffeef2f5);
+-                    subCard.addView(div, new LinearLayout.LayoutParams(-1, dp(1)));
+-                }
+-                LinearLayout row = new LinearLayout(a);
+-                row.setOrientation(LinearLayout.HORIZONTAL);
+-                row.setGravity(Gravity.CENTER_VERTICAL);
+-                row.setPadding(0, dp(14), 0, dp(14));
+-                LinearLayout tc = col(a);
+-                TextView tTitle = text(a, items[i][0], 16, INK);
+-                tTitle.setTypeface(null, Typeface.BOLD);
+-                tc.addView(tTitle);
+-                row.addView(tc, new LinearLayout.LayoutParams(0, -2, 1));
+-                switches[i].setThumbTintList(android.content.res.ColorStateList.valueOf(0xffffffff));
+-                switches[i].setTrackTintList(android.content.res.ColorStateList.valueOf(TEAL));
+-                row.addView(switches[i]);
+-                subCard.addView(row);
+-            }
+-            settingsCard.addView(subCard);
++            final LinearLayout subCard=settingsCard;
++            final Switch swMaster=new Switch(a),swGame=new Switch(a),swVideo=new Switch(a),swPay=new Switch(a),swSocial=new Switch(a);
++            final Switch[] controls={swMaster,swGame,swVideo,swPay,swSocial};
++            final TextView[] settingsEntries=new TextView[5];
++            for(int i=0;i<controls.length;i++){
++                if(i>0){View line=new View(a);line.setBackgroundColor(0xffeef2f5);settingsCard.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));}
++                LinearLayout row=new LinearLayout(a);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(0,dp(12),0,dp(12));
++                TextView icon=HubNotifySettings.categoryIcon(a,i);LinearLayout.LayoutParams ilp=new LinearLayout.LayoutParams(dp(40),dp(40));ilp.rightMargin=dp(10);row.addView(icon,ilp);
++                LinearLayout words=col(a);TextView name=text(a,HubNotifySettings.NAMES[i],16,INK);name.setTypeface(null,Typeface.BOLD);words.addView(name);
++                TextView description=text(a,HubNotifySettings.DESCRIPTIONS[i],12,MUTED);description.setPadding(0,dp(4),0,0);words.addView(description);row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
++                TextView arrow=text(a,"›",22,MUTED);arrow.setPadding(dp(12),dp(8),dp(12),dp(8));row.addView(arrow);settingsEntries[i]=name;
++                final int position=i;arrow.setOnClickListener(v->settingsEntries[position].performClick());words.setOnClickListener(v->settingsEntries[position].performClick());
++                controls[i].setThumbTintList(android.content.res.ColorStateList.valueOf(0xffffffff));row.addView(controls[i]);settingsCard.addView(row);
++            }
++            Switch[] switches={swGame,swVideo,swPay,swSocial};
++            final JSONObject[] confirmedRule={null};
++            final JSONArray[] noticeData={new JSONArray()};
++            final HubNotifySettings.Records[] recordsPage={null};
++            TextView recordsEntry=text(a,"通知记录  ›",16,INK);recordsEntry.setPadding(dp(18),dp(16),dp(18),dp(16));recordsEntry.setBackground(surface(0xffffffff,14));
++            gap(body,14);body.addView(recordsEntry);
+ 
+             gap(body, 14);
+ 
+@@ -588,6 +556,8 @@
+                             if(signature.equals(footprintRendered[0]))return;
+                             footprintRendered[0]=signature;
+                             java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("MM-dd HH:mm",Locale.CHINA);date.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
++                            noticeData[0]=visibleRecords[0];
++                            if(recordsPage[0]!=null)recordsPage[0].update(noticeData[0],resolved[1],resolved[2],resolved[3]);
+                             JSONArray snapshot=visibleRecords[0];List<Object[]> ordered=new ArrayList<>();
+                             for(int i=0;i<snapshot.length();i++){
+                                 JSONObject event=snapshot.optJSONObject(i);if(event==null||footprintSuperseded(event,snapshot))continue;
+@@ -740,7 +710,7 @@
+                     styleSwitches.run();updating[0]=false;
+                 }
+                 void loaded(JSONObject rule)throws Exception {
+-                    confirmed=values(rule);ready=true;render(confirmed);
++                    confirmedRule[0]=new JSONObject(rule.toString());confirmed=values(rule);ready=true;render(confirmed);
+                     if(!ruleProject.isEmpty()&&!ruleResource.equals("notify-rule/"))owner.savePageSnapshot(ruleProject,ruleSerial,ruleResource,rule);
+                     if(active(id))for(Switch control:allSwitches)control.setEnabled(true);
+                 }
+@@ -775,6 +745,7 @@
+                             try{if(settled!=null)confirmed=values(settled);}catch(Exception ignored){}
+                             if(sentVersion!=version){pump();return;}
+                             desired=null;
++                            if(settled!=null)try{confirmedRule[0]=new JSONObject(settled.toString());}catch(Exception ignored){}
+                             if(settled!=null&&!ruleProject.isEmpty()&&!ruleResource.equals("notify-rule/"))owner.savePageSnapshot(ruleProject,ruleSerial,ruleResource,settled);
+                             if(settled!=null)HubAssistantNotifications.ruleChanged(context,a,owner,project,mac,confirmed[0]||confirmed[1]||confirmed[2]||confirmed[3]||confirmed[4],target[0]||target[1]||target[2]||target[3]||target[4]);
+                             render(confirmed);
+@@ -790,6 +761,38 @@
+             if(!ruleProject.isEmpty()&&!ruleResource.equals("notify-rule/")){
+                 JSONObject saved=owner.pageSnapshot(ruleProject,ruleSerial,ruleResource);
+                 if(saved!=null)try{saver.confirmed=saver.values(saved);saver.render(saver.confirmed);android.util.Log.d("HubNotifyTiming","cached rule rendered at "+(SystemClock.elapsedRealtime()-pageStarted)+"ms");}catch(Exception ignored){}
++            }
++            final android.graphics.drawable.Drawable recordFallback=footprintDefaultIcon();
++            HubNotifySettings.Icon recordIcon=appId->{android.graphics.drawable.Drawable icon=footprintImages.get(appId);return icon==null?recordFallback:icon;};
++            recordsEntry.setOnClickListener(v->{
++                recordsPage[0]=new HubNotifySettings.Records(a,recordIcon,()->footprintRefresh.performClick());
++                recordsPage[0].update(noticeData[0],resolved[1],resolved[2],resolved[3]);
++            });
++            for(int category=0;category<settingsEntries.length;category++){
++                final int selectedCategory=category;
++                settingsEntries[category].setOnClickListener(v->{
++                    if(!saver.ready||saver.busy||confirmedRule[0]==null){toast("设置正在同步，请稍后");return;}
++                    JSONObject catalog=owner.pageSnapshot(resolved[0],"","footprint-catalog");
++                    HubNotifySettings.edit(a,selectedCategory,confirmedRule[0],catalog==null?null:catalog.optJSONArray("rows"),appId->{
++                        android.graphics.drawable.Drawable icon=footprintImages.get(appId);
++                        if(icon==null&&catalog!=null){String link=footprintCatalogLink(catalog.optJSONArray("rows"),appId);icon=cachedChildIcon(owner,link);}
++                        return icon==null?footprintDefaultIcon():icon;
++                    },(patch,dialog,button)->{
++                        if(saver.busy||!active(id))return;saver.busy=true;button.setEnabled(false);button.setText("保存中…");
++                        for(Switch control:allSwitches)control.setEnabled(false);
++                        try{worker.execute(()->{
++                            JSONObject result=null;Exception error=null;
++                            try{patch.put("action","save").put("projectId",resolved[0]).put("sn",resolved[1]).put("mac",resolved[2]);result=owner.request("hub/xiaoxing/notifyRule",patch);saver.values(result);}
++                            catch(Exception failed){error=failed;}
++                            final JSONObject actual=result;final Exception failure=error;
++                            ui.post(()->{saver.busy=false;if(!active(id))return;
++                                for(Switch control:allSwitches)control.setEnabled(true);button.setEnabled(true);button.setText("保存");
++                                if(failure==null&&actual!=null){try{saver.loaded(actual);dialog.dismiss();toast("用网通知提醒已保存");}catch(Exception invalid){toast("保存结果无法确认，请重试");}}
++                                else toast("保存失败，请重试");
++                            });
++                        });}catch(RejectedExecutionException full){saver.busy=false;button.setEnabled(true);button.setText("保存");for(Switch control:allSwitches)control.setEnabled(true);toast("当前请求较多，请稍后重试");}
++                    });
++                });
+             }
+             Runnable pushSave=saver::edit;
+ 
+--- a/tools/shinya_hub/build_internal.py
++++ b/tools/shinya_hub/build_internal.py
+@@ -56,7 +56,7 @@
+              '-classpath',os.pathsep.join(str(p) for p in [*libraries,stubs]),'-d',classes,
+              *[ROOT/'tools/shinya_hub'/n for n in ('HubInterceptor.java','CachedHubResponses.java',
+                  'HubToolSession.java','HubSnapshotKey.java','HubTxtRecord.java','HubDns.java','HubToolsView.java','HubToolsViewManager.java',
+-                 'HubAuthView.java','HubAuthViewManager.java','HubDialog.java','HubCoverageSettings.java','HubCoverageViewManager.java','HubDiagnosisModule.java','HubStationModule.java','HubPages.java','HubProjectPages.java','HubPenetrationActivity.java',
++                 'HubAuthView.java','HubAuthViewManager.java','HubDialog.java','HubCoverageSettings.java','HubCoverageViewManager.java','HubDiagnosisModule.java','HubStationModule.java','HubPages.java','HubNotifySettings.java','HubProjectPages.java','HubPenetrationActivity.java',
+                  'HubDiagnosisView.java','HubDiagnosisViewManager.java','HubAssistantFeaturesPage.java',
+                  'HubAssistantNotifications.java','HubAssistantNotificationService.java',
+                  'HubAssistantMessageStore.java','HubAssistantNoticeMerge.java','HubSpeedLoadingViewManager.java')]])
+--- a/tools/shinya_hub/compile_check.py
++++ b/tools/shinya_hub/compile_check.py
+@@ -36,7 +36,7 @@
+          'HubTxtRecord.java', 'HubDns.java', 'HubToolsView.java', 'HubToolsViewManager.java',
+          'HubAuthView.java', 'HubAuthViewManager.java', 'HubDialog.java', 'HubCoverageSettings.java',
+          'HubCoverageViewManager.java', 'HubDiagnosisModule.java',
+-         'HubStationModule.java', 'HubPages.java', 'HubProjectPages.java', 'HubPenetrationActivity.java',
++         'HubStationModule.java', 'HubPages.java','HubNotifySettings.java', 'HubProjectPages.java', 'HubPenetrationActivity.java',
+          'HubDiagnosisView.java', 'HubDiagnosisViewManager.java', 'HubAssistantFeaturesPage.java',
+          'HubAssistantNotifications.java', 'HubAssistantNotificationService.java', 'HubSpeedLoadingViewManager.java',
+          'HubAssistantMessageStore.java', 'HubAssistantNoticeMerge.java')

@@ -103,6 +103,8 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
                 'ongoing':ongoing,'timeKind':time_kind,'sourceEventId':sample['sourceEventId'],
                 'source':'children.report.sessionRanges'}
             save(engine,db,key,device,'activity',sample['category'] or 'activity',token,payload,now)
+        from .notification_preferences import configuration, selected
+        settings = configuration(rule.get('settings'))
         versions=rule.get('categoryUpdatedAt') or {}
         for category in (() if unused.get('history_only') else LABELS):
             rule_name='enable' if category=='usage' else category
@@ -110,6 +112,9 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
             ident=(*scope,device,category)
             previous=db.execute('SELECT * FROM assistant_activity_baselines WHERE tenant=? AND project=? AND sn=? AND device=? AND category=?',ident).fetchone()
             enabled=rule.get(rule_name) is True
+            config=settings[rule_name]
+            if category=='usage': enabled = enabled and config['start']
+            elif category!='payment': enabled = enabled and config['durationEnabled']
             saved=json.loads(previous['state']) if previous else {}
             reset=(previous is None or previous['rule_version']!=version or not previous['enabled']
                    or saved.get('schemaVersion')!=2)
@@ -119,6 +124,7 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
             elif fresh and not reset:
                 candidates=[s for s in ranges if (category=='usage' and s['located']) or s['category']==category]
                 for sample in candidates:
+                    if category!='usage' and not selected(settings,rule_name,sample['appId']): continue
                     if sample['end']<=blocked: continue
                     app_id='' if category=='usage' else sample['appId']
                     sessions=state.setdefault('sessions',{})
@@ -134,7 +140,7 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
                     first=current.get('first',begin)
                     intervals=union(current.get('intervals',[])+[[begin,end]])
                     minutes=sum(b-a for a,b in intervals)/60
-                    threshold=5 if category=='usage' else 30 if category=='social' else 10
+                    threshold=5 if category=='usage' else config.get('minutes',0)
                     token=current.get('token') or identity(*scope,device,'reminder',category,app_id,first)
                     if (category=='payment' and sample['start']>=blocked) or minutes>=threshold:
                         payload={'projectId':project_id or key.project,'deviceName':name,
