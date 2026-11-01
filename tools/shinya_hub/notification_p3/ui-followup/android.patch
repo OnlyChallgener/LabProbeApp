@@ -1,0 +1,112 @@
+--- a/HubPages.java
++++ b/HubPages.java
+@@ -108,6 +108,7 @@
+     private final ReactApplicationContext context;
+     private final Handler ui=new Handler(Looper.getMainLooper());
+     private final ThreadPoolExecutor worker=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(12),new ThreadPoolExecutor.AbortPolicy());
++    private final ThreadPoolExecutor notificationIcons=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(64),new ThreadPoolExecutor.AbortPolicy());
+     private Dialog dialog;
+     private WebView browser;
+     private LinearLayout upload;
+@@ -152,7 +153,7 @@
+         upload=null;
+     }
+     private void close(){generation++;Dialog previous=dialog;dialog=null;releasePage();if(previous!=null)previous.dismiss();}
+-    void dispose(){context.removeActivityEventListener(this);worker.shutdownNow();ui.post(()->close());}
++    void dispose(){context.removeActivityEventListener(this);worker.shutdownNow();notificationIcons.shutdownNow();ui.post(()->close());}
+     void openURL(String raw){ui.post(()->{
+         Activity a=context.getCurrentActivity();if(a==null||a.isFinishing())return;
+ 
+@@ -787,7 +788,27 @@
+                 if(saved!=null)try{saver.confirmed=saver.values(saved);saver.render(saver.confirmed);android.util.Log.d("HubNotifyTiming","cached rule rendered at "+(SystemClock.elapsedRealtime()-pageStarted)+"ms");}catch(Exception ignored){}
+             }
+             final android.graphics.drawable.Drawable recordFallback=footprintDefaultIcon();
+-            HubNotifySettings.Icon recordIcon=appId->{android.graphics.drawable.Drawable icon=footprintImages.get(appId);return icon==null?recordFallback:icon;};
++            HubNotifySettings.Icon recordIcon=new HubNotifySettings.Icon(){
++                final Map<String,List<ImageView>> pending=new HashMap<>();
++                public android.graphics.drawable.Drawable get(String appId){
++                    android.graphics.drawable.Drawable icon=footprintImages.get(appId);
++                    if(icon==null){JSONObject catalog=owner.pageSnapshot(resolved[0],"","footprint-catalog");if(catalog!=null)icon=cachedChildIcon(owner,footprintCatalogLink(catalog.optJSONArray("rows"),appId));}
++                    if(icon!=null)footprintImages.put(appId,icon);
++                    return icon==null?recordFallback:icon;
++                }
++                public void load(String appId,ImageView target){
++                    if(appId.isEmpty()||!active(id))return;
++                    android.graphics.drawable.Drawable cached=get(appId);if(cached!=recordFallback){target.setImageDrawable(cached);return;}
++                    JSONObject catalog=owner.pageSnapshot(resolved[0],"","footprint-catalog");String link=catalog==null?"":footprintCatalogLink(catalog.optJSONArray("rows"),appId);if(link.isEmpty())return;
++                    if(pending.containsKey(appId)){if(!pending.get(appId).contains(target))pending.get(appId).add(target);return;}
++                    List<ImageView> targets=new ArrayList<>();targets.add(target);pending.put(appId,targets);
++                    try{notificationIcons.execute(()->{
++                        if(!active(id)){ui.post(()->pending.remove(appId));return;}
++                        android.graphics.drawable.Drawable loaded=childCatalogIcon(owner,link);
++                        ui.post(()->{List<ImageView> waiting=pending.remove(appId);if(!active(id)||loaded==null)return;footprintImages.put(appId,loaded);if(waiting!=null)for(ImageView image:waiting)if(image.isAttachedToWindow())image.setImageDrawable(loaded);});
++                    });}catch(RejectedExecutionException full){pending.remove(appId);}
++                }
++            };
+             recordsEntry.setOnClickListener(v->{
+                 recordsPage[0]=new HubNotifySettings.Records(a,recordIcon,()->footprintRefresh.performClick());
+                 recordsPage[0].update(noticeData[0],resolved[1],resolved[2],resolved[3]);
+@@ -797,11 +818,7 @@
+                 settingsEntries[category].setOnClickListener(v->{
+                     if(!saver.ready||saver.busy||confirmedRule[0]==null){toast("设置正在同步，请稍后");return;}
+                     JSONObject catalog=owner.pageSnapshot(resolved[0],"","footprint-catalog");
+-                    HubNotifySettings.edit(a,selectedCategory,confirmedRule[0],catalog==null?null:catalog.optJSONArray("rows"),appId->{
+-                        android.graphics.drawable.Drawable icon=footprintImages.get(appId);
+-                        if(icon==null&&catalog!=null){String link=footprintCatalogLink(catalog.optJSONArray("rows"),appId);icon=cachedChildIcon(owner,link);}
+-                        return icon==null?footprintDefaultIcon():icon;
+-                    },(patch,dialog,button)->{
++                    HubNotifySettings.edit(a,selectedCategory,confirmedRule[0],catalog==null?null:catalog.optJSONArray("rows"),recordIcon,(patch,dialog,button)->{
+                         if(saver.busy||!active(id))return;saver.busy=true;button.setEnabled(false);button.setText("保存中…");
+                         for(Switch control:allSwitches)control.setEnabled(false);
+                         try{worker.execute(()->{
+--- a/HubNotifySettings.java
++++ b/HubNotifySettings.java
+@@ -15,7 +15,10 @@
+     static final String[] DESCRIPTIONS={"开始、结束、深夜、长时间用网","关注游戏，达到时长提醒","关注视频，达到时长提醒","识别支付服务访问","关注社交，达到时长提醒"};
+     static final int INK=0xff232529,MUTED=0xff92989e,TEAL=0xff26bcbf;
+     interface Save { void run(JSONObject patch,Dialog dialog,TextView button); }
+-    interface Icon { Drawable get(String appId); }
++    interface Icon {
++        Drawable get(String appId);
++        default void load(String appId,ImageView target){}
++    }
+     interface Request { JSONObject run(JSONObject value)throws Exception; }
+     static final class Saved {
+         final JSONObject actual;final boolean reconciled;
+@@ -88,6 +91,7 @@
+             int end=Math.min(available.size(),shown[0]+30);
+             while(shown[0]<end){JSONObject app=available.get(shown[0]++);String id=app.optString("id");
+                 LinearLayout r=row(a,app.optString("showName"),"");ImageView image=new ImageView(a);image.setImageDrawable(icons.get(id));image.setScaleType(ImageView.ScaleType.FIT_CENTER);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(a,30),dp(a,30));lp.rightMargin=dp(a,10);r.addView(image,0,lp);
++                icons.load(id,image);
+                 CheckBox box=new CheckBox(a);box.setChecked(chosen.contains(id));r.addView(box);box.setOnCheckedChangeListener((button,on)->{if(on)chosen.add(id);else chosen.remove(id);});r.setOnClickListener(v->box.setChecked(!box.isChecked()));content.addView(r,content.indexOfChild(more));
+             }
+             more.setVisibility(shown[0]<available.size()?View.VISIBLE:View.GONE);
+@@ -119,16 +123,17 @@
+     }
+     static final class Records {
+         final Activity a;final Dialog dialog;final LinearLayout list;final ScrollView scroll;final Icon icons;
+-        final Map<String,View> views=new HashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";String focusEvent="";int limit=50;
++        final Map<String,View> views=new HashMap<>();final Map<String,TextView> tabsByType=new LinkedHashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";String focusEvent="";int limit=50;
+         Records(Activity activity,Icon icon,Runnable refresh){
+             a=activity;icons=icon;dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);LinearLayout root=col(a);root.setPadding(dp(a,16),dp(a,8),dp(a,16),dp(a,12));root.setBackgroundColor(0xfff0f5f8);
+             LinearLayout heading=row(a,"通知记录","");TextView back=action(a,"‹ 返回"),reload=action(a,"刷新");heading.addView(back,0);heading.addView(reload);root.addView(heading);back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
+             HorizontalScrollView bar=new HorizontalScrollView(a);bar.setHorizontalScrollBarEnabled(false);LinearLayout tabs=new LinearLayout(a);String[] names={"全部","设备","游戏","视频","支付","社交"},types={"","usage","game","video","payment","social"};
+-            for(int i=0;i<names.length;i++){final String category=types[i];TextView tab=action(a,names[i]);tabs.addView(tab);tab.setOnClickListener(v->{filter=category;signature="";limit=50;render();});}bar.addView(tabs);root.addView(bar);
++            for(int i=0;i<names.length;i++){final String category=types[i];TextView tab=action(a,names[i]);tabs.addView(tab);tabsByType.put(category,tab);tab.setOnClickListener(v->{filter=category;signature="";limit=50;render();});}bar.addView(tabs);root.addView(bar);
+             scroll=new ScrollView(a);list=col(a);scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));empty=text(a,"暂无提醒记录",14,MUTED);empty.setPadding(0,dp(a,24),0,dp(a,24));list.addView(empty);dialog.setContentView(root);dialog.show();Window w=dialog.getWindow();if(w!=null)w.setLayout(-1,-1);
+         }
+         void update(JSONArray events,String sn,String mac,String uid){if(!dialog.isShowing())return;JSONArray kept=new JSONArray();for(int i=0;i<events.length();i++){JSONObject e=events.optJSONObject(i);if(e!=null&&matches(e,sn,mac,uid))kept.put(e);}data=kept;render();}
+         void render(){
++            for(Map.Entry<String,TextView> entry:tabsByType.entrySet()){boolean selected=filter.equals(entry.getKey());TextView tab=entry.getValue();tab.setTextColor(selected?-1:TEAL);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(selected?bg(a,TEAL,12):null);tab.setSelected(selected);}
+             if(!dialog.isShowing())return;int iconVersion=0;for(int i=0;i<data.length();i++)iconVersion=31*iconVersion+System.identityHashCode(icons.get(data.optJSONObject(i).optString("appId")));String next=data.toString()+filter+limit+iconVersion;if(next.equals(signature))return;signature=next;
+             Calendar day=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));day.set(Calendar.HOUR_OF_DAY,0);day.set(Calendar.MINUTE,0);day.set(Calendar.SECOND,0);day.set(Calendar.MILLISECOND,0);day.add(Calendar.DAY_OF_MONTH,-2);long cutoff=day.getTimeInMillis();
+             List<JSONObject> rows=new ArrayList<>();for(int i=0;i<data.length();i++){JSONObject e=data.optJSONObject(i);if(e.optLong("createTime")>=cutoff&&(filter.isEmpty()||filter.equals(e.optString("category"))))rows.add(e);}rows.sort((x,y)->Long.compare(y.optLong("createTime"),x.optLong("createTime")));
+@@ -139,7 +144,7 @@
+                 if(!group.equals(last)){String key="date:"+group;TextView label=(TextView)views.get(key);if(label==null){label=text(a,group,13,MUTED);label.setPadding(0,dp(a,16),0,dp(a,8));views.put(key,label);}place(label,position++);last=group;}
+                 String key=event.optString("eventKey");LinearLayout line=(LinearLayout)views.get(key);
+                 if(line==null){line=new LinearLayout(a);line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,12));line.setBackground(bg(a,-1,10));ImageView image=new ImageView(a);image.setScaleType(ImageView.ScaleType.FIT_CENTER);line.addView(image,new LinearLayout.LayoutParams(dp(a,32),dp(a,32)));LinearLayout words=col(a);words.setPadding(dp(a,10),0,dp(a,8),0);words.addView(text(a,"",14,INK));words.addView(text(a,"",12,MUTED));line.addView(words,new LinearLayout.LayoutParams(0,-2,1));line.addView(text(a,"",12,MUTED));views.put(key,line);}
+-                ((ImageView)line.getChildAt(0)).setImageDrawable(icons.get(event.optString("appId")));LinearLayout words=(LinearLayout)line.getChildAt(1);((TextView)words.getChildAt(0)).setText(event.optString("title"));((TextView)words.getChildAt(1)).setText(event.optString("content"));((TextView)line.getChildAt(2)).setText(time.format(new Date(event.optLong("createTime"))));place(line,position++);
++                ImageView image=(ImageView)line.getChildAt(0);String appId=event.optString("appId");image.setImageDrawable(icons.get(appId));icons.load(appId,image);LinearLayout words=(LinearLayout)line.getChildAt(1);((TextView)words.getChildAt(0)).setText(event.optString("title"));((TextView)words.getChildAt(1)).setText(event.optString("content"));((TextView)line.getChildAt(2)).setText(time.format(new Date(event.optLong("createTime"))));place(line,position++);
+             }
+             if("@latest".equals(focusEvent)){focusEvent="";scroll.post(()->scroll.scrollTo(0,0));}
+             if(!focusEvent.isEmpty()&&views.containsKey(focusEvent)){View focus=views.get(focusEvent);focus.setBackground(bg(a,0xffdff5f3,10));scroll.post(()->scroll.smoothScrollTo(0,focus.getTop()));focusEvent="";}
