@@ -1,0 +1,361 @@
+--- a/build_internal.py
++++ b/build_internal.py
+@@ -58,7 +58,7 @@
+                  'HubToolSession.java','HubSnapshotKey.java','HubTxtRecord.java','HubDns.java','HubToolsView.java','HubToolsViewManager.java',
+                  'HubAuthView.java','HubAuthViewManager.java','HubDialog.java','HubCoverageSettings.java','HubCoverageViewManager.java','HubDiagnosisModule.java','HubStationModule.java','HubPages.java','HubNotifySettings.java','HubProjectPages.java','HubPenetrationActivity.java',
+                  'HubDiagnosisView.java','HubDiagnosisViewManager.java','HubAssistantFeaturesPage.java',
+-                 'HubAssistantNotifications.java','HubAssistantNotificationService.java',
++                 'HubAssistantNotifications.java','HubNotificationReceiver.java','HubAssistantNotificationService.java',
+                  'HubAssistantMessageStore.java','HubAssistantNoticeMerge.java','HubSpeedLoadingViewManager.java')]])
+     dex=work/'dex';dex.mkdir(exist_ok=True)
+     d8=[JAVA/'java.exe','-cp',ROOT/'test/_tools/r8-8.13.17.jar','com.android.tools.r8.D8',
+--- a/compile_check.py
++++ b/compile_check.py
+@@ -38,7 +38,7 @@
+          'HubCoverageViewManager.java', 'HubDiagnosisModule.java',
+          'HubStationModule.java', 'HubPages.java','HubNotifySettings.java', 'HubProjectPages.java', 'HubPenetrationActivity.java',
+          'HubDiagnosisView.java', 'HubDiagnosisViewManager.java', 'HubAssistantFeaturesPage.java',
+-         'HubAssistantNotifications.java', 'HubAssistantNotificationService.java', 'HubSpeedLoadingViewManager.java',
++         'HubAssistantNotifications.java','HubNotificationReceiver.java', 'HubAssistantNotificationService.java', 'HubSpeedLoadingViewManager.java',
+          'HubAssistantMessageStore.java', 'HubAssistantNoticeMerge.java')
+ 
+ work = Path(tempfile.mkdtemp(prefix='shinya-javac-'))
+--- a/HubAssistantMessageStore.java
++++ b/HubAssistantMessageStore.java
+@@ -18,7 +18,7 @@
+         if(instance==null)instance=new HubAssistantMessageStore(context.getApplicationContext());
+         return instance;
+     }
+-    private HubAssistantMessageStore(Context context) { super(context,"hub-assistant-messages.db",null,3); }
++    private HubAssistantMessageStore(Context context) { super(context,"hub-assistant-messages.db",null,4); }
+     @Override public void onCreate(SQLiteDatabase db) {
+         db.execSQL("CREATE TABLE owners(owner TEXT PRIMARY KEY,cursor INTEGER NOT NULL DEFAULT 0,ready INTEGER NOT NULL DEFAULT 0)");
+         db.execSQL("CREATE TABLE events(owner TEXT NOT NULL,seq INTEGER NOT NULL,eventId TEXT NOT NULL,eventKey TEXT NOT NULL,project TEXT NOT NULL,sn TEXT NOT NULL,created INTEGER NOT NULL,payload TEXT NOT NULL,nonce TEXT NOT NULL,hidden INTEGER NOT NULL DEFAULT 0,posted INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(owner,eventKey),UNIQUE(owner,seq),UNIQUE(nonce))");
+@@ -26,18 +26,49 @@
+         db.execSQL("CREATE TABLE clears(owner TEXT NOT NULL,project TEXT NOT NULL,beforeMs INTEGER NOT NULL,PRIMARY KEY(owner,project))");
+         db.execSQL("CREATE TABLE pending(singleton INTEGER PRIMARY KEY CHECK(singleton=1),nonce TEXT NOT NULL)");
+         createChats(db);
+-        createFootprints(db);
++        createFootprints(db);createDeliveries(db);
+     }
+     private static void createFootprints(SQLiteDatabase db){
+         db.execSQL("CREATE TABLE IF NOT EXISTS footprints(owner TEXT NOT NULL,project TEXT NOT NULL,eventKey TEXT NOT NULL,created INTEGER NOT NULL,seq INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(owner,project,eventKey))");
+         db.execSQL("CREATE TABLE IF NOT EXISTS footprint_cursors(owner TEXT PRIMARY KEY,cursor INTEGER NOT NULL)");
+     }
+     private static void createChats(SQLiteDatabase db){db.execSQL("CREATE TABLE IF NOT EXISTS chats(owner TEXT NOT NULL,scope TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(owner,scope))");}
++    private static void createDeliveries(SQLiteDatabase db){
++        db.execSQL("CREATE TABLE IF NOT EXISTS notice_deliveries(owner TEXT NOT NULL,eventKey TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(owner,eventKey))");
++        db.execSQL("CREATE TABLE IF NOT EXISTS notice_clicks(nonce TEXT PRIMARY KEY,owner TEXT NOT NULL,payload TEXT NOT NULL,created INTEGER NOT NULL)");
++    }
+     @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion) {
++        if(oldVersion<1||newVersion!=4)throw new IllegalStateException("Unsupported journal schema");
+         if(oldVersion==1)createChats(db);
+-        if(oldVersion<=2&&newVersion==3){createFootprints(db);return;}
+-        if(oldVersion==1&&newVersion==2)return;
+-        throw new IllegalStateException("Unsupported journal schema");
++        if(oldVersion<=2)createFootprints(db);
++        createDeliveries(db);
++    }
++    synchronized JSONArray pendingNotices(String owner,long cutoff)throws Exception{
++        SQLiteDatabase db=getWritableDatabase();
++        db.execSQL("DELETE FROM notice_deliveries WHERE owner=? AND created<?",new Object[]{owner,cutoff});
++        db.execSQL("DELETE FROM notice_clicks WHERE owner=? AND created<?",new Object[]{owner,cutoff});
++        JSONArray result=new JSONArray();
++        try(Cursor c=db.rawQuery("SELECT f.payload FROM footprints f LEFT JOIN notice_deliveries d ON d.owner=f.owner AND d.eventKey=f.eventKey WHERE f.owner=? AND f.created>=? AND d.eventKey IS NULL ORDER BY f.created DESC,f.seq DESC",new String[]{owner,Long.toString(cutoff)})){
++            while(c.moveToNext()){JSONObject e=new JSONObject(c.getString(0));
++                if("reminder".equals(e.optString("recordKind"))&&e.optInt("schemaVersion")==2&&e.optLong("triggeredAt")>0
++                    &&!e.optString("deviceId").isEmpty()&&!e.optString("sn").isEmpty())result.put(e);
++            }
++        }return result;
++    }
++    synchronized void deliveredNotices(String owner,JSONArray items)throws Exception{
++        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{
++            for(int i=0;i<items.length();i++){JSONObject item=items.getJSONObject(i);ContentValues row=new ContentValues();row.put("owner",owner);row.put("eventKey",item.getString("eventKey"));row.put("created",item.getLong("createTime"));db.insertWithOnConflict("notice_deliveries",null,row,SQLiteDatabase.CONFLICT_IGNORE);}
++            db.setTransactionSuccessful();
++        }finally{db.endTransaction();}
++    }
++    synchronized String noticeClick(String owner,JSONArray items)throws Exception{
++        String nonce=UUID.randomUUID().toString();ContentValues row=new ContentValues();row.put("nonce",nonce);row.put("owner",owner);row.put("payload",items.toString());row.put("created",System.currentTimeMillis());
++        if(getWritableDatabase().insertOrThrow("notice_clicks",null,row)<0)throw new IllegalStateException("Notification target not saved");return nonce;
++    }
++    synchronized JSONArray noticeTarget(String owner,String nonce,long cutoff)throws Exception{
++        try(Cursor c=getReadableDatabase().rawQuery("SELECT payload FROM notice_clicks WHERE owner=? AND nonce=? AND created>=?",new String[]{owner,nonce,Long.toString(cutoff)})){
++            return c.moveToFirst()?new JSONArray(c.getString(0)):new JSONArray();
++        }
+     }
+     synchronized String chat(String owner,String scope){
+         try(Cursor c=getReadableDatabase().rawQuery("SELECT payload FROM chats WHERE owner=? AND scope=?",new String[]{owner,scope})){
+--- a/HubAssistantNotifications.java
++++ b/HubAssistantNotifications.java
+@@ -35,6 +35,9 @@
+     private final SharedPreferences.OnSharedPreferenceChangeListener settingsListener;
+     private final Handler main=new Handler(Looper.getMainLooper());
+     private boolean disposed;
++    private final HubNotificationReceiver receiver;
++    void pages(HubPages pages){receiver.pages(pages);}
++    static void sessionReady(){HubAssistantNotifications bridge=active.get();if(bridge!=null)bridge.main.postDelayed(()->{if(!bridge.disposed)resume(bridge.context,bridge.context.getCurrentActivity());},300);}
+     private HubToolSession bannerSession, actionSession;
+     private String bannerProject="";
+     private JSONArray bannerItems=new JSONArray();
+@@ -83,7 +86,7 @@
+     }
+     private static long lastStartAttempt;
+     public HubAssistantNotifications(ReactApplicationContext context) {
+-        this.context=context;this.store=HubAssistantMessageStore.get(context);
++        this.context=context;this.store=HubAssistantMessageStore.get(context);this.receiver=new HubNotificationReceiver(context);
+         hubSettings=context.getSharedPreferences("labprobe_hub",0);
+         settingsListener=(settings,key)->{
+             if("base_url".equals(key)||"login_account".equals(key)||"tls_pin_sha256".equals(key)||key!=null&&key.startsWith("pin:"))stop(context);
+@@ -116,7 +119,7 @@
+     static boolean permitted(Context context) {
+         if(Build.VERSION.SDK_INT>=33&&context.checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED)return false;
+         if(Build.VERSION.SDK_INT>=24&&!manager(context).areNotificationsEnabled())return false;
+-        if(Build.VERSION.SDK_INT>=26)for(String id:new String[]{CHANNEL,ONGOING_CHANNEL}) {
++        if(Build.VERSION.SDK_INT>=26)for(String id:new String[]{CHANNEL}) {
+             NotificationChannel channel=manager(context).getNotificationChannel(id);
+             if(channel!=null&&channel.getImportance()==NotificationManager.IMPORTANCE_NONE)return false;
+         }
+@@ -125,7 +128,7 @@
+     static NotificationManager manager(Context context) { return (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE); }
+     static void channels(Context context) {
+         if(Build.VERSION.SDK_INT<26)return;
+-        for(String id:new String[]{CHANNEL,ONGOING_CHANNEL}) {
++        for(String id:new String[]{CHANNEL}) {
+             NotificationChannel channel=new NotificationChannel(id,CHANNEL.equals(id)?"关注设备消息":"关注设备消息连接",NotificationManager.IMPORTANCE_LOW);
+             channel.setDescription(CHANNEL.equals(id)?"关注设备的新活动通知":"按您的设置持续连接 HUB 接收消息");
+             channel.setSound(null,null);channel.enableVibration(false);channel.setShowBadge(false);
+@@ -151,7 +154,6 @@
+             String key=HubSnapshotKey.hash(project.trim(),mac.replace(":","").replace("-","").toLowerCase(java.util.Locale.ROOT));
+             if(on)rules.add(key);else rules.remove(key);
+             prefs(context).edit().putStringSet("rules-"+scope,rules).commit();
+-            if(rules.isEmpty()){stop(context);return;}
+             resume(context,activity);
+         } catch(Exception unavailable) { /* No in-app event popup or silent scope fallback. */ }
+     }
+@@ -192,17 +194,19 @@
+     }
+     /** Restart only while the app is visibly foreground, never a boot receiver. */
+     public static void resume(Context context,Activity activity) {
+-        // The user chose an in-page history instead of background alerts.
++        // Only the live app process receives reminders; old FGS starts are stopped.
+         // Stop a service from an older install; never hide an active FGS notice.
+         context.stopService(new Intent(context,HubAssistantNotificationService.class));
+         manager(context).cancel(ONGOING_ID);
++        HubAssistantNotifications bridge=active.get();if(bridge!=null&&!bridge.disposed)bridge.receiver.resume();
+     }
+     /** Invoke immediately on logout, change HUB or native authentication reset. */
+     public static void stop(Context context) {
++        HubAssistantNotifications bridge=active.get();if(bridge!=null)bridge.receiver.stop();
+         synchronized(HubAssistantNotifications.class){lastStartAttempt=0;}
+         context.stopService(new Intent(context,HubAssistantNotificationService.class));
+         if(Build.VERSION.SDK_INT>=23)for(android.service.notification.StatusBarNotification n:manager(context).getActiveNotifications())
+-            if(n.getTag()!=null&&n.getTag().startsWith("hub-assistant:"))manager(context).cancel(n.getTag(),n.getId());
++            if(n.getTag()!=null&&(n.getTag().startsWith("hub-assistant:")||n.getTag().startsWith("hub-reminder:")))manager(context).cancel(n.getTag(),n.getId());
+         manager(context).cancel(ONGOING_ID);
+     }
+     static void post(Context context,HubToolSession session,JSONObject item)throws Exception {
+@@ -273,7 +277,7 @@
+             return true;
+         }catch(Exception ignored){return false;}
+     }
+-    @Override public void onNewIntent(Intent intent){capture(intent);}
++    @Override public void onNewIntent(Intent intent){capture(intent);receiver.capture(intent);}
+     @Override public void onActivityResult(Activity activity,int request,int result,Intent data){}
+     @Override public void onHostResume(){
+         main.postDelayed(()->{
+@@ -285,5 +289,5 @@
+     }
+     @Override public void onHostPause(){}
+     @Override public void onHostDestroy(){}
+-    public void dispose(){disposed=true;hubSettings.unregisterOnSharedPreferenceChangeListener(settingsListener);context.removeActivityEventListener(this);context.removeLifecycleEventListener(this);if(active.get()==this)active.clear();}
++    public void dispose(){disposed=true;receiver.close();hubSettings.unregisterOnSharedPreferenceChangeListener(settingsListener);context.removeActivityEventListener(this);context.removeLifecycleEventListener(this);if(active.get()==this)active.clear();}
+ }
+--- a/HubAssistantNotificationService.java
++++ b/HubAssistantNotificationService.java
+@@ -2,72 +2,10 @@
+ 
+ import android.app.Service;
+ import android.content.Intent;
+-import android.content.pm.ServiceInfo;
+-import android.os.Build;
+ import android.os.IBinder;
+-import java.util.HashSet;
+-import java.util.List;
+-import java.util.Set;
+-import java.util.concurrent.Executors;
+-import java.util.concurrent.ScheduledExecutorService;
+-import java.util.concurrent.TimeUnit;
+-import org.json.JSONArray;
+-import org.json.JSONObject;
+ 
+-/** User-enabled external HUB connection. No boot start, alarm or popup. */
++/** Compatibility tombstone for old installs. Reception belongs to the live app process. */
+ public final class HubAssistantNotificationService extends Service {
+-    private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
+-    private HubAssistantMessageStore store;
+-    private HubToolSession session;
+-    private String owner;
+-    private boolean scheduled;
+-    private volatile boolean ended;
+-    private int failures;
+-    @Override public void onCreate(){super.onCreate();store=HubAssistantMessageStore.get(this);}
+-    @Override public int onStartCommand(Intent intent,int flags,int startId) {
+-        try {
+-            HubToolSession current=HubAssistantNotifications.selected();String identity=HubAssistantNotifications.owner(current);
+-            if(!HubAssistantNotifications.enabled(this,identity)||!HubAssistantNotifications.permitted(this)){stopSelf();return START_NOT_STICKY;}
+-            if(session!=null&&!HubAssistantNotifications.sameLogin(session,current)){stopSelf();return START_NOT_STICKY;}
+-            session=current;owner=identity;HubAssistantNotifications.channels(this);
+-            android.app.Notification notice=HubAssistantNotifications.builder(this,HubAssistantNotifications.ONGOING_CHANNEL)
+-                .setContentTitle("关注设备消息已开启").setContentText("正在连接 HUB 接收新消息；可在通知提醒设置中关闭")
+-                .setOngoing(true).setCategory(android.app.Notification.CATEGORY_SERVICE).setShowWhen(false).build();
+-            if(Build.VERSION.SDK_INT>=29)startForeground(HubAssistantNotifications.ONGOING_ID,notice,ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+-            else startForeground(HubAssistantNotifications.ONGOING_ID,notice);
+-            if(!scheduled){scheduled=true;worker.execute(this::poll);}
+-        } catch(Exception unavailable){stopSelf();}
+-        // Android/OEM termination is not disguised as guaranteed delivery.
+-        return START_NOT_STICKY;
+-    }
+-    private boolean current() {
+-        try{return !ended&&HubAssistantNotifications.sameLogin(session,HubAssistantNotifications.selected())
+-            &&HubAssistantNotifications.enabled(this,owner)&&HubAssistantNotifications.permitted(this);}
+-        catch(Exception unavailable){return false;}
+-    }
+-    private void poll() {
+-        if(!current()){stopSelf();return;}
+-        long delay=15000;
+-        try {
+-            HubToolSession latest=HubAssistantNotifications.selected();
+-            JSONObject response=latest.request("hub/xiaoxing/notificationFeed",new JSONObject().put("after",store.cursor(owner)).put("limit",100));
+-            if(!current()){stopSelf();return;}
+-            List<JSONObject> notices=store.ingest(owner,response);
+-            Set<String> projects=new HashSet<>();JSONArray items=response.getJSONArray("items");
+-            for(int i=0;i<items.length();i++)projects.add(items.getJSONObject(i).getString("projectId"));
+-            HubAssistantNotifications.changed(latest,projects);
+-            for(JSONObject item:notices) {
+-                if(!current()){stopSelf();return;}
+-                HubAssistantNotifications.post(this,latest,item);
+-                store.posted(owner,item.getString("eventKey"));
+-            }
+-            failures=0;if(response.optBoolean("hasMore",false))delay=100;
+-        } catch(Exception unavailable) {
+-            failures=Math.min(6,failures+1);delay=Math.min(120000,5000L*(1L<<failures));
+-            android.util.Log.w("HubAssistantObserver","Feed unavailable: "+unavailable.getClass().getSimpleName());
+-        }
+-        if(!ended)try{worker.schedule(this::poll,delay,TimeUnit.MILLISECONDS);}catch(Exception stopped){}
+-    }
++    @Override public int onStartCommand(Intent intent,int flags,int startId){stopSelf();return START_NOT_STICKY;}
+     @Override public IBinder onBind(Intent intent){return null;}
+-    @Override public void onDestroy(){ended=true;worker.shutdownNow();stopForeground(true);super.onDestroy();}
+ }
+--- a/HubNotifySettings.java
++++ b/HubNotifySettings.java
+@@ -100,7 +100,7 @@
+     }
+     static final class Records {
+         final Activity a;final Dialog dialog;final LinearLayout list;final ScrollView scroll;final Icon icons;
+-        final Map<String,View> views=new HashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";int limit=50;
++        final Map<String,View> views=new HashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";String focusEvent="";int limit=50;
+         Records(Activity activity,Icon icon,Runnable refresh){
+             a=activity;icons=icon;dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);LinearLayout root=col(a);root.setPadding(dp(a,16),dp(a,8),dp(a,16),dp(a,12));root.setBackgroundColor(0xfff0f5f8);
+             LinearLayout heading=row(a,"通知记录","");TextView back=action(a,"‹ 返回"),reload=action(a,"刷新");heading.addView(back,0);heading.addView(reload);root.addView(heading);back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
+@@ -122,6 +122,9 @@
+                 if(line==null){line=new LinearLayout(a);line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,12));line.setBackground(bg(a,-1,10));ImageView image=new ImageView(a);image.setScaleType(ImageView.ScaleType.FIT_CENTER);line.addView(image,new LinearLayout.LayoutParams(dp(a,32),dp(a,32)));LinearLayout words=col(a);words.setPadding(dp(a,10),0,dp(a,8),0);words.addView(text(a,"",14,INK));words.addView(text(a,"",12,MUTED));line.addView(words,new LinearLayout.LayoutParams(0,-2,1));line.addView(text(a,"",12,MUTED));views.put(key,line);}
+                 ((ImageView)line.getChildAt(0)).setImageDrawable(icons.get(event.optString("appId")));LinearLayout words=(LinearLayout)line.getChildAt(1);((TextView)words.getChildAt(0)).setText(event.optString("title"));((TextView)words.getChildAt(1)).setText(event.optString("content"));((TextView)line.getChildAt(2)).setText(time.format(new Date(event.optLong("createTime"))));place(line,position++);
+             }
++            if("@latest".equals(focusEvent)){focusEvent="";scroll.post(()->scroll.scrollTo(0,0));}
++            if(!focusEvent.isEmpty()&&views.containsKey(focusEvent)){View focus=views.get(focusEvent);focus.setBackground(bg(a,0xffdff5f3,10));scroll.post(()->scroll.smoothScrollTo(0,focus.getTop()));focusEvent="";}
++            else if(!focusEvent.isEmpty()&&rows.size()>limit){limit=rows.size();signature="";render();return;}
+             TextView more=(TextView)views.get("more");if(more==null){more=action(a,"加载更多");more.setOnClickListener(v->{limit+=50;signature="";render();});views.put("more",more);}if(rows.size()>limit)place(more,position);
+         }
+         void place(View view,int index){view.setVisibility(View.VISIBLE);if(view.getParent()!=list)list.addView(view,index);else if(list.indexOfChild(view)!=index){list.removeView(view);list.addView(view,index);}}
+--- a/HubPages.java
++++ b/HubPages.java
+@@ -457,7 +457,9 @@
+         return resolveProjectAndSn(owner,project,"");
+     }
+ 
+-    void notifyRemind(String pid, String serial, String macOrId) {
++    void notifyRemind(String pid,String serial,String macOrId){notifyRemind(pid,serial,macOrId,"");}
++    void notifyRecords(String pid,String serial,String mac,String event){notifyRemind(pid,serial,mac,event.isEmpty()?"@latest":event);}
++    private void notifyRemind(String pid, String serial, String macOrId,String focusEvent) {
+         ui.post(() -> {
+             Activity a = context.getCurrentActivity();
+             if (a == null || a.isFinishing()) return;
+@@ -557,6 +559,7 @@
+                             footprintRendered[0]=signature;
+                             java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("MM-dd HH:mm",Locale.CHINA);date.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
+                             noticeData[0]=visibleRecords[0];
++                            if(!focusEvent.isEmpty()&&recordsPage[0]==null){recordsPage[0]=new HubNotifySettings.Records(a,appId->{android.graphics.drawable.Drawable icon=footprintImages.get(appId);return icon==null?footprintDefaultIcon():icon;},()->footprintRefresh.performClick());recordsPage[0].focusEvent=focusEvent;}
+                             if(recordsPage[0]!=null)recordsPage[0].update(noticeData[0],resolved[1],resolved[2],resolved[3]);
+                             JSONArray snapshot=visibleRecords[0];List<Object[]> ordered=new ArrayList<>();
+                             for(int i=0;i<snapshot.length();i++){
+--- a/HubStationModule.java
++++ b/HubStationModule.java
+@@ -115,7 +115,7 @@
+     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,
+         new ArrayBlockingQueue<Runnable>(16),new ThreadPoolExecutor.AbortPolicy());
+     public HubStationModule(ReactApplicationContext context){super(context);this.context=context;pages=new HubPages(context);projectPages=new HubProjectPages(context);
+-        notifications=new HubAssistantNotifications(context);
++        notifications=new HubAssistantNotifications(context);notifications.pages(pages);
+         assistantFeatures=new HubAssistantFeaturesPage(context,(owner,project)->{
+             String[] target=pages.assistantTarget(owner,project);
+             return new HubAssistantFeaturesPage.Target(target[0],target[1]);
+--- a/HubToolSession.java
++++ b/HubToolSession.java
+@@ -141,7 +141,7 @@
+             synchronized(HubToolSession.class){
+                 HubToolSession latest=current();
+                 if(!sameLogin(attempted,latest))return null;
+-                verifiedSession=latest;
++                verifiedSession=latest;HubAssistantNotifications.sessionReady();
+                 android.util.Log.i("HubToolSession","Remembered login verified with HUB");
+                 return latest.bridgeToken;
+             }
+@@ -214,7 +214,7 @@
+         byte[] random=new byte[32];new java.security.SecureRandom().nextBytes(random);String bridge=Base64.encodeToString(random,Base64.NO_WRAP|Base64.URL_SAFE);
+         activeSession=new HubToolSession(base,"Bearer "+value.getString("token"),pin,value.getString("account"),value.getString("accountId"),value.getString("hubId"),value.getString("refreshToken"),bridge,value.getLong("expireTime"));verifiedSession=activeSession;lastSaved="";persist();
+         android.content.SharedPreferences prefs=context.getSharedPreferences("labprobe_hub",0);org.json.JSONArray history=new org.json.JSONArray();history.put(base);org.json.JSONArray previous=new org.json.JSONArray(prefs.getString("address_history","[]"));for(int i=0;i<previous.length()&&history.length()<8;i++)if(!base.equals(previous.optString(i)))history.put(previous.optString(i));prefs.edit().putString("address_history",history.toString()).putString("login_account",value.getString("account")).commit();
+-        return bridgeResult();
++        HubAssistantNotifications.sessionReady();return bridgeResult();
+     }
+     /** Capture the login represented by the original JS request before a worker
+      * can wait for refresh. A stale opaque handle must never fall through as a
+@@ -448,6 +448,12 @@
+         HubToolSession latest=fresh(this);
+         JSONObject result=call(latest.base,latest.pin,resource,latest.token,body);requireCurrent(latest);return result;
+     }
++    interface NoticeCall { void set(okhttp3.Call call); }
++    JSONObject waitNotices(JSONObject body,NoticeCall capture)throws Exception {
++        HubToolSession latest=fresh(this);requireCurrent(latest);
++        JSONObject result=callDocument(latest.base,latest.pin,"hub/xiaoxing/notificationWait",latest.token,body,20,capture).getJSONObject("data");
++        requireCurrent(latest);return result;
++    }
+     byte[] cachedChildCatalogIcon(String iconUrl) {
+         try {
+             android.net.Uri uri=android.net.Uri.parse(iconUrl==null?"":iconUrl);String path=uri.getPath();
+@@ -499,12 +505,16 @@
+         return callDocument(base,pin,resource,auth,body,("hub/maccAccount".equals(resource)||"hub/officialAccount".equals(resource)||"hub/projectManagement".equals(resource)||"homeAp/bindDevice2".equals(resource))?90:0);
+     }
+     private static JSONObject callDocument(String base,String pin,String resource,String auth,JSONObject body,int deadline) throws Exception {
++        return callDocument(base,pin,resource,auth,body,deadline,null);
++    }
++    private static JSONObject callDocument(String base,String pin,String resource,String auth,JSONObject body,int deadline,NoticeCall capture) throws Exception {
+         HttpUrl url=HubInterceptor.normalize(base);
+         if(url==null)throw new Exception("HUB 地址无效");
+         Request.Builder builder=new Request.Builder().url(url.newBuilder().encodedPath("/api/v1/"+resource).build())
+             .post(RequestBody.create(MediaType.parse("application/json; charset=utf-8"),body.toString()));if(auth!=null)builder.header("Authorization",auth);Request request=builder.build();
+         OkHttpClient transport=client(url,pin);if(deadline>0)transport=transport.newBuilder().connectTimeout(3,TimeUnit.SECONDS).readTimeout(deadline,TimeUnit.SECONDS).callTimeout(deadline,TimeUnit.SECONDS).build();
+-        try(Response response=transport.newCall(request).execute()) {
++        okhttp3.Call pendingCall=transport.newCall(request);if(capture!=null)capture.set(pendingCall);
++        try(Response response=pendingCall.execute()) {
+             // Preserve HTTP auth semantics even when a gateway's rejection has
+             // no JSON body. Server errors and parse failures remain retryable.
+             if(response.code()==401||response.code()==403)
+@@ -515,6 +525,6 @@
+             JSONObject result=new JSONObject(response.body().string());
+             if(result.optInt("code",-1)!=0)throw new HubRequestException(result.optInt("code",-1),result.optString("msg","操作失败"));
+             return result;
+-        }
++        }finally{if(capture!=null)capture.set(null);}
+     }
+ }

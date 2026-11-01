@@ -42,7 +42,7 @@ def save(engine, db, key, device, kind, category, token, payload, now):
              'category': category, 'projectScope': key.project, 'sn': key.sn,
              'deviceId': device, 'schemaVersion': 2}
     if old and all(old.get(name) == val for name, val in value.items()): return None
-    created = (payload.get('startTime', int(now*1000))/1000) if kind == 'activity' else now
+    created = payload.get('startTime' if kind == 'activity' else 'triggeredAt', int(now*1000))/1000
     value.update(createTime=old.get('createTime') if old else int(created*1000),
                  updatedAt=int(now*1000), newReminder=kind == 'reminder' and old is None)
     cur = db.execute('INSERT INTO assistant_activity_changes(tenant,project,sn,event_key,payload) VALUES(?,?,?,?,?)',
@@ -103,60 +103,13 @@ def detect(engine, key, device, name, rule, report, *, observed_at, online, now,
                 'ongoing':ongoing,'timeKind':time_kind,'sourceEventId':sample['sourceEventId'],
                 'source':'children.report.sessionRanges'}
             save(engine,db,key,device,'activity',sample['category'] or 'activity',token,payload,now)
-        from .notification_preferences import configuration, selected
-        settings = configuration(rule.get('settings'))
-        versions=rule.get('categoryUpdatedAt') or {}
-        for category in (() if unused.get('history_only') else LABELS):
-            rule_name='enable' if category=='usage' else category
-            version=number(versions.get(rule_name)) or number(rule.get('updatedAt')) or now
-            ident=(*scope,device,category)
-            previous=db.execute('SELECT * FROM assistant_activity_baselines WHERE tenant=? AND project=? AND sn=? AND device=? AND category=?',ident).fetchone()
-            enabled=rule.get(rule_name) is True
-            config=settings[rule_name]
-            if category=='usage': enabled = enabled and config['start']
-            elif category!='payment': enabled = enabled and config['durationEnabled']
-            saved=json.loads(previous['state']) if previous else {}
-            reset=(previous is None or previous['rule_version']!=version or not previous['enabled']
-                   or saved.get('schemaVersion')!=2)
-            state=saved if not reset else {'schemaVersion':2}
-            blocked=max(previous['blocked_before'] if previous else now,now if reset or not fresh else 0)
-            if not enabled: state={'schemaVersion':2}
-            elif fresh and not reset:
-                candidates=[s for s in ranges if (category=='usage' and s['located']) or s['category']==category]
-                for sample in candidates:
-                    if category!='usage' and not selected(settings,rule_name,sample['appId']): continue
-                    if sample['end']<=blocked: continue
-                    app_id='' if category=='usage' else sample['appId']
-                    sessions=state.setdefault('sessions',{})
-                    # Payment accesses are per source interval, never generic app visits.
-                    key_id=identity(app_id,sample['start']) if category=='payment' else app_id
-                    current=sessions.get(key_id,{})
-                    begin=max(sample['start'],math.ceil(blocked/60)*60)
-                    end=min(sample['end'],math.floor(observed/60)*60)
-                    if category!='payment' and (not sample['located'] or end<=begin): continue
-                    if current and begin-current.get('last',begin)>=600:
-                        # A new observed range is a new episode; no inferred end timestamp.
-                        current={}
-                    first=current.get('first',begin)
-                    intervals=union(current.get('intervals',[])+[[begin,end]])
-                    minutes=sum(b-a for a,b in intervals)/60
-                    threshold=5 if category=='usage' else config.get('minutes',0)
-                    token=current.get('token') or identity(*scope,device,'reminder',category,app_id,first)
-                    if (category=='payment' and sample['start']>=blocked) or minutes>=threshold:
-                        payload={'projectId':project_id or key.project,'deviceName':name,
-                            'title':LABELS[category], 'content':('检测到支付服务访问，不代表已完成付款' if category=='payment' else '检测到设备持续网络活动' if category=='usage' else sample['appName']+'网络活动已达'+str(threshold)+'分钟'),
-                            'appId':app_id,'appName':'' if category=='usage' else sample['appName'],
-                            'activityId':identity(*scope,device,'activity',sample['appId'],sample['start']) if app_id else None,
-                            'startTime':int(first*1000),'accessTime':int(sample['start']*1000) if category=='payment' else None,
-                            'triggeredAt':current.get('triggeredAt') or int(observed*1000),
-                            'source':'children.report.sessionRanges','measurementBasis':'observed-network-activity'}
-                        result=save(engine,db,key,device,'reminder',category,token,payload,now)
-                        if result: emitted.append(result)
-                        current['triggeredAt']=payload['triggeredAt']
-                    sessions[key_id]={**current,'first':first,'last':end,'intervals':intervals,'token':token}
-            db.execute('INSERT OR REPLACE INTO assistant_activity_baselines VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                       (*ident,int(enabled),version,0,blocked,observed or 0,0,json.dumps(state)))
+        if not unused.get('history_only'):
+            from .notification_trigger_rules import trigger
+            emitted = trigger(engine,db,key,device,name,rule,report,ranges,observed,online,now,project_id)
         old=db.execute('SELECT event_key FROM assistant_activity_events WHERE tenant=? AND project=? AND sn=? AND created<?',(*scope,cutoff)).fetchall()
         for row in old: db.execute('DELETE FROM assistant_activity_changes WHERE event_key=?',(row['event_key'],))
         db.execute('DELETE FROM assistant_activity_events WHERE tenant=? AND project=? AND sn=? AND created<?',(*scope,cutoff))
+    if emitted:
+        from .notification_wait import changed
+        changed()
     return emitted

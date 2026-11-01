@@ -100,7 +100,7 @@ final class HubNotifySettings {
     }
     static final class Records {
         final Activity a;final Dialog dialog;final LinearLayout list;final ScrollView scroll;final Icon icons;
-        final Map<String,View> views=new HashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";int limit=50;
+        final Map<String,View> views=new HashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";String focusEvent="";int limit=50;
         Records(Activity activity,Icon icon,Runnable refresh){
             a=activity;icons=icon;dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);LinearLayout root=col(a);root.setPadding(dp(a,16),dp(a,8),dp(a,16),dp(a,12));root.setBackgroundColor(0xfff0f5f8);
             LinearLayout heading=row(a,"通知记录","");TextView back=action(a,"‹ 返回"),reload=action(a,"刷新");heading.addView(back,0);heading.addView(reload);root.addView(heading);back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
@@ -122,6 +122,9 @@ final class HubNotifySettings {
                 if(line==null){line=new LinearLayout(a);line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,12));line.setBackground(bg(a,-1,10));ImageView image=new ImageView(a);image.setScaleType(ImageView.ScaleType.FIT_CENTER);line.addView(image,new LinearLayout.LayoutParams(dp(a,32),dp(a,32)));LinearLayout words=col(a);words.setPadding(dp(a,10),0,dp(a,8),0);words.addView(text(a,"",14,INK));words.addView(text(a,"",12,MUTED));line.addView(words,new LinearLayout.LayoutParams(0,-2,1));line.addView(text(a,"",12,MUTED));views.put(key,line);}
                 ((ImageView)line.getChildAt(0)).setImageDrawable(icons.get(event.optString("appId")));LinearLayout words=(LinearLayout)line.getChildAt(1);((TextView)words.getChildAt(0)).setText(event.optString("title"));((TextView)words.getChildAt(1)).setText(event.optString("content"));((TextView)line.getChildAt(2)).setText(time.format(new Date(event.optLong("createTime"))));place(line,position++);
             }
+            if("@latest".equals(focusEvent)){focusEvent="";scroll.post(()->scroll.scrollTo(0,0));}
+            if(!focusEvent.isEmpty()&&views.containsKey(focusEvent)){View focus=views.get(focusEvent);focus.setBackground(bg(a,0xffdff5f3,10));scroll.post(()->scroll.smoothScrollTo(0,focus.getTop()));focusEvent="";}
+            else if(!focusEvent.isEmpty()&&rows.size()>limit){limit=rows.size();signature="";render();return;}
             TextView more=(TextView)views.get("more");if(more==null){more=action(a,"加载更多");more.setOnClickListener(v->{limit+=50;signature="";render();});views.put("more",more);}if(rows.size()>limit)place(more,position);
         }
         void place(View view,int index){view.setVisibility(View.VISIBLE);if(view.getParent()!=list)list.addView(view,index);else if(list.indexOfChild(view)!=index){list.removeView(view);list.addView(view,index);}}

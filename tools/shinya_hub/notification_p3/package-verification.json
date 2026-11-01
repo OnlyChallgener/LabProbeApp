@@ -1,0 +1,10 @@
+{
+  "sha256": "22e5b5b45b58204758c58cafe2341ec6aa01602db2d56b05e973cbe12dd56576",
+  "abi": [
+    "arm64-v8a"
+  ],
+  "v1v2v3": true,
+  "legacyForegroundServiceStopsItself": true,
+  "receiverIncluded": true,
+  "deviceTested": false
+}
