@@ -91,14 +91,35 @@ final class HubNotifySettings {
         s.setTrackTintList(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_checked},new int[]{}},new int[]{TEAL,0xffdce1e5}));
         row.addView(s);s.setOnCheckedChangeListener((b,value)->{try{draft.put(key,value);}catch(Exception ignored){}});return s;
     }
-    private static Dialog sheet(Activity a,String title,LinearLayout content){
-        Dialog d=new Dialog(a);d.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        LinearLayout root=col(a);root.setPadding(dp(a,18),dp(a,10),dp(a,18),dp(a,14));root.setBackground(bg(a,0xfff5f8fa,20));
-        TextView heading=text(a,title,17,INK);heading.setTypeface(null,Typeface.BOLD);heading.setGravity(Gravity.CENTER);heading.setPadding(0,dp(a,10),0,dp(a,16));root.addView(heading);
-        ScrollView scroll=new ScrollView(a){@Override protected void onMeasure(int w,int h){super.onMeasure(w,MeasureSpec.makeMeasureSpec((int)(getResources().getDisplayMetrics().heightPixels*.70),MeasureSpec.AT_MOST));}};
-        scroll.setFillViewport(false);scroll.addView(content);root.addView(scroll);d.setContentView(root);d.show();
-        Window w=d.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);w.setGravity(Gravity.BOTTOM);w.setLayout(-1,-2);w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);}
-        return d;
+    private static View backButton(Activity a){
+        View v=new View(a){final android.graphics.Paint p=new android.graphics.Paint(3);
+            @Override protected void onDraw(android.graphics.Canvas c){super.onDraw(c);p.setColor(TEAL);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(dp(a,2));p.setStrokeCap(android.graphics.Paint.Cap.ROUND);p.setStrokeJoin(android.graphics.Paint.Join.ROUND);float x=getWidth()/2f,y=getHeight()/2f;android.graphics.Path line=new android.graphics.Path();line.moveTo(x+dp(a,3),y-dp(a,7));line.lineTo(x-dp(a,4),y);line.lineTo(x+dp(a,3),y+dp(a,7));c.drawPath(line,p);}};
+        v.setContentDescription("返回");v.setFocusable(true);return v;
+    }
+    private static Dialog page(Activity a,String title,LinearLayout content,LinearLayout footer){
+        Dialog d=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);
+        LinearLayout root=col(a);root.setBackgroundColor(0xfff0f4fa);
+        FrameLayout header=new FrameLayout(a);TextView heading=text(a,title,17,INK);heading.setGravity(Gravity.CENTER);heading.setTypeface(null,Typeface.BOLD);
+        header.addView(heading,new FrameLayout.LayoutParams(-1,-1));View back=backButton(a);header.addView(back,new FrameLayout.LayoutParams(dp(a,52),-1,Gravity.LEFT));back.setOnClickListener(v->d.dismiss());root.addView(header,new LinearLayout.LayoutParams(-1,dp(a,56)));
+        ScrollView scroll=new ScrollView(a);scroll.setFillViewport(false);scroll.setClipToPadding(false);scroll.setPadding(dp(a,16),dp(a,12),dp(a,16),dp(a,12));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        footer.setPadding(dp(a,20),dp(a,12),dp(a,20),dp(a,20));
+        for(int i=0;i<footer.getChildCount();i++){TextView button=(TextView)footer.getChildAt(i);if(i==0){button.setVisibility(View.GONE);continue;}button.setTextColor(-1);button.setTextSize(16);button.setTypeface(null,Typeface.BOLD);button.setGravity(Gravity.CENTER);button.setBackground(bg(a,TEAL,26));button.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(a,48)));}
+        root.addView(footer);d.setContentView(root);d.show();Window w=d.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);systemBars(w);w.setLayout(-1,-1);w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);}return d;
+    }
+    private static void systemBars(Window w){w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS|WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);w.setStatusBarColor(0xfff0f4fa);w.setNavigationBarColor(0xfff0f4fa);w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);}
+    private static LinearLayout card(Activity a){LinearLayout v=col(a);v.setPadding(dp(a,16),dp(a,8),dp(a,16),dp(a,8));v.setBackground(bg(a,-1,18));return v;}
+    private static void addSetting(Activity a,LinearLayout card,LinearLayout line,int category){
+        if(card.getChildCount()>0){View divider=new View(a);divider.setBackgroundColor(0xffedf0f4);card.addView(divider,new LinearLayout.LayoutParams(-1,dp(a,1)));}
+        line.setMinimumHeight(dp(a,64));TextView icon=categoryIcon(a,category);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(a,44),dp(a,44));lp.rightMargin=dp(a,10);line.addView(icon,0,lp);card.addView(line);
+    }
+    private static boolean categoryApp(JSONObject app,int category){String id=app.optString("id");return category==3?("0006".equals(app.optString("type"))||Arrays.asList("18-1-1-0","18-156-1-0").contains(id)):(category==1?"0003":category==2?"0002":"0005").equals(app.optString("type"));}
+    private static void preview(Activity a,LinearLayout strip,int category,JSONObject draft,JSONArray catalog,Icon icons){
+        strip.removeAllViews();JSONArray chosen=draft.optJSONArray("appIds");Set<String> ids=new HashSet<>();if(chosen!=null)for(int i=0;i<chosen.length();i++)ids.add(chosen.optString(i));boolean all=draft.optBoolean(category==3?"allServices":"allApps",true);
+        for(int i=0;catalog!=null&&i<catalog.length();i++){JSONObject app=catalog.optJSONObject(i);if(app==null||!categoryApp(app,category)||!all&&!ids.contains(app.optString("id")))continue;
+            LinearLayout tile=col(a);tile.setGravity(Gravity.CENTER);ImageView image=new ImageView(a);image.setScaleType(ImageView.ScaleType.FIT_CENTER);String id=app.optString("id");image.setImageDrawable(icons.get(id));icons.load(id,image);tile.addView(image,new LinearLayout.LayoutParams(dp(a,36),dp(a,36)));
+            TextView label=text(a,app.optString("showName"),11,MUTED);label.setSingleLine(true);label.setEllipsize(android.text.TextUtils.TruncateAt.END);label.setGravity(Gravity.CENTER);label.setPadding(0,dp(a,6),0,0);tile.addView(label,new LinearLayout.LayoutParams(-1,-2));strip.addView(tile,new LinearLayout.LayoutParams(dp(a,62),-2));
+        }
+        if(strip.getChildCount()==0)strip.addView(text(a,"暂无关注应用",13,MUTED));
     }
     private static TextView action(Activity a,String value){TextView t=text(a,value,14,TEAL);t.setPadding(dp(a,12),dp(a,10),dp(a,12),dp(a,10));return t;}
     private static void minuteEditor(Activity a,JSONObject draft,String field,int fallback,TextView label){
@@ -119,13 +140,13 @@ final class HubNotifySettings {
     private static void applications(Activity a,int category,JSONObject draft,JSONArray catalog,Icon icons,TextView count){
         String allKey=category==3?"allServices":"allApps";final JSONObject edit;
         try{edit=new JSONObject(draft.toString());}catch(Exception bad){return;}
-        LinearLayout content=col(a);LinearLayout all=row(a,category==3?"全部支付服务":"关注该类别全部应用","");Switch allToggle=toggle(a,all,edit,allKey,true);content.addView(all);
+        LinearLayout content=card(a);LinearLayout all=row(a,category==3?"全部支付／购物应用":"关注该类别全部应用","");Switch allToggle=toggle(a,all,edit,allKey,true);content.addView(all);
         Set<String> chosen=new HashSet<>();JSONArray ids=edit.optJSONArray("appIds");if(ids!=null)for(int i=0;i<ids.length();i++)chosen.add(ids.optString(i));
         String type=category==1?"0003":category==2?"0002":"0005";int total=0;
         List<JSONObject> available=new ArrayList<>();
         for(int i=0;catalog!=null&&i<catalog.length();i++){
             JSONObject app=catalog.optJSONObject(i);if(app==null)continue;String id=app.optString("id");
-            if(category==3?!Arrays.asList("18-1-1-0","18-156-1-0").contains(id):!type.equals(app.optString("type")))continue;
+            if(category==3?!("0006".equals(app.optString("type"))||Arrays.asList("18-1-1-0","18-156-1-0").contains(id)):!type.equals(app.optString("type")))continue;
             available.add(app);
         }
         Set<String> availableIds=new LinkedHashSet<>();for(JSONObject app:available)availableIds.add(app.optString("id"));
@@ -144,31 +165,50 @@ final class HubNotifySettings {
             more.setVisibility(shown[0]<available.size()?View.VISIBLE:View.GONE);
         };more.setOnClickListener(v->append.run());append.run();
         if(available.isEmpty())content.addView(text(a,"暂无可选应用",14,MUTED));
-        Dialog dialog=sheet(a,"关注应用",content);LinearLayout footer=new LinearLayout(a);TextView cancel=action(a,"取消"),save=action(a,"保存");footer.addView(cancel,new LinearLayout.LayoutParams(0,-2,1));footer.addView(save,new LinearLayout.LayoutParams(0,-2,1));content.addView(footer);
+        LinearLayout footer=new LinearLayout(a);TextView cancel=action(a,"取消"),save=action(a,"保存");footer.addView(cancel,new LinearLayout.LayoutParams(0,-2,1));footer.addView(save,new LinearLayout.LayoutParams(0,-2,1));Dialog dialog=page(a,"关注应用",content,footer);
         cancel.setOnClickListener(v->dialog.dismiss());save.setOnClickListener(v->{try{draft.put(allKey,selection.all);draft.put("appIds",new JSONArray(selection.saved()));count.setText(selection.all?"全部 ›":selection.saved().size()+"个 ›");dialog.dismiss();}catch(Exception ignored){}});
+    }
+    private static void scene(Activity a,LinearLayout rules,String title,JSONObject draft,String enabled,String number,int fallback,int glyph){
+        LinearLayout r=row(a,title,"");
+        if(number!=null){String unit=number.endsWith("Count")?"次":"分钟";TextView value=action(a,draft.optInt(number,fallback)+unit+" ›");value.setTextSize(12);value.setPadding(dp(a,6),dp(a,10),dp(a,6),dp(a,10));r.addView(value);value.setOnClickListener(v->{
+            LinearLayout body=new LinearLayout(a);body.setGravity(Gravity.CENTER);EditText input=new EditText(a);input.setInputType(2);input.setSingleLine(true);input.setTextSize(16);input.setText(Integer.toString(draft.optInt(number,fallback)));input.setPadding(dp(a,12),dp(a,8),dp(a,12),dp(a,8));input.setBackground(bg(a,0xfff0f4fa,8));body.addView(input,new LinearLayout.LayoutParams(dp(a,88),dp(a,42)));body.addView(text(a," "+unit,14,INK));
+            HubDialog.show(a,title,body,"取消","保存",d->{String raw=input.getText().toString();int max=number.endsWith("Count")?100:1440;if(!raw.matches("[0-9]{1,4}")||Integer.parseInt(raw)<1||Integer.parseInt(raw)>max){Toast.makeText(a,"请输入1—"+max+"的整数",0).show();return;}try{draft.put(number,Integer.parseInt(raw));value.setText(raw+unit+" ›");d.dismiss();}catch(Exception ignored){}});
+        });}else{TextView value=action(a,"22:00—06:00");r.addView(value);}
+        toggle(a,r,draft,enabled,"durationEnabled".equals(enabled));addSetting(a,rules,r,glyph);
     }
     static void edit(Activity a,int category,JSONObject rule,JSONArray catalog,Icon icons,Save save){
         final JSONObject draft;try{JSONObject config=rule.optJSONObject("settings");draft=new JSONObject(config==null?"{}":config.optJSONObject(KEYS[category])==null?"{}":config.getJSONObject(KEYS[category]).toString());}catch(Exception invalid){return;}
-        LinearLayout content=col(a);JSONObject enabled=new JSONObject();try{enabled.put("value",rule.optBoolean(KEYS[category]));}catch(Exception ignored){}
-        LinearLayout enable=row(a,NAMES[category],DESCRIPTIONS[category]);toggle(a,enable,enabled,"value",false);content.addView(enable);
+        LinearLayout content=col(a);LinearLayout rules=card(a);
         if(category==0){
             String[] labels={"开始用网提醒","结束用网提醒","深夜用网提醒","长时间用网提醒"},fields={"start","end","night","long"};
-            for(int i=0;i<fields.length;i++){LinearLayout r=row(a,labels[i],i==2?"22:00—06:00":"");toggle(a,r,draft,fields[i],true);content.addView(r);}
+            for(int i=0;i<fields.length;i++){if(i==3){scene(a,rules,labels[i],draft,"long","longMinutes",120,7);continue;}LinearLayout r=row(a,labels[i],i==2?"22:00—06:00":"");toggle(a,r,draft,fields[i],true);addSetting(a,rules,r,i==2?6:0);}
         }else{
-            String field=category==3?"allServices":"allApps";LinearLayout r=row(a,category==3?"关注的支付服务":"关注应用管理","");TextView count=action(a,draft.optBoolean(field,true)?"全部 ›":(draft.optJSONArray("appIds")==null?0:draft.optJSONArray("appIds").length())+"个 ›");r.addView(count);r.setOnClickListener(v->applications(a,category,draft,catalog,icons,count));content.addView(r);
-            if(category!=3){LinearLayout duration=row(a,"使用时长提醒","");toggle(a,duration,draft,"durationEnabled",true);content.addView(duration);}
+            LinearLayout apps=card(a);String field=category==3?"allServices":"allApps";String label=category==1?"关注的游戏":category==2?"关注的视频应用":category==3?"关注的支付／购物应用":"关注的社交应用";
+            LinearLayout r=row(a,label,"");TextView count=action(a,draft.optBoolean(field,true)?"全部 ›":(draft.optJSONArray("appIds")==null?0:draft.optJSONArray("appIds").length())+"个 ›");r.addView(count);apps.addView(r);
+            HorizontalScrollView bar=new HorizontalScrollView(a);bar.setHorizontalScrollBarEnabled(false);LinearLayout strip=new LinearLayout(a);strip.setPadding(0,dp(a,8),0,dp(a,12));bar.addView(strip);apps.addView(bar);preview(a,strip,category,draft,catalog,icons);
+            count.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){preview(a,strip,category,draft,catalog,icons);}public void afterTextChanged(android.text.Editable e){}});
+            r.setOnClickListener(v->applications(a,category,draft,catalog,icons,count));content.addView(apps);View gap=new View(a);content.addView(gap,new LinearLayout.LayoutParams(-1,dp(a,16)));
+            if(category!=3){scene(a,rules,"使用时长提醒",draft,"durationEnabled","minutes",category==4?30:10,5);scene(a,rules,"深夜使用提醒",draft,"nightEnabled",null,0,6);scene(a,rules,"长时间使用提醒",draft,"longEnabled","longMinutes",60,7);scene(a,rules,"高频使用提醒",draft,"frequencyEnabled","frequencyCount",5,8);}else{
+                TextView paymentLabel=text(a,"支付服务访问",13,MUTED);paymentLabel.setPadding(0,dp(a,8),0,0);rules.addView(paymentLabel);
+                LinearLayout access=row(a,"访问提醒","");toggle(a,access,draft,"accessEnabled",true);addSetting(a,rules,access,3);
+                scene(a,rules,"访问次数提醒",draft,"frequencyEnabled","frequencyCount",5,8);
+                TextView shoppingLabel=text(a,"购物应用使用",13,MUTED);shoppingLabel.setPadding(0,dp(a,12),0,0);rules.addView(shoppingLabel);
+                scene(a,rules,"使用时长提醒",draft,"shoppingDurationEnabled","shoppingMinutes",10,5);
+                scene(a,rules,"使用次数提醒",draft,"shoppingFrequencyEnabled","shoppingFrequencyCount",5,8);
+            }
         }
-        if(category!=3){String field=category==0?"longMinutes":"minutes";int fallback=category==0?120:category==4?30:10;LinearLayout threshold=row(a,category==0?"长时间阈值":"提醒时长","");TextView label=action(a,draft.optInt(field,fallback)+"分钟 ›");threshold.addView(label);threshold.setOnClickListener(v->minuteEditor(a,draft,field,fallback,label));content.addView(threshold);}
-        Dialog d=sheet(a,NAMES[category]+"设置",content);LinearLayout footer=new LinearLayout(a);TextView cancel=action(a,"取消"),commit=action(a,"保存");footer.addView(cancel,new LinearLayout.LayoutParams(0,-2,1));footer.addView(commit,new LinearLayout.LayoutParams(0,-2,1));content.addView(footer);
-        cancel.setOnClickListener(v->d.dismiss());commit.setOnClickListener(v->{try{JSONObject patch=new JSONObject().put(KEYS[category],enabled.optBoolean("value")).put("settings",new JSONObject().put(KEYS[category],draft));save.run(patch,d,commit);}catch(Exception ignored){}});
+
+        if(rules.getChildCount()>0)content.addView(rules);
+        LinearLayout footer=new LinearLayout(a);TextView cancel=action(a,"取消"),commit=action(a,"保存");footer.addView(cancel);footer.addView(commit);Dialog d=page(a,NAMES[category]+"设置",content,footer);
+        cancel.setOnClickListener(v->d.dismiss());commit.setOnClickListener(v->{try{JSONObject patch=new JSONObject().put("settings",new JSONObject().put(KEYS[category],draft));save.run(patch,d,commit);}catch(Exception ignored){}});
     }
+
     static boolean matches(JSONObject event,String sn,String mac,String uid){
         if(!"reminder".equals(event.optString("recordKind"))||!sn.equals(event.optString("sn")))return false;
         String device=event.optString("deviceId");String normalized=device.replace(":","").replace("-","").toLowerCase(Locale.ROOT);
         String target=mac.replace(":","").replace("-","").toLowerCase(Locale.ROOT);
         return normalized.equals("mac"+target)||!uid.isEmpty()&&device.equalsIgnoreCase("user:"+uid);
     }
-    private static void systemBars(Window w){w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS|WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);w.setStatusBarColor(0xfff0f4fa);w.setNavigationBarColor(0xfff0f4fa);w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);}
     static final class Records {
         static final int PAGE=0xfff0f1f7,BAR=0xff9290d8;
         final Activity a;final Dialog dialog;final LinearLayout list;final ScrollView scroll;final Icon icons;
@@ -187,7 +227,7 @@ final class HubNotifySettings {
             dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);
             LinearLayout root=col(a);root.setBackgroundColor(PAGE);root.setPadding(dp(a,16),0,dp(a,16),0);
             FrameLayout heading=new FrameLayout(a);TextView title=text(a,"通知记录",17,INK);title.setTypeface(null,Typeface.BOLD);title.setGravity(Gravity.CENTER);
-            heading.addView(title,new FrameLayout.LayoutParams(-1,-1));TextView back=action(a,"‹"),reload=action(a,"刷新");back.setTextSize(30);back.setGravity(Gravity.CENTER);
+            heading.addView(title,new FrameLayout.LayoutParams(-1,-1));View back=backButton(a);TextView reload=action(a,"刷新");
             heading.addView(back,new FrameLayout.LayoutParams(dp(a,48),-1,Gravity.LEFT));reload.setGravity(Gravity.CENTER);heading.addView(reload,new FrameLayout.LayoutParams(dp(a,64),-1,Gravity.RIGHT));
             root.addView(heading,new LinearLayout.LayoutParams(-1,dp(a,52)));back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
             HorizontalScrollView bar=new HorizontalScrollView(a);bar.setHorizontalScrollBarEnabled(false);
@@ -248,29 +288,33 @@ final class HubNotifySettings {
         void placeIn(LinearLayout parent,View view,int index){view.setVisibility(View.VISIBLE);if(view.getParent()!=parent){detach(view);parent.addView(view,Math.min(index,parent.getChildCount()));}else if(parent.indexOfChild(view)!=index){parent.removeView(view);parent.addView(view,Math.min(index,parent.getChildCount()));}}
         final class DayViews {
             final String key;final LinearLayout root=col(a),summary=col(a),details=col(a);final TextView date=text(a,"",14,INK),count=text(a,"",12,MUTED);
-            final List<TextView> values=new ArrayList<>();final HourChart chart=new HourChart(a);
+            final List<TextView> values=new ArrayList<>(),metricLabels=new ArrayList<>();final HourChart chart=new HourChart(a);List<JSONObject> currentEvents=Collections.emptyList();
             DayViews(String day){
                 key=day;LinearLayout heading=new LinearLayout(a);heading.setGravity(Gravity.CENTER_VERTICAL);heading.setPadding(dp(a,4),dp(a,16),dp(a,4),dp(a,9));
                 date.setTypeface(null,Typeface.BOLD);heading.addView(date,new LinearLayout.LayoutParams(0,-2,1));heading.addView(count);heading.setMinimumHeight(dp(a,44));root.addView(heading);
                 heading.setOnClickListener(v->{expanded.put(key,!Boolean.TRUE.equals(expanded.get(key)));signature="";int y=scroll.getScrollY();render();scroll.post(()->scroll.scrollTo(0,y));});
                 summary.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,8));summary.setBackground(bg(a,-1,18));root.addView(summary);
-                boolean compact=a.getResources().getConfiguration().screenWidthDp<380||a.getResources().getConfiguration().fontScale>1.15f;int columns=compact?2:4;
+                int columns=4;
                 String[] labels={"提醒次数","主要应用","高峰小时","涉及应用"};LinearLayout metricRow=null;
                 for(int i=0;i<labels.length;i++){if(i%columns==0){metricRow=new LinearLayout(a);metricRow.setGravity(Gravity.CENTER_VERTICAL);summary.addView(metricRow,new LinearLayout.LayoutParams(-1,-2));}
                     LinearLayout cell=col(a);cell.setGravity(Gravity.CENTER);cell.setPadding(dp(a,3),0,dp(a,3),dp(a,8));
-                    View symbol=new StatSymbol(a,i);cell.addView(symbol,new LinearLayout.LayoutParams(dp(a,20),dp(a,20)));TextView label=text(a,labels[i],12,0xff747984);label.setGravity(Gravity.CENTER);label.setPadding(0,dp(a,5),0,dp(a,3));cell.addView(label);
-                    TextView value=text(a,"--",14,TEAL);value.setGravity(Gravity.CENTER);value.setSingleLine(true);value.setEllipsize(android.text.TextUtils.TruncateAt.END);value.setTypeface(null,Typeface.BOLD);cell.addView(value,new LinearLayout.LayoutParams(-1,-2));values.add(value);metricRow.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
+                    View symbol=new StatSymbol(a,i);cell.addView(symbol,new LinearLayout.LayoutParams(dp(a,17),dp(a,17)));TextView label=text(a,labels[i],11,0xff747984);label.setGravity(Gravity.CENTER);label.setPadding(0,dp(a,5),0,dp(a,3));cell.addView(label);metricLabels.add(label);
+                    TextView value=text(a,"--",12,new int[]{0xff5285d8,0xff665cb8,0xff378b9c,0xff429d89}[i]);value.setGravity(Gravity.CENTER);value.setSingleLine(true);value.setEllipsize(android.text.TextUtils.TruncateAt.END);value.setTypeface(null,Typeface.BOLD);cell.addView(value,new LinearLayout.LayoutParams(-1,-2));values.add(value);metricRow.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
                 }
-                summary.addView(chart,new LinearLayout.LayoutParams(-1,dp(a,60)));View gap=new View(a);root.addView(gap,new LinearLayout.LayoutParams(-1,dp(a,8)));
+                chart.onSelect=hour->updateMetrics(currentEvents);summary.addView(chart,new LinearLayout.LayoutParams(-1,dp(a,60)));View gap=new View(a);root.addView(gap,new LinearLayout.LayoutParams(-1,dp(a,8)));
                 details.setPadding(dp(a,12),0,dp(a,12),0);details.setBackground(bg(a,-1,18));root.addView(details);
             }
             void bind(List<JSONObject> events,boolean open,String today){
                 Date at=new Date(occurred(events.get(0)));String prefix=key.equals(today)?"今天  ":"";date.setText(prefix+dateLabel.format(at));count.setText(events.size()+"条  "+(open?"⌃":"⌄"));
-                int[] hours=new int[24];Map<String,Integer> apps=new LinkedHashMap<>();Map<String,String> names=new HashMap<>();Calendar c=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));
-                for(JSONObject event:events){c.setTimeInMillis(occurred(event));hours[c.get(Calendar.HOUR_OF_DAY)]++;String id=event.optString("appId");if(!id.isEmpty()){apps.put(id,apps.containsKey(id)?apps.get(id)+1:1);String name=event.optString("appName");if(!name.isEmpty())names.put(id,name);}}
-                int peak=0;for(int i=1;i<24;i++)if(hours[i]>hours[peak])peak=i;String main="";for(String id:apps.keySet())if(main.isEmpty()||apps.get(id)>apps.get(main))main=id;
-                values.get(0).setText(events.size()+"次");values.get(1).setText(names.containsKey(main)?names.get(main):"--");values.get(2).setText(String.format(Locale.ROOT,"%02d:00–%02d:00",peak,peak+1));values.get(2).setAutoSizeTextTypeUniformWithConfiguration(10,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);
-                values.get(3).setText(apps.size()+"个");chart.update(hours);
+                currentEvents=events;int[] hours=new int[24];Calendar c=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));
+                for(JSONObject event:events){c.setTimeInMillis(occurred(event));hours[c.get(Calendar.HOUR_OF_DAY)]++;}chart.update(hours);updateMetrics(events);
+            }
+            void updateMetrics(List<JSONObject> events){
+                int selected=chart.selectedHour,total=0;metricLabels.get(2).setText(selected<0?"高峰小时":"所选时段");Map<String,Integer> apps=new LinkedHashMap<>();Map<String,String> names=new HashMap<>();Calendar c=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));
+                for(JSONObject event:events){c.setTimeInMillis(occurred(event));if(selected>=0&&c.get(Calendar.HOUR_OF_DAY)!=selected)continue;total++;String id=event.optString("appId");if(!id.isEmpty()){apps.put(id,apps.containsKey(id)?apps.get(id)+1:1);String name=event.optString("appName");if(!name.isEmpty())names.put(id,name);}}
+                int peak=0;for(int i=1;i<24;i++)if(chart.hours[i]>chart.hours[peak])peak=i;if(selected>=0)peak=selected;String main="";for(String id:apps.keySet())if(main.isEmpty()||apps.get(id)>apps.get(main))main=id;
+                values.get(0).setText(total+"次");values.get(1).setText(names.containsKey(main)?names.get(main):"--");values.get(2).setText(String.format(Locale.ROOT,"%02d–%02d时",peak,peak+1));values.get(2).setContentDescription(String.format(Locale.ROOT,"%02d:00至%02d:00",peak,peak+1));values.get(3).setText(apps.size()+"个");
+
             }
         }
         final class ReminderRow extends LinearLayout {
@@ -285,18 +329,24 @@ final class HubNotifySettings {
             @Override protected void dispatchDraw(android.graphics.Canvas canvas){super.dispatchDraw(canvas);if(separator){paint.setColor(0xffedf0f4);paint.setStrokeWidth(dp(a,1));canvas.drawLine(0,getHeight()-1,getWidth(),getHeight()-1,paint);}}
         }
         static final class HourChart extends View {
-            final android.graphics.Paint paint=new android.graphics.Paint(3);int[] hours=new int[24];final float density;final float sp;
+            final android.graphics.Paint paint=new android.graphics.Paint(3);int[] hours=new int[24];int selectedHour=-1;java.util.function.IntConsumer onSelect;float downX,downY;final float density;final float sp;
             HourChart(Activity a){super(a);density=a.getResources().getDisplayMetrics().density;sp=a.getResources().getDisplayMetrics().scaledDensity;setContentDescription("按小时统计通知次数");}
             void update(int[] values){if(!Arrays.equals(hours,values)){hours=values.clone();invalidate();}StringBuilder label=new StringBuilder("通知次数：");for(int i=0;i<24;i++)if(hours[i]>0)label.append(i).append("点").append(hours[i]).append("次；");setContentDescription(label);}
             @Override protected void onDraw(android.graphics.Canvas canvas){super.onDraw(canvas);float w=getWidth(),baseline=getHeight()-16*density,step=w/24f;int max=0;for(int n:hours)max=Math.max(max,n);paint.setStyle(android.graphics.Paint.Style.FILL);
-                for(int i=0;i<24;i++){if(hours[i]<=0||max==0)continue;float h=(baseline-5*density)*hours[i]/max,x=i*step+step*.2f;paint.setShader(new android.graphics.LinearGradient(0,baseline-h,0,baseline,BAR,0xffd1d0ed,android.graphics.Shader.TileMode.CLAMP));canvas.drawRoundRect(new android.graphics.RectF(x,baseline-h,x+step*.6f,baseline),2*density,2*density,paint);}
-                paint.setShader(null);paint.setColor(0xffdfe2ea);paint.setStrokeWidth(density*.5f);canvas.drawLine(0,baseline,w,baseline,paint);paint.setColor(0xff8f949c);paint.setTextSize(10*sp);paint.setTextAlign(android.graphics.Paint.Align.CENTER);
-                for(int hour:new int[]{0,6,12,18,23})canvas.drawText(Integer.toString(hour),step*(hour+.5f),getHeight()-2*density,paint);
+                for(int i=0;i<24;i++){if(hours[i]<=0||max==0)continue;float h=(baseline-17*density)*hours[i]/max,x=i*step+step*.2f;paint.setShader(new android.graphics.LinearGradient(0,baseline-h,0,baseline,BAR,0xffd1d0ed,android.graphics.Shader.TileMode.CLAMP));canvas.drawRoundRect(new android.graphics.RectF(x,baseline-h,x+step*.6f,baseline),2*density,2*density,paint);}
+                paint.setShader(null);paint.setColor(0xff8f949c);paint.setTextSize(10*sp);paint.setTextAlign(android.graphics.Paint.Align.CENTER);
+                for(int hour:new int[]{0,2,4,6,8,10,12,14,16,18,20,22})canvas.drawText(Integer.toString(hour),step*(hour+.5f),getHeight()-2*density,paint);
+                if(selectedHour>=0){paint.setTextAlign(android.graphics.Paint.Align.RIGHT);paint.setTextSize(10*sp);paint.setColor(0xff665cb8);canvas.drawText(String.format(Locale.ROOT,"%02d:00–%02d:00 · %d次",selectedHour,selectedHour+1,hours[selectedHour]),w,11*sp,paint);}
             }
+            @Override public boolean onTouchEvent(android.view.MotionEvent e){
+                if(e.getAction()==android.view.MotionEvent.ACTION_DOWN){downX=e.getX();downY=e.getY();return true;}
+                if(e.getAction()==android.view.MotionEvent.ACTION_UP){if(Math.abs(e.getX()-downX)<8*density&&Math.abs(e.getY()-downY)<8*density){int hour=Math.max(0,Math.min(23,(int)(e.getX()*24/Math.max(1,getWidth()))));selectedHour=selectedHour==hour?-1:hour;performClick();if(onSelect!=null)onSelect.accept(selectedHour);invalidate();}return true;}return true;
+            }
+            @Override public boolean performClick(){super.performClick();return true;}
         }
         static final class StatSymbol extends View {
             final int kind;final android.graphics.Paint p=new android.graphics.Paint(3);StatSymbol(Activity a,int value){super(a);kind=value;setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);}
-            @Override protected void onDraw(android.graphics.Canvas c){super.onDraw(c);int save=c.save();c.scale(getWidth()/24f,getHeight()/24f);p.setColor(TEAL);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(1.7f);p.setStrokeCap(android.graphics.Paint.Cap.ROUND);p.setStrokeJoin(android.graphics.Paint.Join.ROUND);android.graphics.Path path=new android.graphics.Path();
+            @Override protected void onDraw(android.graphics.Canvas c){super.onDraw(c);int save=c.save();c.scale(getWidth()/24f,getHeight()/24f);p.setColor(new int[]{0xff5285d8,0xff665cb8,0xff378b9c,0xff429d89}[kind]);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(1.7f);p.setStrokeCap(android.graphics.Paint.Cap.ROUND);p.setStrokeJoin(android.graphics.Paint.Join.ROUND);android.graphics.Path path=new android.graphics.Path();
                 if(kind==0){path.moveTo(4,17);path.lineTo(6,14);path.lineTo(6,9);path.cubicTo(6,1,18,1,18,9);path.lineTo(18,14);path.lineTo(20,17);path.close();c.drawPath(path,p);c.drawArc(new android.graphics.RectF(9,17,15,23),0,180,false,p);}
                 else if(kind==1){for(int x:new int[]{3,13})for(int y:new int[]{3,13})c.drawRoundRect(new android.graphics.RectF(x,y,x+7,y+7),1.5f,1.5f,p);}
                 else if(kind==2){path.moveTo(2,19);path.lineTo(8,12);path.lineTo(13,15);path.lineTo(21,5);path.moveTo(15,5);path.lineTo(21,5);path.lineTo(21,11);c.drawPath(path,p);}
