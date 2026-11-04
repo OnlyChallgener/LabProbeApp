@@ -1,0 +1,9 @@
+{
+  "source": "tools/shinya_hub/HubPages.java",
+  "sha256": "f46be52b9e2416a0755df1aae0d6614458666de9f217f958594fbd14e109b4de",
+  "lines": [
+    1192,
+    1204
+  ],
+  "includedBy": "tools/shinya_hub/build_internal.py"
+}
