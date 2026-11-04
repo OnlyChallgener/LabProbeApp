@@ -240,8 +240,19 @@ final class HubNotifySettings {
             empty=text(a,"暂无提醒记录",14,MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(a,40),0,dp(a,40));list.addView(empty);
             dialog.setContentView(root);dialog.show();Window w=dialog.getWindow();if(w!=null){systemBars(w);w.setStatusBarColor(PAGE);w.setNavigationBarColor(PAGE);w.setLayout(-1,-1);}
         }
-        static long occurred(JSONObject event){long value=event.optLong("triggeredAt",0);return value>0?value:event.optLong("createTime",0);}
-        static String eventId(JSONObject event){String value=event.optString("eventId","");return value.isEmpty()?event.optString("eventKey",""):value;}
+        static long occurred(JSONObject event){if(event==null)return 0;long value=event.optLong("triggeredAt",0);return value>0?value:event.optLong("createTime",0);}
+        static String eventId(JSONObject event){if(event==null)return "";String value=event.optString("eventId","");return value.isEmpty()?event.optString("eventKey",""):value;}
+        static List<JSONObject> aggregate(JSONArray source,String filter,long cutoff,long now){
+            Map<String,JSONObject> unique=new LinkedHashMap<>();
+            for(int i=0;source!=null&&i<source.length();i++){
+                JSONObject event=source.optJSONObject(i);String key=eventId(event);if(key.isEmpty())continue;
+                JSONObject old=unique.get(key);long seq=event.optLong("revisionSeq",0),oldSeq=old==null?-1:old.optLong("revisionSeq",0);
+                if(old==null||seq>oldSeq||seq==oldSeq&&event.optLong("updatedAt",0)>=old.optLong("updatedAt",0))unique.put(key,event);
+            }
+            List<JSONObject> sorted=new ArrayList<>();
+            for(JSONObject event:unique.values()){long at=occurred(event);if(at<=0||at<cutoff||at>now||(!filter.isEmpty()&&!filter.equals(event.optString("category"))))continue;sorted.add(event);}
+            sorted.sort((x,y)->{int order=Long.compare(occurred(y),occurred(x));return order!=0?order:eventId(x).compareTo(eventId(y));});return sorted;
+        }
         void update(JSONArray events,String sn,String mac,String uid){
             if(!dialog.isShowing())return;String nextScope=sn+"/"+mac+"/"+uid;
             if(!scope.isEmpty()&&!scope.equals(nextScope))return;scope=nextScope;
@@ -255,12 +266,7 @@ final class HubNotifySettings {
             if(next.equals(signature)){for(ReminderRow row:rows.values())if(row.getVisibility()==View.VISIBLE)row.bindIcon();return;}signature=next;
             Calendar start=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));start.set(Calendar.HOUR_OF_DAY,0);start.set(Calendar.MINUTE,0);start.set(Calendar.SECOND,0);start.set(Calendar.MILLISECOND,0);start.add(Calendar.DAY_OF_MONTH,-2);
             long cutoff=start.getTimeInMillis(),now=System.currentTimeMillis();
-            Map<String,JSONObject> unique=new LinkedHashMap<>();
-            for(int i=0;i<data.length();i++){JSONObject event=data.optJSONObject(i);long at=occurred(event);String key=eventId(event);
-                if(key.isEmpty()||at<cutoff||at>now||(!filter.isEmpty()&&!filter.equals(event.optString("category"))))continue;
-                JSONObject old=unique.get(key);if(old==null||event.optLong("revisionSeq",event.optLong("updatedAt"))>=old.optLong("revisionSeq",old.optLong("updatedAt")))unique.put(key,event);
-            }
-            List<JSONObject> sorted=new ArrayList<>(unique.values());sorted.sort((x,y)->{int order=Long.compare(occurred(y),occurred(x));return order!=0?order:eventId(x).compareTo(eventId(y));});
+            List<JSONObject> sorted=aggregate(data,filter,cutoff,now);
             Map<String,List<JSONObject>> days=new LinkedHashMap<>();for(JSONObject event:sorted){String day=dateKey.format(new Date(occurred(event)));if(!days.containsKey(day))days.put(day,new ArrayList<>());days.get(day).add(event);}
             empty.setVisibility(days.isEmpty()?View.VISIBLE:View.GONE);for(DayViews view:groups.values())view.root.setVisibility(View.GONE);
             for(ReminderRow row:rows.values())row.setVisibility(View.GONE);

@@ -5,7 +5,7 @@ root=Path(__file__).resolve().parents[3]
 s=(root/'tools/shinya_hub/HubNotifySettings.java').read_text('utf8')
 a=s.index('            void updateMetrics(');b=s.index('\n        }\n        final class ReminderRow',a)
 method=s[a:b].strip()
-a=s.index('        static long occurred(');b=s.index('        void update(',a)
+a=s.index('        static long occurred(');b=s.index('        static List<JSONObject> aggregate(',a)
 helpers=s[a:b]
 java='''import java.util.*;import org.json.*;
 class CheckHour {
