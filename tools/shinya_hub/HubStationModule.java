@@ -66,7 +66,7 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
                 double remaining=result.optDouble("ipv6RemainingSeconds",0)
                     -(android.os.SystemClock.elapsedRealtime()-started)/1000.0;
                 if(candidate.matches("[0-9a-fA-F:]+") && candidate.contains(":") && remaining>0 && !Double.isNaN(remaining) && !Double.isInfinite(remaining)) {
-                    address=candidate;deadline=System.currentTimeMillis()/1000.0+Math.min(30,remaining);
+                    watch.session.savePageSnapshot(watch.project,watch.sn,"ipv6-last/"+watch.mac.replace(":","").replace("-","").toLowerCase(java.util.Locale.ROOT),new JSONObject().put("address",candidate).put("observedAt",System.currentTimeMillis()));address=candidate;deadline=System.currentTimeMillis()/1000.0+Math.min(30,remaining);
                     next=Math.max(2000,Math.min(10000,(long)(remaining*500)));
                 }else if(!result.optBoolean("refreshPending",false)){address="";next=10000;}
             } catch(Exception failure) {
@@ -76,6 +76,17 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
             ipv6Main.post(()-> {watch.inFlight=false;if(selected!=null)emitIpv6(watch,selected,until);
                 if(!disposed && ipv6Watches.get(watch.id)==watch)ipv6Main.postDelayed(watch.poll,delay);});
         }); } catch(Exception rejected) {watch.inFlight=false;ipv6Main.postDelayed(watch.poll,3000);}
+    }
+    /** Synchronous first-frame cache; the network watcher remains asynchronous. */
+    @ReactMethod(isBlockingSynchronousMethod=true) public String getSnapshot(String watchId) {
+        try {
+            String[] parts=watchId.split(":",3);if(parts.length!=3)return "{}";String project=parts[0],sn=parts[1],mac=parts[2];
+            HubToolSession session=HubToolSession.current();String resource="ipv6-last/"+mac.replace(":","").replace("-","").toLowerCase(java.util.Locale.ROOT);
+            JSONObject saved=session.pageSnapshot(project,sn,resource);if(saved==null)return "{}";
+            String address=saved.optString("address");if(!address.matches("[0-9a-fA-F:]{2,45}")||!address.contains(":"))return "{}";
+            // -1 explicitly means historical, never a fabricated live lease.
+            return new JSONObject().put("address",address).put("endTime",-1).toString();
+        }catch(Exception unavailable){return "{}";}
     }
     @ReactMethod public void startIpv6Watch(String project,String sn,String mac,String watchId) {
         if(project==null || sn==null || mac==null || watchId==null || project.isEmpty()

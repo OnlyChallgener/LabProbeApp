@@ -52,6 +52,7 @@ class VM:
         self.started = []
         self.stopped = []
         self.copied = []
+        self.initial_snapshot = {}
         self.removed = 0
         self.sets = 0
         self.globals = {
@@ -70,6 +71,7 @@ class VM:
         }
         emitter = {'addListener': Fn(lambda _, event, callback: self.add_listener(event, callback))}
         native = {
+            'getSnapshot': Fn(lambda _, *args: json.dumps(self.initial_snapshot)),
             'startIpv6Watch': Fn(lambda _, *args: self.started.append(args)),
             'stopIpv6Watch': Fn(lambda _, watch: self.stopped.append(watch)),
             'copyIpv6': Fn(lambda _, address: self.copied.append(address)),
@@ -143,7 +145,7 @@ class VM:
             elif name == 'GetGlobalObject': r[a[0]] = self.globals
             elif name in ('GetById', 'GetByIdShort', 'TryGetById'): r[a[0]] = self.prop(r[a[1]], self.reader.strings[a[3]])
             elif name == 'GetByVal': r[a[0]] = self.prop(r[a[1]], r[a[2]])
-            elif name == 'PutNewOwnById': r[a[0]][self.reader.strings[a[2]]] = r[a[1]]
+            elif name in ('PutNewOwnById', 'PutNewOwnByIdShort'): r[a[0]][self.reader.strings[a[2]]] = r[a[1]]
             elif name == 'PutByVal': r[a[0]][r[a[1]]] = r[a[2]]
             elif name == 'NewObject': r[a[0]] = {}
             elif name == 'NewArray': r[a[0]] = [None] * a[1]
@@ -225,6 +227,9 @@ def main():
         assert text['style'][1]['textAlign'] == 'right'
         return text['children']
     assert render() == '2001:4860::1234'
+    vm.initial_snapshot={'address':'2001:4860::cafe','endTime':-1}
+    assert render()=='2001:4860::cafe'
+    vm.initial_snapshot={}
     assert props['watchId']=='p:r:aa' and props['key']==props['watchId']
     element['kind'].call(None,[props])['props']['onPress'].call(None,[])
     assert vm.copied==['2001:4860::1234']

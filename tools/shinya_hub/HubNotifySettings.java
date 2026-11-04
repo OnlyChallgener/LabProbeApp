@@ -49,10 +49,43 @@ final class HubNotifySettings {
         r.addView(words,new LinearLayout.LayoutParams(0,-2,1));return r;
     }
     static TextView categoryIcon(Activity a,int category){
-        int[] icons={android.R.drawable.ic_menu_myplaces,android.R.drawable.ic_media_play,android.R.drawable.ic_menu_slideshow,android.R.drawable.ic_menu_view,android.R.drawable.ic_menu_send};
-        TextView v=text(a,"",14,TEAL);Drawable icon=a.getDrawable(icons[category]);if(icon!=null){icon=icon.mutate();icon.setTint(TEAL);icon.setBounds(0,0,dp(a,22),dp(a,22));v.setCompoundDrawables(icon,null,null,null);}
-        v.setGravity(Gravity.CENTER);v.setPadding(dp(a,9),dp(a,9),dp(a,9),dp(a,9));v.setBackground(bg(a,0xffe5f7f7,100));return v;
+        TextView v=text(a,"",14,TEAL);Drawable icon=categoryDrawable(a,category);
+        icon.setBounds(0,0,dp(a,24),dp(a,24));v.setCompoundDrawables(icon,null,null,null);
+        int[] colors={0xffe0f7f8,0xffe8f1ff,0xffffe8ed,0xfffff2df,0xffe4efff,0xffedeaff,0xffedeaff,0xffe2f3ff,0xffe2f3ff};
+        v.setGravity(Gravity.CENTER);v.setPadding(dp(a,10),dp(a,10),dp(a,10),dp(a,10));v.setBackground(bg(a,colors[category],100));return v;
     }
+    static Drawable categoryDrawable(Activity a,int category){
+        if(category==0)try(java.io.InputStream stream=a.getAssets().open("hub-ui/notify_device_network.png")){Drawable d=Drawable.createFromStream(stream,null);if(d!=null)return d;}catch(Exception ignored){}
+        return new ReminderGlyph(category);
+    }
+    /** Normalized vector paths keep all category glyphs optically centered. */
+    private static final class ReminderGlyph extends Drawable {
+        final int category;final android.graphics.Paint paint=new android.graphics.Paint(3);
+        ReminderGlyph(int value){category=value;}
+        public void draw(android.graphics.Canvas canvas){
+            android.graphics.Rect b=getBounds();int save=canvas.save();canvas.translate(b.left,b.top);canvas.scale(b.width()/24f,b.height()/24f);
+            int[] colors={0xff00a7b5,0xff0879ff,0xffff2856,0xffff8900,0xff1768ff,0xff6457ff,0xff6457ff,0xff1988ff,0xff1988ff};paint.setColor(colors[category]);paint.setStyle(android.graphics.Paint.Style.STROKE);paint.setStrokeWidth(1.8f);paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);paint.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            android.graphics.Path p=new android.graphics.Path();
+            if(category==0){canvas.drawArc(2,5,22,23,224,92,false,paint);canvas.drawArc(5,9,19,23,224,92,false,paint);canvas.drawArc(8,13,16,23,224,92,false,paint);paint.setStyle(android.graphics.Paint.Style.FILL);canvas.drawCircle(12,19,1.5f,paint);}
+            else if(category==1){
+                p.moveTo(8,6);p.lineTo(16,6);p.cubicTo(19,6,20,8,20.5f,11);p.lineTo(22,18);p.cubicTo(22.5f,21,20,21,18,19);p.lineTo(15,16);p.lineTo(9,16);p.lineTo(6,19);p.cubicTo(4,21,1.5f,21,2,18);p.lineTo(3.5f,11);p.cubicTo(4,8,5,6,8,6);p.close();canvas.drawPath(p,paint);
+                canvas.drawLine(7,9,7,14,paint);canvas.drawLine(4.5f,11.5f,9.5f,11.5f,paint);paint.setStyle(android.graphics.Paint.Style.FILL);canvas.drawCircle(16,10,1.1f,paint);canvas.drawCircle(19,13,1.1f,paint);
+            }
+            else if(category==2){canvas.drawRoundRect(2.5f,5,21.5f,19,2.5f,2.5f,paint);p.moveTo(10,8.5f);p.lineTo(15.5f,12);p.lineTo(10,15.5f);p.close();canvas.drawPath(p,paint);}
+            else if(category==3){canvas.drawRoundRect(2.5f,7,21.5f,21,2,2,paint);canvas.drawRoundRect(7,3,17,9,2,2,paint);canvas.drawLine(3,12,21,12,paint);}
+            else if(category==4){
+                p.moveTo(8,3);p.lineTo(14,3);p.cubicTo(18,3,21,6,21,10);p.cubicTo(21,14,18,17,14,17);p.lineTo(8,17);p.lineTo(3,21);p.lineTo(4,15);p.cubicTo(2,13,2,12,2,10);p.cubicTo(2,6,4,3,8,3);p.close();canvas.drawPath(p,paint);
+                paint.setStyle(android.graphics.Paint.Style.FILL);for(int x:new int[]{7,11,15})canvas.drawCircle(x,10,1,paint);
+            }
+            else if(category==5){canvas.drawCircle(12,12,8.5f,paint);canvas.drawLine(12,6.5f,12,12,paint);canvas.drawLine(12,12,16,14.5f,paint);}
+            else if(category==6){p.moveTo(15.5f,3.5f);p.cubicTo(9,1.5f,3,6.5f,3,13);p.cubicTo(3,18,7,21,12,21);p.cubicTo(16.5f,21,20.5f,17.5f,21,13);p.cubicTo(18,16,13,16,10.5f,12.5f);p.cubicTo(8,9,10.5f,4.5f,15.5f,3.5f);p.close();canvas.drawPath(p,paint);}
+            else if(category==7){paint.setStyle(android.graphics.Paint.Style.FILL);canvas.drawRoundRect(3,12,7,21,2,2,paint);canvas.drawRoundRect(10,3,14,21,2,2,paint);canvas.drawRoundRect(17,8,21,21,2,2,paint);}
+            else if(category==8){for(int x:new int[]{3,13})for(int y:new int[]{3,13})canvas.drawRoundRect(x,y,x+7,y+7,1.5f,1.5f,paint);}
+            canvas.restoreToCount(save);
+        }
+        public void setAlpha(int alpha){paint.setAlpha(alpha);}public void setColorFilter(android.graphics.ColorFilter filter){paint.setColorFilter(filter);}public int getOpacity(){return android.graphics.PixelFormat.TRANSLUCENT;}
+    }
+
     private static Switch toggle(Activity a,LinearLayout row,JSONObject draft,String key,boolean fallback){
         Switch s=new Switch(a);s.setChecked(draft.optBoolean(key,fallback));s.setThumbTintList(android.content.res.ColorStateList.valueOf(-1));
         s.setTrackTintList(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_checked},new int[]{}},new int[]{TEAL,0xffdce1e5}));
@@ -135,36 +168,142 @@ final class HubNotifySettings {
         String target=mac.replace(":","").replace("-","").toLowerCase(Locale.ROOT);
         return normalized.equals("mac"+target)||!uid.isEmpty()&&device.equalsIgnoreCase("user:"+uid);
     }
+    private static void systemBars(Window w){w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS|WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);w.setStatusBarColor(0xfff0f4fa);w.setNavigationBarColor(0xfff0f4fa);w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);}
     static final class Records {
+        static final int PAGE=0xfff0f1f7,BAR=0xff9290d8;
         final Activity a;final Dialog dialog;final LinearLayout list;final ScrollView scroll;final Icon icons;
-        final Map<String,View> views=new HashMap<>();final Map<String,TextView> tabsByType=new LinkedHashMap<>();final TextView empty;JSONArray data=new JSONArray();String filter="";String signature="";String focusEvent="";int limit=50;
+        final Map<String,DayViews> groups=new LinkedHashMap<>();
+        final Map<String,ReminderRow> rows=new HashMap<>();
+        final Map<String,Boolean> expanded=new HashMap<>();
+        final Map<String,Integer> scrollPositions=new HashMap<>();
+        final Map<String,TextView> tabsByType=new LinkedHashMap<>();
+        final TextView empty;JSONArray data=new JSONArray();String filter="",focusEvent="",signature="",scope="";
+        final java.text.SimpleDateFormat dateKey=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.CHINA);
+        final java.text.SimpleDateFormat dateLabel=new java.text.SimpleDateFormat("MM月dd日",Locale.CHINA);
+        final java.text.SimpleDateFormat clock=new java.text.SimpleDateFormat("HH:mm",Locale.CHINA);
         Records(Activity activity,Icon icon,Runnable refresh){
-            a=activity;icons=icon;dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);LinearLayout root=col(a);root.setPadding(dp(a,16),dp(a,8),dp(a,16),dp(a,12));root.setBackgroundColor(0xfff0f5f8);
-            LinearLayout heading=row(a,"通知记录","");TextView back=action(a,"‹ 返回"),reload=action(a,"刷新");heading.addView(back,0);heading.addView(reload);root.addView(heading);back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
-            HorizontalScrollView bar=new HorizontalScrollView(a);bar.setHorizontalScrollBarEnabled(false);LinearLayout tabs=new LinearLayout(a);String[] names={"全部","设备","游戏","视频","支付","社交"},types={"","usage","game","video","payment","social"};
-            for(int i=0;i<names.length;i++){final String category=types[i];TextView tab=action(a,names[i]);tabs.addView(tab);tabsByType.put(category,tab);tab.setOnClickListener(v->{filter=category;signature="";limit=50;render();});}bar.addView(tabs);root.addView(bar);
-            scroll=new ScrollView(a);list=col(a);scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));empty=text(a,"暂无提醒记录",14,MUTED);empty.setPadding(0,dp(a,24),0,dp(a,24));list.addView(empty);dialog.setContentView(root);dialog.show();Window w=dialog.getWindow();if(w!=null)w.setLayout(-1,-1);
+            a=activity;icons=icon;TimeZone zone=TimeZone.getTimeZone("Asia/Shanghai");
+            dateKey.setTimeZone(zone);dateLabel.setTimeZone(zone);clock.setTimeZone(zone);
+            dialog=new Dialog(a,android.R.style.Theme_Material_Light_NoActionBar);
+            LinearLayout root=col(a);root.setBackgroundColor(PAGE);root.setPadding(dp(a,16),0,dp(a,16),0);
+            FrameLayout heading=new FrameLayout(a);TextView title=text(a,"通知记录",17,INK);title.setTypeface(null,Typeface.BOLD);title.setGravity(Gravity.CENTER);
+            heading.addView(title,new FrameLayout.LayoutParams(-1,-1));TextView back=action(a,"‹"),reload=action(a,"刷新");back.setTextSize(30);back.setGravity(Gravity.CENTER);
+            heading.addView(back,new FrameLayout.LayoutParams(dp(a,48),-1,Gravity.LEFT));reload.setGravity(Gravity.CENTER);heading.addView(reload,new FrameLayout.LayoutParams(dp(a,64),-1,Gravity.RIGHT));
+            root.addView(heading,new LinearLayout.LayoutParams(-1,dp(a,52)));back.setOnClickListener(v->dialog.dismiss());reload.setOnClickListener(v->refresh.run());
+            HorizontalScrollView bar=new HorizontalScrollView(a);bar.setHorizontalScrollBarEnabled(false);
+            LinearLayout tabs=new LinearLayout(a);tabs.setPadding(0,dp(a,4),0,dp(a,8));bar.addView(tabs);
+            String[] names={"全部","设备","游戏","视频","支付","社交"},types={"","usage","game","video","payment","social"};
+            scroll=new ScrollView(a);scroll.setVerticalScrollBarEnabled(false);scroll.setClipToPadding(false);scroll.setPadding(0,0,0,dp(a,20));
+            for(int i=0;i<names.length;i++){String category=types[i];TextView tab=text(a,names[i],14,INK);tab.setGravity(Gravity.CENTER);tab.setMinHeight(dp(a,36));tab.setPadding(dp(a,14),dp(a,7),dp(a,14),dp(a,7));
+                tabs.addView(tab);tabsByType.put(category,tab);tab.setOnClickListener(v->{if(filter.equals(category))return;scrollPositions.put(filter,scroll.getScrollY());filter=category;signature="";render();scroll.post(()->scroll.scrollTo(0,scrollPositions.containsKey(filter)?scrollPositions.get(filter):0));});}
+            root.addView(bar,new LinearLayout.LayoutParams(-1,-2));list=col(a);scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+            empty=text(a,"暂无提醒记录",14,MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(a,40),0,dp(a,40));list.addView(empty);
+            dialog.setContentView(root);dialog.show();Window w=dialog.getWindow();if(w!=null){systemBars(w);w.setStatusBarColor(PAGE);w.setNavigationBarColor(PAGE);w.setLayout(-1,-1);}
         }
-        void update(JSONArray events,String sn,String mac,String uid){if(!dialog.isShowing())return;JSONArray kept=new JSONArray();for(int i=0;i<events.length();i++){JSONObject e=events.optJSONObject(i);if(e!=null&&matches(e,sn,mac,uid))kept.put(e);}data=kept;render();}
+        static long occurred(JSONObject event){long value=event.optLong("triggeredAt",0);return value>0?value:event.optLong("createTime",0);}
+        static String eventId(JSONObject event){String value=event.optString("eventId","");return value.isEmpty()?event.optString("eventKey",""):value;}
+        void update(JSONArray events,String sn,String mac,String uid){
+            if(!dialog.isShowing())return;String nextScope=sn+"/"+mac+"/"+uid;
+            if(!scope.isEmpty()&&!scope.equals(nextScope))return;scope=nextScope;
+            JSONArray kept=new JSONArray();for(int i=0;events!=null&&i<events.length();i++){JSONObject event=events.optJSONObject(i);if(event!=null&&matches(event,sn,mac,uid))kept.put(event);}data=kept;render();
+        }
         void render(){
-            for(Map.Entry<String,TextView> entry:tabsByType.entrySet()){boolean selected=filter.equals(entry.getKey());TextView tab=entry.getValue();tab.setTextColor(selected?-1:TEAL);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(selected?bg(a,TEAL,12):null);tab.setSelected(selected);}
-            if(!dialog.isShowing())return;int iconVersion=0;for(int i=0;i<data.length();i++)iconVersion=31*iconVersion+System.identityHashCode(icons.get(data.optJSONObject(i).optString("appId")));String next=data.toString()+filter+limit+iconVersion;if(next.equals(signature))return;signature=next;
-            Calendar day=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));day.set(Calendar.HOUR_OF_DAY,0);day.set(Calendar.MINUTE,0);day.set(Calendar.SECOND,0);day.set(Calendar.MILLISECOND,0);day.add(Calendar.DAY_OF_MONTH,-2);long cutoff=day.getTimeInMillis();
-            List<JSONObject> rows=new ArrayList<>();for(int i=0;i<data.length();i++){JSONObject e=data.optJSONObject(i);if(e.optLong("createTime")>=cutoff&&(filter.isEmpty()||filter.equals(e.optString("category"))))rows.add(e);}rows.sort((x,y)->Long.compare(y.optLong("createTime"),x.optLong("createTime")));
-            for(View view:views.values())view.setVisibility(View.GONE);empty.setVisibility(rows.isEmpty()?View.VISIBLE:View.GONE);
-            java.text.SimpleDateFormat date=new java.text.SimpleDateFormat("MM月dd日",Locale.CHINA),time=new java.text.SimpleDateFormat("HH:mm",Locale.CHINA);date.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));time.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));int position=0;String last="";
-            for(int i=0;i<Math.min(rows.size(),limit);i++){
-                JSONObject event=rows.get(i);String group=date.format(new Date(event.optLong("createTime")));
-                if(!group.equals(last)){String key="date:"+group;TextView label=(TextView)views.get(key);if(label==null){label=text(a,group,13,MUTED);label.setPadding(0,dp(a,16),0,dp(a,8));views.put(key,label);}place(label,position++);last=group;}
-                String key=event.optString("eventKey");LinearLayout line=(LinearLayout)views.get(key);
-                if(line==null){line=new LinearLayout(a);line.setGravity(Gravity.CENTER_VERTICAL);line.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,12));line.setBackground(bg(a,-1,10));ImageView image=new ImageView(a);image.setScaleType(ImageView.ScaleType.FIT_CENTER);line.addView(image,new LinearLayout.LayoutParams(dp(a,32),dp(a,32)));LinearLayout words=col(a);words.setPadding(dp(a,10),0,dp(a,8),0);words.addView(text(a,"",14,INK));words.addView(text(a,"",12,MUTED));line.addView(words,new LinearLayout.LayoutParams(0,-2,1));line.addView(text(a,"",12,MUTED));views.put(key,line);}
-                ImageView image=(ImageView)line.getChildAt(0);String appId=event.optString("appId");image.setImageDrawable(icons.get(appId));icons.load(appId,image);LinearLayout words=(LinearLayout)line.getChildAt(1);((TextView)words.getChildAt(0)).setText(event.optString("title"));((TextView)words.getChildAt(1)).setText(event.optString("content"));((TextView)line.getChildAt(2)).setText(time.format(new Date(event.optLong("createTime"))));place(line,position++);
+            if(!dialog.isShowing())return;
+            for(Map.Entry<String,TextView> entry:tabsByType.entrySet()){boolean on=filter.equals(entry.getKey());TextView tab=entry.getValue();tab.setTextColor(on?-1:0xff5d626a);tab.setTypeface(null,on?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(on?bg(a,TEAL,24):null);}
+            String today=dateKey.format(new Date());String next=data.toString()+filter+expanded.toString()+today+focusEvent;
+            // Icon completion can update a bound ImageView without rebuilding cards.
+            if(next.equals(signature)){for(ReminderRow row:rows.values())if(row.getVisibility()==View.VISIBLE)row.bindIcon();return;}signature=next;
+            Calendar start=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));start.set(Calendar.HOUR_OF_DAY,0);start.set(Calendar.MINUTE,0);start.set(Calendar.SECOND,0);start.set(Calendar.MILLISECOND,0);start.add(Calendar.DAY_OF_MONTH,-2);
+            long cutoff=start.getTimeInMillis(),now=System.currentTimeMillis();
+            Map<String,JSONObject> unique=new LinkedHashMap<>();
+            for(int i=0;i<data.length();i++){JSONObject event=data.optJSONObject(i);long at=occurred(event);String key=eventId(event);
+                if(key.isEmpty()||at<cutoff||at>now||(!filter.isEmpty()&&!filter.equals(event.optString("category"))))continue;
+                JSONObject old=unique.get(key);if(old==null||event.optLong("revisionSeq",event.optLong("updatedAt"))>=old.optLong("revisionSeq",old.optLong("updatedAt")))unique.put(key,event);
             }
+            List<JSONObject> sorted=new ArrayList<>(unique.values());sorted.sort((x,y)->{int order=Long.compare(occurred(y),occurred(x));return order!=0?order:eventId(x).compareTo(eventId(y));});
+            Map<String,List<JSONObject>> days=new LinkedHashMap<>();for(JSONObject event:sorted){String day=dateKey.format(new Date(occurred(event)));if(!days.containsKey(day))days.put(day,new ArrayList<>());days.get(day).add(event);}
+            empty.setVisibility(days.isEmpty()?View.VISIBLE:View.GONE);for(DayViews view:groups.values())view.root.setVisibility(View.GONE);
+            for(ReminderRow row:rows.values())row.setVisibility(View.GONE);
+            int position=0;View focused=null;
+            for(Map.Entry<String,List<JSONObject>> day:days.entrySet()){
+                String key=day.getKey();List<JSONObject> events=day.getValue();DayViews view=groups.get(key);if(view==null){view=new DayViews(key);groups.put(key,view);}
+                if(!expanded.containsKey(key))expanded.put(key,key.equals(today));
+                for(JSONObject event:events)if(eventId(event).equals(focusEvent))expanded.put(key,true);
+                boolean open=Boolean.TRUE.equals(expanded.get(key));view.bind(events,open,today);place(view.root,position++);
+                view.details.setVisibility(open?View.VISIBLE:View.GONE);
+                if(!open)continue;int index=0;
+                for(JSONObject event:events){String id=eventId(event);ReminderRow row=rows.get(id);if(row==null){row=new ReminderRow();rows.put(id,row);}
+                    row.bind(event,index<events.size()-1);placeIn(view.details,row,index++);if(id.equals(focusEvent))focused=row;
+                }
+            }
+            // Bound retained native views to the real three-day event set.
+            Set<String> retained=new HashSet<>();for(int i=0;i<data.length();i++){JSONObject e=data.optJSONObject(i);if(e!=null&&occurred(e)>=cutoff)retained.add(eventId(e));}
+            Iterator<Map.Entry<String,ReminderRow>> old=rows.entrySet().iterator();while(old.hasNext()){Map.Entry<String,ReminderRow> item=old.next();if(!retained.contains(item.getKey())){detach(item.getValue());old.remove();}}
+            Iterator<Map.Entry<String,DayViews>> stale=groups.entrySet().iterator();while(stale.hasNext()){Map.Entry<String,DayViews> entry=stale.next();if(entry.getKey().compareTo(dateKey.format(new Date(cutoff)))<0){detach(entry.getValue().root);expanded.remove(entry.getKey());stale.remove();}}
             if("@latest".equals(focusEvent)){focusEvent="";scroll.post(()->scroll.scrollTo(0,0));}
-            if(!focusEvent.isEmpty()&&views.containsKey(focusEvent)){View focus=views.get(focusEvent);focus.setBackground(bg(a,0xffdff5f3,10));scroll.post(()->scroll.smoothScrollTo(0,focus.getTop()));focusEvent="";}
-            else if(!focusEvent.isEmpty()&&rows.size()>limit){limit=rows.size();signature="";render();return;}
-            TextView more=(TextView)views.get("more");if(more==null){more=action(a,"加载更多");more.setOnClickListener(v->{limit+=50;signature="";render();});views.put("more",more);}if(rows.size()>limit)place(more,position);
+            else if(focused!=null){final View selected=focused;focusEvent="";scroll.post(()->{android.graphics.Rect area=new android.graphics.Rect();selected.getDrawingRect(area);list.offsetDescendantRectToMyCoords(selected,area);scroll.smoothScrollTo(0,Math.max(0,area.top-dp(a,12)));});}
         }
-        void place(View view,int index){view.setVisibility(View.VISIBLE);if(view.getParent()!=list)list.addView(view,index);else if(list.indexOfChild(view)!=index){list.removeView(view);list.addView(view,index);}}
+        void detach(View view){if(view.getParent()!=null)((android.view.ViewGroup)view.getParent()).removeView(view);}
+        void place(View view,int index){placeIn(list,view,index);}
+        void placeIn(LinearLayout parent,View view,int index){view.setVisibility(View.VISIBLE);if(view.getParent()!=parent){detach(view);parent.addView(view,Math.min(index,parent.getChildCount()));}else if(parent.indexOfChild(view)!=index){parent.removeView(view);parent.addView(view,Math.min(index,parent.getChildCount()));}}
+        final class DayViews {
+            final String key;final LinearLayout root=col(a),summary=col(a),details=col(a);final TextView date=text(a,"",14,INK),count=text(a,"",12,MUTED);
+            final List<TextView> values=new ArrayList<>();final HourChart chart=new HourChart(a);
+            DayViews(String day){
+                key=day;LinearLayout heading=new LinearLayout(a);heading.setGravity(Gravity.CENTER_VERTICAL);heading.setPadding(dp(a,4),dp(a,16),dp(a,4),dp(a,9));
+                date.setTypeface(null,Typeface.BOLD);heading.addView(date,new LinearLayout.LayoutParams(0,-2,1));heading.addView(count);heading.setMinimumHeight(dp(a,44));root.addView(heading);
+                heading.setOnClickListener(v->{expanded.put(key,!Boolean.TRUE.equals(expanded.get(key)));signature="";int y=scroll.getScrollY();render();scroll.post(()->scroll.scrollTo(0,y));});
+                summary.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,8));summary.setBackground(bg(a,-1,18));root.addView(summary);
+                boolean compact=a.getResources().getConfiguration().screenWidthDp<380||a.getResources().getConfiguration().fontScale>1.15f;int columns=compact?2:4;
+                String[] labels={"提醒次数","主要应用","高峰小时","涉及应用"};LinearLayout metricRow=null;
+                for(int i=0;i<labels.length;i++){if(i%columns==0){metricRow=new LinearLayout(a);metricRow.setGravity(Gravity.CENTER_VERTICAL);summary.addView(metricRow,new LinearLayout.LayoutParams(-1,-2));}
+                    LinearLayout cell=col(a);cell.setGravity(Gravity.CENTER);cell.setPadding(dp(a,3),0,dp(a,3),dp(a,8));
+                    View symbol=new StatSymbol(a,i);cell.addView(symbol,new LinearLayout.LayoutParams(dp(a,20),dp(a,20)));TextView label=text(a,labels[i],12,0xff747984);label.setGravity(Gravity.CENTER);label.setPadding(0,dp(a,5),0,dp(a,3));cell.addView(label);
+                    TextView value=text(a,"--",14,TEAL);value.setGravity(Gravity.CENTER);value.setSingleLine(true);value.setEllipsize(android.text.TextUtils.TruncateAt.END);value.setTypeface(null,Typeface.BOLD);cell.addView(value,new LinearLayout.LayoutParams(-1,-2));values.add(value);metricRow.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
+                }
+                summary.addView(chart,new LinearLayout.LayoutParams(-1,dp(a,60)));View gap=new View(a);root.addView(gap,new LinearLayout.LayoutParams(-1,dp(a,8)));
+                details.setPadding(dp(a,12),0,dp(a,12),0);details.setBackground(bg(a,-1,18));root.addView(details);
+            }
+            void bind(List<JSONObject> events,boolean open,String today){
+                Date at=new Date(occurred(events.get(0)));String prefix=key.equals(today)?"今天  ":"";date.setText(prefix+dateLabel.format(at));count.setText(events.size()+"条  "+(open?"⌃":"⌄"));
+                int[] hours=new int[24];Map<String,Integer> apps=new LinkedHashMap<>();Map<String,String> names=new HashMap<>();Calendar c=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));
+                for(JSONObject event:events){c.setTimeInMillis(occurred(event));hours[c.get(Calendar.HOUR_OF_DAY)]++;String id=event.optString("appId");if(!id.isEmpty()){apps.put(id,apps.containsKey(id)?apps.get(id)+1:1);String name=event.optString("appName");if(!name.isEmpty())names.put(id,name);}}
+                int peak=0;for(int i=1;i<24;i++)if(hours[i]>hours[peak])peak=i;String main="";for(String id:apps.keySet())if(main.isEmpty()||apps.get(id)>apps.get(main))main=id;
+                values.get(0).setText(events.size()+"次");values.get(1).setText(names.containsKey(main)?names.get(main):"--");values.get(2).setText(String.format(Locale.ROOT,"%02d:00–%02d:00",peak,peak+1));values.get(2).setAutoSizeTextTypeUniformWithConfiguration(10,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+                values.get(3).setText(apps.size()+"个");chart.update(hours);
+            }
+        }
+        final class ReminderRow extends LinearLayout {
+            final TextView time=text(a,"",12,MUTED),title=text(a,"",14,INK),detail=text(a,"",12,0xff7c818b);final ImageView image=new ImageView(a);JSONObject event;boolean separator;
+            final android.graphics.Paint paint=new android.graphics.Paint(3);
+            ReminderRow(){super(Records.this.a);setGravity(Gravity.CENTER_VERTICAL);setMinimumHeight(dp(a,64));setPadding(0,dp(a,9),0,dp(a,9));
+                addView(time,new LinearLayout.LayoutParams(dp(a,44),-2));image.setScaleType(ImageView.ScaleType.FIT_CENTER);LinearLayout.LayoutParams imageLp=new LinearLayout.LayoutParams(dp(a,36),dp(a,36));imageLp.rightMargin=dp(a,12);addView(image,imageLp);
+                LinearLayout words=col(a);title.setTypeface(null,Typeface.BOLD);words.addView(title);detail.setPadding(0,dp(a,4),0,0);words.addView(detail);addView(words,new LinearLayout.LayoutParams(0,-2,1));
+            }
+            void bind(JSONObject value,boolean line){event=value;separator=line;time.setText(clock.format(new Date(occurred(value))));title.setText(value.optString("title"));detail.setText(value.optString("content").replace("，不代表已完成付款","").replace("；应用访问不代表已完成支付",""));bindIcon();invalidate();}
+            void bindIcon(){if(event==null)return;String id=event.optString("appId");Drawable drawable=id.isEmpty()&&"usage".equals(event.optString("category"))?categoryDrawable(a,0):icons.get(id);if(image.getDrawable()!=drawable)image.setImageDrawable(drawable);if(!id.isEmpty())icons.load(id,image);}
+            @Override protected void dispatchDraw(android.graphics.Canvas canvas){super.dispatchDraw(canvas);if(separator){paint.setColor(0xffedf0f4);paint.setStrokeWidth(dp(a,1));canvas.drawLine(0,getHeight()-1,getWidth(),getHeight()-1,paint);}}
+        }
+        static final class HourChart extends View {
+            final android.graphics.Paint paint=new android.graphics.Paint(3);int[] hours=new int[24];final float density;final float sp;
+            HourChart(Activity a){super(a);density=a.getResources().getDisplayMetrics().density;sp=a.getResources().getDisplayMetrics().scaledDensity;setContentDescription("按小时统计通知次数");}
+            void update(int[] values){if(!Arrays.equals(hours,values)){hours=values.clone();invalidate();}StringBuilder label=new StringBuilder("通知次数：");for(int i=0;i<24;i++)if(hours[i]>0)label.append(i).append("点").append(hours[i]).append("次；");setContentDescription(label);}
+            @Override protected void onDraw(android.graphics.Canvas canvas){super.onDraw(canvas);float w=getWidth(),baseline=getHeight()-16*density,step=w/24f;int max=0;for(int n:hours)max=Math.max(max,n);paint.setStyle(android.graphics.Paint.Style.FILL);
+                for(int i=0;i<24;i++){if(hours[i]<=0||max==0)continue;float h=(baseline-5*density)*hours[i]/max,x=i*step+step*.2f;paint.setShader(new android.graphics.LinearGradient(0,baseline-h,0,baseline,BAR,0xffd1d0ed,android.graphics.Shader.TileMode.CLAMP));canvas.drawRoundRect(new android.graphics.RectF(x,baseline-h,x+step*.6f,baseline),2*density,2*density,paint);}
+                paint.setShader(null);paint.setColor(0xffdfe2ea);paint.setStrokeWidth(density*.5f);canvas.drawLine(0,baseline,w,baseline,paint);paint.setColor(0xff8f949c);paint.setTextSize(10*sp);paint.setTextAlign(android.graphics.Paint.Align.CENTER);
+                for(int hour:new int[]{0,6,12,18,23})canvas.drawText(Integer.toString(hour),step*(hour+.5f),getHeight()-2*density,paint);
+            }
+        }
+        static final class StatSymbol extends View {
+            final int kind;final android.graphics.Paint p=new android.graphics.Paint(3);StatSymbol(Activity a,int value){super(a);kind=value;setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);}
+            @Override protected void onDraw(android.graphics.Canvas c){super.onDraw(c);int save=c.save();c.scale(getWidth()/24f,getHeight()/24f);p.setColor(TEAL);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(1.7f);p.setStrokeCap(android.graphics.Paint.Cap.ROUND);p.setStrokeJoin(android.graphics.Paint.Join.ROUND);android.graphics.Path path=new android.graphics.Path();
+                if(kind==0){path.moveTo(4,17);path.lineTo(6,14);path.lineTo(6,9);path.cubicTo(6,1,18,1,18,9);path.lineTo(18,14);path.lineTo(20,17);path.close();c.drawPath(path,p);c.drawArc(new android.graphics.RectF(9,17,15,23),0,180,false,p);}
+                else if(kind==1){for(int x:new int[]{3,13})for(int y:new int[]{3,13})c.drawRoundRect(new android.graphics.RectF(x,y,x+7,y+7),1.5f,1.5f,p);}
+                else if(kind==2){path.moveTo(2,19);path.lineTo(8,12);path.lineTo(13,15);path.lineTo(21,5);path.moveTo(15,5);path.lineTo(21,5);path.lineTo(21,11);c.drawPath(path,p);}
+                else{path.moveTo(3,8);path.lineTo(12,3);path.lineTo(21,8);path.lineTo(12,13);path.close();c.drawPath(path,p);for(int y:new int[]{13,18}){path.reset();path.moveTo(3,y);path.lineTo(12,y+5);path.lineTo(21,y);c.drawPath(path,p);}}
+                c.restoreToCount(save);
+            }
+        }
     }
+
 }
