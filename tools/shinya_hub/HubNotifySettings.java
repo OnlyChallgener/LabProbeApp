@@ -253,6 +253,14 @@ final class HubNotifySettings {
             for(JSONObject event:unique.values()){long at=occurred(event);if(at<=0||at<cutoff||at>now||(!filter.isEmpty()&&!filter.equals(event.optString("category"))))continue;sorted.add(event);}
             sorted.sort((x,y)->{int order=Long.compare(occurred(y),occurred(x));return order!=0?order:eventId(x).compareTo(eventId(y));});return sorted;
         }
+        View readingAnchor(){
+            int y=scroll.getScrollY();View best=null;int top=Integer.MAX_VALUE;
+            for(ReminderRow row:rows.values())if(row.isShown()){
+                android.graphics.Rect rect=new android.graphics.Rect();row.getDrawingRect(rect);list.offsetDescendantRectToMyCoords(row,rect);
+                if(rect.bottom>y&&rect.top<top){top=rect.top;best=row;}
+            }return best;
+        }
+        int contentTop(View view){android.graphics.Rect rect=new android.graphics.Rect();view.getDrawingRect(rect);list.offsetDescendantRectToMyCoords(view,rect);return rect.top;}
         void update(JSONArray events,String sn,String mac,String uid){
             if(!dialog.isShowing())return;String nextScope=sn+"/"+mac+"/"+uid;
             if(!scope.isEmpty()&&!scope.equals(nextScope))return;scope=nextScope;
@@ -260,6 +268,7 @@ final class HubNotifySettings {
         }
         void render(){
             if(!dialog.isShowing())return;
+            final int previousY=scroll.getScrollY();final View anchor=focusEvent.isEmpty()?readingAnchor():null;final int anchorOffset=anchor==null?0:contentTop(anchor)-previousY;
             for(Map.Entry<String,TextView> entry:tabsByType.entrySet()){boolean on=filter.equals(entry.getKey());TextView tab=entry.getValue();tab.setTextColor(on?-1:0xff5d626a);tab.setTypeface(null,on?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(on?bg(a,TEAL,24):null);}
             String today=dateKey.format(new Date());String next=data.toString()+filter+expanded.toString()+today+focusEvent;
             // Icon completion can update a bound ImageView without rebuilding cards.
@@ -286,6 +295,7 @@ final class HubNotifySettings {
             Set<String> retained=new HashSet<>();for(int i=0;i<data.length();i++){JSONObject e=data.optJSONObject(i);if(e!=null&&occurred(e)>=cutoff)retained.add(eventId(e));}
             Iterator<Map.Entry<String,ReminderRow>> old=rows.entrySet().iterator();while(old.hasNext()){Map.Entry<String,ReminderRow> item=old.next();if(!retained.contains(item.getKey())){detach(item.getValue());old.remove();}}
             Iterator<Map.Entry<String,DayViews>> stale=groups.entrySet().iterator();while(stale.hasNext()){Map.Entry<String,DayViews> entry=stale.next();if(entry.getKey().compareTo(dateKey.format(new Date(cutoff)))<0){detach(entry.getValue().root);expanded.remove(entry.getKey());stale.remove();}}
+            if(focusEvent.isEmpty()&&previousY>0)scroll.post(()->{if(dialog.isShowing())scroll.scrollTo(0,anchor!=null&&anchor.isShown()?Math.max(0,contentTop(anchor)-anchorOffset):previousY);});
             if("@latest".equals(focusEvent)){focusEvent="";scroll.post(()->scroll.scrollTo(0,0));}
             else if(focused!=null){final View selected=focused;focusEvent="";scroll.post(()->{android.graphics.Rect area=new android.graphics.Rect();selected.getDrawingRect(area);list.offsetDescendantRectToMyCoords(selected,area);scroll.smoothScrollTo(0,Math.max(0,area.top-dp(a,12)));});}
         }
@@ -301,11 +311,12 @@ final class HubNotifySettings {
                 heading.setOnClickListener(v->{expanded.put(key,!Boolean.TRUE.equals(expanded.get(key)));signature="";int y=scroll.getScrollY();render();scroll.post(()->scroll.scrollTo(0,y));});
                 summary.setPadding(dp(a,12),dp(a,12),dp(a,12),dp(a,8));summary.setBackground(bg(a,-1,18));root.addView(summary);
                 int columns=4;
+                HorizontalScrollView metricsScroll=new HorizontalScrollView(a);metricsScroll.setHorizontalScrollBarEnabled(false);metricsScroll.setFillViewport(true);summary.addView(metricsScroll,new LinearLayout.LayoutParams(-1,-2));
                 String[] labels={"提醒次数","主要应用","高峰小时","涉及应用"};LinearLayout metricRow=null;
-                for(int i=0;i<labels.length;i++){if(i%columns==0){metricRow=new LinearLayout(a);metricRow.setGravity(Gravity.CENTER_VERTICAL);summary.addView(metricRow,new LinearLayout.LayoutParams(-1,-2));}
+                for(int i=0;i<labels.length;i++){if(i%columns==0){metricRow=new LinearLayout(a);metricRow.setGravity(Gravity.TOP);float scale=Math.max(1f,a.getResources().getConfiguration().fontScale);metricRow.setMinimumWidth(dp(a,Math.round(280*scale)));metricsScroll.addView(metricRow,new android.widget.FrameLayout.LayoutParams(-1,-2));}
                     LinearLayout cell=col(a);cell.setGravity(Gravity.CENTER);cell.setPadding(dp(a,3),0,dp(a,3),dp(a,8));
                     View symbol=new StatSymbol(a,i);cell.addView(symbol,new LinearLayout.LayoutParams(dp(a,17),dp(a,17)));TextView label=text(a,labels[i],11,0xff747984);label.setGravity(Gravity.CENTER);label.setPadding(0,dp(a,5),0,dp(a,3));cell.addView(label);metricLabels.add(label);
-                    TextView value=text(a,"--",12,new int[]{0xff5285d8,0xff665cb8,0xff378b9c,0xff429d89}[i]);value.setGravity(Gravity.CENTER);value.setSingleLine(true);value.setEllipsize(android.text.TextUtils.TruncateAt.END);value.setTypeface(null,Typeface.BOLD);cell.addView(value,new LinearLayout.LayoutParams(-1,-2));values.add(value);metricRow.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
+                    TextView value=text(a,"--",12,new int[]{0xff5285d8,0xff665cb8,0xff378b9c,0xff429d89}[i]);value.setGravity(Gravity.CENTER);value.setSingleLine(false);value.setEllipsize(null);value.setMinHeight(Math.round(30*a.getResources().getDisplayMetrics().scaledDensity));value.setTypeface(null,Typeface.BOLD);cell.addView(value,new LinearLayout.LayoutParams(-1,-2));values.add(value);metricRow.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
                 }
                 chart.onSelect=hour->updateMetrics(currentEvents);summary.addView(chart,new LinearLayout.LayoutParams(-1,dp(a,60)));View gap=new View(a);root.addView(gap,new LinearLayout.LayoutParams(-1,dp(a,8)));
                 details.setPadding(dp(a,12),0,dp(a,12),0);details.setBackground(bg(a,-1,18));root.addView(details);
@@ -331,7 +342,7 @@ final class HubNotifySettings {
                 LinearLayout words=col(a);title.setTypeface(null,Typeface.BOLD);words.addView(title);detail.setPadding(0,dp(a,4),0,0);words.addView(detail);addView(words,new LinearLayout.LayoutParams(0,-2,1));
             }
             void bind(JSONObject value,boolean line){event=value;separator=line;time.setText(clock.format(new Date(occurred(value))));title.setText(value.optString("title"));detail.setText(value.optString("content").replace("，不代表已完成付款","").replace("；应用访问不代表已完成支付",""));bindIcon();invalidate();}
-            void bindIcon(){if(event==null)return;String id=event.optString("appId");Drawable drawable=id.isEmpty()&&"usage".equals(event.optString("category"))?categoryDrawable(a,0):icons.get(id);if(image.getDrawable()!=drawable)image.setImageDrawable(drawable);if(!id.isEmpty())icons.load(id,image);}
+            void bindIcon(){if(event==null)return;String id=event.optString("appId");image.setTag(id);Drawable drawable=id.isEmpty()&&"usage".equals(event.optString("category"))?categoryDrawable(a,0):icons.get(id);if(image.getDrawable()!=drawable)image.setImageDrawable(drawable);if(!id.isEmpty())icons.load(id,image);}
             @Override protected void dispatchDraw(android.graphics.Canvas canvas){super.dispatchDraw(canvas);if(separator){paint.setColor(0xffedf0f4);paint.setStrokeWidth(dp(a,1));canvas.drawLine(0,getHeight()-1,getWidth(),getHeight()-1,paint);}}
         }
         static final class HourChart extends View {

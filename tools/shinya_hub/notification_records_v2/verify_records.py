@@ -14,14 +14,20 @@ end=records.index('        View readingAnchor(') if '        View readingAnchor(
 helpers=records[records.index('        static long occurred('):end]
 
 duration=pages[pages.index('    static String footprintDuration('):pages.index('    static boolean footprintOngoing(')]
+matches=settings[settings.index('    static boolean matches('):settings.index('    static boolean matches(')+settings[settings.index('    static boolean matches('):].index('\n    }')+6]
 java='''import org.json.*;import java.util.*;
 public class Check {
 HELPERS
+MATCHES
 DURATION
 static JSONObject event(String id,String type,long at,int revision)throws Exception{return new JSONObject().put("eventId",id).put("category",type).put("triggeredAt",at).put("revisionSeq",revision);}
 static void ok(boolean value){if(!value)throw new AssertionError();}
 public static void main(String[] args)throws Exception{
 long day=java.time.LocalDate.of(2026,11,4).atStartOfDay(java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli(),now=day+16*3600000L,cutoff=day-2*86400000L;
+JSONObject scoped=new JSONObject().put("recordKind","reminder").put("sn","BE72").put("deviceId","mac:AA:BB:CC:DD:EE:FF");
+ok(matches(scoped,"BE72","aa-bb-cc-dd-ee-ff",""));ok(!matches(scoped,"BE50","aa-bb-cc-dd-ee-ff",""));ok(!matches(scoped,"BE72","00:11:22:33:44:55",""));
+ok(!matches(new JSONObject(scoped.toString()).put("recordKind","activity"),"BE72","aa-bb-cc-dd-ee-ff",""));
+ok(matches(new JSONObject(scoped.toString()).put("deviceId","user:42"),"BE72","","42"));ok(!matches(new JSONObject(scoped.toString()).put("deviceId","user:43"),"BE72","","42"));
 JSONArray data=new JSONArray().put(event("a","video",day+1000,1)).put(event("a","video",day+1000,2)).put(event("b","social",cutoff,1)).put(event("old","video",cutoff-1,1)).put(event("future","video",now+1,1));
 List<JSONObject> all=aggregate(data,"",cutoff,now);ok(all.size()==2);ok(all.get(0).getInt("revisionSeq")==2);ok(aggregate(data,"video",cutoff,now).size()==1);ok(aggregate(data,"payment",cutoff,now).isEmpty());
 // Latest revision wins before category/time filtering, independently of arrival order.
@@ -37,7 +43,7 @@ ok(footprintDuration(new JSONObject().put("startTime",1).put("endTime",300001)).
 ok(footprintDuration(new JSONObject().put("activeMinutes",-1)).isEmpty());
 System.out.println("PASS: production Java stable-ID deduplication, revision replacement, category filtering, Beijing cutoff, future exclusion and true duration fallback; no span-based invented minutes");
 }}
-'''.replace('HELPERS',helpers).replace('DURATION',duration)
+'''.replace('HELPERS',helpers).replace('DURATION',duration).replace('MATCHES',matches)
 jar=next(Path('C:/Users/admin/.gradle/caches/modules-2/files-2.1/org.json/json').glob('*/*/*.jar'))
 jdk=Path('D:/Program Files/Eclipse Adoptium/jdk-17.0.19.10-hotspot/bin')
 with tempfile.TemporaryDirectory(prefix='notification-v2-') as directory:
