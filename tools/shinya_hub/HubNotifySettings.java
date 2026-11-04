@@ -93,7 +93,7 @@ final class HubNotifySettings {
     }
     private static View backButton(Activity a){
         View v=new View(a){final android.graphics.Paint p=new android.graphics.Paint(3);
-            @Override protected void onDraw(android.graphics.Canvas c){super.onDraw(c);p.setColor(TEAL);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(dp(a,2));p.setStrokeCap(android.graphics.Paint.Cap.ROUND);p.setStrokeJoin(android.graphics.Paint.Join.ROUND);float x=getWidth()/2f,y=getHeight()/2f;android.graphics.Path line=new android.graphics.Path();line.moveTo(x+dp(a,3),y-dp(a,7));line.lineTo(x-dp(a,4),y);line.lineTo(x+dp(a,3),y+dp(a,7));c.drawPath(line,p);}};
+            @Override protected void onDraw(android.graphics.Canvas c){super.onDraw(c);p.setColor(INK);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(dp(a,2));p.setStrokeCap(android.graphics.Paint.Cap.ROUND);p.setStrokeJoin(android.graphics.Paint.Join.ROUND);float x=getWidth()/2f,y=getHeight()/2f;android.graphics.Path line=new android.graphics.Path();line.moveTo(x+dp(a,3),y-dp(a,7));line.lineTo(x-dp(a,4),y);line.lineTo(x+dp(a,3),y+dp(a,7));c.drawPath(line,p);}};
         v.setContentDescription("返回");v.setFocusable(true);return v;
     }
     private static Dialog page(Activity a,String title,LinearLayout content,LinearLayout footer){
