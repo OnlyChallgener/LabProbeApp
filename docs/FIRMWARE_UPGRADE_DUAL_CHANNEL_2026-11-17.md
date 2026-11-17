@@ -373,3 +373,25 @@ APP → HUB → 设备自研模块，**完全不走厂商链路**：
 
 **本轮未做**：未改固件升级的任何代码、未打包、未下发、未刷写。
 上述 GET 全部只读，`uci show` 只读。
+
+---
+
+## 9. 实施结果（2026-11-17 14:30，用户授权「实施」）
+
+§8.4 六步已全部落地，**未下发、未刷写、未重新打包 APP**：
+
+1. HUB `shinya_hub/firmware_upgrade.py` + `api.py` 双通道判定/分派/`cancel`；
+   `hub/beta` 的 `channel` 移入 data。
+2. `firmware_command.py` 去掉 shell URL 抠取与 `shinya_upgrade` 死链，复用新分派。
+3. `beta.py` 移除 `official_package()`；`upgrade_row()` 的 `code 2/6` 保留。
+4. APP `HubToolsView.java` 按 channel 渲染/下发/轮询，`113` 停轮询，取消仅 Beta
+   downloading；零新增文案与资产。`verify_upgrade_scope.py` 更新双通道断言，
+   `compile_check.py` 30 sources 编译通过。
+5. 两份 `shinya_upgrade.lua` 孤儿源码删除；`fnos_agent_deploy.CAPABILITY_PROBES`
+   新增两条只读升级通道探针（一键检测可报告 Beta/官方模块是否可用）。
+6. 测试：`tests/test_firmware_upgrade.py` 改写、`tests/test_firmware_dual_channel.py`
+   新增、`tests/test_fnos_agent_deploy.py` 补三条断言。
+
+**待办**：BE72 当前无新版，且真机下发需单独授权；APP Java 改动需重新打包
+APK 后在真机验收。`docs/APP_FIRMWARE_UPGRADE_AUDIT_2026-11-13.md` 已追加
+「自研刷写已摘除」结论。

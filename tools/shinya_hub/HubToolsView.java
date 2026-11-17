@@ -61,7 +61,8 @@ public final class HubToolsView extends FrameLayout {
     private JSONArray projectRows=new JSONArray();
     private LinearLayout content; private TextView status,routerButton; private ProgressBar progress;
     private View refreshControl;private ObjectAnimator refreshSpin;
-    private HubToolSession session; private String sn="",project="",mode="stun",preferredSn="";
+    private HubToolSession session; private String sn="",project="",mode="stun",preferredSn="",upgradeChannel="beta";
+    private TextView cancelUpgrade;
     private boolean active=false,mutating=false;private int generation=0;
     private final Runnable poll=new Runnable(){public void run(){if(active){load(false);ui.postDelayed(this,5000);}}};
 
@@ -198,12 +199,12 @@ public final class HubToolsView extends FrameLayout {
         try{JSONArray aps=matched.getJSONArray("apList");for(int j=0;j<aps.length();j++){JSONObject d=new JSONObject(aps.getJSONObject(j).toString());d.put("projectId",matched.getString("projectId")).put("projectName",matched.optString("name",matched.optString("projectName")));devices.add(d);}}catch(JSONException error){busy(false);status.setText("当前项目数据未完整同步");return;}
         for(JSONObject d:devices)if(d.optString("sn").equals(preferredSn)){select(d);return;}}
     private String snapshotKey(){return project+"/"+sn;}
-    private void select(JSONObject d){dismissRuleMenu();generation++;sn=d.optString("sn");project=d.optString("projectId");routerButton.setText(d.optString("projectName"));render(snapshots.get(snapshotKey()));status.setText(snapshots.containsKey(snapshotKey())?"显示上次同步数据":"正在读取路由器数据…");load(false);}
+    private void select(JSONObject d){dismissRuleMenu();generation++;mutating=false;sn=d.optString("sn");project=d.optString("projectId");routerButton.setText(d.optString("projectName"));render(snapshots.get(snapshotKey()));status.setText(snapshots.containsKey(snapshotKey())?"显示上次同步数据":"正在读取路由器数据…");load(false);}
     private JSONObject scope(String operation)throws JSONException{return new JSONObject().put("projectId",project).put("apSn",sn).put("operation",operation);}
-    private void load(boolean force){if(!active||session==null||sn.isEmpty()||mutating||!reading.compareAndSet(false,true))return;final int g=generation;final String selected=snapshotKey(),selectedSn=sn,selectedProject=project,selectedName=routerButton.getText().toString();final HubToolSession auth=session;final JSONObject body;try{body=scope("list");if(force)body.put("force",1);}catch(Exception e){reading.set(false);return;}if(force||!snapshots.containsKey(selected)){busy(true);status.setText(force?"正在刷新…":"正在读取路由器数据…");}reads.execute(()->{try{JSONObject data=auth.request(mode.equals("beta")?"hub/beta":"hub/stun",body);if(mode.equals("stun"))auth.saveTools(selectedSn,selectedProject,selectedName,data);ui.post(()->{if(!active||g!=generation)return;snapshots.put(selected,data);render(data);busy(false);String time=new java.text.SimpleDateFormat("HH:mm",java.util.Locale.CHINA).format(new Date());status.setText(mode.equals("beta")?"检测已更新 · "+time:"已同步");});}catch(Exception error){ui.post(()->{if(active&&g==generation){busy(false);status.setText(message(error));if(force)toast(message(error));}});}finally{reading.set(false);ui.post(()->{if(active&&g!=generation)load(false);});}});}
+    private void load(boolean force){if(!active||session==null||sn.isEmpty()||mutating||!reading.compareAndSet(false,true))return;final int g=generation;final String selected=snapshotKey(),selectedSn=sn,selectedProject=project,selectedName=routerButton.getText().toString();final HubToolSession auth=session;final JSONObject body;try{body=scope("list");if(force)body.put("force",1);}catch(Exception e){reading.set(false);return;}if(force||!snapshots.containsKey(selected)){busy(true);status.setText(force?"正在刷新…":"正在读取路由器数据…");}reads.execute(()->{try{JSONObject data=auth.request(mode.equals("beta")?"hub/beta":"hub/stun",body);if(mode.equals("stun")&&(data==null||data.optJSONArray("rules")==null))throw new Exception("路由器规则数据不完整，请刷新重试");if(mode.equals("stun"))auth.saveTools(selectedSn,selectedProject,selectedName,data);ui.post(()->{if(!active||g!=generation)return;if(mode.equals("beta")&&data!=null)upgradeChannel=data.optString("channel","beta");snapshots.put(selected,data);render(data);busy(false);String time=new java.text.SimpleDateFormat("HH:mm",java.util.Locale.CHINA).format(new Date());status.setText(mode.equals("beta")?"检测已更新 · "+time:"已同步");});}catch(Exception error){ui.post(()->{if(active&&g==generation){busy(false);status.setText(message(error));if(force)toast(message(error));}});}finally{reading.set(false);ui.post(()->{if(active&&g!=generation)load(false);});}});}
     private void render(JSONObject data){boolean switched=!renderedSn.equals(snapshotKey());renderedSn=snapshotKey();
         if(switched){dismissRuleMenu();while(content.getChildCount()>1)content.removeViewAt(1);ruleCards.clear();ruleContent.clear();betaContent="";emptyCard=null;emptySynced=false;}
-        if(data==null){if(ruleCards.isEmpty()&&emptyCard==null){emptyCard=card();for(int width:new int[]{140,210,190}){View line=new View(getContext());line.setBackground(surface(Color.rgb(240,243,246),8,0));emptyCard.addView(line,new LinearLayout.LayoutParams(dp(width),dp(16)));gap(emptyCard,16);}}relayout();return;}if(mode.equals("beta")){String key=String.valueOf(data.opt("cur"))+"\n"+String.valueOf(data.opt("new"));if(!key.equals(betaContent)){while(content.getChildCount()>1)content.removeViewAt(1);emptyCard=null;renderBeta(data);betaContent=key;relayout();}return;}
+        if(data==null){if(ruleCards.isEmpty()&&emptyCard==null){emptyCard=card();for(int width:new int[]{140,210,190}){View line=new View(getContext());line.setBackground(surface(Color.rgb(240,243,246),8,0));emptyCard.addView(line,new LinearLayout.LayoutParams(dp(width),dp(16)));gap(emptyCard,16);}}relayout();return;}if(mode.equals("beta")){String channel=data.optString("channel","beta");String key=channel+"\n"+String.valueOf(data.opt("cur"))+"\n"+String.valueOf(data.opt("new"))+"\n"+String.valueOf(data.opt("status"));if(!key.equals(betaContent)){while(content.getChildCount()>1)content.removeViewAt(1);emptyCard=null;cancelUpgrade=null;if("official".equals(channel))renderOfficial(data);else renderBeta(data);betaContent=key;relayout();}return;}
         JSONArray rules=data.optJSONArray("rules");if(rules==null){status.setText("规则未完整同步");return;}
         if(rules.length()==0){if(emptySynced)return;dismissRuleMenu();for(LinearLayout c:ruleCards.values())content.removeView(c);ruleCards.clear();ruleContent.clear();if(emptyCard!=null){content.removeView(emptyCard);emptyCard=null;}emptyCard=card();emptyCard.addView(toolIcon(),new LinearLayout.LayoutParams(dp(56),dp(56)));emptyCard.addView(text("还没有 STUN 穿透",18,INK));emptySynced=true;relayout();return;}emptySynced=false;
         if(emptyCard!=null){content.removeView(emptyCard);emptyCard=null;}
@@ -212,8 +213,17 @@ public final class HubToolsView extends FrameLayout {
         for(String id:new ArrayList<>(ruleCards.keySet()))if(!current.contains(id)){if(id.equals(menuRuleId))dismissRuleMenu();content.removeView(ruleCards.remove(id));ruleContent.remove(id);}
         relayout();}
     private String displayKey(JSONObject r){StringBuilder value=new StringBuilder();for(String field:new String[]{"name","serviceType","enabled","actualState","transportProtocol","targetIpv4","targetPort","forwardMode","nativeMappingState","firewallState","syncError"})value.append(r.opt(field)).append('\n');JSONObject rt=r.optJSONObject("runtime"),addresses=r.optJSONObject("addresses");if(rt!=null)for(String field:new String[]{"mappingFresh","publicEndpoint","lastError"})value.append(rt.opt(field)).append('\n');if(addresses!=null)value.append(addresses.opt("publicReachabilityState"));return value.toString();}
+    static boolean stunMappingReady(JSONObject rule){
+        JSONObject runtime=rule.optJSONObject("runtime");
+        if(!rule.optBoolean("enabled")||!"mapped".equals(rule.optString("actualState"))||
+           runtime==null||!runtime.optBoolean("mappingFresh")||runtime.optString("publicEndpoint").trim().isEmpty())return false;
+        String forward=rule.optString("forwardMode");
+        if("router_native".equals(forward))return "ready".equals(rule.optString("nativeMappingState"));
+        if("relay_proxy".equals(forward))return "ready".equals(rule.optString("firewallState"));
+        return false;
+    }
     private void renderRule(JSONObject r,LinearLayout c){c.setBackground(new NetworkSurface(false));c.setOnClickListener(v->editor(r));LinearLayout heading=row();heading.addView(toolIcon(),new LinearLayout.LayoutParams(dp(30),dp(30)));TextView title=text(r.optString("name","穿透规则"),16,INK);title.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));LinearLayout.LayoutParams titleParams=new LinearLayout.LayoutParams(0,-2,1);titleParams.leftMargin=dp(8);heading.addView(title,titleParams);TextView more=text("⋮",22,MUTED);more.setGravity(Gravity.CENTER);more.setPadding(0,0,0,0);more.setContentDescription(r.optString("name","穿透规则")+"，更多操作");more.setBackground(touchSurface(18));heading.addView(more,new LinearLayout.LayoutParams(dp(36),dp(36)));more.setOnClickListener(v->showRuleMenu(r,more));c.addView(heading);gap(c,4);
-        JSONObject rt=r.optJSONObject("runtime");if(rt==null)rt=new JSONObject();String state=r.optString("actualState");boolean mapped=r.optBoolean("enabled")&&state.equals("mapped")&&rt.optBoolean("mappingFresh")&&(r.optString("forwardMode").equals("router_native")?r.optString("nativeMappingState").equals("ready"):r.optString("firewallState").equals("ready"));
+        JSONObject rt=r.optJSONObject("runtime");if(rt==null)rt=new JSONObject();String state=r.optString("actualState");boolean mapped=stunMappingReady(r);
         String caption=!r.optBoolean("enabled")?"已停止":mapped?"公网地址已获取":state.contains("error")?"穿透异常":"正在确认穿透状态";c.addView(text("● "+caption,13,mapped?TEAL:MUTED));
         c.addView(text(r.optString("transportProtocol")+"  ·  "+r.optString("targetIpv4")+":"+r.optInt("targetPort"),14,INK));
         String endpoint=rt.optString("publicEndpoint");TextView addressLine=text((!mapped&&!endpoint.isEmpty()?"上次地址：":"公网地址：")+(endpoint.isEmpty()?"等待获取":endpoint),14,endpoint.isEmpty()?MUTED:Color.rgb(34,139,210));addressLine.setMinHeight(dp(26));addressLine.setGravity(Gravity.CENTER_VERTICAL);c.addView(addressLine,new LinearLayout.LayoutParams(-1,-2));if(!endpoint.isEmpty()){String serviceType=r.optString("serviceType");boolean opensBrowser=mapped&&!stunWebAddress(serviceType,endpoint).isEmpty();addressLine.setContentDescription("公网地址 "+endpoint+(opensBrowser?"，点按复制并打开浏览器":"，点按复制"));addressLine.setBackground(touchSurface(10));addressLine.setOnClickListener(v->activateStunAddress(serviceType,endpoint,mapped));}
@@ -245,7 +255,134 @@ public final class HubToolsView extends FrameLayout {
     private void renderBeta(JSONObject data){LinearLayout c=card();c.addView(text("当前版本",14,MUTED));String current=data.isNull("cur")?"":data.optString("cur").trim();c.addView(text(current.isEmpty()?"未取得版本信息":current,17,INK));gap(c,12);JSONObject next=data.optJSONObject("new");if(next==null){c.addView(text("测试版检测尚未完成",16,MUTED));c.addView(text("未收到有效检测结果，点击刷新可重试。",14,MUTED));return;}String result=next.optString("msg","检测完成");c.addView(text(result.equals("no new version available")?"检测完成":result,16,TEAL));Object raw=next.opt("firmwareList");if(raw instanceof String){try{raw=new JSONTokener((String)raw).nextValue();}catch(Exception ignored){}}
         List<Object> releases=new ArrayList<>();if(raw instanceof JSONArray){JSONArray a=(JSONArray)raw;for(int i=0;i<a.length();i++)releases.add(a.opt(i));}else if(raw instanceof JSONObject){JSONObject o=(JSONObject)raw;Iterator<String> keys=o.keys();while(keys.hasNext()){String key=keys.next();Object v=o.opt(key);if(v instanceof JSONObject){JSONObject r=(JSONObject)v;try{if(!r.has("version"))r.put("version",key);}catch(Exception ignored){}releases.add(r);}else releases.add(key);}}
         for(Object value:releases){LinearLayout r=card();if(value instanceof JSONObject){JSONObject info=(JSONObject)value;r.addView(text(info.optString("version",info.optString("versionCode")),18,INK));Object notes=info.opt("releaseNotes");if(notes==null)notes=info.opt("notes");if(notes!=null)r.addView(text(notes.toString(),14,MUTED));}else r.addView(text(String.valueOf(value),18,INK));}
-        if(releases.isEmpty())c.addView(text("暂无可用的测试版固件",16,MUTED));}
-    private String message(Exception e){String v=e.getMessage();if(e instanceof java.io.IOException)return "HUB 连接暂不可用";return v==null||v.isEmpty()?"操作未完成，请重试":v;}
+        if(releases.isEmpty())c.addView(text("暂无可用的测试版固件",16,MUTED));
+        else{
+            Object first=releases.get(0);
+            final String version=(first instanceof JSONObject)?((JSONObject)first).optString("version",((JSONObject)first).optString("versionCode","")):String.valueOf(first);
+            final int upgradeGeneration=generation;
+            final HubToolSession upgradeOwner=session;
+            final String upgradeProject=project, upgradeSn=sn;
+            TextView flash=button("一键升级到 "+(version.isEmpty()?"最新版":version),true,()->{
+                if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)||mutating)return;
+                HubDialog.show(getContext(),"固件升级",
+                    "升级过程中路由器会重启，网络将暂时中断，请勿断电。确认继续？",
+                    "取消","确认升级",d->{
+                        d.dismiss();
+                        if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)||mutating)return;
+                        mutating=true;status.setText("正在下发升级命令…");
+                        writes.execute(()->{try{
+                            if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))return;
+                            JSONObject body=upgradeScope(upgradeProject,upgradeSn,"start");
+                            body.put("channel","beta").put("version",version);
+                            JSONObject ack=upgradeOwner.request("hub/firmware/upgrade",body);
+                            validateUpgradeAck(ack);
+                            ui.post(()->{if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))return;
+                                status.setText("升级命令已提交，正在读取进度");
+                                watchUpgrade(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn,0,"beta");
+                            });
+                        }catch(Exception error){ui.post(()->{if(upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)){
+                            mutating=false;status.setText(message(error));toast(message(error));
+                        }});}});
+                    });
+            });
+            flash.setTextSize(15);flash.setMinHeight(dp(44));c.addView(flash);
+            cancelUpgrade=button("取消升级",false,()->{
+                if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))return;
+                writes.execute(()->{try{
+                    JSONObject body=upgradeScope(upgradeProject,upgradeSn,"cancel");body.put("channel","beta");
+                    upgradeOwner.request("hub/firmware/upgrade",body);
+                    ui.post(()->{if(upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))status.setText("已取消升级");});
+                }catch(Exception error){ui.post(()->{if(upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))toast(message(error));});}});
+            });
+            cancelUpgrade.setTextSize(14);cancelUpgrade.setVisibility(View.GONE);c.addView(cancelUpgrade);
+        }
+    }
+    private void renderOfficial(JSONObject data){
+        LinearLayout c=card();c.addView(text("当前版本",14,MUTED));
+        String current=data.isNull("cur")?"":data.optString("cur").trim();
+        c.addView(text(current.isEmpty()?"未取得版本信息":current,17,INK));gap(c,12);
+        c.addView(text("检测完成",16,TEAL));
+        final int upgradeGeneration=generation;final HubToolSession upgradeOwner=session;
+        final String upgradeProject=project,upgradeSn=sn;
+        TextView flash=button("一键升级到 最新版",true,()->{
+            if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)||mutating)return;
+            HubDialog.show(getContext(),"固件升级",
+                "升级过程中路由器会重启，网络将暂时中断，请勿断电。确认继续？",
+                "取消","确认升级",d->{
+                    d.dismiss();
+                    if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)||mutating)return;
+                    mutating=true;status.setText("正在下发升级命令…");
+                    writes.execute(()->{try{
+                        JSONObject body=upgradeScope(upgradeProject,upgradeSn,"start");body.put("channel","official");
+                        JSONObject ack=upgradeOwner.request("hub/firmware/upgrade",body);
+                        validateUpgradeAck(ack);
+                        ui.post(()->{if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))return;
+                            status.setText("升级命令已提交，正在读取进度");
+                            watchUpgrade(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn,0,"official");});
+                    }catch(Exception error){ui.post(()->{if(upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)){
+                        mutating=false;status.setText(message(error));toast(message(error));}});}});
+                });
+        });
+        flash.setTextSize(15);flash.setMinHeight(dp(44));c.addView(flash);
+    }
+    static JSONObject upgradeScope(String project,String serial,String action)throws JSONException {
+        if(project==null||project.trim().isEmpty()||serial==null||serial.trim().isEmpty())
+            throw new JSONException("请先选择当前项目的路由器");
+        return new JSONObject().put("projectId",project).put("sn",serial).put("apSn",serial).put("action",action);
+    }
+    static void validateUpgradeAck(JSONObject ack)throws Exception {
+        if(ack==null)throw new Exception("未收到升级确认，请先查询进度");
+        if(ack.has("error_code")&&!"0".equals(ack.optString("error_code")))
+            throw new Exception(ack.optString("msg","升级命令未被设备接受"));
+        if(ack.optBoolean("started")||"upgrade started".equals(ack.optString("message"))
+           ||(ack.has("code")&&ack.optInt("code")==0))return;
+        String state=ack.optString("state");
+        if(!("downloading".equals(state)||"flashing".equals(state)||"rebooting".equals(state)||"running".equals(state)))
+            throw new Exception("未收到有效升级确认，请先查询进度");
+    }
+    static boolean upgradeTargetMatches(boolean active,int expectedGeneration,int liveGeneration,
+            Object expectedOwner,Object liveOwner,String pid,String serial,String liveProject,String liveSn){
+        return active&&expectedGeneration==liveGeneration&&expectedOwner!=null&&expectedOwner==liveOwner
+            &&pid!=null&&!pid.trim().isEmpty()&&serial!=null&&!serial.trim().isEmpty()
+            &&pid.equals(liveProject)&&serial.equals(liveSn);
+    }
+    private boolean upgradeCurrent(int g,HubToolSession owner,String pid,String serial){
+        if(!upgradeTargetMatches(active,g,generation,owner,session,pid,serial,project,sn))return false;
+        try{HubToolSession.requireCurrent(owner);return true;}catch(Exception invalid){return false;}
+    }
+    private void watchUpgrade(int g,HubToolSession owner,String pid,String serial,int attempt,String channel){
+        if(!upgradeCurrent(g,owner,pid,serial))return;
+        if(attempt>=150){mutating=false;status.setText("升级状态等待超时，请重新进入页面核对版本");return;}
+        ui.postDelayed(()->{if(!upgradeCurrent(g,owner,pid,serial))return;
+            reads.execute(()->{try{
+                JSONObject body=upgradeScope(pid,serial,"state");body.put("channel",channel);
+                JSONObject doc=owner.request("hub/firmware/upgrade",body);
+                String state=doc.optString("status"),code=doc.optString("stateCode");
+                // 113 / upgrading means the device is already flashing and will
+                // reboot. Stop polling; never report success from the client.
+                boolean writing="113".equals(code)||"200".equals(code)
+                    ||"upgrading".equals(state)||"verifying".equals(state);
+                boolean failed="failed".equals(state)||"error".equals(state)
+                    ||"116".equals(code)||"108".equals(code)||"110".equals(code)||"111".equals(code);
+                String msg=writing?"升级已启动，设备正在写入并重启":doc.optString("message","正在读取升级进度，请勿断电");
+                boolean downloading="downloading".equals(state);
+                ui.post(()->{if(!upgradeCurrent(g,owner,pid,serial))return;
+                    status.setText(msg+(downloading&&doc.optInt("progress")>0?" · "+doc.optInt("progress")+"%":"")
+                        +(downloading&&!doc.optString("speedHuman").isEmpty()?" · "+doc.optString("speedHuman"):""));
+                    if(cancelUpgrade!=null)cancelUpgrade.setVisibility(
+                        "beta".equals(channel)&&downloading?View.VISIBLE:View.GONE);
+                    if(writing){
+                        mutating=false;
+                        ui.postDelayed(()->{if(active)load(true);},20000);
+                    }else if(failed){mutating=false;
+                    }else watchUpgrade(g,owner,pid,serial,attempt+1,channel);
+                });
+            }catch(Exception error){ui.post(()->{if(!upgradeCurrent(g,owner,pid,serial))return;
+                status.setText("升级状态暂时无法读取，正在重试，请勿断电");
+                watchUpgrade(g,owner,pid,serial,attempt+1,channel);
+            });}});
+        },4000);
+    }
+    private String message(Exception e){return HubDialog.humanize(e);}
     private void toast(String value){Toast.makeText(getContext(),value,Toast.LENGTH_SHORT).show();}
 }
