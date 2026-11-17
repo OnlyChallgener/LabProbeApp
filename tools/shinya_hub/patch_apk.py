@@ -1,5 +1,6 @@
 """Apply the native/package changes to an apktool-decoded Shinya APK."""
 import argparse
+import os
 import re
 import shutil
 from pathlib import Path
@@ -8,8 +9,8 @@ from trim_retired_native import trim
 
 OLD_PACKAGE = "cn.com.ruijie.shinya2"
 NEW_PACKAGE = "com.labprobe.shinyahub"
-VERSION_NAME = "1.2.4-hub.2"
-VERSION_CODE = 183249837
+VERSION_NAME = "1.2.5-hub.62-dev"
+VERSION_CODE = 183249973
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 
 
@@ -22,6 +23,15 @@ def apply(decoded: Path, native_smali: Path):
     root.set("package", NEW_PACKAGE)
     app = root.find("application")
     app.set(ANDROID + "label", "星耀家 Hub")
+    permissions={node.get(ANDROID+'name') for node in root.findall('uses-permission')}
+    for permission in ('POST_NOTIFICATIONS','FOREGROUND_SERVICE','FOREGROUND_SERVICE_CONNECTED_DEVICE','CHANGE_NETWORK_STATE'):
+        name='android.permission.'+permission
+        if name not in permissions:root.insert(0,ET.Element('uses-permission',{ANDROID+'name':name}))
+    service_name='com.labprobe.shinyahub.HubAssistantNotificationService'
+    observer=next((node for node in app.findall('service') if node.get(ANDROID+'name')==service_name),None)
+    if observer is None:observer=ET.SubElement(app,'service',{ANDROID+'name':service_name})
+    observer.set(ANDROID+'exported','false')
+    observer.set(ANDROID+'foregroundServiceType','connectedDevice')
     if not any(node.get(ANDROID+'name')=='com.labprobe.shinyahub.HubPenetrationActivity' for node in app.findall('activity')):
         ET.SubElement(app,'activity',{ANDROID+'name':'com.labprobe.shinyahub.HubPenetrationActivity',
             ANDROID+'exported':'false',ANDROID+'theme':'@android:style/Theme.Material.Light.NoActionBar',
@@ -34,6 +44,23 @@ def apply(decoded: Path, native_smali: Path):
                 node.set(name, "星耀家 Hub")
     # Keep native class names intact: JNI and React Native entrypoints use them.
     tree.write(manifest, encoding="utf-8", xml_declaration=True)
+
+    # React's onNewIntent cannot notify listeners before its context exists.
+    # Retain the exact explicit notification Intent on the singleTask Activity
+    # so the later native bridge can drain it; preserve the normal RN delegate.
+    activity = decoded / "smali/cn/com/ruijie/shinya2/MainActivity.smali"
+    activity_text = activity.read_text(encoding="utf-8")
+    if '.method public onNewIntent(Landroid/content/Intent;)V' not in activity_text:
+        assert '.super Lcom/facebook/react/ReactActivity;' in activity_text
+        activity_text += '''
+.method public onNewIntent(Landroid/content/Intent;)V
+    .locals 0
+    invoke-virtual {p0, p1}, Landroid/app/Activity;->setIntent(Landroid/content/Intent;)V
+    invoke-super {p0, p1}, Lcom/facebook/react/ReactActivity;->onNewIntent(Landroid/content/Intent;)V
+    return-void
+.end method
+'''
+        activity.write_text(activity_text, encoding="utf-8")
 
     config = decoded / "smali/cn/com/ruijie/shinya2/BuildConfig.smali"
     text = config.read_text(encoding="utf-8")
@@ -73,12 +100,31 @@ def apply(decoded: Path, native_smali: Path):
     # An empty RadarData has no max-entry dataset. The bundled MPAndroidChart
     # dereferences that null dataset before it can draw the ordinary empty state.
     # Keep valid chart data unchanged; use the native no-data state while loading.
+    #
+    # The empty-state shortcut must stay scoped to RadarChart.  ChartBaseManager
+    # is the base of every chart type, and its empty branch ends in Chart.clear(),
+    # which leaves Chart.mData == null -- a state the official build never
+    # produces (the official path always calls setData, so mData is never null).
+    # Line/bar charts therefore crashed with a null dereference in the renderer.
     charts = decoded / "smali_classes2/com/github/wuxudong/rncharts/charts/ChartBaseManager.smali"
     text = charts.read_text(encoding="utf-8")
     begin = text.index(".method public setData(")
     end = text.index(".end method", begin)
     part = text[begin:end]
-    if ":hub_chart_empty" not in part:
+    # HUB_CHART_GUARD: radar (default) keeps the empty-state shortcut for radar
+    # charts only; none restores the untouched official body; base keeps the
+    # original all-chart-type shortcut.
+    mode = os.environ.get("HUB_CHART_GUARD", "radar")
+    if mode == "none":
+        if ":hub_chart_empty" in part:
+            anchor = "    invoke-virtual {p1, p2}, Lcom/github/mikephil/charting/charts/Chart;->setData(Lcom/github/mikephil/charting/data/ChartData;)V"
+            start = part.index("    if-eqz p2, :hub_chart_empty")
+            stop = part.index("    :hub_chart_empty")
+            tail = part.index("    return-void", stop) + len("    return-void")
+            part = part[:start] + anchor + "\n    return-void" + part[tail:]
+            text = text[:begin] + part + text[end:]
+            charts.write_text(text, encoding="utf-8")
+    elif ":hub_chart_empty" not in part:
         anchor = "    invoke-virtual {p1, p2}, Lcom/github/mikephil/charting/charts/Chart;->setData(Lcom/github/mikephil/charting/data/ChartData;)V"
         assert part.count(anchor) == 1
         guard = '''    if-eqz p2, :hub_chart_empty
@@ -90,9 +136,16 @@ def apply(decoded: Path, native_smali: Path):
     return-void
 
     :hub_chart_empty
+    instance-of v0, p1, Lcom/github/mikephil/charting/charts/RadarChart;
+    if-eqz v0, :hub_chart_normal
     const-string v0, "暂无已采集数据"
     invoke-virtual {p1, v0}, Lcom/github/mikephil/charting/charts/Chart;->setNoDataText(Ljava/lang/String;)V
-    invoke-virtual {p1}, Lcom/github/mikephil/charting/charts/Chart;->clear()V'''
+    invoke-virtual {p1}, Lcom/github/mikephil/charting/charts/Chart;->clear()V
+    return-void
+
+    :hub_chart_normal
+''' + anchor + '''
+    return-void'''
         text = text[:begin] + part.replace(anchor, guard) + text[end:]
         charts.write_text(text, encoding="utf-8")
 
@@ -149,6 +202,12 @@ def apply(decoded: Path, native_smali: Path):
     new-instance v1, Lcom/labprobe/shinyahub/HubDiagnosisViewManager;
     invoke-direct {v1}, Lcom/labprobe/shinyahub/HubDiagnosisViewManager;-><init>()V
     invoke-interface {v0, v1}, Ljava/util/List;->add(Ljava/lang/Object;)Z
+    new-instance v1, Lcom/labprobe/shinyahub/HubSpeedLoadingViewManager;
+    invoke-direct {v1}, Lcom/labprobe/shinyahub/HubSpeedLoadingViewManager;-><init>()V
+    invoke-interface {v0, v1}, Ljava/util/List;->add(Ljava/lang/Object;)Z
+    new-instance v1, Lcom/labprobe/shinyahub/HubCoverageViewManager;
+    invoke-direct {v1}, Lcom/labprobe/shinyahub/HubCoverageViewManager;-><init>()V
+    invoke-interface {v0, v1}, Ljava/util/List;->add(Ljava/lang/Object;)Z
     return-object v0
 .end method''' + text[end:]
     package.write_text(text, encoding="utf-8")
@@ -169,6 +228,9 @@ def apply(decoded: Path, native_smali: Path):
     brand_icons = Path(__file__).parent / "assets/hub-brandicons"
     if brand_icons.is_dir():
         shutil.copytree(brand_icons, decoded / "assets/hub-brandicons", dirs_exist_ok=True)
+        other_icon = brand_icons / 'device_other_centered.png'
+        if other_icon.exists():
+            shutil.copy2(other_icon, decoded / 'res/drawable-mdpi/src_assets_image_common_icon_statype_other.png')
     # Runtime artwork follows the user's latest official-tools style reference.
     # Design source images and notes stay outside the APK assets directory.
     ui_icons = Path(__file__).parent / "assets/hub-ui"
@@ -194,6 +256,8 @@ def apply(decoded: Path, native_smali: Path):
             (custom_dir / "device_nas_128x128.png", mdpi / "src_assets_image_common_icon_statype_nas.png"),
             (custom_dir / "device_nas_128x128.png", mdpi / "src_assets_image_common_icon_child_statype_nas.png"),
             (custom_dir / "device_nas_256x256.png", nodpi / "device_nas.png"),
+            (custom_dir / "helper_icon_device_onoff_73x73.png",
+             mdpi / "src_assets_image_helper_icon_device_onoff.png"),
         ]:
             if src.exists():
                 shutil.copy2(src, dst)

@@ -311,6 +311,11 @@ def patch(source, output):
     # project's UpgradeManager. HUB adapts the original detection endpoints to
     # the firmware beta getter; this page must never use an account-wide picker.
 
+    # checkUpgrade's own predicate (F24054) stays original: it counts only the
+    # channel the project is on (upDateVersionCode from getBetaStatus), so a
+    # beta router is never dotted for an official update. The page row filter
+    # (F32277) and upgrade-all filter (F24070) use the same per-channel rule.
+
     # Use HUB's measured radar dimensions. Unsupported cloud QoE/house scores
     # must not become zero-valued spokes. The original component still renders
     # the returned chart contract, with one local dataset and no national mean.
@@ -498,7 +503,12 @@ def patch(source, output):
         c=bytearray([ops.StartGenerator.opcode,ops.ResumeGenerator.opcode,0,1,
                      ops.GetEnvironment.opcode,0,2,ops.LoadFromEnvironment.opcode,1,0,rn_slot])
         for target,source,sid in [(2,1,22921),(2,2,22266),(3,2,method_sid)]:
-            c+=bytes([ops.GetById.opcode,target,source,1])+struct.pack('<H',sid)
+            if int(reader.string_kinds[sid])==1:
+                c+=bytes([ops.GetById.opcode,target,source,1])+struct.pack('<H',sid)
+            else:
+                assert target!=source
+                c+=bytes([ops.LoadConstString.opcode,target])+struct.pack('<H',sid)
+                c+=bytes([ops.GetByVal.opcode,target,source,target])
         c+=bytes([ops.GetEnvironment.opcode,0,1,ops.LoadFromEnvironment.opcode,4,0,project_slot])
         if not project_is_id:c+=bytes([ops.GetByIdShort.opcode,4,4,1,210])
         c+=bytes([ops.LoadFromEnvironment.opcode,1,0,ap_slot,
@@ -590,10 +600,6 @@ def patch(source, output):
     shortcuts.emit('Ret',0)
     replace_function(35770,bytes(shortcuts.raw),'drop the retired feedback shortcut')
 
-    # 2. FID 35708: render preset question cards first, immune to stale cache
-    instruction(35708, 0x5d, 'JStrictNotEqual', [29, 2, 5],
-                dict(enumerate([ops.LoadConstNull.opcode, 2, ops.LoadConstNull.opcode, 5])))
-
     # 3. FID 35723: reduce init timer to 60ms for instant message sync
     instruction(35723, 0x1b, 'LoadConstInt', [0, 1000],
                 {2 + idx: b for idx, b in enumerate(struct.pack('<i', 60))})
@@ -619,6 +625,15 @@ def patch(source, output):
     game_home_additions(reader,replace_function)
     insert_row(reader,data,changed_functions,changes)
     unknown_counts(reader,data,replace_function)
+    # GameNetwork's switch used the category-specific `game` flag. The HUB
+    # projects overview.rcgame_enabled as `enabled`, so the switch follows the
+    # global firmware service even when a dedicated device or study keeps it on.
+    global_state=reader.strings.index('enabled')
+    true_literal=reader.strings.index('true')
+    instruction(25772,0x40a,'GetById',[1,6,36,23169],
+                {4:global_state & 255,5:global_state >> 8})
+    instruction(25772,0x418,'LoadConstString',[0,21354],
+                {2:true_literal & 255,3:true_literal >> 8})
     # ServiceWrapper mounts this old feedback component even while invisible.
     # Remove its body as well as its entry so erased captions never reach i18n.
     assert reader.strings[reader.function_headers[23454].functionName]=='GameFeedBack'
@@ -638,6 +653,10 @@ def patch(source, output):
         code+=bytes([ops.LoadConstUndefined.opcode,0,ops.Ret.opcode,0])
         return bytes(code)
     replace_function(23043,game_navigation(12595,True),'game card opens router application centre')
+    nav_header=reader.get_small_func_header_reader().from_buffer(data,reader.functions_offset+23043*ctypes.sizeof(reader.get_small_func_header_reader()))
+    assert not nav_header.overflowed
+    nav_header.frameSize=max(nav_header.frameSize,16)
+    del nav_header
     replace_function(23048,game_navigation(12370),'game card opens STUN penetration')
     replace_function(23478,game_navigation(12595,True),'UU shortcut shares the router application screen')
     # Qiyou and Gamng are retired. Keep the UU branch and its firmware data;
@@ -800,31 +819,129 @@ def patch(source, output):
     if enabled("measured_status"):
         from patch_measured_status import additions as measured_additions
         data=measured_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_cards"):
+        from patch_assistant_cards import STRINGS as assistant_card_strings
+        assert not set(assistant_card_strings).intersection(labels), set(assistant_card_strings).intersection(labels)
+        labels.update(assistant_card_strings)
+    if enabled("assistant_diagnosis_detail") and enabled("assistant_cards"):
+        from patch_assistant_diagnosis_detail import additions as assistant_diagnosis_detail_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_diagnosis_detail_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_diagnose_intake") and enabled("assistant_cards"):
+        from patch_assistant_diagnose_intake import additions as assistant_diagnose_intake_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_diagnose_intake_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_features"):
+        from patch_assistant_features import additions as assistant_features_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_features_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("station_notify"):
+        from patch_station_notify import additions as station_notify_additions, STRINGS as station_notify_strings
+        assert not set(station_notify_strings).intersection(labels), set(station_notify_strings).intersection(labels)
+        labels.update(station_notify_strings)
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=station_notify_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_history"):
+        from patch_assistant_history import additions as assistant_history_additions, STRINGS as assistant_history_strings
+        assert not set(assistant_history_strings).intersection(labels), set(assistant_history_strings).intersection(labels)
+        labels.update(assistant_history_strings)
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_history_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_messages"):
+        from patch_assistant_messages import additions as assistant_messages_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_messages_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_notifications"):
+        from patch_assistant_notifications import additions as assistant_notifications_additions, STRINGS as assistant_notifications_strings
+        assert all(labels.get(sid, '') in ('', value) for sid, value in assistant_notifications_strings.items()), {sid: labels[sid] for sid, value in assistant_notifications_strings.items() if labels.get(sid, '') not in ('', value)}
+        labels.update(assistant_notifications_strings)
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_notifications_additions(load(bytes(data)),data,changed_functions,changes)
+    if enabled("assistant_diagnosis_heading"):
+        from patch_assistant_diagnosis_heading import additions as assistant_diagnosis_heading_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_diagnosis_heading_additions(load(bytes(data)),data,changed_functions,changes,
+            placeholder=18524 if enabled("assistant_cards") else 1313)
     # The empty rotated tag cut into the banner's right edge. Keep the original
     # speech arrow and card layout, and render this retired badge as null.
     instruction(24141,0x2de,'Call3',[9,10,3,9,7],
                 dict(enumerate([ops.LoadConstNull.opcode,9]*3)))
+    if enabled("assistant_banner"):
+        from patch_assistant_banner import additions as assistant_banner_additions, STRINGS as assistant_banner_strings
+        assert not set(assistant_banner_strings).intersection(labels), set(assistant_banner_strings).intersection(labels)
+        labels.update(assistant_banner_strings)
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_banner_additions(load(bytes(data)),data,changed_functions,changes)
+    # The entry now reads the original store on click; never inject a hook
+    # into Speed's render body (see verify_speed_page_safe).
+    if enabled("speed_entry"):
+        from patch_speed_entry import additions as speed_entry_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=speed_entry_additions(load(bytes(data)),data,changed_functions,changes)
+    from patch_child_report_cache import additions as child_report_cache_additions
+    data[-20:]=hashlib.sha1(data[:-20]).digest()
+    data=child_report_cache_additions(load(bytes(data)),data,changed_functions,changes)
+    from patch_project_lifecycle import additions as project_lifecycle_additions
+    data[-20:]=hashlib.sha1(data[:-20]).digest()
+    data=project_lifecycle_additions(load(bytes(data)),data,changed_functions,changes)
+    from patch_macc_entry import additions as macc_entry_additions, STRINGS as macc_entry_strings
+    assert not set(macc_entry_strings).intersection(labels), ('MACC string conflict', set(macc_entry_strings).intersection(labels))
+    labels.update(macc_entry_strings)
+    data[-20:]=hashlib.sha1(data[:-20]).digest()
+    data=macc_entry_additions(load(bytes(data)),data,changed_functions,changes)
+    # NOTE: patch_project_entry（主页添加→HUB/MACC 向导）经真机回归确认会劫持
+    # 「新增网络」入口，2026-11-13 撤下接线；重新接入前必须与新增网络入口做区分。
+    from patch_game_last_result import additions as game_last_result_additions
+    data[-20:]=hashlib.sha1(data[:-20]).digest()
+    data=game_last_result_additions(load(bytes(data)),data,changed_functions,changes)
+    from patch_offline_wake import additions as offline_wake_additions
+    data[-20:]=hashlib.sha1(data[:-20]).digest()
+    data=offline_wake_additions(load(bytes(data)),data,changed_functions,changes)
     labels[19918]='关于星耀家 HUB'
     # Include every replacement before computing occupied/free string ranges.
     # Late labels would still count as live storage and could overwrite them.
     labels.update({
-        20357: '小星助手 V2.0',
         20949: '由小星助手V2.0提供服务',
-        2911: '{"rebootCount":1}',
-        13067: '{"flapCount":1}',
-        18903: '{"upLinkSpeed":100}',
-        7156: 'assistantSend',
-        7163: 'hub://speedtest',
+        2911: '{"reboot_count":null}',
+        13067: '{"flapCount":null}',
+        18903: '{"upLinkSpeed":null}',
+        49425: 'assistantSend',
         6987: 'assistantSpeedtest',
         22216: 'openProjectPages',
     })
     from patch_assistant_bridge import BANNER_CACHE_SID
-    assert reader.strings[BANNER_CACHE_SID].startswith('https://support.qq.com/product/318572/')
-    labels[BANNER_CACHE_SID] = '__hubXiaoxingBanner'
+    assert BANNER_CACHE_SID != account_tag, 'assistant cache must not overwrite account component name'
+    assert labels[BANNER_CACHE_SID] == '{"reboot_count":null}'
     labels.update({sid:'STUN穿透' for sid,s in enumerate(reader.strings)
                    if s in {'远程游戏','远程玩游戏','远程打游戏','星耀家Link'}})
     labels.update({sid:'内网服务穿透与公网地址管理' for sid,s in enumerate(reader.strings)
                    if s in {'手机/平板远程玩家里电脑','在任何地方，远程玩您家里电脑中的Steam游戏'}})
+    labels.update({sid:'信号覆盖情况' for sid,s in enumerate(reader.strings)
+                   if s=='我最远，隔两堵墙都不掉线~'})
+    from patch_device_catalog import additions as device_catalog_additions, STRINGS as device_catalog_strings
+    assert not set(device_catalog_strings).intersection(labels), set(device_catalog_strings).intersection(labels)
+    labels.update(device_catalog_strings)
+    data[-20:] = hashlib.sha1(data[:-20]).digest()
+    data = device_catalog_additions(load(bytes(data)), data, changed_functions, changes)
+    # The original Helper header also references string 20357; the identity
+    # patch reuses that slot for the fnOS manufacturer. Retarget the actual
+    # header instruction, not just the tool-page banner, to the dedicated copy.
+    data[-20:] = hashlib.sha1(data[:-20]).digest()
+    helper_reader = load(bytes(data))
+    helper_header = helper_reader.function_headers[35695]
+    titles = [i for i in parse_hbc_bytecode(helper_header, helper_reader)
+              if i.inst.name == 'LoadConstString' and i.arg2 == 20357]
+    assert len(titles) == 1, 'Helper header title instruction changed'
+    struct.pack_into('<H', data, helper_header.offset + titles[0].original_pos + 2, 344)
+    changed_functions.add(35695)
+    changes.append({'function':35695,'action':'use dedicated assistant header title, independent of fnOS manufacturer'})
+    # Assistant cards insert new function bodies; run them after every other
+    # body-inserting module so later insertions cannot relocate their headers.
+    # Their strings were reserved early so allocation order stays unchanged.
+    if enabled("assistant_cards"):
+        from patch_assistant_cards import additions as assistant_card_additions
+        data[-20:]=hashlib.sha1(data[:-20]).digest()
+        data=assistant_card_additions(load(bytes(data)),data,changed_functions,changes)
     retired = {i for i, value in enumerate(reader.strings) if value.startswith(
         ("https://62ec64a915db5157d7b078ac555f0119@", "https://support.qq.com/product/318572/"))}
     changed_strings = set(labels) | retired
@@ -845,6 +962,20 @@ def patch(source, output):
             if not used[j]:
                 free[j] = 1
 
+    # Hermes permits multiple string table entries to share a storage span.
+    # Reuse only known immutable strings or newly allocated spans, with the
+    # same encoding and UTF-16 code-unit boundary. This also avoids exhausting
+    # the few contiguous retired ranges with duplicate translated labels.
+    shared_strings = {}
+    allocated_strings = []
+    immutable_strings = []
+    for sid, value in enumerate(reader.strings):
+        if sid not in changed_strings:
+            shared_strings.setdefault((value, bool(reader.small_string_table[sid].isUTF16)), ranges[sid][0])
+            start, size = ranges[sid]
+            immutable_strings.append((bool(reader.small_string_table[sid].isUTF16),
+                bytes(data[reader.storage_offset+start:reader.storage_offset+start+size]), start))
+
     def store_string(sid, value):
         utf16 = any(ord(c) > 127 for c in value)
         encoded = value.encode("utf-16-le" if utf16 else "ascii")
@@ -852,16 +983,33 @@ def patch(source, output):
         assert length < 255
         start = 0
         if encoded:
-            count = 0
-            for j, available in enumerate(free):
-                count = count + 1 if available else 0
-                if count >= len(encoded):
-                    start = j - len(encoded) + 1
-                    break
-            else:
-                raise ValueError(f"No exclusive string storage available for {sid} ({len(encoded)} bytes; {sum(free)} free)")
-            free[start:start + len(encoded)] = b"\x00" * len(encoded)
-            data[reader.storage_offset + start:reader.storage_offset + start + len(encoded)] = encoded
+            start = shared_strings.get((value, utf16))
+            if start is None:
+                for pool_utf16, pool_bytes, pool_start in allocated_strings + immutable_strings:
+                    if pool_utf16 != utf16:
+                        continue
+                    inner = pool_bytes.find(encoded)
+                    while inner >= 0 and utf16 and inner % 2:
+                        inner = pool_bytes.find(encoded, inner + 1)
+                    if inner >= 0:
+                        start = pool_start + inner
+                        break
+            if start is None:
+                # Best fit preserves larger contiguous holes for later values.
+                holes = []; begin = None
+                for j, available in enumerate(free):
+                    if available and begin is None: begin = j
+                    if begin is not None and (not available or j == len(free)-1):
+                        end = j if not available else j+1
+                        if end-begin >= len(encoded): holes.append((end-begin, begin))
+                        begin = None
+                if not holes:
+                    raise ValueError(f"No exclusive string storage available for {sid} ({len(encoded)} bytes; {sum(free)} free)")
+                _, start = min(holes)
+                free[start:start + len(encoded)] = b"\x00" * len(encoded)
+                data[reader.storage_offset + start:reader.storage_offset + start + len(encoded)] = encoded
+                allocated_strings.append((utf16, encoded, start))
+            shared_strings.setdefault((value, utf16), start)
         struct.pack_into("<I", data, reader.table_offset + 4 * sid, (length << 24) | (start << 1) | int(utf16))
 
     for sid in retired:
@@ -907,6 +1055,10 @@ def patch(source, output):
     assert_bodies_mapped(result)
     from hermes_identifier_hashes import verify as verify_identifier_hashes
     verify_identifier_hashes(result)
+    from hermes_identifier_hashes import verify_property_operands
+    verify_property_operands(result)
+    from hermes_call_frames import verify as verify_implicit_call_frames
+    verify_implicit_call_frames(reader,result)
     # Helper preserved for XiaoXing Assistant V2.0
     assert reader.object_keys==result.object_keys
     assert result.object_values[:62888]==reader.object_values[:62888]
