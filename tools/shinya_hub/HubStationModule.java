@@ -422,9 +422,18 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
     private static boolean assistantRunning(String state){return "queued".equals(state)||"starting".equals(state)||"running".equals(state);}
     private void restoreAssistantTasks(String history)throws Exception{
         synchronized(prepareLock){org.json.JSONArray rows=new org.json.JSONArray(history);
+            boolean diagnosisRestored=false;
             for(int i=0;i<rows.length();i++){JSONObject row=rows.optJSONObject(i);if(row==null)continue;
                 String kind="",server=row.optString("uuid"),local=server;
-                if("diagnose_loading".equals(row.optString("type"))&&"running".equals(row.optString("diagnosisStatus")))kind="diagnosis";
+                long created=row.optLong("createTime",System.currentTimeMillis());
+                // Never resurrect a stale running diagnosis from history: it
+                // becomes a poll of an evicted uuid ("接口不可用"/spinner).
+                // Keep at most one, the newest.
+                if("diagnose_loading".equals(row.optString("type"))
+                   &&"running".equals(row.optString("diagnosisStatus"))
+                   &&!diagnosisRestored
+                   &&System.currentTimeMillis()-created<5*60*1000L){
+                    kind="diagnosis";diagnosisRestored=true;}
                 if("hubCard".equals(row.optString("type")))try{
                     JSONObject card=new JSONObject(row.optString("messageDetail"));
                     if("speedtest".equals(card.optString("kind"))&&assistantRunning(card.optString("state"))){
@@ -432,24 +441,41 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
                 }catch(Exception oldMessage){}
                 if(!kind.isEmpty()&&!server.isEmpty()){
                     assistantTaskKinds.put(server,kind);assistantTaskRows.put(server,local);
-                    assistantTaskTimes.put(server,row.optLong("createTime",System.currentTimeMillis()));}
+                    assistantTaskTimes.put(server,created);}
             }
         }
     }
     private void subscribeAssistantTasks(org.json.JSONArray messages)throws Exception{
         if(messages==null)return;
-        synchronized(prepareLock){for(int i=0;i<messages.length();i++){
-            JSONObject message=messages.optJSONObject(i);if(message==null)continue;
-            String id=message.optString("uuid"),kind="";JSONObject card=message.optJSONObject("hubCard");
-            if("diagnose_loading".equals(message.optString("responseMessageType")))kind="diagnosis";
-            if(card!=null&&"speedtest".equals(card.optString("kind")))kind="speedtest";
-            String state=message.optString("state",card==null?"":card.optString("state"));
-            if(!id.isEmpty()&&!kind.isEmpty()&&assistantRunning(state)){
-                android.util.Log.i("HubAssistantTask","subscribe "+kind+" state="+state);
-                assistantTaskKinds.put(id,kind);assistantTaskTimes.putIfAbsent(id,message.optLong("createTime",System.currentTimeMillis()));
-                if(card!=null)card.put("assistantTaskId",id);
+        synchronized(prepareLock){
+            // At most one live task per kind: a second "网络诊断" frame must
+            // replace (not join) the first, or the APP polls two cards and
+            // shows duplicates.
+            String liveDiagnosis=null,liveSpeed=null;
+            for(java.util.Map.Entry<String,String> task:assistantTaskKinds.entrySet()){
+                if("diagnosis".equals(task.getValue()))liveDiagnosis=task.getKey();
+                if("speedtest".equals(task.getValue()))liveSpeed=task.getKey();
             }
-        }}
+            for(int i=0;i<messages.length();i++){
+                JSONObject message=messages.optJSONObject(i);if(message==null)continue;
+                String id=message.optString("uuid"),kind="";JSONObject card=message.optJSONObject("hubCard");
+                if("diagnose_loading".equals(message.optString("responseMessageType")))kind="diagnosis";
+                if(card!=null&&"speedtest".equals(card.optString("kind")))kind="speedtest";
+                String state=message.optString("state",message.optString("diagnosisStatus",
+                                     card==null?"":card.optString("state")));
+                if(!id.isEmpty()&&!kind.isEmpty()&&assistantRunning(state)){
+                    android.util.Log.i("HubAssistantTask","subscribe "+kind+" state="+state);
+                    if("diagnosis".equals(kind)&&liveDiagnosis!=null&&!liveDiagnosis.equals(id))
+                        assistantTaskKinds.remove(liveDiagnosis);
+                    if("speedtest".equals(kind)&&liveSpeed!=null&&!liveSpeed.equals(id))
+                        assistantTaskKinds.remove(liveSpeed);
+                    assistantTaskKinds.put(id,kind);assistantTaskTimes.putIfAbsent(id,message.optLong("createTime",System.currentTimeMillis()));
+                    if("diagnosis".equals(kind))liveDiagnosis=id;
+                    if("speedtest".equals(kind))liveSpeed=id;
+                    if(card!=null)card.put("assistantTaskId",id);
+                }
+            }
+        }
     }
     private JSONObject pollAssistantTasks(HubToolSession session)throws Exception{
         final long generation;final String project,owner;final LinkedHashMap<String,String> tasks;
