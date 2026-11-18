@@ -170,13 +170,21 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
     }
     @ReactMethod public void openURL(String url){pages.openURL(url);}
     @ReactMethod public void speedTest(String project,String sn){pages.speedTest(project,sn);}
-    @ReactMethod public void assistantSpeedtest(String project){assistantSpeedtestFeedback(project,"");}
+    @ReactMethod public void assistantSpeedtest(String project){
+        // Both entry points open the native speed page. The assistant only
+        // shows a read-only history card, so no in-chat task/robot/spinner.
+        // The page resolves the current project's main router itself.
+        pages.speedTest(project==null?"":project,"");
+    }
     @ReactMethod public void more(String project,final com.facebook.react.bridge.Callback selected){
         assistantFeatures.show(project,question->{if(selected!=null)selected.invoke(question);});
     }
     @ReactMethod public void cardSpeedtest(String project,String sn){
         if(sn==null||sn.trim().isEmpty())return;
-        assistantSpeedtestFeedback(project,sn);
+        // The history card is read-only. "去测速" jumps straight to the native
+        // speed page (same as hub://speedtest) instead of starting a task in
+        // the assistant, so there is no preparation/robot/spinner state here.
+        pages.speedTest(project==null?"":project,sn);
     }
     private final java.util.Map<String,String> assistantScopeOwners=new java.util.concurrent.ConcurrentHashMap<>();
     private final Object prepareLock=new Object();
@@ -311,7 +319,9 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
         }
     }
     private static String preparationLabel(String payload){
-        if(speedIntent(payload))return "正在准备测速…";
+        // The assistant now answers speed questions with a read-only history
+        // card from the server. No local preparation card/spinner is needed;
+        // a live job is started only on the native speed page ("去测速").
         // Legacy diagnosis already owns its waiting animation and multiple
         // response messages. Ordinary reads retain their original callbacks.
         return "";
