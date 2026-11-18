@@ -196,6 +196,7 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
     private final LinkedHashMap<String,String> assistantTaskKinds=new LinkedHashMap<>();
     private final LinkedHashMap<String,Long> assistantTaskTimes=new LinkedHashMap<>();
     private final LinkedHashMap<String,Integer> assistantTaskErrors=new LinkedHashMap<>();
+    private final LinkedHashMap<String,Integer> assistantTerminalSeen=new LinkedHashMap<>();
     private SpeedPreparation speedPreparing;
     private static final class SpeedPreparation {
         final long generation;final String id,project,owner;
@@ -294,9 +295,32 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
         org.json.JSONArray rows=new org.json.JSONArray(payload),kept=new org.json.JSONArray();
         for(int i=0;i<rows.length();i++){
             JSONObject row=rows.optJSONObject(i);boolean transientRow=false;
-            if(row!=null&&"hubCard".equals(row.optString("type"))){
-                try{transientRow="loading".equals(new JSONObject(row.optString("messageDetail")).optString("kind"));}
-                catch(Exception oldMessage){/* Preserve non-placeholder history. */}
+            if(row!=null){
+                if("hubCard".equals(row.optString("type"))){
+                    try{transientRow="loading".equals(new JSONObject(row.optString("messageDetail")).optString("kind"));}
+                    catch(Exception oldMessage){/* Preserve non-placeholder history. */}
+                }
+                // A finished-but-empty diagnosis card ("诊断终止" + five
+                // zero rows) carries no result. Drop it from history so a
+                // page revisit does not replay a useless failure card.
+                if(!transientRow&&"diagnose_loading".equals(row.optString("type"))){
+                    String verdict=row.optString("diagnosisStatus","");
+                    if("fail".equals(verdict)||"pause".equals(verdict)||"cancelled".equals(verdict)){
+                        try{
+                            JSONObject detail=new JSONObject(row.optString("messageDetail"));
+                            org.json.JSONArray steps=detail.optJSONArray("steps");
+                            if(steps!=null){
+                                boolean anyEvidence=false;
+                                for(int s=0;s<steps.length();s++){
+                                    JSONObject step=steps.optJSONObject(s);
+                                    if(step!=null&&(step.optInt("normalNumber",0)>0
+                                       ||step.optInt("exceptionNumber",0)>0)){anyEvidence=true;break;}
+                                }
+                                if(!anyEvidence)transientRow=true;
+                            }
+                        }catch(Exception oldMessage){/* keep on parse failure */}
+                    }
+                }
             }
             if(!transientRow)kept.put(rows.get(i));
         }
@@ -418,7 +442,7 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
         }
         if(job.callback!=null)job.callback.invoke(result);
     }
-    private void clearPreparations(){synchronized(prepareLock){android.util.Log.i("HubAssistantTask","clearing transport tasks="+assistantTaskKinds.size());prepareGeneration++;preparedMessages.clear();assistantTaskRows.clear();assistantTaskKinds.clear();assistantTaskTimes.clear();assistantTaskErrors.clear();speedPreparing=null;}}
+    private void clearPreparations(){synchronized(prepareLock){android.util.Log.i("HubAssistantTask","clearing transport tasks="+assistantTaskKinds.size());prepareGeneration++;preparedMessages.clear();assistantTaskRows.clear();assistantTaskKinds.clear();assistantTaskTimes.clear();assistantTaskErrors.clear();assistantTerminalSeen.clear();speedPreparing=null;}}
     private static boolean assistantRunning(String state){return "queued".equals(state)||"starting".equals(state)||"running".equals(state);}
     private void restoreAssistantTasks(String history)throws Exception{
         synchronized(prepareLock){org.json.JSONArray rows=new org.json.JSONArray(history);
@@ -486,20 +510,36 @@ public final class HubStationModule extends ReactContextBaseJavaModule {
                 JSONObject view=session.request("assistantChat/"+task.getValue()+"/status",new JSONObject().put("projectId",project).put("uuid",task.getKey()));
                 android.util.Log.i("HubAssistantTask",task.getValue()+" status="+view.optString("state"));
                 synchronized(prepareLock){if(generation!=prepareGeneration||!project.equals(activeAssistantProject)||!owner.equals(activeAssistantOwner))return new JSONObject().put("messages",new org.json.JSONArray());
-                    if(!task.getKey().equals(view.optString("uuid")))throw new Exception("任务已失效，请重新发起");
+                    String reported=view.optString("uuid");
+                    if(!task.getKey().equals(reported)&&!reported.isEmpty())
+                        throw new Exception("任务已失效，请重新发起");
                     org.json.JSONArray rows=view.optJSONArray("messages");
                     if(rows==null||rows.length()==0)throw new Exception("任务暂未返回状态");
                     for(int i=0;i<rows.length();i++){
                         JSONObject row=rows.optJSONObject(i);if(row!=null&&task.getKey().equals(row.optString("uuid")))messages.put(row);
                     }
                     assistantTaskErrors.remove(task.getKey());
-                    if(!assistantRunning(view.optString("state")))assistantTaskKinds.remove(task.getKey());
+                    // A diagnosis takes ~18s in the cloud. Do NOT stop polling
+                    // on a single non-running frame: intermediate frames can
+                    // carry a per-dimension verdict while the job is still
+                    // streaming. Require the terminal state to be confirmed,
+                    // or the bounded timeout, before dropping the task.
+                    if(!assistantRunning(view.optString("state"))){
+                        String key=task.getKey();long firstAt=assistantTaskTimes.get(key);
+                        if(firstAt<=0){assistantTaskTimes.put(key,System.currentTimeMillis());firstAt=assistantTaskTimes.get(key);}
+                        int seen=assistantTerminalSeen.getOrDefault(key,0)+1;
+                        assistantTerminalSeen.put(key,seen);
+                        boolean timedOut=System.currentTimeMillis()-firstAt>60_000L;
+                        if(seen>=3||timedOut)assistantTaskKinds.remove(key);
+                    }else assistantTerminalSeen.remove(task.getKey());
                 }
             }catch(Exception failed){synchronized(prepareLock){
                 android.util.Log.w("HubAssistantTask",task.getValue()+" status failed: "+failed.getClass().getSimpleName());
                 if(generation!=prepareGeneration)return new JSONObject().put("messages",new org.json.JSONArray());
                 int errors=assistantTaskErrors.getOrDefault(task.getKey(),0)+1;assistantTaskErrors.put(task.getKey(),errors);
-                if(errors>=2){messages.put(new JSONObject().put("uuid",task.getKey()).put("responseMessageType","chat")
+                // Transient status read failures must not kill a live cloud
+                // diagnosis: allow repeated retries within the 60s window.
+                if(errors>=5){messages.put(new JSONObject().put("uuid",task.getKey()).put("responseMessageType","chat")
                     .put("messageDetail","任务状态暂时不可用，请重试查询；未自动重新启动任务。"));assistantTaskKinds.remove(task.getKey());}
             }}
         }

@@ -14,8 +14,11 @@ JAVA = Path('D:/Program Files/Eclipse Adoptium/jdk-17.0.19.10-hotspot/bin')
 source = (ROOT / 'tools/shinya_hub/HubStationModule.java').read_text(encoding='utf8')
 
 start = source.index('    private static boolean assistantRunning(')
-end = source.index('    private JSONObject pollAssistantTasks(', start)
+end = source.index('    private org.json.JSONArray assistantEvents(', start)
 methods = source[start:end].replace('android.util.Log', 'Log')
+# Extract only the history filter as a standalone static method.
+history_filter = source[source.index('    private static String withoutTransientHistory('):
+                        source.index('    private static String presetCard(')]
 
 harness = '''import org.json.*;import java.util.*;
 public class TaskSubscriptionCheck {
@@ -24,7 +27,16 @@ public class TaskSubscriptionCheck {
  private final LinkedHashMap<String,String> assistantTaskKinds=new LinkedHashMap<>();
  private final LinkedHashMap<String,String> assistantTaskRows=new LinkedHashMap<>();
  private final LinkedHashMap<String,Long> assistantTaskTimes=new LinkedHashMap<>();
+ private final LinkedHashMap<String,Integer> assistantTaskErrors=new LinkedHashMap<>();
+ private final LinkedHashMap<String,Integer> assistantTerminalSeen=new LinkedHashMap<>();
+ private long prepareGeneration=1;
+ private String activeAssistantProject="p",activeAssistantOwner="o";
+ static class HubToolSession {
+   JSONObject reply;
+   JSONObject request(String resource,JSONObject body)throws Exception{return new JSONObject(reply.toString());}
+ }
 '''+methods+'''
+'''+history_filter+'''
  static void ok(boolean b){if(!b)throw new AssertionError();}
  public static void main(String[] args)throws Exception{
   TaskSubscriptionCheck t=new TaskSubscriptionCheck();
@@ -55,7 +67,49 @@ public class TaskSubscriptionCheck {
     .put("state","complete").put("createTime",now));
   t.subscribeAssistantTasks(finished);
   ok(!t.assistantTaskKinds.containsKey("d4"));
-  System.out.println("PASS task subscription: stale history, single restore, replace-not-join, terminal frames");
+  // A finished-but-empty diagnosis card is dropped from history, so a page
+  // revisit does not replay the "诊断终止 + five zero rows" card.
+  JSONArray emptyCardSteps=new JSONArray();
+  for(int s=0;s<5;s++)emptyCardSteps.put(new JSONObject()
+    .put("normalNumber",0).put("exceptionNumber",0).put("stageState","unavailable"));
+  JSONObject emptyCard=new JSONObject().put("steps",emptyCardSteps);
+  JSONArray history=new JSONArray()
+    .put(new JSONObject().put("uuid","e1").put("type","diagnose_loading")
+         .put("diagnosisStatus","fail").put("messageDetail",emptyCard.toString()))
+    .put(new JSONObject().put("uuid","ok").put("type","chat").put("messageDetail","hello"));
+  ok(new JSONArray(withoutTransientHistory(history.toString())).length()==1);
+  // A real result card (with evidence) survives.
+  emptyCardSteps.getJSONObject(0).put("normalNumber",5);
+  history.getJSONObject(0).put("messageDetail",emptyCard.toString());
+  ok(new JSONArray(withoutTransientHistory(history.toString())).length()==2);
+  // Polling robustness: one non-running frame must NOT stop a live diagnosis;
+  // three consecutive terminal confirmations are required.
+  TaskSubscriptionCheck poller=new TaskSubscriptionCheck();
+  poller.activeAssistantProject="p";poller.activeAssistantOwner="o";
+  poller.assistantTaskKinds.put("diag-live","diagnosis");
+  poller.assistantTaskTimes.put("diag-live",System.currentTimeMillis());
+  HubToolSession session=new HubToolSession();
+  JSONArray msg=new JSONArray().put(new JSONObject().put("uuid","diag-live")
+    .put("responseMessageType","diagnose_loading").put("state","running"));
+  session.reply=new JSONObject().put("uuid","diag-live").put("state","complete")
+    .put("messages",msg);
+  poller.pollAssistantTasks(session);
+  ok(poller.assistantTaskKinds.containsKey("diag-live"));
+  poller.pollAssistantTasks(session);
+  ok(poller.assistantTaskKinds.containsKey("diag-live"));
+  // A third terminal confirmation is allowed to drop the task.
+  poller.pollAssistantTasks(session);
+  ok(!poller.assistantTaskKinds.containsKey("diag-live"));
+  // Empty/mismatched uuid must not kill a fresh live task.
+  TaskSubscriptionCheck p2=new TaskSubscriptionCheck();
+  p2.activeAssistantProject="p";p2.activeAssistantOwner="o";
+  p2.assistantTaskKinds.put("diag-live2","diagnosis");
+  p2.assistantTaskTimes.put("diag-live2",System.currentTimeMillis());
+  session.reply=new JSONObject().put("uuid","").put("state","running")
+    .put("messages",new JSONArray().put(new JSONObject().put("uuid","diag-live2").put("state","running")));
+  p2.pollAssistantTasks(session);
+  ok(p2.assistantTaskKinds.containsKey("diag-live2"));
+  System.out.println("PASS task subscription: stale history, single restore, replace-not-join, terminal frames, empty-card history filter, resilient polling");
  }
 }'''
 
