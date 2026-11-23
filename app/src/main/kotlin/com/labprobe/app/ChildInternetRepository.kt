@@ -118,7 +118,6 @@ internal fun childGuardCacheNamespace(
 }
 
 internal const val CHILD_GUARD_OVERVIEW_SEGMENT = "overview"
-private const val USAGE_REPORT_DEDUPE_MS = 5_000L
 
 /** 缓存只保留统计窗口内的日期，超出的整条丢掉，防止 SharedPreferences 无限膨胀。 */
 internal fun childGuardCacheKeyIsExpired(key: String, today: String, keepDays: Int): Boolean {
@@ -207,7 +206,6 @@ class RealChildInternetRepository internal constructor(
 
     private val usageJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
     private val usageLocks = ConcurrentHashMap<String, Mutex>()
-    private val usageFetchedAt = ConcurrentHashMap<String, Long>()
     // An uncertain acknowledgement is polled again, never submitted as another write.
     private val unresolvedCommands = mutableMapOf<String, String>()
 
@@ -670,11 +668,13 @@ class RealChildInternetRepository internal constructor(
 
     /** 上网报告 payload 的唯一抓取入口；写入状态的一律是 `applyUsage`。 */
     internal suspend fun updateUsageFromReport(uid: String, expected: Long = revision) {
+        // No time-based dedupe here: the same function serves foreground polling,
+        // explicit refresh (loadUsageReport) and detail opening. A blanket window
+        // would silently swallow a real refresh or a device coming back online.
+        // Offline "settle once" is handled by offlineReportAttempts in the polling
+        // caller, which is the only place that should throttle repeat reads.
         usageLocks.computeIfAbsent(uid) { Mutex() }.withLock {
             if (expected != revision || uid in pending) return@withLock
-            val now = System.nanoTime() / 1_000_000L
-            val lastFetch = usageFetchedAt[uid] ?: 0L
-            if (lastFetch > 0L && now - lastFetch < USAGE_REPORT_DEDUPE_MS) return@withLock
             val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return@withLock
             val payload = withContext(Dispatchers.IO) {
                 api.usageReportPayload(uid, device.summary.macAddresses,
@@ -682,7 +682,6 @@ class RealChildInternetRepository internal constructor(
             }
             if (expected != revision || uid in pending) return@withLock
             applyUsage(uid, payload)
-            usageFetchedAt[uid] = System.nanoTime() / 1_000_000L
         }
     }
 

@@ -118,6 +118,9 @@ internal fun serviceAddressForCopy(serviceType: String, rawAddress: String): Str
 
 internal fun serviceQuickAccessTarget(serviceType: String, rawAddress: String): ServiceQuickAccessTarget? {
     val type = normalizedServiceType(serviceType)
+    // Unknown/empty service types must not fall through to a generic Copy target,
+    // otherwise callers think the shortcut is actionable when it is not.
+    if (!serviceSupportsQuickAccess(serviceType)) return null
     if (rawAddress.isBlank()) return when (type) {
         "WIREGUARD" -> ServiceQuickAccessTarget.ClientApp("WIREGUARD", listOf("com.wireguard.android"))
         "OPENVPN" -> ServiceQuickAccessTarget.ClientApp("OPENVPN", listOf("net.openvpn.openvpn", "de.blinkt.openvpn"))

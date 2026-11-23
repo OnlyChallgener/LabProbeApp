@@ -402,7 +402,11 @@ internal fun stunDraftValidationError(draft: StunDraft): String? {
     return null
 }
 internal fun stunAddressForCopy(serviceType: String, endpoint: String): String {
-    return serviceAddressForCopy(serviceType, endpoint)
+    val address = serviceAddressForCopy(serviceType, endpoint)
+    if (address.isBlank()) return address
+    // STUN 的 HTTPS 规则复制出来要能直接粘进浏览器，必须带 https://；
+    // 其余服务（SSH / WireGuard 等）仍只复制纯 host:port。
+    return if (serviceType.trim().uppercase(Locale.ROOT) == "HTTPS") "https://$address" else address
 }
 
 internal fun stunTargetBindingChanged(rule: StunRule, draft: StunDraft): Boolean {

@@ -219,7 +219,13 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 固件 DDNS 适配与网速换算" to listOf(
+            "v$NAME build$CODE · 复制格式与报告刷新修复" to listOf(
+                "STUN 的 HTTPS 规则复制自动带 https://，可直接粘贴到浏览器",
+                "未知服务类型不再显示无效快捷操作",
+                "上网报告区分前台轮询与手动刷新，设备重新上线后能立即读到新数据",
+                "全量单元测试 530 项通过"
+            ),
+            "v0.13.98 build341 · 固件 DDNS 适配与网速换算" to listOf(
                 "路由器原生 DDNS 适配新固件：新增腾讯云 API3、花生壳、DynDNS、华为云等服务商",
                 "固件 DDNS 支持 TXT 解析：可配置记录类型、DNS 托管域、区域、TXT 模板与外部端口",
                 "按服务商能力开放 A / AAAA / TXT 记录类型，旧固件保持原有表单",
