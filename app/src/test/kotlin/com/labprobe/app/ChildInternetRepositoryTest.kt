@@ -617,6 +617,29 @@ class ChildInternetRepositoryTest {
     }
 
     /**
+     * 公网穿透回收空闲 keep-alive 连接后，OkHttp 复用旧连接会把下面这些英文
+     * 原文直接抛上来。它们都属于「换条新连接就好」，不该弹红色横幅。
+     */
+    @Test
+    fun recycledKeepAliveSocketIsASilentRetry() {
+        for (raw in listOf(
+            "unexpected end of stream on http://hub.example.com/",
+            "Connection closed",
+            "java.net.SocketException: Connection reset",
+            "Broken pipe",
+            "Software caused connection abort: socket write error",
+            "java.io.EOFException",
+        )) {
+            val error = java.io.IOException(raw)
+            assertTrue("应静默重试: $raw", error.isTransientHubLink())
+            assertTrue("应静默重试: $raw", error.needsASilentRetry())
+            assertEquals("和 Hub 的连接中断，路由器可能还在处理，稍后自动重试", error.userMessage())
+        }
+        assertFalse(java.io.IOException("HTTP 404 Not Found").needsASilentRetry())
+        assertFalse(java.io.IOException("read timed out").isTransientHubLink())
+    }
+
+    /**
      * 「设备名经常变成一长串字符」= 名字被占位串挤掉后退成了 32 位 UID。
      * 名字只能是真的，或者是「未命名设备 · MAC 尾号」。
      */

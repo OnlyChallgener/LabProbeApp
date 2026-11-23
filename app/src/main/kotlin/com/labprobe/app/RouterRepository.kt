@@ -78,7 +78,11 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     val ddns: StateFlow<RouterResource<List<DdnsRecord>>> = _ddns.asStateFlow()
 
     /** Firmware DDNS protocol in use on the current device ("ddns_view" for new firmware). */
-    private val _ddnsProtocol = MutableStateFlow(cache.ddnsProtocol)
+    private val _ddnsProtocol = MutableStateFlow(
+        // The shared slow-data cache is keyed by Hub+token only, so a snapshot
+        // recorded for another router in the same Hub must not leak in here.
+        cache.ddnsProtocol.takeIf { cache.ddnsProtocolFor == prefs.routerCapabilitiesFingerprint() }.orEmpty()
+    )
     val ddnsProtocol: StateFlow<String> = _ddnsProtocol.asStateFlow()
 
     private val _labProbeDdns = MutableStateFlow(RouterResource<LabProbeDdnsSnapshot>())
@@ -290,17 +294,25 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private val capabilitiesFingerprint: String
         get() = prefs.routerCapabilitiesFingerprint()
 
+    /** Fingerprint the in-memory/cached capability snapshot belongs to. */
+    @Volatile private var capabilitiesFor: String = ""
+
     suspend fun refreshCapabilities(force: Boolean = false) {
         val key = "capabilities"
         val seq = sequence(key).incrementAndGet()
-        val old = _capabilities.value
         val fingerprint = capabilitiesFingerprint
+        // After switching routers the shared slow-data cache still holds the
+        // previous device's snapshot. It must not be mistaken for this device's
+        // capabilities, and it must not block the first probe either.
+        val sameDevice = fingerprint == capabilitiesFor
+        val old = if (sameDevice) _capabilities.value else RouterResource()
+        val persisted = prefs.loadRouterCapabilities(fingerprint)
         // Firmware modules do not change at runtime: probe once per connected
         // device and reuse the persisted snapshot on every page entry / process
         // restart. Never re-probe just because a TTL elapsed.
-        val persisted = prefs.loadRouterCapabilities(fingerprint)
         if (!force && persisted != null) {
-            if (old.value != persisted) {
+            capabilitiesFor = fingerprint
+            if (_capabilities.value.value != persisted) {
                 cache.capabilities = persisted
                 cache.capabilitiesAt = System.currentTimeMillis()
                 _capabilities.value = RouterResource(persisted, cache.capabilitiesAt, generation = seq)
@@ -313,6 +325,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
             .onSuccess { latest ->
                 if (sequence(key).get() != seq) return@onSuccess
                 val now = System.currentTimeMillis()
+                capabilitiesFor = fingerprint
                 cache.capabilities = latest
                 cache.capabilitiesAt = now
                 prefs.saveRouterCapabilities(fingerprint, latest)
@@ -341,7 +354,10 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         runCatching { coalesced(key) { api.ddnsPayload(force) } }
             .onSuccess { payload ->
                 val latest = parseDdnsList(payload)
-                updateDdnsProtocol(api.ddnsProtocol(payload))
+                val protocol = api.ddnsProtocol(payload)
+                // An empty protocol is the old firmware contract, not "unknown":
+                // reset so a firmware downgrade cannot keep the ddns_view form.
+                if (protocol.isBlank()) resetDdnsProtocol() else updateDdnsProtocol(protocol)
                 if (latest.isEmpty() && !old.value.isNullOrEmpty()) {
                     // Hub may answer during a router reconnect before the
                     // native DDNS list is repopulated. Keep the last snapshot
@@ -419,9 +435,21 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
 
     private fun updateDdnsProtocol(protocol: String) {
         val normalized = protocol.trim()
-        if (normalized.isBlank() || normalized == _ddnsProtocol.value) return
+        if (normalized.isBlank()) return
+        // Remember which device this protocol belongs to so the next router
+        // does not inherit it and serialize its records with the wrong shape.
+        cache.ddnsProtocolFor = capabilitiesFingerprint
+        if (normalized == _ddnsProtocol.value) return
         cache.ddnsProtocol = normalized
         _ddnsProtocol.value = normalized
+    }
+
+    /** Old firmware answers without `nativeProtocol`; drop any inherited value. */
+    private fun resetDdnsProtocol() {
+        cache.ddnsProtocolFor = capabilitiesFingerprint
+        if (_ddnsProtocol.value.isBlank()) return
+        cache.ddnsProtocol = ""
+        _ddnsProtocol.value = ""
     }
 
     suspend fun refreshUpnp(force: Boolean = false) {

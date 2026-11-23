@@ -31,6 +31,8 @@ internal class RouterSlowDataCache private constructor() {
     var ddnsLoaded: Boolean = false
     var ddnsAt: Long = 0L
     var ddnsProtocol: String = ""
+    /** Device fingerprint [ddnsProtocol] was observed on; keeps routers apart. */
+    var ddnsProtocolFor: String = ""
 
     fun isFresh(updatedAt: Long, ttlMs: Long, now: Long = System.currentTimeMillis()): Boolean =
         updatedAt > 0L && now - updatedAt in 0L..ttlMs

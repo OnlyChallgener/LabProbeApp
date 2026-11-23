@@ -219,7 +219,14 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 复制格式与报告刷新修复" to listOf(
+            "v$NAME build$CODE · 连接稳定性与能力探测修复" to listOf(
+                "儿童守护读取请求遇到旧连接被回收时自动换新连接重试，不再频繁提示「和 Hub 的连接中断」",
+                "单台设备上网报告补抓失败只在设备卡片提示，不再点亮整屏红色横幅",
+                "切换路由器后重新探测功能能力，不再沿用上一台的 WireGuard / DDNS / 防火墙显隐",
+                "固件 DDNS 协议按设备隔离，切换路由器不会串用新固件表单",
+                "DDNS 页在能力加载期间不再出现页签跳动"
+            ),
+            "v0.13.99 build342 · 复制格式与报告刷新修复" to listOf(
                 "STUN 的 HTTPS 规则复制自动带 https://，可直接粘贴到浏览器",
                 "未知服务类型不再显示无效快捷操作",
                 "上网报告区分前台轮询与手动刷新，设备重新上线后能立即读到新数据",
@@ -12676,6 +12683,16 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
         .callTimeout(12, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
         .build()
+    // Reads are idempotent, so a keep-alive connection that the tunnel/proxy
+    // already recycled may safely be retried on a fresh socket. Writes keep the
+    // non-retrying client: replaying a POST could duplicate a router command.
+    private val childGuardReadClient = client.newBuilder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(11, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
+        .callTimeout(12, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
 
     suspend fun health(): String = withContext(Dispatchers.IO) {
         if (targetHub.isBlank()) return@withContext "失败：Hub 地址为空"
@@ -12846,7 +12863,12 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
         JSONObject(requestText(path, method, body?.toString(), shortControlClient))
 
     internal fun requestChildGuardJson(path: String, method: String, body: JSONObject?): JSONObject =
-        JSONObject(requestText(path, method, body?.toString(), childGuardClient))
+        JSONObject(requestText(
+            path,
+            method,
+            body?.toString(),
+            if (method.equals("GET", true)) childGuardReadClient else childGuardClient,
+        ))
 
     internal fun requestText(
         path: String,

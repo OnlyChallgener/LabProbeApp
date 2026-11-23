@@ -1261,12 +1261,19 @@ private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean,
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val capabilityResource by repository.capabilities.collectAsState()
+    val capabilityValue = capabilityResource.value
     // 固件原生 DDNS 是按设备探测出的能力，而非型号猜测；自建 DDNS 与证书监控始终显示。
-    val hasNativeDdns = capabilityResource.value?.ddns == true
+    // 能力尚未返回时先按「有原生 DDNS」渲染：先少一个 tab 再补回来，会让正在看的
+    // 证书页被顶成原生 DDNS 页。只有明确探测到不支持才收起。
+    val hasNativeDdns = capabilityValue?.ddns ?: true
     val pageCount = if (hasNativeDdns) 3 else 2
     val certificatePage = if (hasNativeDdns) 2 else 1
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { pageCount })
     val scope = rememberCoroutineScope()
+    // 能力收起导致页数变少时，把越界的页码退回证书页，避免空白页。
+    LaunchedEffect(pageCount) {
+        if (pagerState.currentPage > pageCount - 1) pagerState.scrollToPage(pageCount - 1)
+    }
     Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, if (hasNativeDdns) "LabProbe DDNS · 路由器原生 DDNS · 证书监控" else "LabProbe DDNS · 证书监控") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

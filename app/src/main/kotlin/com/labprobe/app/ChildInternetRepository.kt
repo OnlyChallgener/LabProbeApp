@@ -320,8 +320,24 @@ class RealChildInternetRepository internal constructor(
                     if (expected == revision) offlineReportAttempts[uid] = date
                     continue
                 }
-                // 一台补抓失败不能擦掉整屏：数字留在 `--`，错误只在总状态上示一次。
-                if (expected == revision && state.error.isBlank()) state = state.copy(error = error.userMessage())
+                // A tunnel/proxy recycled the idle socket: retry silently once on
+                // a fresh connection instead of flashing a banner at the user.
+                if (expected == revision && error.needsASilentRetry()) {
+                    val settled = try {
+                        updateUsageFromReport(uid, expected)
+                        true
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (settled) continue
+                }
+                // One device's report missing must not light up the whole screen:
+                // the numbers stay `--` and the card says it once.
+                if (expected == revision) {
+                    updateDevice(uid) { it.copy(usageError = error.reportReadMessage()) }
+                }
             }
         }
     }
@@ -897,7 +913,9 @@ internal fun ChildInternetDeviceState.withUsage(report: ChildGuardUsageReport): 
             onlineMinutes = null, lateNightMinutes = null, hasData = false,
             attention = ChildAttentionState.UNKNOWN, stale = true),
         attentionEntries = report.attention,
-        usageReport = report.traffic.takeIf { currentDay }, usageSource = report.source
+        usageReport = report.traffic.takeIf { currentDay }, usageSource = report.source,
+        // A successful report is the only proof the link is healthy again.
+        usageError = ""
     )
 }
 
@@ -1621,9 +1639,19 @@ private val unresolvedHostText = Regex(
 internal fun Throwable.isUnresolvedHubHost(): Boolean =
     unresolvedHostText.containsMatchIn(message.orEmpty())
 
-/** 值得「不报错、过几秒自己再试一次」的两种失败：路由器还在处理，和 DNS 打嗝。 */
+/** 公网穿透/反向代理回收空闲长连接时，OkHttp 复用旧连接会直接抛这些原文。 */
+private val transientLinkText = Regex(
+    "connection closed|connection reset|broken pipe|socket closed|stream was reset|" +
+        "software caused connection abort|unexpected end of stream|eofexception|\\beof\\b",
+    RegexOption.IGNORE_CASE
+)
+
+internal fun Throwable.isTransientHubLink(): Boolean =
+    transientLinkText.containsMatchIn(message.orEmpty())
+
+/** 值得「不报错、过几秒自己再试一次」的失败：路由器还在处理、DNS 打嗝、旧连接被回收。 */
 internal fun Throwable.needsASilentRetry(): Boolean =
-    this is ChildGuardPendingException || isUnresolvedHubHost()
+    this is ChildGuardPendingException || isUnresolvedHubHost() || isTransientHubLink()
 
 internal fun Throwable.reportReadMessage(): String = when {
     this is java.net.SocketTimeoutException || this is java.io.InterruptedIOException ||
@@ -1652,7 +1680,8 @@ internal fun Throwable.userMessage(): String {
         // 这类中断绝大多数发生在路由器还在写配置的窗口里，稍后自己会好。
         "software caused connection abort" in lower || "connection closed" in lower ||
             "connection reset" in lower || "broken pipe" in lower || "socket closed" in lower ||
-            "stream was reset" in lower || "canceled" in lower ->
+            "stream was reset" in lower || "unexpected end of stream" in lower ||
+            "eofexception" in lower || "canceled" in lower ->
             "和 Hub 的连接中断，路由器可能还在处理，稍后自动重试"
         "invalid plan id" in lower -> "计划标识无效"
         "invalid device uid" in lower -> "设备标识无效"
