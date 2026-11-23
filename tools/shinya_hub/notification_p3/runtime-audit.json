@@ -1,1 +1,0 @@
-{"observerStartup": [{"module": "runtime.py", "call": "app.extensions[\"shinya_xiaoxing\"].start_notifications(keys)"}], "activityCountsByKind": [{"category": "usage", "kind": "legacy", "count": 1}, {"category": "social", "kind": "activity", "count": 8}, {"category": "payment", "kind": "activity", "count": 2}, {"category": "video", "kind": "activity", "count": 6}]}

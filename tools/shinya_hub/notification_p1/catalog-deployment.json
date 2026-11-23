@@ -1,9 +1,0 @@
-{
-  "backup": "/data/notification-p1-backup-1793503003",
-  "files": {
-    "assistant_notifications.py": {
-      "before": "4c4512a4b699aa985b5a326a00eb3133311607414872cdc6f1738b153d46557a",
-      "after": "6f0bb57f217b901e2a86e252af3905b11a55290f071d4ee6af41b8d3dc3026f5"
-    }
-  }
-}

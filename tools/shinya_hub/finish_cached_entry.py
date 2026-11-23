@@ -1,7 +1,0 @@
-from pathlib import Path
-p=Path('tools/shinya_hub/HubToolsView.java');s=p.read_text(encoding='utf8')
-start=s.index('    private void restoreCached()');end=s.index('    private void connect()',start)
-s=s[:start]+'''    private void restoreCached(){if(!mode.equals("stun")||preferredSn.isEmpty())return;final int g=generation;final String target=preferredSn;reads.execute(()->{try{HubToolSession auth=HubToolSession.current();JSONObject saved=auth.cachedTools(target);if(saved==null)return;JSONObject data=saved.optJSONObject("data");if(data==null||data.optJSONArray("rules")==null)return;final String savedProject=saved.getString("projectId");ui.post(()->{if(!active||g!=generation||!target.equals(preferredSn))return;if(session!=null&&(!session.base.equals(auth.base)||!session.token.equals(auth.token)||!session.pin.equals(auth.pin)))snapshots.clear();session=auth;sn=target;project=savedProject;routerButton.setText(saved.optString("projectName","当前项目"));snapshots.put(snapshotKey(),data);LayoutTransition transition=content.getLayoutTransition();content.setLayoutTransition(null);render(data);content.setLayoutTransition(transition);busy(false);});}catch(Exception ignored){}});}
-'''+s[end:];p.write_text(s,encoding='utf8')
-p=Path('tools/shinya_hub/release.json');s=p.read_text(encoding='utf8').replace('1.2.4-hub.38-dev','1.2.4-hub.39-dev').replace('183249878','183249879');p.write_text(s,encoding='utf8')
-print('STUN cached entry moved off main thread; release bumped to hub.39')
