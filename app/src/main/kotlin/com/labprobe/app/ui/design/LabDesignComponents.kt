@@ -176,7 +176,7 @@ fun LabBottomSheet(onDismiss: () -> Unit, scrollable: Boolean = false, content: 
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         sheetGesturesEnabled = !scrollable,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        shape = LabPopupShapes.Sheet,
         containerColor = if (polished) polishColors.surface else LAB_POPUP_SURFACE,
         scrimColor = LAB_POPUP_SCRIM.copy(alpha = if (polished) .46f else .38f),
         dragHandle = {

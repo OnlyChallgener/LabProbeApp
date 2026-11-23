@@ -1,10 +1,12 @@
 package com.labprobe.app
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import com.labprobe.app.labCardCombinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -25,15 +27,16 @@ internal data class ServiceQuickAccessEndpoint(val host: String, val port: Int? 
 
 internal sealed interface ServiceQuickAccessTarget {
     data class Browser(val url: String) : ServiceQuickAccessTarget
-    data class Rdp(val uri: String) : ServiceQuickAccessTarget
+    data class Rdp(val uri: String, val address: String = uri.removePrefix("rdp://")) : ServiceQuickAccessTarget
     data class Ssh(val host: String, val port: Int) : ServiceQuickAccessTarget
-    data object WireGuard : ServiceQuickAccessTarget
+    data class ClientApp(val serviceType: String, val packages: List<String>) : ServiceQuickAccessTarget
+    data class Copy(val address: String) : ServiceQuickAccessTarget
 }
 
 private fun normalizedServiceType(value: String): String = value.trim().uppercase(Locale.ROOT)
 
 internal fun serviceSupportsQuickAccess(serviceType: String): Boolean =
-    normalizedServiceType(serviceType) in setOf("HTTP", "HTTPS", "RDP", "SSH", "WIREGUARD")
+    normalizedServiceType(serviceType) in setOf("HTTP", "HTTPS", "RDP", "SSH", "WIREGUARD", "OPENVPN", "TELNET", "DNS", "TCP", "UDP", "CUSTOM")
 
 private fun serviceDefaultPort(serviceType: String): Int? = when (normalizedServiceType(serviceType)) {
     "HTTP" -> 80
@@ -41,6 +44,9 @@ private fun serviceDefaultPort(serviceType: String): Int? = when (normalizedServ
     "SSH" -> 22
     "RDP" -> 3389
     "WIREGUARD" -> 51820
+    "OPENVPN" -> 1194
+    "TELNET" -> 23
+    "DNS" -> 53
     else -> null
 }
 
@@ -103,8 +109,7 @@ private fun webUrl(rawAddress: String, scheme: String): String {
 internal fun serviceAddressForCopy(serviceType: String, rawAddress: String): String {
     val type = normalizedServiceType(serviceType)
     if (rawAddress.isBlank()) return ""
-    if (type == "HTTPS") return webUrl(rawAddress, "https").ifBlank { rawAddress.trim() }
-    if (type in setOf("HTTP", "SSH", "RDP", "WIREGUARD", "TCP", "UDP", "OPENVPN", "TELNET", "DNS", "CUSTOM")) {
+    if (type in setOf("HTTP", "HTTPS", "SSH", "RDP", "WIREGUARD", "TCP", "UDP", "OPENVPN", "TELNET", "DNS", "CUSTOM")) {
         val endpoint = parseQuickAccessEndpoint(rawAddress) ?: return rawAddress.trim()
         return formatServiceHostPort(endpoint.host, endpoint.port ?: serviceDefaultPort(type))
     }
@@ -112,15 +117,23 @@ internal fun serviceAddressForCopy(serviceType: String, rawAddress: String): Str
 }
 
 internal fun serviceQuickAccessTarget(serviceType: String, rawAddress: String): ServiceQuickAccessTarget? {
-    return when (normalizedServiceType(serviceType)) {
+    val type = normalizedServiceType(serviceType)
+    if (rawAddress.isBlank()) return when (type) {
+        "WIREGUARD" -> ServiceQuickAccessTarget.ClientApp("WIREGUARD", listOf("com.wireguard.android"))
+        "OPENVPN" -> ServiceQuickAccessTarget.ClientApp("OPENVPN", listOf("net.openvpn.openvpn", "de.blinkt.openvpn"))
+        else -> null
+    }
+    return when (type) {
         "HTTPS" -> webUrl(rawAddress, "https").takeIf { it.isNotBlank() }?.let { ServiceQuickAccessTarget.Browser(it) }
         "HTTP" -> webUrl(rawAddress, "http").takeIf { it.isNotBlank() }?.let { ServiceQuickAccessTarget.Browser(it) }
         "RDP" -> parseQuickAccessEndpoint(rawAddress)?.let { endpoint ->
-            ServiceQuickAccessTarget.Rdp("rdp://${formatServiceHostPort(endpoint.host, endpoint.port ?: 3389)}")
+            val address = formatServiceHostPort(endpoint.host, endpoint.port ?: 3389)
+            ServiceQuickAccessTarget.Rdp("rdp://full%20address=s:$address", address)
         }
         "SSH" -> parseQuickAccessEndpoint(rawAddress)?.let { ServiceQuickAccessTarget.Ssh(it.host, it.port ?: 22) }
-        "WIREGUARD" -> ServiceQuickAccessTarget.WireGuard
-        else -> null
+        "WIREGUARD" -> ServiceQuickAccessTarget.ClientApp("WIREGUARD", listOf("com.wireguard.android"))
+        "OPENVPN" -> ServiceQuickAccessTarget.ClientApp("OPENVPN", listOf("net.openvpn.openvpn", "de.blinkt.openvpn"))
+        else -> ServiceQuickAccessTarget.Copy(serviceAddressForCopy(serviceType, rawAddress))
     }
 }
 
@@ -131,15 +144,54 @@ internal fun launchServiceQuickAccess(
     onOpenWireGuard: () -> Unit,
 ) {
     when (target) {
-        is ServiceQuickAccessTarget.Ssh -> onOpenSsh(target.host, target.port)
-        ServiceQuickAccessTarget.WireGuard -> onOpenWireGuard()
+        is ServiceQuickAccessTarget.Ssh -> {
+            copyServiceAddress(context, formatServiceHostPort(target.host, target.port))
+            onOpenSsh(target.host, target.port)
+        }
+        is ServiceQuickAccessTarget.ClientApp -> {
+            val intents = target.packages.mapNotNull { context.packageManager.getLaunchIntentForPackage(it) }
+            if (intents.size > 1) {
+                val chooser = Intent.createChooser(intents.first(), "选择 ${target.serviceType} 客户端")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(Intent.EXTRA_INITIAL_INTENTS, intents.drop(1).toTypedArray())
+                runCatching { context.startActivity(chooser) }
+                    .onFailure { toast(context, "无法打开 ${target.serviceType} 客户端") }
+            } else if (intents.isNotEmpty()) {
+                runCatching { context.startActivity(intents.first().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    .onFailure { toast(context, "无法打开 ${target.serviceType} 客户端") }
+            } else if (target.serviceType == "WIREGUARD") {
+                onOpenWireGuard()
+            } else {
+                toast(context, "未安装 OpenVPN 客户端")
+            }
+        }
+        is ServiceQuickAccessTarget.Copy -> {
+            copyServiceAddress(context, target.address)
+            toast(context, "已复制 ${target.address}")
+        }
         is ServiceQuickAccessTarget.Browser -> runCatching {
+            val scheme = target.url.substringBefore("://").uppercase(Locale.ROOT)
+            copyServiceAddress(context, serviceAddressForCopy(scheme, target.url))
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }.onFailure { toast(context, "未找到可用的浏览器") }
+        }.onFailure {
+            val scheme = target.url.substringBefore("://").uppercase(Locale.ROOT)
+            val address = serviceAddressForCopy(scheme, target.url)
+            copyServiceAddress(context, address)
+            toast(context, "已复制 $address")
+        }
         is ServiceQuickAccessTarget.Rdp -> runCatching {
+            copyServiceAddress(context, target.address)
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target.uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }.onFailure { toast(context, "未找到可用的 RDP 应用") }
+        }.onFailure {
+            copyServiceAddress(context, target.address)
+            toast(context, "已复制 ${target.address}")
+        }
     }
+}
+
+private fun copyServiceAddress(context: Context, value: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("WAN 地址", value))
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -157,7 +209,8 @@ internal fun ServiceQuickAccessIconButton(
         Modifier
             .size(32.dp)
             .clip(CircleShape)
-            .combinedClickable(
+            .labCardCombinedClickable(
+                halo = false,
                 onClick = {
                     val target = serviceQuickAccessTarget(serviceType, endpoint)
                     if (target == null) toast(context, "暂未取得可用的快捷访问地址")
@@ -167,6 +220,6 @@ internal fun ServiceQuickAccessIconButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Rounded.OpenInNew, contentDescription = "快捷访问", tint = tint, modifier = Modifier.size(18.dp))
+        LabNavigationIndicator(external = true, description = "快捷访问")
     }
 }

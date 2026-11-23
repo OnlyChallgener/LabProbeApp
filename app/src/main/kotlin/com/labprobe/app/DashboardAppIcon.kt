@@ -43,6 +43,7 @@ private const val ASSET_DIR = "appicons"
  */
 private val assetIconCache = ConcurrentHashMap<String, ImageBitmap>()
 private val fileIconCache = ConcurrentHashMap<String, ImageBitmap>()
+private val iconLoadLocks = ConcurrentHashMap<String, Any>()
 
 /** assets/appicons 里真实存在的文件名，只列一次。 */
 @Volatile
@@ -115,12 +116,28 @@ private fun cachedIcon(context: Context, iconKey: String, localIconPath: String?
 private fun loadIcon(context: Context, iconKey: String, localIconPath: String?): ImageBitmap? {
     val path = localIconPath?.takeIf { it.isNotBlank() }
     if (path != null) {
-        fileIconCache[path]?.let { return it }
-        return decodeFile(path)?.also { fileIconCache[path] = it }
+        val lock = iconLoadLocks.computeIfAbsent("file:$path") { Any() }
+        return synchronized(lock) {
+            fileIconCache[path]?.let { return@synchronized it }
+            decodeFile(path)?.also { fileIconCache[path] = it }
+        }
     }
     val asset = resolvedAssetKey(context, iconKey)
-    assetIconCache[asset]?.let { return it }
-    return decodeAsset(context, asset)?.also { assetIconCache[asset] = it }
+    val lock = iconLoadLocks.computeIfAbsent("asset:$asset") { Any() }
+    return synchronized(lock) {
+        assetIconCache[asset]?.let { return@synchronized it }
+        decodeAsset(context, asset)?.also { assetIconCache[asset] = it }
+    }
+}
+
+/** Warm the first visible report rows before Compose asks each icon row to decode it. */
+internal suspend fun preloadDashboardAppIcons(context: Context, entries: List<InternetUsageEntry>) {
+    withContext(Dispatchers.IO) {
+        entries.asSequence()
+            .distinctBy { it.localIconPath?.takeIf(String::isNotBlank)?.let { path -> "file:$path" } ?: "asset:${resolvedAssetKey(context, it.iconKey)}" }
+            .take(24)
+            .forEach { loadIcon(context, it.iconKey, it.localIconPath) }
+    }
 }
 
 /** 认不出来的 key 一律并到未识别图标上，和别的没图的应用共用同一份位图。 */

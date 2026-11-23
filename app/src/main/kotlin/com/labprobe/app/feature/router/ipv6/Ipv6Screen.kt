@@ -1,5 +1,7 @@
 package com.labprobe.app.feature.router.ipv6
 
+import com.labprobe.app.LabNavigationIndicator
+
 import androidx.compose.foundation.layout.heightIn
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -293,9 +295,7 @@ private fun Dhcpv6ClientsEntry(onClick: () -> Unit) {
                 Text("DHCPv6 客户端", style = LabTypography.CardTitle.copy(color = LabV2.Ink))
                 Text("查看主机名、地址、剩余租期与 DUID", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
             }
-            Surface(shape = CircleShape, color = LabV2.Cyan.copy(alpha = .09f)) {
-                Icon(Icons.Rounded.ChevronRight, null, Modifier.padding(7.dp).size(19.dp), tint = LabV2.Cyan)
-            }
+            LabNavigationIndicator()
         }
     }
 }

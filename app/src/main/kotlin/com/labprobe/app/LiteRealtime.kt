@@ -176,8 +176,8 @@ fun mergeLiteDeviceRealtime(items: List<DeviceItem>, payload: JSONObject): List<
         val mac = cleanMac(row.optString("mac"))
         if (mac.isBlank()) continue
         runtime[mac] = Triple(
-            row.optLong("uploadBps", 0L).coerceAtLeast(0L),
-            row.optLong("downloadBps", 0L).coerceAtLeast(0L),
+            rateBitsPerSecondToBytesPerSecond(row.optLong("uploadBps", 0L)),
+            rateBitsPerSecondToBytesPerSecond(row.optLong("downloadBps", 0L)),
             row.optInt("connectionCount", 0).coerceAtLeast(0),
         )
     }

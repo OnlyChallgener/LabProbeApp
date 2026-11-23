@@ -253,7 +253,7 @@ class StunModelTest {
     }
 
     @Test
-    fun authoritativeStunSnapshotUpdatesAddressAndRemovesDeletedLinks() {
+    fun authoritativeStunSnapshotUpdatesAddressAndRetainsDeletedSourceCards() {
         val existing = sampleStunFavorite()
         val unrelated = existing.copy(id = "manual", type = "manual", stunRuleId = null, order = 1)
         val refreshed = sampleStunRule().copy(
@@ -265,7 +265,7 @@ class StunModelTest {
         )
 
         assertEquals("https://198.51.100.20:20200", reconcileStunFavoriteItems(listOf(existing), listOf(refreshed)).single().remoteEndpoint)
-        assertEquals(listOf(unrelated.copy(order = 0)), reconcileStunFavoriteItems(listOf(existing, unrelated), emptyList()))
+        assertEquals(listOf(existing, unrelated), reconcileStunFavoriteItems(listOf(existing, unrelated), emptyList()))
     }
 
     @Test
@@ -303,11 +303,9 @@ class StunModelTest {
         val unrelatedSameName = sampleStunRule().copy(id = "stun-2")
 
         val result = reconcileStunFavoriteItems(listOf(linked), listOf(unrelatedSameName))
-        // New rules keep the existing auto-favorite behavior, but never inherit another ID's edits.
-        assertFalse(result.any { it.id == linked.id || it.stunRuleId == linked.stunRuleId })
-        assertEquals("stun-2", result.single().stunRuleId)
-        assertEquals(unrelatedSameName.name, result.single().title)
-        assertEquals("server", result.single().iconValue)
+        // New sources must neither create cards nor claim an old binding by name.
+        assertEquals(listOf(linked), result)
+        assertTrue(reconcileStunFavoriteItems(emptyList(), listOf(unrelatedSameName)).isEmpty())
         assertTrue(
             reconcileStunFavoriteItems(
                 current = emptyList(),

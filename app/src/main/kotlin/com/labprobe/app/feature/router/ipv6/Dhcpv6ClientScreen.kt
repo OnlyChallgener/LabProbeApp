@@ -66,11 +66,7 @@ fun Dhcpv6ClientScreen(viewModel: Ipv6ViewModel, onBack: () -> Unit) {
                 border = BorderStroke(1.dp, LabV2.Border)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    if (state.loading) {
-                        CircularProgressIndicator(Modifier.size(16.dp), color = LabV2.Primary, strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(19.dp), tint = LabV2.Primary)
-                    }
+                    com.labprobe.app.LabRefreshIcon(state.loading, Modifier.size(19.dp))
                 }
             }
         },

@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -23,6 +25,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 interface ChildInternetRepository {
     val state: ChildInternetOverviewState
@@ -89,7 +93,7 @@ internal class HubChildGuardTransport(prefs: AppPrefs) : ChildGuardTransport {
 }
 
 /**
- * 儿童守护聚合缓存。键一律是 `routerId|设备|统计日`，日期进键就保证
+ * 儿童守护聚合缓存。键一律是 `连接范围|设备|统计日`，日期进键就保证
  * 新的一天不会把昨天的数字当成今天的实况；值是 Hub 原样返回的 JSON。
  */
 internal interface ChildGuardCache {
@@ -104,7 +108,17 @@ internal fun childGuardUsageCacheKey(routerId: String, deviceKey: String, date: 
 internal fun childGuardOverviewCacheKey(routerId: String, date: String): String =
     "$routerId|${CHILD_GUARD_OVERVIEW_SEGMENT}|$date"
 
+/** Cache scope includes the selected workspace and Hub credentials without storing the token. */
+internal fun childGuardCacheNamespace(
+    routerId: String, workspaceId: String, hub: String, token: String, hubDns: String
+): String {
+    val identity = listOf(workspaceId, routerId, hub.trimEnd('/'), token.trim(), hubDns.trim()).joinToString("\n")
+    val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(StandardCharsets.UTF_8))
+    return "scope:" + digest.take(12).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+}
+
 internal const val CHILD_GUARD_OVERVIEW_SEGMENT = "overview"
+private const val USAGE_REPORT_DEDUPE_MS = 5_000L
 
 /** 缓存只保留统计窗口内的日期，超出的整条丢掉，防止 SharedPreferences 无限膨胀。 */
 internal fun childGuardCacheKeyIsExpired(key: String, today: String, keepDays: Int): Boolean {
@@ -124,6 +138,7 @@ internal class SharedChildGuardCache(private val prefs: AppPrefs) : ChildGuardCa
     private val connection = ChildGuardConnectionGuard(prefs)
 
     override fun read(key: String): String? = runCatching {
+        connection.requireOriginalConnection()
         JSONObject(prefs.childGuardUsageCacheJson).optString(key).takeIf { it.isNotBlank() }
     }.getOrNull()
 
@@ -137,6 +152,7 @@ internal class SharedChildGuardCache(private val prefs: AppPrefs) : ChildGuardCa
     }
 
     override fun keys(): List<String> = runCatching {
+        connection.requireOriginalConnection()
         val names = JSONObject(prefs.childGuardUsageCacheJson).names() ?: JSONArray()
         (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
     }.getOrDefault(emptyList())
@@ -169,13 +185,15 @@ class RealChildInternetRepository internal constructor(
     private val cache: ChildGuardCache,
     private val scope: CoroutineScope,
     private val operationTimeoutMs: Long = CHILD_GUARD_OPERATION_TIMEOUT_MS,
-    private val commandPollMs: Long = COMMAND_POLL_MS
+    private val commandPollMs: Long = COMMAND_POLL_MS,
+    private val cacheNamespace: String = routerId
 ) : ChildInternetRepository {
     constructor(
         prefs: AppPrefs,
         routerId: String = "default",
         scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    ) : this(routerId, HubChildGuardTransport(prefs), SharedChildGuardCache(prefs), scope)
+    ) : this(routerId, HubChildGuardTransport(prefs), SharedChildGuardCache(prefs), scope,
+        cacheNamespace = childGuardCacheNamespace(routerId, prefs.workspaceId, prefs.hub, prefs.token, prefs.hubDns))
 
     private val api get() = ChildGuardHubApi(transport, routerId)
     private var refreshJob: kotlinx.coroutines.Job? = null
@@ -184,10 +202,12 @@ class RealChildInternetRepository internal constructor(
     private var revision = 0L
     private val pending = mutableSetOf<String>()
 
-    /** 缓存键快照，用来判断某天是否已经抓过报告，省掉一次磁盘扫。 */
-    private var cacheKeys: List<String> = emptyList()
+    /** 缓存键快照，用来定位当前连接下的报告，省掉重复磁盘扫。 */
+    @Volatile private var cacheKeys: List<String> = emptyList()
 
     private val usageJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    private val usageLocks = ConcurrentHashMap<String, Mutex>()
+    private val usageFetchedAt = ConcurrentHashMap<String, Long>()
     // An uncertain acknowledgement is polled again, never submitted as another write.
     private val unresolvedCommands = mutableMapOf<String, String>()
 
@@ -220,9 +240,7 @@ class RealChildInternetRepository internal constructor(
                 uids.mapNotNull { uid -> readCachedUsagePayload(uid)?.let { payload -> uid to parseChildGuardUsageReport(payload) } }
             }
             reports.forEach { (uid, report) ->
-                updateDevice(uid) { current ->
-                    if (current.usage != null) current else current.withUsage(report)
-                }
+                applyCachedReportToState(uid, report)
             }
             state = state.copy(loading = state.devices.isEmpty())
         }
@@ -230,7 +248,7 @@ class RealChildInternetRepository internal constructor(
 
     /** 今天的聚合优先；换天了才退回最近一份，至少设备名单不用等网络。 */
     private fun readCachedOverview(today: String): Pair<String, ChildGuardOverviewSnapshot>? {
-        val prefix = "$routerId|$CHILD_GUARD_OVERVIEW_SEGMENT|"
+        val prefix = "$cacheNamespace|$CHILD_GUARD_OVERVIEW_SEGMENT|"
         val keys = cacheKeys.filter { it.startsWith(prefix) }.sortedBy { it.substringAfterLast('|') }
             .takeIf { it.isNotEmpty() } ?: return null
         val chosen = if (keys.last() == today) keys.last() else keys.lastOrNull { it != today } ?: keys.last()
@@ -257,7 +275,7 @@ class RealChildInternetRepository internal constructor(
             if (expected != revision) return
             val snapshot = withContext(Dispatchers.IO) {
                 parseChildGuardOverview(root).also { parsed ->
-                    cache.write(childGuardOverviewCacheKey(routerId, parsed.date.ifBlank { childGuardStatisticsDate() }), root.toString())
+                    cache.write(childGuardOverviewCacheKey(cacheNamespace, parsed.date.ifBlank { childGuardStatisticsDate() }), root.toString())
                 }
             }
             applyOverview(snapshot)
@@ -269,7 +287,7 @@ class RealChildInternetRepository internal constructor(
                 }
             }
             cachedReports.forEach { (uid, report) ->
-                updateDevice(uid) { current -> if (current.usage != null) current else current.withUsage(report) }
+                applyCachedReportToState(uid, report)
             }
             state = state.copy(error = "")
             refreshAggregateUsage(expected)
@@ -355,7 +373,7 @@ class RealChildInternetRepository internal constructor(
     }
 
     private fun usageCacheKey(deviceId: String, date: String): String =
-        childGuardUsageCacheKey(routerId, childGuardDeviceKey(deviceId), date)
+        childGuardUsageCacheKey(cacheNamespace, childGuardDeviceKey(deviceId), date)
 
     override fun refresh() = refreshFrom(0)
 
@@ -518,8 +536,9 @@ class RealChildInternetRepository internal constructor(
         if (usageJobs[uid]?.isActive == true) return
         usageJobs[uid] = scope.launch {
             setUsageLoading(uid, true)
+            var cachedVisible = false
             try {
-                applyCachedUsage(uid)
+                cachedVisible = applyCachedUsage(uid)
                 // Reports are Hub aggregates: never wait for router plans/runtime here.
                 updateUsageFromReport(uid, expected)
                 // 一次成功的读取就是这一屏的「新」，之前那条红色横幅该退了。
@@ -527,7 +546,11 @@ class RealChildInternetRepository internal constructor(
                 onResult(Result.success(Unit))
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (expected == revision) updateDevice(uid) { it.copy(usageError = error.reportReadMessage()) }
+                if (expected == revision) updateDevice(uid) {
+                    // A cached report is already useful content. Keep it in place and
+                    // avoid replacing the screen with a transient refresh warning.
+                    it.copy(usageError = if (cachedVisible) "" else error.reportReadMessage())
+                }
                 onResult(Result.failure(error))
             } finally {
                 setUsageLoading(uid, false)
@@ -647,12 +670,20 @@ class RealChildInternetRepository internal constructor(
 
     /** 上网报告 payload 的唯一抓取入口；写入状态的一律是 `applyUsage`。 */
     internal suspend fun updateUsageFromReport(uid: String, expected: Long = revision) {
-        val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return
-        val payload = withContext(Dispatchers.IO) {
-            api.usageReportPayload(uid, device.summary.macAddresses, date = childGuardStatisticsDate(), days = USAGE_REPORT_WINDOW_DAYS)
+        usageLocks.computeIfAbsent(uid) { Mutex() }.withLock {
+            if (expected != revision || uid in pending) return@withLock
+            val now = System.nanoTime() / 1_000_000L
+            val lastFetch = usageFetchedAt[uid] ?: 0L
+            if (lastFetch > 0L && now - lastFetch < USAGE_REPORT_DEDUPE_MS) return@withLock
+            val device = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) } ?: return@withLock
+            val payload = withContext(Dispatchers.IO) {
+                api.usageReportPayload(uid, device.summary.macAddresses,
+                    date = childGuardStatisticsDate(), days = USAGE_REPORT_WINDOW_DAYS)
+            }
+            if (expected != revision || uid in pending) return@withLock
+            applyUsage(uid, payload)
+            usageFetchedAt[uid] = System.nanoTime() / 1_000_000L
         }
-        if (expected != revision || uid in pending) return
-        applyUsage(uid, payload)
     }
 
     /**
@@ -671,22 +702,35 @@ class RealChildInternetRepository internal constructor(
     }
 
     /**
-     * 打开页面前先把这台设备最近一份报告铺回去。缓存按 `routerId|设备|日期`
+     * 打开页面前先把当前连接下这台设备最近一份报告铺回去。缓存按连接/设备/日期
      * 分键，所以昨天那份只会以昨天的日期出现，不会冒充今天的实况。
      */
-    private suspend fun applyCachedUsage(uid: String) {
+    private suspend fun applyCachedUsage(uid: String): Boolean {
         val report = withContext(Dispatchers.IO) {
             readCachedUsagePayload(uid)?.let(::parseChildGuardUsageReport)
-        } ?: return
+        } ?: return false
+        return applyCachedReportToState(uid, report)
+    }
+
+    private fun applyCachedReportToState(uid: String, report: ChildGuardUsageReport): Boolean {
+        if (report.stats.date != childGuardStatisticsDate()) return false
+        var visible = false
         updateDevice(uid) { current ->
-            if (current.usage != null) current else current.withUsage(report)
+            visible = true
+            if (current.usageDate == report.stats.date &&
+                (current.usageReport != null || current.todayUsage.entries.isNotEmpty())) current
+            else current.withUsage(report)
         }
+        return visible
     }
 
     /** 找这台设备最近一份报告的原始 JSON；纯读，供 IO 线程调用。 */
     private fun readCachedUsagePayload(uid: String): JSONObject? {
         val prefix = usageCacheKey(uid, "")
-        val latestKey = cacheKeys.filter { it.startsWith(prefix) && it.lastDatePart() != null }
+        // A page can request its report before asynchronous startup hydration
+        // has populated the in-memory key index. Load it once on the IO caller.
+        val keys = cacheKeys.takeIf { it.isNotEmpty() } ?: cacheKeyList().also { cacheKeys = it }
+        val latestKey = keys.filter { it.startsWith(prefix) && it.lastDatePart() != null }
             .maxByOrNull { it.lastDatePart().orEmpty() } ?: return null
         val raw = runCatching { cache.read(latestKey) }.getOrNull() ?: return null
         return runCatching { JSONObject(raw) }.getOrNull()

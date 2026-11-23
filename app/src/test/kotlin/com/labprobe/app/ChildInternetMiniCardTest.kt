@@ -3,12 +3,12 @@ package com.labprobe.app
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** 首页「儿童上网」小卡副标题：大字已经给了台数，副标题只许给状态。 */
+/** 首页总数与在线数使用不同口径；计划放行不等于设备在线。 */
 class ChildInternetMiniCardTest {
-    private fun device(id: String, scheduleState: String) = ChildInternetDeviceState(
+    private fun device(id: String, scheduleState: String, online: Boolean = false) = ChildInternetDeviceState(
         summary = ProtectedDeviceSummary(
             deviceId = id, name = id, iconKey = "missing", accentArgb = 0,
-            status = GuardStatus.GUARDED
+            status = GuardStatus.GUARDED, isOnline = online
         ),
         plan = DeviceGuardPlan(),
         schedule = ChildGuardSchedule(state = scheduleState)
@@ -19,29 +19,34 @@ class ChildInternetMiniCardTest {
 
     @Test
     fun anEmptyGuardListSaysSoInsteadOfZero() {
-        assertEquals("还没添加守护设备", childGuardMiniSubtitle(overview(true)))
-        assertEquals("读不到 Hub 数据",
+        assertEquals("未添加设备", childGuardMiniSubtitle(overview(true)))
+        assertEquals("读取失败",
             childGuardMiniSubtitle(overview(true, error = "hub unreachable")))
     }
 
     @Test
-    fun aSwitchedOffMasterIsNotReportedAsProtecting() {
-        val state = overview(false, device("a", "blocked"), device("b", "unrestricted"))
-        assertEquals("上网计划已暂停", childGuardMiniSubtitle(state))
+    fun masterSwitchDoesNotChangePresenceCount() {
+        val state = overview(false, device("a", "blocked", true), device("b", "unrestricted", true))
+        assertEquals("2台在线", childGuardMiniSubtitle(state))
     }
 
     @Test
-    fun blockedDevicesAreNamedBeforeEverythingElse() {
-        val state = overview(true, device("a", "blocked"), device("b", "allowed"))
-        assertEquals("1 台正停网", childGuardMiniSubtitle(state))
+    fun blockedOnlineDeviceStillCountsAsOnline() {
+        val state = overview(true, device("a", "blocked", true), device("b", "allowed"))
+        assertEquals("1台在线", childGuardMiniSubtitle(state))
     }
 
     @Test
     fun allFreeVersusUnknownScheduleReadDifferently() {
-        assertEquals("都在允许上网",
+        assertEquals("0台在线",
             childGuardMiniSubtitle(overview(true, device("a", "unrestricted"), device("b", "allowed"))))
-        assertEquals("按计划放行",
+        assertEquals("0台在线",
             childGuardMiniSubtitle(overview(true, device("a", "partial"), device("b", "unrestricted"))))
+    }
+
+    @Test fun overviewPresenceOverridesAnOlderSummary() {
+        val offline = device("a", "allowed", true).copy(presence = ChildGuardPresence(online = false))
+        assertEquals("0台在线", childGuardMiniSubtitle(overview(true, offline)))
     }
 
     @Test

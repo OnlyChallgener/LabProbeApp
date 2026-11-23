@@ -25,8 +25,6 @@ import androidx.compose.material.icons.rounded.QueryStats
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -571,7 +569,7 @@ private fun ProtectedDeviceCard(
                     // 官方是一张贴着按钮的大圆角小卡：居中文、没有标题和说明。
                     // 禁网和放行是两个相反的开关，各占一组，中间一道分隔线。
                     val menuChoice: @Composable (String, () -> Unit) -> Unit = { label, choose ->
-                        DropdownMenuItem(
+                        LabDropdownMenuItem(
                             text = {
                                 Text(
                                     label,
@@ -590,15 +588,14 @@ private fun ProtectedDeviceCard(
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                         )
                     }
-                    DropdownMenu(
+                    LabDropdownMenu(
                         expanded = showBlockMenu,
                         onDismissRequest = { showBlockMenu = false },
-                        modifier = Modifier.width(168.dp),
-                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.widthIn(max = 240.dp),
+                        shape = LabPopupShapes.Menu,
                         containerColor = LabCoreSurface.Card,
                         tonalElevation = 0.dp,
-                        shadowElevation = 10.dp
-                    ) {
+                        shadowElevation = 10.dp, actionMenu = true) {
                         listOf<Pair<String, Int?>>(
                             "立即禁网" to null,
                             "禁网 10 分钟" to 10,

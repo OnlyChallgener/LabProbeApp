@@ -97,7 +97,7 @@ internal fun FollowedDevicePresenceSection(device: DeviceItem, events: List<Even
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("查看记录", style = LabTypography.CompactButton.copy(color = LabV2.Primary))
-                    Icon(Icons.Rounded.ChevronRight, null, Modifier.size(17.dp), tint = LabV2.Primary)
+                    LabNavigationIndicator()
                 }
             }
         }

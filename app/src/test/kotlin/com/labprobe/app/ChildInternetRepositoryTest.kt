@@ -608,7 +608,7 @@ class ChildInternetRepositoryTest {
     @Test
     fun dnsBlipBecomesASentenceAndNotAnExceptionDump() {
         val dns = IllegalStateException(
-            "com.labprobe.app.CustomDns@4f393b0 returned no addresses for lp.lab86.shinya.icu")
+            "com.labprobe.app.CustomDns@4f393b0 returned no addresses for lp.fixture.example.com")
         assertEquals("无法解析 Hub 域名，请检查手机网络或 DNS", dns.userMessage())
         assertTrue(dns.needsASilentRetry())
         assertTrue(ChildGuardPendingException("a".repeat(24)).needsASilentRetry())

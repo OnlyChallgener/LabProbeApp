@@ -23,7 +23,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -86,7 +85,7 @@ fun EditableDeviceTypeField(
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             LabGradientDialogSurface(
-                shape = RoundedCornerShape(28.dp),
+                shape = LabPopupShapes.Card,
                 color = if (polished) polishColors.surface else LAB_POPUP_SURFACE,
                 tonalElevation = 0.dp,
                 shadowElevation = if (polished) 8.dp else 16.dp,

@@ -85,7 +85,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import com.labprobe.app.labCardCombinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -219,7 +219,14 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 同步恢复与状态排版" to listOf(
+            "v$NAME build$CODE · 固件 DDNS 适配与网速换算" to listOf(
+                "路由器原生 DDNS 适配新固件：新增腾讯云 API3、花生壳、DynDNS、华为云等服务商",
+                "固件 DDNS 支持 TXT 解析：可配置记录类型、DNS 托管域、区域、TXT 模板与外部端口",
+                "按服务商能力开放 A / AAAA / TXT 记录类型，旧固件保持原有表单",
+                "WireGuard、固件 DDNS、WEB 防火墙按设备探测能力显隐，接入时探测一次并持久化",
+                "修复终端列表实时网速多 8 倍：bit/s 正确换算为 byte/s 后显示"
+            ),
+            "v0.13.97 build340 · 同步恢复与状态排版" to listOf(
                 "完整同步增加总时限，避免弱网下长时间占用刷新",
                 "上网报告区分未同步与当日暂无记录",
                 "IPv4、IPv6 连接数移到路由器卡片下方，完整显示数值",
@@ -363,6 +370,9 @@ fun Activity.applyLabProbeSystemBars() {
 class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSPACE_ID) {
     companion object {
         fun current(context: Context): AppPrefs = AppPrefs(context, RouterWorkspaceStore.activeWorkspaceId(context))
+
+        private const val CAP_FINGERPRINT_KEY = "router.capabilities.fingerprint"
+        private const val CAP_SNAPSHOT_KEY = "router.capabilities.snapshot"
     }
 
     private val appContext: Context = context.applicationContext
@@ -408,6 +418,32 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             }
             return scopedSp!!
         }
+
+    /**
+     * Firmware module capabilities are probed once per router connection and
+     * persisted here. Entering a page never re-probes; only a changed device /
+     * Hub identity invalidates the snapshot (the key is the connection digest).
+     */
+    /** Fingerprint of the connected router; a change means new hardware -> re-probe once. */
+    fun routerCapabilitiesFingerprint(): String = listOf(
+        hub.trim().trimEnd('/'), token, workspaceId,
+        RouterWorkspaceStore.connectionEpoch.toString()
+    ).joinToString("|")
+
+    @Synchronized
+    fun loadRouterCapabilities(fingerprint: String): RouterCapabilities? {
+        val prefs = sp
+        if (prefs.getString(CAP_FINGERPRINT_KEY, "") != fingerprint) return null
+        return RouterCapabilities.fromJson(prefs.getString(CAP_SNAPSHOT_KEY, null))
+    }
+
+    @Synchronized
+    fun saveRouterCapabilities(fingerprint: String, capabilities: RouterCapabilities) {
+        sp.edit()
+            .putString(CAP_FINGERPRINT_KEY, fingerprint)
+            .putString(CAP_SNAPSHOT_KEY, capabilities.toJson().toString())
+            .apply()
+    }
 
     @Synchronized
     private fun workspaceTokenStore(): SecureWorkspaceStringStore {
@@ -480,8 +516,11 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             if (usesLegacyDefault()) {
                 val legacyId = RouterWorkspaceStore.legacyServerId(appContext, hubRoot)
                 val currentId = RouterWorkspaceStore.serverDefaultId(appContext, hubRoot)
+                RouterWorkspaceStore.confirmedBasePath(appContext, hubRoot, legacyId)?.let { path ->
+                    return hubChannelRoot(hubRoot) + path
+                }
                 return if (legacyId.isNotBlank() && currentId.isNotBlank() && legacyId != currentId)
-                    normalizeHubBaseUrl(hubRoot) + "/r/" + legacyId else hubRoot
+                    withHubChannel(hubRoot, legacyId) else hubRoot
             }
             val explicitHub = sp.getString("hub", "").orEmpty().trim()
             if (explicitHub.isNotBlank()) return withHubChannel(explicitHub, routerHubId)
@@ -498,6 +537,38 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                 hubRoot = clean
             }
         }
+    /** Move a verified physical router onto its registered channel, retaining the old scope for rollback. */
+    internal fun attachRegisteredRouter(root: String, serverId: String, managementToken: String) {
+        require(workspaceId.startsWith("local_"))
+        val oldHub = hub
+        val oldToken = token
+        val oldSsh = sshPassword
+        val values = sp.all.toMap()
+        val cleanRoot = hubChannelRoot(root)
+        if (hubChannelRoot(hubRoot) != cleanRoot) {
+            hubRoot = cleanRoot
+            val editor = sp.edit()
+            values.forEach { (key, value) ->
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+                }
+            }
+            editor.commit()
+        }
+        hub = cleanRoot
+        routerHubId = serverId.lowercase(java.util.Locale.ROOT)
+        hubServerRouterId = routerHubId
+        val nextToken = managementToken.ifBlank { oldToken }
+        if (nextToken != token) token = nextToken
+        if (oldSsh.isNotBlank() && oldSsh != sshPassword) sshPassword = oldSsh
+        if (oldHub != hub && RouterWorkspaceStore.activeWorkspaceId(appContext) == workspaceId)
+            RouterWorkspaceStore.hubConnectionChanged()
+    }
     var token: String
         get() = if (usesLegacyDefault())
             secureTokenStore.get().ifBlank { DEFAULT_TOKEN }
@@ -546,6 +617,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) = sp.edit().putBoolean("privacy_mode", v).apply()
     var favoriteShortcutsJson: String get() = sp.getString("favorite_shortcuts_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("favorite_shortcuts_v1", v).apply()
+    var favoriteSourceResetVersion: Int get() = sp.getInt("favorite_source_reset_version", 0)
+        set(v) = sp.edit().putInt("favorite_source_reset_version", v).apply()
     var favoriteNetworkMode: String get() = sp.getString("favorite_network_mode", "lan") ?: "lan"
         set(v) = sp.edit().putString("favorite_network_mode", v).apply()
     /** WireGuard profile metadata only. Private keys are stored separately in Android Keystore. */
@@ -721,7 +794,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                 r.value + if (r.operator.isNotBlank()) " " + operatorText(r.operator) else ""
             }
         }
-        val summary = listOfNotNull(line("A"), line("AAAA")).joinToString("\n")
+        val summary = listOfNotNull(line("A"), line("AAAA"), line("CNAME"), line("TXT")).joinToString("\n")
         if (summary.isBlank()) return
         val arr = JSONArray()
         (listOf(DnsQueryHistory(d, now, summary, signature)) + old).take(10).forEach { h ->
@@ -731,6 +804,62 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
     }
 
     fun clearDnsQueryHistory() { sp.edit().putString("dns_query_history", "[]").apply() }
+
+    fun phoneSpeedHistory(): List<PhoneSpeedHistoryEntry> {
+        val arr = runCatching { JSONArray(sp.getString("phone_speed_history_v1", "[]") ?: "[]") }
+            .getOrElse { JSONArray() }
+        fun nullableDouble(row: JSONObject, key: String): Double? =
+            if (row.has(key) && !row.isNull(key)) row.optDouble(key) else null
+        return (0 until arr.length()).mapNotNull { index ->
+            val row = arr.optJSONObject(index) ?: return@mapNotNull null
+            PhoneSpeedHistoryEntry(
+                epoch = row.optLong("epoch"),
+                nodeName = row.optString("nodeName"),
+                network = row.optString("network"),
+                protocol = row.optString("protocol"),
+                downAvg = nullableDouble(row, "downAvg"),
+                downPeak = nullableDouble(row, "downPeak"),
+                upAvg = nullableDouble(row, "upAvg"),
+                upPeak = nullableDouble(row, "upPeak"),
+                latency = nullableDouble(row, "latency"),
+                jitter = nullableDouble(row, "jitter"),
+                loss = nullableDouble(row, "loss"),
+                totalBytes = row.optLong("totalBytes"),
+                durationMs = row.optLong("durationMs"),
+                stable = row.optBoolean("stable"),
+                message = row.optString("message")
+            )
+        }.take(30)
+    }
+
+    fun addPhoneSpeedHistory(entry: PhoneSpeedHistoryEntry) {
+        val arr = JSONArray()
+        (listOf(entry) + phoneSpeedHistory()).take(30).forEach { row ->
+            arr.put(
+                JSONObject()
+                    .put("epoch", row.epoch)
+                    .put("nodeName", row.nodeName)
+                    .put("network", row.network)
+                    .put("protocol", row.protocol)
+                    .put("downAvg", row.downAvg ?: JSONObject.NULL)
+                    .put("downPeak", row.downPeak ?: JSONObject.NULL)
+                    .put("upAvg", row.upAvg ?: JSONObject.NULL)
+                    .put("upPeak", row.upPeak ?: JSONObject.NULL)
+                    .put("latency", row.latency ?: JSONObject.NULL)
+                    .put("jitter", row.jitter ?: JSONObject.NULL)
+                    .put("loss", row.loss ?: JSONObject.NULL)
+                    .put("totalBytes", row.totalBytes)
+                    .put("durationMs", row.durationMs)
+                    .put("stable", row.stable)
+                    .put("message", row.message)
+            )
+        }
+        sp.edit().putString("phone_speed_history_v1", arr.toString()).apply()
+    }
+
+    fun clearPhoneSpeedHistory() {
+        sp.edit().putString("phone_speed_history_v1", "[]").apply()
+    }
 
     var cacheStatus: String get() = sp.getString("cache_status", "") ?: ""
         set(v) = sp.edit().putString("cache_status", v).apply()
@@ -913,7 +1042,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
 
     fun clearPingHistory() { sp.edit().putString("ping_history_v2", "[]").apply() }
 
-    var dnsDomain: String get() = sp.getString("dns_domain", "net86.dynv6.net") ?: "net86.dynv6.net"
+    var dnsDomain: String
+        get() = sp.getString("dns_domain", "").orEmpty().takeUnless { it == "net86.dynv6.net" } ?: ""
         set(v) = sp.edit().putString("dns_domain", v).apply()
     var dns1: String get() = sp.getString("dns1", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("dns1", v).apply()
@@ -2661,7 +2791,8 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         nextPrefs.hubServerRouterId = row.serverRouterId
         workspaceTokenForSwitch(
             targetHasOwnToken = nextPrefs.token.isNotBlank(),
-            hubIsMultiChannel = hubIsMultiChannel(workspaces),
+            hubIsMultiChannel = hubIsMultiChannel(workspaces) &&
+                hubChannelRoot(nextPrefs.hubRoot) == hubChannelRoot(rootPrefs.hubRoot),
             currentToken = AppPrefs(context, workspaceId).token,
         ).takeIf(String::isNotBlank)?.let { nextPrefs.token = it }
         RouterWorkspaceStore.activate(context, rootPrefs.hubRoot, target)
@@ -2680,10 +2811,13 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         if (RouterWorkspaceStore.connectionEpoch != requestedEpoch || rootPrefs.hubRoot != requestedHubRoot) return
         result
             .onSuccess { rows ->
+                val visible = loadVisibleRouterWorkspaces(context, requestedHubRoot, rows, registryConfirmed = true)
+                val resolvedId = registeredWorkspaceSelection(context, requestedHubRoot, visible, workspaceId)
                 workspaces = preserveSelectedRouterWorkspace(
-                    loadVisibleRouterWorkspaces(context, requestedHubRoot, rows), workspaceId,
+                    visible, resolvedId,
                     workspaces.firstOrNull { it.routerId == workspaceId },
                 )
+                if (resolvedId != workspaceId) switchWorkspace(resolvedId)
                 listingConfirmed = true
             }
             .onFailure { failure ->
@@ -2769,7 +2903,8 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
             val newPrefs = AppPrefs(context, item.routerId)
             newPrefs.routerDisplayName = clean
             newPrefs.routerUsername = "admin"
-            workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot, workspaces)
+            workspaces = loadVisibleRouterWorkspaces(context, rootPrefs.hubRoot,
+                RouterWorkspaceStore.cachedList(context, rootPrefs.hubRoot))
             showAddRouter = false
             switchWorkspace(item.routerId)
         },
@@ -3424,6 +3559,7 @@ private fun LabProbeWorkspaceApp(
                         "tool_mtu" -> MtuScreen(prefs, backFromTool)
                         "tool_dns_quality" -> DnsQualityScreen(prefs, backFromTool)
                         "tool_tcp_peak" -> TcpPeakConnectionsScreen(prefs, backFromTool)
+                        "tool_network_speedtest" -> NetworkSpeedTestScreen(prefs, backFromTool)
                         "tool_portmap" -> MappingAndUpnpScreen(
                             prefs,
                             backFromTool,
@@ -3797,14 +3933,14 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
         IconButton(onClick = { expanded = true }, enabled = items.isNotEmpty(), modifier = Modifier.size(30.dp)) {
             Icon(Icons.Rounded.ArrowDropDown, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f))
         }
-        DropdownMenu(
+        LabDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Menu,
             containerColor = LAB_MENU_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp,
-            modifier = Modifier.widthIn(min = 230.dp, max = 340.dp).padding(vertical = 6.dp)
+            modifier = Modifier.widthIn(max = 340.dp)
         ) {
             Text(
                 if (keyName == "hub") "可用地址" else "最近使用",
@@ -3815,7 +3951,7 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
             items.forEach { item ->
                 val pinned = keyName == "hub" && prefs.isPinnedHubUrl(item)
                 // 紧凑：一行一条，地址占满、右侧只放类型角标或删除，不撑到 56dp 高。
-                DropdownMenuItem(
+                LabDropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -3835,16 +3971,11 @@ fun HistoryDropdown(keyName: String, prefs: AppPrefs, onPick: (String) -> Unit) 
                                         .padding(horizontal = 5.dp, vertical = 1.dp)
                                 )
                             }
+                            if (!pinned) Text("删除", modifier = Modifier.padding(start = 8.dp).clickable { prefs.removeHistory(keyName, item); tick++ },
+                                fontSize = 11.sp, color = LabV2.InkMuted)
                         }
                     },
                     onClick = { onPick(item); expanded = false },
-                    trailingIcon = {
-                        if (!pinned) {
-                            IconButton(onClick = { prefs.removeHistory(keyName, item); tick++ }, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Rounded.Close, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha=.55f))
-                            }
-                        }
-                    },
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 1.dp),
                     modifier = Modifier.heightIn(min = 34.dp),
                     colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.onSurface)
@@ -3988,16 +4119,16 @@ fun TinyParamSelect(label: String, value: String, options: List<String>, onChang
                 )
             }
         }
-        DropdownMenu(
+        LabDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Menu,
             containerColor = LAB_MENU_SURFACE,
             tonalElevation = 0.dp,
             shadowElevation = 10.dp
         ) {
             options.forEach { option ->
-                DropdownMenuItem(
+                LabDropdownMenuItem(
                     text = { Text(option + "ms", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Default) },
                     onClick = { onChange(option); expanded = false },
                     leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null
@@ -4072,9 +4203,9 @@ fun TinyParamSelectIcon(label: String, value: String, options: List<String>, onC
                 Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .58f))
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
+        LabDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = LabPopupShapes.Menu, containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp) {
             options.forEach { option ->
-                DropdownMenuItem(
+                LabDropdownMenuItem(
                     text = { Text(option + suffix, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Default) },
                     onClick = { onChange(option); expanded = false },
                     leadingIcon = if (option == value) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = Color(0xFF2563EB)) }) else null
@@ -4655,16 +4786,7 @@ fun HomeRefreshMenuButton(autoRefresh: String, loading: Boolean, onRefresh: () -
                         .padding(start = 13.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (loading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(17.dp),
-                            strokeWidth = 2.dp,
-                            color = Color(0xFF2563EB),
-                            trackColor = Color(0xFF2563EB).copy(alpha = .12f)
-                        )
-                    } else {
-                        Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp), tint = Color(0xFF2563EB))
-                    }
+                    LabRefreshIcon(loading, Modifier.size(17.dp), Color(0xFF2563EB))
                     Spacer(Modifier.width(6.dp))
                     Text(if (loading) "刷新中" else "刷新", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                 }
@@ -4947,8 +5069,14 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         }
                         // 通栏开关放在这两张卡下面：在外面连不回 Hub 时，WireGuard 是唯一
                         // 自助的入站路径（家庭宽带在 CGNAT 后面），所以它要在首页一步可点。
-                        // 当前路由不支持 WireGuard（例如 BE50 无内核）时动态隐藏
-                        if (routerWorkspace.wireguardSupported && !isWorkspaceBe50(prefs, routerWorkspace.model, routerWorkspace.name)) {
+                        // WireGuard 快捷入口按固件探测能力显隐（接入时探一次并持久化）。
+                        // 能力未探到时沿用工作区标志，避免刚接入瞬间闪隐。
+                        val probedCapabilities = remember(prefs.hub, prefs.token, prefs.workspaceId, RouterWorkspaceStore.connectionEpoch) {
+                            prefs.loadRouterCapabilities(prefs.routerCapabilitiesFingerprint())
+                        }
+                        val wireguardAvailable = probedCapabilities?.wireguard
+                            ?: (routerWorkspace.wireguardSupported && !isWorkspaceBe50(prefs, routerWorkspace.model, routerWorkspace.name))
+                        if (wireguardAvailable) {
                             HomeWireGuardQuickRow(prefs = prefs, onOpenPage = { onNavigate("tool_wireguard") })
                         }
                     }
@@ -5469,7 +5597,8 @@ private fun HealthStatePill(icon: ImageVector, label: String, value: String, col
             Spacer(Modifier.width(7.dp))
             Text("$label：", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1)
             Text(value, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Icon(trailing, null, Modifier.size(16.dp), tint = color.copy(alpha = if (trailing == Icons.Rounded.ChevronRight) .42f else 1f))
+            if (trailing == Icons.Rounded.ChevronRight) LabNavigationIndicator()
+            else Icon(trailing, null, Modifier.size(16.dp), tint = color)
         }
     }
 }
@@ -5706,7 +5835,7 @@ fun HealthStunCard(
                 Text("STUN 穿透", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "NAT 穿透端点，点击卡片进入管理。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
+            LabNavigationIndicator()
         }
         Spacer(Modifier.height(13.dp))
         val displayRows = rows.take(4)
@@ -5730,7 +5859,7 @@ fun HealthStunCard(
                 Modifier
                     .fillMaxWidth()
                     .clip(shape)
-                    .combinedClickable(
+                    .labCardCombinedClickable(
                         onClick = {
                             val target = serviceQuickAccessTarget(serviceType, row.endpoint)
                             copy(context, copyText)
@@ -6484,7 +6613,7 @@ fun DeviceSmartCard(state: AppState, d: DeviceItem, onOpenDetails: () -> Unit = 
                 )
             )
             .clip(LabCoreSurface.CardShape)
-            .combinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
+            .labCardCombinedClickable(onClick = onOpenDetails, onLongClick = onOpenDetails)
     ) {
         DeviceSmartInfo(d, profile)
         if (!d.online && wolManaged) {
@@ -6825,7 +6954,7 @@ fun ToolsHomeScreen(prefs: AppPrefs, topNav: @Composable () -> Unit, open: (Stri
                 Text("AI 助手", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
                 Text("对话、设备查询与确认操作", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
             }
-            Icon(Icons.Rounded.ChevronRight, contentDescription = "打开 AI 助手", tint = LabV2.InkFaint)
+            LabNavigationIndicator(description = "打开 AI 助手")
         }
     }
 
@@ -6999,7 +7128,7 @@ fun ReorderableToolSection(sectionKey: String, order: List<String>, onOrder: (Li
         Box(
             Modifier
                 .fillMaxWidth()
-                .shadow(if (dragging) 10.dp else 0.dp, RoundedCornerShape(25.dp), clip = false)
+                .labCardHeldHalo(dragging)
         ) { content() }
         if (dragging) {
             Surface(
@@ -7128,7 +7257,7 @@ fun ToolEntry(title: String, subtitle: String, icon: ImageVector, color: Color, 
         subtitle = subtitle,
         icon = icon,
         accent = color,
-        headerAction = { Icon(Icons.Rounded.ChevronRight, null, tint = color, modifier = Modifier.size(22.dp)) },
+        headerAction = { LabNavigationIndicator() },
         modifier = Modifier.clip(RoundedCornerShape(30.dp)).clickable { onClick() }
     ) { }
 }
@@ -7357,7 +7486,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     if (showHistorySheet) {
         ModalBottomSheet(
             onDismissRequest = { showHistorySheet = false },
-            shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+            shape = LabPopupShapes.Sheet,
             containerColor = LAB_POPUP_SURFACE,
             scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
             dragHandle = {
@@ -7406,7 +7535,7 @@ fun WifiRoamingToolEmergencyStable(prefs: AppPrefs) {
     selectedHistoryReport?.let { report ->
         ModalBottomSheet(
             onDismissRequest = { selectedHistoryReport = null },
-            shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+            shape = LabPopupShapes.Sheet,
             containerColor = LAB_POPUP_SURFACE,
             scrimColor = LAB_POPUP_SCRIM.copy(alpha = .38f),
             dragHandle = {
@@ -10225,7 +10354,7 @@ fun DnsTool(prefs: AppPrefs) {
     var msg by remember { mutableStateOf("等待解析") }
     val scope = rememberCoroutineScope(); val ctx = LocalContext.current
     val localDns = remember { getLocalDnsServers(ctx) }.ifEmpty { listOf("系统 DNS") }
-    ExpressiveCard("查询配置", "双 DNS 备选，A / AAAA 解析与运营商识别。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
+    ExpressiveCard("查询配置", "双 DNS 备选，A / AAAA / CNAME / TXT 解析与运营商识别。", Icons.Rounded.Dns, Color(0xFF2563EB)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("本机DNS", fontSize = 12.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.70f))
             Spacer(Modifier.width(8.dp))
@@ -10234,10 +10363,14 @@ fun DnsTool(prefs: AppPrefs) {
             Text(if (useSystem) "使用系统解析" else "使用自定义DNS", fontSize = 11.2.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha=.58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         TinyInfoParam("本机DNS", localDns.joinToString(" / "), Icons.Rounded.Info, Color(0xFF2563EB))
-        CompactIconHistoryInput("域名", "net86.dynv6.net", domain, { domain = it; prefs.dnsDomain = it }, "dns_domain", prefs, Icons.Rounded.Dns)
+        CompactIconHistoryInput("域名", "输入域名", domain, { domain = it; prefs.dnsDomain = it }, "dns_domain", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-            TinyParamSelectIcon("记录", type, listOf("A", "AAAA", "ALL"), { type = it; prefs.dnsRecord = it }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
-            TinyParamSelectIcon("策略", if (type == "AAAA") "优先AAAA" else if (type == "A") "优先A" else "自动", listOf("自动", "优先AAAA", "优先A"), { v -> type = when(v){"优先AAAA" -> "AAAA"; "优先A" -> "A"; else -> "ALL"}; prefs.dnsRecord = type }, Icons.Rounded.Public, Modifier.weight(1f))
+            TinyParamSelectIcon("记录", type, listOf("A", "AAAA", "CNAME", "TXT", "ALL"), { type = it; prefs.dnsRecord = it }, Icons.Rounded.FilterAlt, Modifier.weight(1f))
+            if (type == "CNAME" || type == "TXT") {
+                TinyInfoParam("类型", if (type == "CNAME") "别名记录" else "文本记录", Icons.Rounded.Info, Color(0xFF2563EB), Modifier.weight(1f))
+            } else {
+                TinyParamSelectIcon("策略", if (type == "AAAA") "优先AAAA" else if (type == "A") "优先A" else "自动", listOf("自动", "优先AAAA", "优先A"), { v -> type = when(v){"优先AAAA" -> "AAAA"; "优先A" -> "A"; else -> "ALL"}; prefs.dnsRecord = type }, Icons.Rounded.Public, Modifier.weight(1f))
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyHistoryParamInputIcon("DNS1", "223.5.5.5", dns1, { dns1 = it; prefs.dns1 = it }, "dns1", prefs, Icons.Rounded.Storage, KeyboardType.Text, Modifier.weight(1f))
@@ -10245,9 +10378,24 @@ fun DnsTool(prefs: AppPrefs) {
         }
         PillButton("查询 DNS", Icons.Rounded.Search, accent = Color(0xFF2563EB)) {
             scope.launch {
-                msg = "查询中..."; prefs.addHistory("dns_domain", domain); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2)
-                val records = dnsLookup(domain, if (useSystem) "system" else dns1, if (useSystem) "system" else dns2, type, prefs)
-                result = records; prefs.addDnsQueryHistory(domain, records); history = prefs.dnsQueryHistory(); msg = "完成：${records.size} 条"
+                val target = domain.trim()
+                if (target.isBlank()) { msg = "请输入域名"; return@launch }
+                msg = "查询中..."; prefs.addHistory("dns_domain", target); prefs.addHistory("dns1", dns1); prefs.addHistory("dns2", dns2)
+                val records = dnsLookup(
+                    target,
+                    if (useSystem) "system" else dns1,
+                    if (useSystem) "system" else dns2,
+                    type,
+                    prefs,
+                    systemServers = if (useSystem) localDns.filter { it != "系统 DNS" } else emptyList()
+                )
+                result = records
+                if (records.none { it.value.startsWith("无记录") || it.value.startsWith("系统DNS 不支持") }) {
+                    prefs.addDnsQueryHistory(target, records)
+                    history = prefs.dnsQueryHistory()
+                }
+                msg = records.firstOrNull { it.value.startsWith("无记录") || it.value.startsWith("系统DNS 不支持") }?.value
+                    ?: "完成：${records.size} 条"
             }
         }
     }
@@ -10275,7 +10423,7 @@ fun DnsHistoryRow(h: DnsQueryHistory, onCopy: () -> Unit) {
         if (lines.isEmpty()) lines += clean
         return lines
     }
-    val lines = legacyLines(h.summary).take(2)
+    val lines = legacyLines(h.summary).take(4)
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -11098,7 +11246,7 @@ fun TraceHistoryCard(item: TraceHistoryEntry, openedSwipeId: Long?, onSwipeOpen:
                         )
                     }
                     .clip(RoundedCornerShape(14.dp))
-                    .combinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); expanded = !expanded }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
+                    .labCardCombinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); expanded = !expanded }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -11308,7 +11456,7 @@ fun SshResultCard(item: SshResultEntry, openedSwipeId: Long?, onSwipeOpen: (Long
                         )
                     }
                     .clip(RoundedCornerShape(14.dp))
-                    .combinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); showDetail = true }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
+                    .labCardCombinedClickable(onClick = { targetOffsetPx = 0f; onSwipeClose(); showDetail = true }, onLongClick = { targetOffsetPx = 0f; onSwipeClose(); onCopy() })
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -11335,7 +11483,8 @@ fun SshResultDetailDialog(item: SshResultEntry, onDismiss: () -> Unit, onCopy: (
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭", fontWeight = FontWeight.SemiBold) } },
         title = { Text("执行结果", fontWeight = FontWeight.Black) },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // LabCompactAlertDialog owns the bounded scroll area and fixed actions.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("主机：${item.host}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text("时间：${item.time}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.Top) {
@@ -11391,7 +11540,7 @@ fun EventsScreen(state: AppState, onRefresh: () -> Unit, openDaily: () -> Unit, 
             CompactPageHeader(title = "记录", subtitle = "按天折叠 · 长按复制 · 左滑删除", action = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AssistChip(onClick = openDaily, label = { Text("每日总结", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(17.dp)) })
-                    AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)) })
+                    AssistChip(onClick = onRefresh, label = { Text("刷新", fontSize = 12.sp) }, leadingIcon = { LabRefreshIcon(state.loading, Modifier.size(17.dp)) })
                 }
             })
         }
@@ -11646,7 +11795,7 @@ private fun EventCompactCard(e: EventItem, deviceLookup: EventDeviceLookup, open
                     }
                     .shadow(0.dp, RoundedCornerShape(14.dp), clip = false)
                     .clip(RoundedCornerShape(14.dp))
-                    .combinedClickable(
+                    .labCardCombinedClickable(
                         onClick = {
                             if (targetOffsetPx < -1f) {
                                 targetOffsetPx = 0f
@@ -11982,10 +12131,10 @@ fun DailyScreen(prefs: AppPrefs, onBack: () -> Unit) = DetailShell("每日总结
     ExpressiveCard("日期", selected.ifBlank { "今天" }, Icons.Rounded.CalendarMonth, Color(0xFF2563EB)) {
         Box {
             PillButton("选择日期", Icons.Rounded.CalendarMonth, accent = Color(0xFF2563EB)) { expanded = true }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = RoundedCornerShape(18.dp), containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier.padding(vertical = 6.dp)) {
+            LabDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, shape = LabPopupShapes.Menu, containerColor = LAB_MENU_SURFACE, tonalElevation = 0.dp, shadowElevation = 10.dp, modifier = Modifier) {
                 dates.take(7).forEachIndexed { idx, d ->
                     val label = when (idx) { 0 -> "今天  $d"; 1 -> "昨天  $d"; 2 -> "前天  $d"; else -> d }
-                    DropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)
+                    LabDropdownMenuItem(text = { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }, onClick = { selected = d; expanded = false; loadDate(d) }, leadingIcon = if (d == selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }) else null)
                 }
             }
         }
@@ -12819,7 +12968,66 @@ object DnsWire {
         }
     }.getOrDefault(emptyList())
     private fun buildQuery(id: Int, host: String, qtype: Int): ByteArray { val out = ByteArrayOutputStream(); val d = DataOutputStream(out); d.writeShort(id); d.writeShort(0x0100); d.writeShort(1); d.writeShort(0); d.writeShort(0); d.writeShort(0); host.split('.').forEach { val b=it.toByteArray(); d.writeByte(b.size); d.write(b) }; d.writeByte(0); d.writeShort(qtype); d.writeShort(1); return out.toByteArray() }
-    private fun parseResponse(data: ByteArray, qtype: Int): List<String> { if (data.size < 12) return emptyList(); val an = u16(data,6); var off=12; while (off < data.size && data[off].toInt()!=0) off += 1 + (data[off].toInt() and 0xff); off += 5; val list= mutableListOf<String>(); repeat(an){ off = skipName(data, off); if (off+10 > data.size) return@repeat; val type=u16(data,off); off+=2; off+=2; off+=4; val len=u16(data,off); off+=2; if (off+len>data.size) return@repeat; if (type==qtype){ if(type==1&&len==4) list+=InetAddress.getByAddress(data.copyOfRange(off,off+4)).hostAddress ?: ""; if(type==28&&len==16) list+=InetAddress.getByAddress(data.copyOfRange(off,off+16)).hostAddress ?: "" }; off+=len }; return list.filter{it.isNotBlank()}.distinct() }
+    private fun parseResponse(data: ByteArray, qtype: Int): List<String> {
+        if (data.size < 12) return emptyList()
+        val an = u16(data, 6)
+        var off = 12
+        while (off < data.size && data[off].toInt() != 0) off += 1 + (data[off].toInt() and 0xff)
+        off += 5
+        val list = mutableListOf<String>()
+        for (index in 0 until an) {
+            off = skipName(data, off)
+            if (off + 10 > data.size) break
+            val type = u16(data, off); off += 2
+            off += 2
+            off += 4
+            val len = u16(data, off); off += 2
+            if (off + len > data.size) break
+            if (type == qtype) {
+                when (type) {
+                    1 -> if (len == 4) list += InetAddress.getByAddress(data.copyOfRange(off, off + 4)).hostAddress ?: ""
+                    28 -> if (len == 16) list += InetAddress.getByAddress(data.copyOfRange(off, off + 16)).hostAddress ?: ""
+                    5 -> list += readName(data, off)
+                    16 -> list += readTxt(data, off, len)
+                }
+            }
+            off += len
+        }
+        return list.filter { it.isNotBlank() }.distinct()
+    }
+    private fun readName(data: ByteArray, start: Int): String {
+        val out = StringBuilder()
+        var off = start
+        var jumps = 0
+        while (off in data.indices && jumps < 32) {
+            val len = data[off].toInt() and 0xff
+            if (len == 0) break
+            if (len and 0xc0 == 0xc0) {
+                if (off + 1 >= data.size) break
+                off = ((len and 0x3f) shl 8) or (data[off + 1].toInt() and 0xff)
+                jumps++
+                continue
+            }
+            if (len > 63 || off + 1 + len > data.size) break
+            if (out.isNotEmpty()) out.append('.')
+            out.append(String(data, off + 1, len, Charsets.UTF_8))
+            off += 1 + len
+        }
+        return out.toString()
+    }
+    private fun readTxt(data: ByteArray, start: Int, length: Int): String {
+        val end = minOf(start + length, data.size)
+        var off = start
+        val out = StringBuilder()
+        while (off < end) {
+            val size = data[off].toInt() and 0xff
+            off++
+            if (off + size > end) break
+            out.append(String(data, off, size, Charsets.UTF_8))
+            off += size
+        }
+        return out.toString()
+    }
     private fun skipName(data: ByteArray, start: Int): Int { var o=start; while(o<data.size){ val v=data[o].toInt() and 0xff; if(v and 0xc0 == 0xc0) return o+2; if(v==0) return o+1; o += 1+v }; return o }
     private fun u16(data: ByteArray, off: Int): Int = ((data[off].toInt() and 0xff) shl 8) or (data[off+1].toInt() and 0xff)
 }
@@ -12852,22 +13060,69 @@ suspend fun runLoadLatencyTest(url: String, pingHost: String, durationSec: Int, 
     LoadLatencyResult(baselineAvg, loadedAvg, loadedMax, lossRate, note)
 }
 
-suspend fun dnsLookup(domain: String, dns1: String, dns2: String, type: String, prefs: AppPrefs): List<DnsRecord> = withContext(Dispatchers.IO) {
+suspend fun dnsLookup(
+    domain: String,
+    dns1: String,
+    dns2: String,
+    type: String,
+    prefs: AppPrefs,
+    systemServers: List<String> = emptyList()
+): List<DnsRecord> = withContext(Dispatchers.IO) {
+    val target = domain.trim().trimEnd('.')
+    if (target.isBlank()) return@withContext listOf(DnsRecord("请输入域名", type, ""))
+    val normalizedType = type.trim().uppercase(Locale.ROOT)
+    val queryTypes = when (normalizedType) {
+        "A" -> listOf(1)
+        "AAAA" -> listOf(28)
+        "CNAME" -> listOf(5)
+        "TXT" -> listOf(16)
+        else -> listOf(1, 28, 5, 16)
+    }
+    fun typeLabel(qtype: Int): String = when (qtype) {
+        1 -> "A"
+        28 -> "AAAA"
+        5 -> "CNAME"
+        else -> "TXT"
+    }
     val servers = listOf(dns1.ifBlank { "system" }, dns2.ifBlank { DEFAULT_DNS2 }).distinct()
     for (server in servers) {
         val raw = mutableListOf<DnsRecord>()
         if (server.equals("system", true)) {
-            raw += InetAddress.getAllByName(domain)
-                .filterNot { it.hostAddress == "127.0.0.1" }
-                .filter { type == "ALL" || (type == "AAAA") == (it is Inet6Address) }
-                .map { DnsRecord(it.hostAddress ?: it.hostName, if (it is Inet6Address) "AAAA" else "A", "系统DNS") }
+            if (queryTypes.any { it == 1 || it == 28 }) {
+                runCatching {
+                    InetAddress.getAllByName(target)
+                        .filterNot { it.hostAddress == "127.0.0.1" }
+                        .forEach { address ->
+                            val qtype = if (address is Inet6Address) 28 else 1
+                            if (qtype in queryTypes) {
+                                raw += DnsRecord(address.hostAddress ?: address.hostName, typeLabel(qtype), "系统DNS")
+                            }
+                        }
+                }
+            }
+            if (queryTypes.any { it == 5 || it == 16 }) {
+                val dnsServer = systemServers.firstOrNull()
+                if (dnsServer == null) {
+                    if (normalizedType == "CNAME" || normalizedType == "TXT") {
+                        return@withContext listOf(DnsRecord("系统DNS 不支持该记录类型，请关闭“使用系统解析”后指定 DNS", normalizedType, "系统DNS"))
+                    }
+                } else {
+                    if (5 in queryTypes) raw += DnsWire.query(target, dnsServer, 5).map { DnsRecord(it, "CNAME", "系统DNS") }
+                    if (16 in queryTypes) raw += DnsWire.query(target, dnsServer, 16).map { DnsRecord(it, "TXT", "系统DNS") }
+                }
+            }
         } else {
-            if (type == "A" || type == "ALL") raw += DnsWire.query(domain, server, 1).filter { it != "127.0.0.1" }.map { DnsRecord(it, "A", server) }
-            if (type == "AAAA" || type == "ALL") raw += DnsWire.query(domain, server, 28).map { DnsRecord(it, "AAAA", server) }
+            queryTypes.forEach { qtype ->
+                raw += DnsWire.query(target, server, qtype).map { DnsRecord(it, typeLabel(qtype), server) }
+            }
         }
-        if (raw.isNotEmpty()) return@withContext raw.map { it.copy(operator = operatorLookup(it.value, prefs)) }
+        if (raw.isNotEmpty()) {
+            return@withContext raw.map {
+                if (it.type == "A" || it.type == "AAAA") it.copy(operator = operatorLookup(it.value, prefs)) else it
+            }
+        }
     }
-    listOf(DnsRecord("无记录或超时", type, servers.joinToString(" / ")))
+    listOf(DnsRecord("无记录或超时", normalizedType, servers.joinToString(" / ")))
 }
 
 fun operatorLookup(ip: String, prefs: AppPrefs): String {

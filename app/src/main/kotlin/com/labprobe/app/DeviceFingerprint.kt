@@ -2,6 +2,9 @@ package com.labprobe.app
 
 import java.util.Locale
 
+private val UPLUS_HAIER_MODEL = Regex("""(?<![a-z0-9])uplus[-_]haier(?![a-z0-9])""")
+private val MIDEA_AC_MODEL = Regex("""(?<![a-z0-9])midea[-_ ]+ac(?![a-z0-9])""")
+
 fun inferDeviceProfile(d: DeviceItem): DeviceVisualProfile {
     // 只有 APP 本地手动类型才当作强制类型；Hub / 路由器返回的 devType 只做弱参考，避免把海尔热水器、美的空调误锁成“路由/AP”。
     val manualType = normalizeDeviceTypeToken(d.manualType)
@@ -75,6 +78,14 @@ private fun strongNameType(d: DeviceItem): DeviceTypeRule? {
         .lowercase(Locale.getDefault())
 
     if (nameText.isBlank()) return null
+    // These router-reported host-name patterns are specific product identities.
+    // Keep them ahead of broad brand-only matching and stale router categories.
+    if (UPLUS_HAIER_MODEL.containsMatchIn(nameText)) {
+        return deviceTypeById("fridge")
+    }
+    if (MIDEA_AC_MODEL.containsMatchIn(nameText)) {
+        return deviceTypeById("aircon")
+    }
     return when {
         listOf("儿童手表", "电话手表", "小天才", "米兔", "kidswatch").any { nameText.contains(it) } -> deviceTypeById("child_watch")
         listOf("galaxy watch", "apple watch", "watch", "手表", "手环", "band").any { nameText.contains(it) } || Regex("""\bsm-[rl]\d+""").containsMatchIn(nameText) -> deviceTypeById("watch")
@@ -142,8 +153,25 @@ private fun scoreDeviceRule(text: String, rule: DeviceTypeRule): Int {
 private fun containsToken(text: String, token: String): Boolean {
     val t = token.trim().lowercase(Locale.getDefault())
     if (t.isBlank()) return false
+    // Short Latin aliases such as "AP", "TV" and "PC" must be standalone
+    // tokens. Substring matching made "...sapbz" look like an access point.
+    if (t.length <= 3 && t.all { it.isLetterOrDigit() && it.code < 128 }) {
+        val normalizedText = text.lowercase(Locale.ROOT)
+        var index = normalizedText.indexOf(t)
+        while (index >= 0) {
+            val end = index + t.length
+            val leftBoundary = index == 0 || !normalizedText[index - 1].isAsciiAlphaNumeric()
+            val rightBoundary = end == normalizedText.length || !normalizedText[end].isAsciiAlphaNumeric()
+            if (leftBoundary && rightBoundary) return true
+            index = normalizedText.indexOf(t, index + 1)
+        }
+        return false
+    }
     return text.contains(t)
 }
+
+private fun Char.isAsciiAlphaNumeric(): Boolean =
+    this in 'a'..'z' || this in '0'..'9'
 
 private fun deviceFingerprintText(d: DeviceItem): String = listOf(
     d.remark,

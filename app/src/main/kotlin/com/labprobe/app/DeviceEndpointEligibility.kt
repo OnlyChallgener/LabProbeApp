@@ -13,13 +13,18 @@ private fun isMacLikeText(value: String): Boolean {
 
 private val SUITABLE_ENDPOINT_DEVICE_TYPES = setOf(
     // Computers and Workstations
-    "desktop", "laptop", "mac_mini", "mini_pc", "all_in_one", "server", "industrial",
+    "desktop", "laptop", "mac_mini", "mini_pc", "all_in_one", "server", "industrial", "linux_pc", "mac_pc",
     // NAS and Storage
     "nas",
     // Management, Gateway and Network Appliances
     "camera", "doorbell", "nvr", "ipc", "printer", "router", "soft_router", "ap",
-    "network_switch", "network_device", "ont", "gateway", "pdu", "ip_kvm"
+    "network_switch", "netswitch", "network_device", "ont", "gateway", "pdu", "ip_kvm",
+    "tv_box", "tvbox", "set_top_box"
 )
+
+private val MAPPING_MEDIA_DEVICE_TYPES = setOf("tv_box", "tvbox", "set_top_box")
+private val MAPPING_ONLY_DEVICE_TYPES = MAPPING_MEDIA_DEVICE_TYPES + "switch"
+private val MAPPING_MEDIA_NAME_TOKENS = listOf("电视盒", "机顶盒", "tv box", "tv_box", "tvbox", "set-top box", "set top box")
 
 private val SUITABLE_NAME_TOKENS = listOf(
     // NAS
@@ -69,33 +74,43 @@ private fun normalizedEndpointText(value: String): String =
  * Devices selected for a public port mapping or STUN endpoint must be a
  * reachable service host.
  */
-internal fun isDeviceUsableForPublicEndpoint(device: DeviceItem): Boolean {
+internal fun isDeviceUsableForPublicEndpoint(
+    device: DeviceItem,
+    allowOfflineWithoutIpv4: Boolean = false,
+    allowMediaTargets: Boolean = false,
+): Boolean {
     val rawNames = listOf(device.remark, device.name, device.hostName).filter { it.trim().isNotBlank() }
     val meaningfulNames = rawNames.filterNot { isMacLikeText(it) }
     val hasMeaningfulName = meaningfulNames.isNotEmpty()
 
-    // Offline devices without a human-readable custom name or valid IP are discarded
+    // Port mapping may target a sleeping device by its stable IPv6/MAC even
+    // when its IPv4 lease is absent from this snapshot.
     if (!device.online) {
-        if (!hasMeaningfulName) return false
-        if (device.ip.isBlank()) return false
+        if (!hasMeaningfulName && !allowOfflineWithoutIpv4) return false
+        if (device.ip.isBlank() && !allowOfflineWithoutIpv4) return false
     }
 
     val inferredType = inferDeviceTypeRule(device).id
-    if (inferredType in UNSUITABLE_ENDPOINT_DEVICE_TYPES) return false
+    val identity = listOf(device.remark, device.name, device.hostName, device.osType, device.devType)
+        .joinToString(" ", transform = ::normalizedEndpointText)
+    val isMappingMediaTarget = allowMediaTargets && (
+        inferredType in MAPPING_MEDIA_DEVICE_TYPES || MAPPING_MEDIA_NAME_TOKENS.any(identity::contains)
+    )
+    val isMappingOnlyTarget = allowMediaTargets && inferredType in MAPPING_ONLY_DEVICE_TYPES
+    if (inferredType in UNSUITABLE_ENDPOINT_DEVICE_TYPES && !isMappingMediaTarget && !isMappingOnlyTarget) return false
 
     // Manual classification is authoritative for filtering. Hub's devType is
     // also honoured when it explicitly names a known unsuitable category.
     val explicitTypes = listOf(device.manualType, device.devType)
         .map(::normalizeDeviceTypeToken)
         .filter { it.isNotBlank() }
-    if (explicitTypes.any { it in UNSUITABLE_ENDPOINT_DEVICE_TYPES }) return false
+    if (explicitTypes.any { it in UNSUITABLE_ENDPOINT_DEVICE_TYPES && !(allowMediaTargets && it in MAPPING_ONLY_DEVICE_TYPES) }) return false
 
-    val identity = listOf(device.remark, device.name, device.hostName, device.osType, device.devType)
-        .joinToString(" ", transform = ::normalizedEndpointText)
-    if (UNSUITABLE_ENDPOINT_NAME_TOKENS.any { identity.contains(it) }) return false
+    if (UNSUITABLE_ENDPOINT_NAME_TOKENS.any { identity.contains(it) } && !isMappingMediaTarget) return false
 
     if (inferredType in SUITABLE_ENDPOINT_DEVICE_TYPES) return true
     if (explicitTypes.any { it in SUITABLE_ENDPOINT_DEVICE_TYPES }) return true
+    if (isMappingMediaTarget || isMappingOnlyTarget) return true
     if (SUITABLE_NAME_TOKENS.any { identity.contains(it) }) return true
 
     // For online devices with a custom remark or recognized name, allow
@@ -104,3 +119,6 @@ internal fun isDeviceUsableForPublicEndpoint(device: DeviceItem): Boolean {
 
     return false
 }
+
+internal fun isDeviceUsableForPortMappingTarget(device: DeviceItem): Boolean =
+    isDeviceUsableForPublicEndpoint(device, allowOfflineWithoutIpv4 = true, allowMediaTargets = true)

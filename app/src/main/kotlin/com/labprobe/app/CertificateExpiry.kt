@@ -34,8 +34,6 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -301,20 +299,20 @@ private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Uni
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(certificateOpenUrl(item.url))))
                             }
                         },
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(32.dp),
                         shape = CircleShape,
-                        color = LabV2.Primary.copy(alpha = .10f)
+                        color = Color.Transparent
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.OpenInNew, "打开快捷网址", Modifier.size(15.dp), tint = LabV2.Primary)
+                            LabNavigationIndicator(external = true, description = "打开快捷网址")
                         }
                     }
                 }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(17.dp), tint = LabV2.InkMuted) }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(15.dp), containerColor = LabV2.Field) {
-                        DropdownMenuItem(text = { Text("编辑", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp)) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text("删除", fontSize = 12.sp, color = LabV2.Red, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(16.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
+                    LabDropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = LabPopupShapes.Menu, containerColor = LabV2.Field, actionMenu = true) {
+                        LabDropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp)) }, onClick = { menu = false; onEdit() })
+                        LabDropdownMenuItem(text = { Text("删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(16.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
                     }
                 }
             }
@@ -349,24 +347,7 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
     var url by remember(existing?.id) { mutableStateOf(existing?.url.orEmpty()) }
     var error by remember(existing?.id) { mutableStateOf("") }
 
-    CompactBottomSheet(title = if (existing == null) "添加证书" else "编辑证书", onDismiss = onDismiss, scrollable = true) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CertificateInput("备注", note, { note = it }, "例如 lab6", Modifier.weight(1f))
-            CertificateInput("域名", domain, { domain = it }, "lab.example.com", Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CertificateInput("机构", organization, { organization = it }, "ZeroSSL", Modifier.weight(1f))
-            CertificateInput("服务商", provider, { provider = it }, "阿里云 DNS", Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CertificateInput("申请时间", appliedOn, { appliedOn = it }, "2026-07-17", Modifier.weight(1f))
-            CertificateInput("到期时间", expiresOn, { expiresOn = it }, "2026-10-15", Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth()) {
-            CertificateInput("快捷网址", url, { url = it }, "https://example.com", Modifier.weight(1f), uri = true)
-        }
-        if (error.isNotBlank()) Text(error, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Red)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LabEditorDialog(title = if (existing == null) "添加证书" else "编辑证书", onDismiss = onDismiss, actions = {
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = {
@@ -396,14 +377,30 @@ private fun CertificateEditorSheet(existing: CertificateExpiryItem?, onDismiss: 
                 modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                 shape = LabV2.ButtonShape
             ) { Text("保存", fontWeight = FontWeight.SemiBold) }
+    }) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CertificateInput("备注", note, { note = it }, "例如 lab6", Modifier.weight(1f))
+            CertificateInput("域名", domain, { domain = it }, "lab.example.com", Modifier.weight(1f))
         }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CertificateInput("机构", organization, { organization = it }, "ZeroSSL", Modifier.weight(1f))
+            CertificateInput("服务商", provider, { provider = it }, "阿里云 DNS", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CertificateInput("申请时间", appliedOn, { appliedOn = it }, "2026-07-17", Modifier.weight(1f))
+            CertificateInput("到期时间", expiresOn, { expiresOn = it }, "2026-10-15", Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth()) {
+            CertificateInput("快捷网址", url, { url = it }, "https://example.com", Modifier.weight(1f), uri = true)
+        }
+        if (error.isNotBlank()) Text(error, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Red)
     }
 }
 
 @Composable
 private fun RowScope.CertificateInput(label: String, value: String, onValueChange: (String) -> Unit, placeholder: String, modifier: Modifier, uri: Boolean = false) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, modifier = Modifier.padding(start = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+        Text(label, modifier = Modifier.padding(start = 2.dp), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
         CompactTextField(value, onValueChange, Modifier.fillMaxWidth(), placeholder = placeholder, keyboardOptions = KeyboardOptions(keyboardType = if (uri) KeyboardType.Uri else KeyboardType.Text))
     }
 }

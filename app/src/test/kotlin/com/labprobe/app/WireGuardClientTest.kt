@@ -513,7 +513,7 @@ class WireGuardClientTest {
         assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("http://192.168.5.1:8080"))
         assertEquals(listOf("192.168.5.0/24"), privateHubLanRouteCidrs("http://192.168.5.46:58443"))
         assertTrue(privateHubLanRouteCidrs("http://111.23.167.101:58443").isEmpty())
-        assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("", "mq.lab86.shinya.icu", "192.168.5.46"))
+        assertEquals(listOf("192.168.5.0/24"), homeLanRouteCidrs("", "mq.example.com", "192.168.5.46"))
         assertTrue(homeLanRouteCidrs("router.local", "", null).isEmpty())
     }
 

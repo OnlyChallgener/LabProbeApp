@@ -52,81 +52,7 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
     val recommendation = if (normalizedType.isBlank() || normalizedType == "unknown" || normalizedType == "router") wolRecommendationForDevice(device, typeInput) else wolRecommendationForDeviceType(typeInput)
     val polished = LabMaterialPolish.enabled
     val polishColors = LabMaterialPolish.colors
-    LabBottomSheet(onDismiss = onDismiss) {
-        Text("编辑设备", fontWeight = FontWeight.Black, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface)
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Surface(shape = RoundedCornerShape(26.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Column(Modifier.weight(1f)) {
-                            Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
-                            CompactTextField(
-                                value = remark,
-                                onValueChange = { remark = it },
-                                placeholder = "例如：客厅摄像头",
-                                modifier = Modifier.fillMaxWidth(),
-                                leadingIcon = {
-                                    Icon(Icons.Rounded.EditNote, null, Modifier.size(16.dp), tint = DEVICE_ICON_ACCENT)
-                                }
-                            )
-                        }
-                        EditableDeviceTypeField(
-                            value = typeInput,
-                            onChange = { typeInput = it },
-                            modifier = Modifier.weight(1f),
-                            label = "设备类型",
-                            showLeadingIcon = true
-                        )
-                    }
-                    Column(Modifier.fillMaxWidth()) {
-                        Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
-                        CompactTextField(
-                            value = cleanMac(device.mac),
-                            onValueChange = {},
-                            readOnly = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            }
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    DeviceTypeIconPreview(rule, 42)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("图标预览：${rule.label}", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                        Text("按 MAC 本地保存。刷新后仍优先使用你的备注和类型。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 2)
-                    }
-                }
-            }
-            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-                    Text("设备管理", fontWeight = FontWeight.Black, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
-                    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("添加到关注", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                            Text("关注后可在“关注”页快速查看", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 2)
-                        }
-                        Switch(checked = followed, onCheckedChange = { followed = it })
-                    }
-                    if (polished) {
-                        Spacer(Modifier.height(2.dp))
-                    } else {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .07f))
-                    }
-                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("加入 WOL 管理", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                            Text(recommendation.reason, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 3)
-                        }
-                        FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
-                        Spacer(Modifier.width(6.dp))
-                        Switch(checked = wolOverride ?: recommendation.recommended, onCheckedChange = { wolOverride = it })
-                    }
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    LabEditorDialog(title = "编辑设备", onDismiss = onDismiss, actions = {
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = {
@@ -160,8 +86,77 @@ fun LabDeviceEditSheet(device: DeviceItem, state: AppState, onDismiss: () -> Uni
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = if (polished) polishColors.accent else DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.SemiBold) }
-        }
-        Spacer(Modifier.height(8.dp))
+    }) {
+            Surface(shape = RoundedCornerShape(26.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("备注名称", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
+                            CompactTextField(
+                                value = remark,
+                                onValueChange = { remark = it },
+                                placeholder = "例如：客厅摄像头",
+                                modifier = Modifier.fillMaxWidth(),
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.EditNote, null, Modifier.size(16.dp), tint = DEVICE_ICON_ACCENT)
+                                }
+                            )
+                        }
+                        EditableDeviceTypeField(
+                            value = typeInput,
+                            onChange = { typeInput = it },
+                            modifier = Modifier.weight(1f),
+                            label = "设备类型",
+                            showLeadingIcon = true
+                        )
+                    }
+                    Column(Modifier.fillMaxWidth()) {
+                        Text("MAC 地址", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, modifier = Modifier.padding(start = 2.dp, bottom = 5.dp))
+                        CompactTextField(
+                            value = cleanMac(device.mac),
+                            onValueChange = {},
+                            readOnly = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DeviceTypeIconPreview(rule, 42)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("图标预览：${rule.label}", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("按 MAC 本地保存。刷新后仍优先使用你的备注和类型。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f), maxLines = 2)
+                    }
+                }
+            }
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = if (polished) polishColors.surfaceInset else LAB_POPUP_SUBTLE, border = if (polished) null else BorderStroke(1.dp, LAB_POPUP_BORDER)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Text("设备管理", fontWeight = FontWeight.Medium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .66f))
+                    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("添加到关注", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text("关注后可在“关注”页快速查看", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 2)
+                        }
+                        Switch(checked = followed, onCheckedChange = { followed = it })
+                    }
+                    if (polished) {
+                        Spacer(Modifier.height(2.dp))
+                    } else {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .07f))
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("加入 WOL 管理", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(recommendation.reason, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .52f), maxLines = 3)
+                        }
+                        FilterChip(selected = wolOverride == null, onClick = { wolOverride = null }, label = { Text("自动", fontSize = 11.sp) })
+                        Spacer(Modifier.width(6.dp))
+                        Switch(checked = wolOverride ?: recommendation.recommended, onCheckedChange = { wolOverride = it })
+                    }
+                }
+            }
     }
 }
 

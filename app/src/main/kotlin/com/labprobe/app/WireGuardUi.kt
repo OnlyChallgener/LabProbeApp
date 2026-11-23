@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import androidx.compose.foundation.layout.imePadding
+
 import com.labprobe.app.ui.design.LabActionIcons
 
 import android.content.ClipData
@@ -1320,7 +1322,7 @@ private fun WireGuardProfileDetailsDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 720.dp),
-            shape = LabV2.CardShape,
+            shape = LabPopupShapes.Card,
             color = Color.White,
         ) {
             Column(
@@ -1412,7 +1414,7 @@ private fun WireGuardEnableServerDialog(
     onConfirm: () -> Unit,
 ) {
     Dialog(onDismissRequest = onCancel) {
-        LabGradientDialogSurface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
+        LabGradientDialogSurface(shape = LabPopupShapes.Card, color = Color.White, shadowElevation = 10.dp) {
             Column(
                 Modifier.fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1495,13 +1497,13 @@ private fun WireGuardEditorDialog(
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LabGradientDialogSurface(
-            modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 720.dp),
-            shape = LabV2.CardShape,
+            modifier = Modifier.fillMaxWidth(.94f).imePadding().heightIn(max = 720.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
         ) {
             Box(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                Text(if (isExisting) "编辑 WireGuard 配置" else "新建 WireGuard 配置", style = LabTypography.PageTitle)
+            Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (isExisting) "编辑 WireGuard 配置" else "新建 WireGuard 配置", style = LabTypography.DialogTitle, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp), color = wireGuardSourceColor(source).copy(alpha = .10f)) {
                     Text(source.displayName, Modifier.padding(horizontal = 9.dp, vertical = 5.dp), style = LabTypography.Caption.copy(color = wireGuardSourceColor(source)), fontWeight = FontWeight.SemiBold)
                 }
@@ -1749,7 +1751,7 @@ private fun WireGuardRouterPeersDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.93f).heightIn(max = 640.dp),
-            shape = LabV2.CardShape,
+            shape = LabPopupShapes.Card,
             color = Color.White,
         ) {
             Column(
@@ -1968,7 +1970,7 @@ private fun WireGuardServerSettingsDialog(
     }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        LabGradientDialogSurface(shape = LabCoreSurface.CardShape, color = Color.White, shadowElevation = 10.dp) {
+        LabGradientDialogSurface(shape = LabPopupShapes.Card, color = Color.White, shadowElevation = 10.dp) {
             Column(
                 Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)

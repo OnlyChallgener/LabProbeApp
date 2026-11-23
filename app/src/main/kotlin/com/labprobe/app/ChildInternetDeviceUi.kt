@@ -608,27 +608,19 @@ private fun ChildInternetTabIcon(tab: ChildInternetTab, active: Boolean, modifie
 }
 
 /**
- * 首页那张「儿童上网」小卡：大字已经是「几台在管」，副标题就只说状态，不再把台数
- * 重复一遍。数据只读 Hub 已经算好的总览聚合（`refreshOverview`），不会为了首页去逼
- * 路由器重扫。
+ * 首页大字是受管总数，副标题是其中在线的数量；不以计划放行状态推断在线。
  */
 internal fun childGuardMiniSubtitle(state: ChildInternetOverviewState): String {
     val guarded = state.devices.size
     if (guarded == 0) {
         return when {
-            state.error.isNotBlank() -> "读不到 Hub 数据"
-            state.loading -> "正在读取…"
-            else -> "还没添加守护设备"
+            state.error.isNotBlank() -> "读取失败"
+            state.loading -> "同步中"
+            else -> "未添加设备"
         }
     }
-    if (state.masterKnown && !state.masterEnabled) return "上网计划已暂停"
-    val blocked = state.devices.count { it.schedule.state == "blocked" }
-    val free = state.devices.count { it.schedule.state in setOf("unrestricted", "allowed") }
-    return when {
-        blocked > 0 -> "$blocked 台正停网"
-        free == guarded -> "都在允许上网"
-        else -> "按计划放行"
-    }
+    val online = state.devices.count { it.presence?.online ?: it.summary.isOnline }
+    return "${online}台在线"
 }
 
 @Composable
@@ -739,6 +731,13 @@ internal fun ChildInternetReportScreen(
         period == "今日" -> device.todayUsage.entries
         dayDetail != null -> dayDetail.usage.entries
         else -> emptyList()
+    }
+    val iconContext = LocalContext.current
+    val iconPrefetchKey = currentEntries.map { entry ->
+        "${entry.iconKey}|${entry.localIconPath.orEmpty()}"
+    }
+    LaunchedEffect(iconContext, device.summary.deviceId, selectedDate, iconPrefetchKey) {
+        preloadDashboardAppIcons(iconContext, currentEntries)
     }
     val entriesLoading = period != "今日" && dayDetail?.loading != false
 
@@ -1253,7 +1252,7 @@ private fun UsageEntryRow(entry: InternetUsageEntry, onClick: () -> Unit = {}) {
             }
             Text("共${entry.count}次", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
         }
-        Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkFaint, modifier = Modifier.size(19.dp))
+        LabNavigationIndicator()
     }
 }
 
@@ -1456,7 +1455,7 @@ private fun ChildInternetPlanOverview(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(planRuleLabel(rule), style = LabTypography.Caption.copy(color = LabV2.InkMuted))
-                        Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(18.dp))
+                        LabNavigationIndicator()
                     }
                 }
             }
@@ -1478,7 +1477,7 @@ private fun ChildInternetPlanOverview(
                             modifier = Modifier.weight(1f),
                             style = LabTypography.SectionTitle.copy(color = LabV2.InkMuted))
                         Text("已停用", style = LabTypography.Caption.copy(color = LabV2.InkMuted))
-                        Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(18.dp))
+                        LabNavigationIndicator()
                     }
                 }
             }
@@ -1588,7 +1587,7 @@ private fun ChildInternetPlanEditor(
         Dialog(onDismissRequest = { confirmDelete = false }) {
             LabGradientDialogSurface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 30.dp),
-                shape = RoundedCornerShape(20.dp),
+                shape = LabPopupShapes.Card,
                 color = LabCoreSurface.Card
             ) {
                 Column(Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
@@ -2262,7 +2261,7 @@ private fun PlanTimelineRow(
                 }
                 if (!blocked && apps.isNotEmpty()) StackedAppIcons(apps)
                 if (onClick != null) {
-                    Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(18.dp))
+                    LabNavigationIndicator()
                 }
             }
         }
@@ -2326,7 +2325,7 @@ private fun LabTimeWheelDialog(
         Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             LabGradientDialogSurface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                shape = RoundedCornerShape(20.dp),
+                shape = LabPopupShapes.Card,
                 color = LabCoreSurface.Card
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {

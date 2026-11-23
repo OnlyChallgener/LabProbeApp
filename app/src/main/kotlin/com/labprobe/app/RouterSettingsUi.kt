@@ -81,9 +81,7 @@ fun RouterSettingsHomeCard(isBe50: Boolean = false, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Surface(shape = CircleShape, color = SettingsBlue.copy(alpha = .09f)) {
-                Icon(Icons.Rounded.ChevronRight, null, Modifier.padding(7.dp).size(20.dp), tint = SettingsBlue)
-            }
+            LabNavigationIndicator()
         }
     }
 }
@@ -102,6 +100,7 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
         nativePortMapping = true,
         upnp = true,
         ddns = true,
+        wireguard = true,
         diagnostic = true
     )
 
@@ -143,34 +142,37 @@ fun RouterSettingsScreen(prefs: AppPrefs, onBack: () -> Unit, onOpen: (String) -
                 color = SettingsCyan,
                 enabled = capabilities.configured
             ) { onOpen("tool_stun") }
-            if (!isBe50) {
+            // WEB 防火墙是固件模块：按 HUB 探测到的能力显隐，不按型号硬编码。
+            if (capabilities.firewall) {
                 RouterSettingsTile(
                     title = "防火墙",
                     subtitle = "入站、出站与转发规则",
                     icon = Icons.Rounded.Security,
                     color = SettingsGreen,
-                    enabled = capabilities.firewall
+                    enabled = true
                 ) { onOpen("tool_router_firewall") }
             }
         }
 
         RouterSettingsSection("远程访问") {
-            if (!isBe50) {
+            // WireGuard 是固件模块：按探测能力显隐；APP 客户端依赖固件 wg 工具。
+            if (capabilities.wireguard) {
                 RouterSettingsTile(
                     title = "WireGuard",
                     subtitle = "APP 客户端 · DDNS 与 STUN 独立配置",
                     icon = Icons.Rounded.Shield,
                     color = SettingsBlue,
-                    enabled = capabilities.configured
+                    enabled = true
                 ) { onOpen("tool_wireguard") }
             }
+            // DDNS 入口始终显示：自建 LabProbe DDNS 不依赖固件；固件原生页在支持的设备上才出现。
             RouterSettingsTile(
                 title = "DDNS",
-                subtitle = if (isBe50) "LabProbe DDNS · 证书监控" else "LabProbe DDNS · 路由器原生 DDNS · 证书监控",
+                subtitle = if (capabilities.ddns) "LabProbe DDNS · 路由器原生 DDNS · 证书监控" else "LabProbe DDNS · 证书监控",
                 icon = Icons.Rounded.CloudSync,
                 glyph = RouterGlyph.Ddns,
                 color = SettingsCyan,
-                enabled = capabilities.ddns || capabilities.configured
+                enabled = true
             ) { onOpen("tool_router_ddns") }
             RouterSettingsTile(
                 title = "Webhook",
@@ -260,7 +262,7 @@ private fun RouterSettingsConnectionCard(resource: RouterResource<RouterHubStatu
                 )
                 Text(detail, style = LabTypography.Supporting.copy(color = SettingsMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = accent)
+            LabNavigationIndicator()
         }
     }
 }
@@ -311,7 +313,7 @@ private fun RouterSettingsTile(
                 )
                 Text(subtitle, style = LabTypography.Supporting.copy(color = SettingsMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(19.dp), tint = actualColor.copy(alpha = if (enabled) 1f else .45f))
+            LabNavigationIndicator(enabled = enabled)
         }
     }
 }

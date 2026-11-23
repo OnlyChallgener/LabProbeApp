@@ -6,6 +6,12 @@ import java.util.Locale
 
 private val DEVICE_VALUE_SPLIT = Regex("[,;，；\\s]+")
 
+/** Convert a network rate in bit/s to the byte/s value used by DeviceItem. */
+internal fun rateBitsPerSecondToBytesPerSecond(bitsPerSecond: Long): Long {
+    val safe = bitsPerSecond.coerceAtLeast(0L)
+    return safe / 8L + if (safe % 8L >= 4L) 1L else 0L
+}
+
 fun parseDeviceArray(json: String): List<DeviceItem> {
     if (json.isBlank()) return emptyList()
     val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }
@@ -63,6 +69,14 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
     val name = f("name").ifBlank { f("devRecommend") }.ifBlank { f("hostName") }.ifBlank { mac }
     val ipv6Candidates = collectDeviceIpv6Candidates(o).take(24)
     val ipv6List = ipv6Candidates.map { it.address }
+    val realtimeUploadBytes = o.optLong(
+        "realtimeUploadBytes",
+        o.optLong("realtimeUpload", o.optLong("realtimeUpBytes", rateBitsPerSecondToBytesPerSecond(o.optLong("flowUp", 0L))))
+    ).coerceAtLeast(0L)
+    val realtimeDownloadBytes = o.optLong(
+        "realtimeDownloadBytes",
+        o.optLong("realtimeDownload", o.optLong("realtimeDownBytes", rateBitsPerSecondToBytesPerSecond(o.optLong("flowDown", 0L))))
+    ).coerceAtLeast(0L)
 
     return DeviceItem(
         name = name,
@@ -120,14 +134,8 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
             directionKeys = listOf("download", "down", "rx", "downstream", "received", "receive", "downloadBytes", "downBytes", "rxBytes", "下行", "下载"),
             directionLabels = listOf("下行", "下载", "download", "down", "rx")
         ),
-        realtimeUploadBytes = o.optLong(
-            "realtimeUploadBytes",
-            o.optLong("realtimeUpload", o.optLong("realtimeUpBytes", o.optLong("flowUp", 0L)))
-        ).coerceAtLeast(0L),
-        realtimeDownloadBytes = o.optLong(
-            "realtimeDownloadBytes",
-            o.optLong("realtimeDownload", o.optLong("realtimeDownBytes", o.optLong("flowDown", 0L)))
-        ).coerceAtLeast(0L),
+        realtimeUploadBytes = realtimeUploadBytes,
+        realtimeDownloadBytes = realtimeDownloadBytes,
         connectionCount = o.optInt(
             "connectionCount",
             o.optInt("flow_cnt", o.optInt("flowCnt", 0))

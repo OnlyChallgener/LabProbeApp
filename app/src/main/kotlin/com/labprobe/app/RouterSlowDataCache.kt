@@ -30,6 +30,7 @@ internal class RouterSlowDataCache private constructor() {
     var ddnsRows: List<DdnsRecord> = emptyList()
     var ddnsLoaded: Boolean = false
     var ddnsAt: Long = 0L
+    var ddnsProtocol: String = ""
 
     fun isFresh(updatedAt: Long, ttlMs: Long, now: Long = System.currentTimeMillis()): Boolean =
         updatedAt > 0L && now - updatedAt in 0L..ttlMs

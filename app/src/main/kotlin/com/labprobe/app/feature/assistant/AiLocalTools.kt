@@ -1,6 +1,7 @@
 package com.labprobe.app.feature.assistant
 
 import com.labprobe.app.AppPrefs
+import com.labprobe.app.suggestedFavoriteIcon
 import com.labprobe.app.FavoriteShortcut
 import com.labprobe.app.TcpPeakConfig
 import com.labprobe.app.TcpPeakFamily
@@ -136,7 +137,8 @@ class AiLocalToolExecutor(private val prefs: AppPrefs) {
             title = title,
             description = description,
             iconType = "builtin",
-            iconValue = "web",
+            iconValue = suggestedFavoriteIcon(title, serviceType),
+            iconAutomatic = true,
             lanUrl = localUrl,
             wanUrl = remoteUrl,
             order = current.size,

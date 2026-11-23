@@ -100,6 +100,7 @@ data class RouterWorkspace(
     val isDefault: Boolean = false,
     val serverRouterId: String = routerId,
     val wireguardSupported: Boolean = true,
+    val serialNumber: String = "",
 )
 
 fun isModelWireGuardSupported(model: String, name: String, routerId: String): Boolean {
@@ -186,7 +187,9 @@ fun defaultRouterWorkspace(): RouterWorkspace =
 fun parseRouterWorkspaces(root: JSONObject, legacyServerId: String? = null): List<RouterWorkspace> {
     val rows = root.optJSONArray("routers") ?: return listOf(defaultRouterWorkspace())
     val defaultRouterId = root.optString("defaultRouterId").trim().takeIf(::validRouterWorkspaceId)
-    val originalRouterId = legacyServerId?.takeIf(::validRouterWorkspaceId) ?: defaultRouterId
+    val serverIds = (0 until rows.length()).mapNotNull { rows.optJSONObject(it)?.optString("routerId") }.toSet()
+    val originalRouterId = legacyServerId?.takeIf(::validRouterWorkspaceId)
+        ?.takeUnless { it == DEFAULT_ROUTER_WORKSPACE_ID && it !in serverIds } ?: defaultRouterId
     // 缺字段和 0 不是一回事：0 是「一台设备都没有」，缺才是「还不知道」。
     fun count(item: JSONObject, key: String): Int? =
         if (!item.has(key) || item.isNull(key)) null else item.optInt(key, -1).takeIf { it >= 0 }
@@ -197,7 +200,6 @@ fun parseRouterWorkspaces(root: JSONObject, legacyServerId: String? = null): Lis
             if (!validRouterWorkspaceId(serverId)) continue
             val id = if (serverId == originalRouterId) DEFAULT_ROUTER_WORKSPACE_ID else serverId
             val canonicalPath = "/r/$serverId"
-            val expectedPath = if (serverId == defaultRouterId) "" else canonicalPath
             val suppliedPath = item.optString("basePath").trim().trimEnd('/')
             // Keep the original router attached to its legacy local preferences even
             // after another worker becomes the Hub's default root route.
@@ -217,12 +219,13 @@ fun parseRouterWorkspaces(root: JSONObject, legacyServerId: String? = null): Lis
                     site = item.optString("site").trim(),
                     model = item.optString("model").trim(),
                     online = item.optBoolean("online"),
-                    basePath = expectedPath,
+                    basePath = suppliedPath,
                     deviceCount = count(item, "deviceCount"),
                     onlineDeviceCount = count(item, "onlineDeviceCount"),
                     isDefault = if (defaultRouterId == null) id == DEFAULT_ROUTER_WORKSPACE_ID else serverId == defaultRouterId,
                     serverRouterId = serverId,
                     wireguardSupported = wgSupported,
+                    serialNumber = item.optString("serialNumber").trim().uppercase(java.util.Locale.ROOT),
                 )
             )
         }
@@ -324,13 +327,18 @@ object LocalRouterWorkspaceRegistry {
 fun mergeRouterWorkspaces(
     remote: List<RouterWorkspace>, local: List<RouterWorkspace>,
     boundRoutes: Map<String, String> = emptyMap(), hiddenIds: Set<String> = emptySet(),
+    preferredLocalId: String = "",
 ): List<RouterWorkspace> {
-    val linked = local.map { draft ->
+    val linkedIds = mutableSetOf<String>()
+    val linked = local.sortedByDescending { it.routerId == preferredLocalId }.mapNotNull { draft ->
         val worker = remote.firstOrNull { it.serverRouterId == boundRoutes[draft.routerId] }
+        if (worker != null && !linkedIds.add(worker.serverRouterId)) return@mapNotNull null
         if (worker == null) draft else draft.copy(
             online = worker.online, deviceCount = worker.deviceCount,
             onlineDeviceCount = worker.onlineDeviceCount, isDefault = worker.isDefault,
-            serverRouterId = worker.serverRouterId, basePath = worker.basePath)
+            serverRouterId = worker.serverRouterId, basePath = worker.basePath,
+            localDraft = false, model = worker.model, serialNumber = worker.serialNumber,
+            wireguardSupported = worker.wireguardSupported)
     }
     val boundIds = boundRoutes.values.toSet()
     return (remote.filterNot { it.routerId in hiddenIds || it.serverRouterId in boundIds } +
@@ -338,7 +346,32 @@ fun mergeRouterWorkspaces(
         .sortedWith(compareByDescending<RouterWorkspace> { it.isDefault })
 }
 
-fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<RouterWorkspace>): List<RouterWorkspace> {
+internal fun cachedRouterSerialNumber(prefs: AppPrefs): String {
+    val root = runCatching { JSONObject(prefs.cacheRouterDashboard) }.getOrNull() ?: return ""
+    val details = root.optJSONObject("details") ?: root.optJSONObject("data")?.optJSONObject("details")
+    return (details?.optJSONObject("ap")?.optString("serialNumber").orEmpty()
+        .ifBlank { details?.optJSONObject("identity")?.optString("serialNumber").orEmpty() })
+        .trim().uppercase(java.util.Locale.ROOT)
+}
+
+/** A persisted UI placeholder is not evidence that the gateway has a router named 'default'. */
+internal fun registryLegacyServerId(root: JSONObject, previous: String, cachedSerial: String, reportedId: String): String {
+    val rows = root.optJSONArray("routers") ?: return previous
+    val entries = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }
+    val ids = entries.map { it.optString("routerId") }.toSet()
+    val oldId = previous.trim().lowercase(java.util.Locale.ROOT)
+    val reported = reportedId.trim().lowercase(java.util.Locale.ROOT)
+    if (oldId in ids) return oldId
+    if (oldId.isNotBlank() && oldId != DEFAULT_ROUTER_WORKSPACE_ID) return oldId
+    if (cachedSerial.isNotBlank()) {
+        entries.singleOrNull { it.optString("serialNumber").equals(cachedSerial, true) }
+            ?.optString("routerId")?.let { return it }
+    }
+    if (reported.isNotBlank() && reported != DEFAULT_ROUTER_WORKSPACE_ID && reported in ids) return reported
+    return root.optString("defaultRouterId").takeIf { it in ids } ?: oldId
+}
+
+fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<RouterWorkspace>, registryConfirmed: Boolean = false): List<RouterWorkspace> {
     // 被哪台 Hub 列出来就绑哪台：远端 worker 的 hub 由列表来源决定，不由全局回落决定。
     remote.forEach { row ->
         if (row.routerId != DEFAULT_ROUTER_WORKSPACE_ID && !row.localDraft) {
@@ -346,13 +379,37 @@ fun loadVisibleRouterWorkspaces(context: Context, hubRoot: String, remote: List<
         }
     }
     val local = LocalRouterWorkspaceRegistry.list(context, hubRoot)
+    val rootPrefs = AppPrefs(context, DEFAULT_ROUTER_WORKSPACE_ID)
+    if (registryConfirmed && hubIsMultiChannel(remote)) {
+        local.forEach { draft ->
+            val prefs = AppPrefs(context, draft.routerId)
+            val sameHub = hubChannelRoot(prefs.hub) == hubChannelRoot(hubRoot)
+            val serial = cachedRouterSerialNumber(prefs)
+            val explicit = remote.singleOrNull { row ->
+                sameHub && row.serverRouterId.equals(prefs.routerHubId, ignoreCase = true) &&
+                    (serial.isBlank() || row.serialNumber.isBlank() || serial == row.serialNumber)
+            }
+            val physical = remote.singleOrNull { serial.isNotBlank() && it.serialNumber == serial }
+            val worker = explicit ?: physical
+            if (worker != null) prefs.attachRegisteredRouter(hubRoot, worker.serverRouterId, rootPrefs.token)
+        }
+    }
     val bound = local.mapNotNull { draft ->
         val prefs = AppPrefs(context, draft.routerId)
         // 比根地址：卡片读出来的 hub 自带 /r/<id>，列表的 hubRoot 是前端根地址。
         val sameHub = hubChannelRoot(prefs.hub) == hubChannelRoot(hubRoot)
-        prefs.routerHubId.takeIf { sameHub && it.isNotBlank() }?.let { draft.routerId to it }
+        prefs.routerHubId.takeIf { sameHub && it.isNotBlank() }
+            ?.lowercase(java.util.Locale.ROOT)?.let { draft.routerId to it }
     }.toMap()
-    return mergeRouterWorkspaces(remote, local, bound, LocalRouterWorkspaceRegistry.hidden(context, hubRoot))
+    return mergeRouterWorkspaces(remote, local, bound, LocalRouterWorkspaceRegistry.hidden(context, hubRoot),
+        RouterWorkspaceStore.activeWorkspaceId(context))
+}
+
+internal fun registeredWorkspaceSelection(context: Context, hubRoot: String, rows: List<RouterWorkspace>, selectedId: String): String {
+    if (rows.any { it.routerId == selectedId }) return selectedId
+    val serverId = if (selectedId == DEFAULT_ROUTER_WORKSPACE_ID)
+        RouterWorkspaceStore.legacyServerId(context, hubRoot) else AppPrefs(context, selectedId).routerHubId
+    return rows.firstOrNull { it.serverRouterId == serverId }?.routerId ?: selectedId
 }
 
 data class WorkspaceDeviceCounts(
@@ -441,9 +498,9 @@ object RouterWorkspaceStore {
 
     @Synchronized
     fun restoreActive(context: Context, hubRoot: String, rows: List<RouterWorkspace>): String {
-        val saved = remembered(context, hubRoot)
+        val saved = registeredWorkspaceSelection(context, hubRoot, rows, remembered(context, hubRoot))
         val restored = saved.takeIf { rows.any { row -> row.routerId == it } }
-            ?: DEFAULT_ROUTER_WORKSPACE_ID
+            ?: rows.firstOrNull { it.isDefault }?.routerId ?: DEFAULT_ROUTER_WORKSPACE_ID
         if (activeId != restored) activation += 1L
         activeId = restored
         return restored
@@ -493,6 +550,22 @@ object RouterWorkspaceStore {
         val editor = prefs.edit()
         if (!prefs.contains(legacyKey)) editor.putString(legacyKey, serverId)
         editor.putString(identityKey("server_default", hubRoot), serverId).apply()
+    }
+
+    fun recordLegacyServerId(context: Context, hubRoot: String, serverId: String) {
+        if (!validRouterWorkspaceId(serverId)) return
+        context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+            .edit().putString(identityKey("legacy_server", hubRoot), serverId).apply()
+    }
+
+    fun confirmedBasePath(context: Context, hubRoot: String, serverId: String): String? {
+        if (!validRouterWorkspaceId(serverId)) return null
+        val raw = context.applicationContext.getSharedPreferences("labprobe_workspaces", Context.MODE_PRIVATE)
+            .getString(identityKey("router_list", hubRoot), "").orEmpty()
+        val rows = runCatching { JSONObject(raw).optJSONArray("routers") }.getOrNull() ?: return null
+        val row = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }
+            .singleOrNull { it.optString("routerId") == serverId } ?: return null
+        return row.optString("basePath").trimEnd('/').takeIf { it.isEmpty() || it == "/r/$serverId" }
     }
 
     fun cacheList(context: Context, hubRoot: String, root: JSONObject) {
@@ -556,13 +629,17 @@ class RouterWorkspaceApi(private val context: Context, private val defaultPrefs:
 
     suspend fun list(): List<RouterWorkspace> = withContext(Dispatchers.IO) {
         requireOriginalConnection()
+        val previousHub = defaultPrefs.hub
         val root = api.requestJson("/api/routers")
         requireOriginalConnection()
         val serverDefault = root.optString("defaultRouterId").trim().takeIf(::validRouterWorkspaceId)
         val previousLegacy = RouterWorkspaceStore.legacyServerId(context, targetHubRoot)
-        val parsed = parseRouterWorkspaces(root, previousLegacy.ifBlank { serverDefault })
+        val legacyId = registryLegacyServerId(root, previousLegacy, cachedRouterSerialNumber(defaultPrefs), defaultPrefs.hubServerRouterId)
+        val parsed = parseRouterWorkspaces(root, legacyId.ifBlank { serverDefault })
         if (serverDefault != null) RouterWorkspaceStore.recordServerDefault(context, targetHubRoot, serverDefault)
+        RouterWorkspaceStore.recordLegacyServerId(context, targetHubRoot, legacyId)
         RouterWorkspaceStore.cacheList(context, targetHubRoot, root)
+        if (previousHub != defaultPrefs.hub) RouterWorkspaceStore.hubConnectionChanged()
         parsed
     }
 
@@ -735,11 +812,11 @@ fun RouterWorkspacePickerDialog(
         dragHandle = null,
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 14.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
         ) {
-            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 18.dp, vertical = 8.dp)) {
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 18.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("切换路由器", style = LabTypography.SectionTitle, modifier = Modifier.weight(1f))
                     Box(
@@ -817,7 +894,7 @@ fun routerWorkspaceDeviceCountsLine(item: RouterWorkspace): String = when {
 fun routerWorkspaceSummaryLine(item: RouterWorkspace): String {
     val devPart = routerWorkspaceDeviceCountsLine(item)
     val followedPart = item.followedOnlineCount?.let { "关注设备在线 ${it} 台" } ?: "关注设备在线待同步"
-    return "$devPart · $followedPart"
+    return (if (item.localDraft) "独立配置 · 缓存 " else "") + "$devPart · $followedPart"
 }
 
 /** 一行讲清「通不通 + 有几台」；缺字段时说「待同步」，绝不拿 0 冒充已知。 */
@@ -845,7 +922,7 @@ fun AddRouterWorkspaceDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(26.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
             shadowElevation = 8.dp,
         ) {
@@ -980,11 +1057,11 @@ fun RouterWorkspaceEditDialog(
     }
     Dialog(onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Surface(Modifier.fillMaxSize(), color = Color(0xFFF4F5F8)) {
-            Box(Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+        LabGradientDialogSurface(Modifier.fillMaxWidth(.94f).heightIn(max = 520.dp)) {
+            Box(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 18.dp, vertical = 18.dp)) {
                     Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
-                        Text("编辑", style = LabTypography.PageTitle.copy(fontSize = 17.sp))
+                        Text("编辑", style = LabTypography.DialogTitle)
                         Box(Modifier.align(Alignment.CenterStart).size(40.dp).clip(CircleShape)
                             .clickable(enabled = !busy, onClick = onDismiss), contentAlignment = Alignment.Center) {
                             Icon(Icons.Rounded.ArrowBack, "返回", tint = LabV2.Ink)
@@ -998,7 +1075,7 @@ fun RouterWorkspaceEditDialog(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 BasicTextField(value = name, onValueChange = { if (!busy) name = it },
                                     singleLine = true, enabled = !busy,
-                                    textStyle = LabTypography.CardTitle.copy(fontSize = 17.5.sp, color = LabV2.Ink),
+                                    textStyle = LabTypography.DialogBody.copy(color = LabV2.Ink),
                                     modifier = Modifier.weight(1f))
                                 if (name.isNotEmpty()) Box(
                                     Modifier.size(30.dp).clip(CircleShape).clickable(enabled = !busy) { name = "" },
@@ -1007,7 +1084,7 @@ fun RouterWorkspaceEditDialog(
                             }
                         }
                     }
-                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.height(16.dp))
                     Button(onClick = {
                         val clean = name.trim()
                         if (clean.isBlank()) { result = false to "名称不能为空"; return@Button }
@@ -1119,7 +1196,7 @@ fun RouterWorkspaceEditDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(26.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
             shadowElevation = 8.dp,
         ) {

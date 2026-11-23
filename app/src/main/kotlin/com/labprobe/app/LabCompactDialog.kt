@@ -41,7 +41,7 @@ fun LabCompactAlertDialog(
     icon: @Composable (() -> Unit)? = null,
     title: @Composable (() -> Unit)? = null,
     text: @Composable (() -> Unit)? = null,
-    @Suppress("UNUSED_PARAMETER") shape: Shape = LabV2.CardShape,
+    @Suppress("UNUSED_PARAMETER") shape: Shape = LabPopupShapes.Card,
     @Suppress("UNUSED_PARAMETER") containerColor: Color = Color.White,
     iconContentColor: Color = LabV2.Primary,
     titleContentColor: Color = LabV2.Ink,
@@ -49,7 +49,7 @@ fun LabCompactAlertDialog(
     @Suppress("UNUSED_PARAMETER") tonalElevation: Dp = 0.dp,
     properties: DialogProperties = DialogProperties(),
 ) {
-    val cardShape = LabV2.CardShape
+    val cardShape = LabPopupShapes.Card
     MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = LabV2.Primary, secondary = LabV2.Cyan)) {
       Dialog(onDismissRequest = onDismissRequest, properties = properties) {
         Column(
@@ -110,7 +110,7 @@ fun LabCompactAlertDialog(
 @Composable
 fun LabGradientDialogSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = LabV2.CardShape,
+    shape: Shape = LabPopupShapes.Card,
     @Suppress("UNUSED_PARAMETER") color: Color = Color.White,
     contentColor: Color = LabV2.Ink,
     @Suppress("UNUSED_PARAMETER") tonalElevation: Dp = 0.dp,

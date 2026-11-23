@@ -29,8 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -424,7 +422,7 @@ fun CompactDropdown(
         Surface(
             onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth().height(LabV2.FieldHeight),
-            shape = LabV2.FieldShape,
+            shape = LabPopupShapes.Field,
             color = if (polished) polishColors.surfaceInset else LabV2.Field,
             border = if (polished) BorderStroke(1.dp, polishColors.outline.copy(alpha = .38f)) else BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .8f))
         ) {
@@ -434,16 +432,16 @@ fun CompactDropdown(
                 Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = if (polished) polishColors.inkMuted else LabV2.InkMuted)
             }
         }
-        DropdownMenu(
+        LabDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Menu,
             containerColor = if (polished) polishColors.surfaceRaised else LabV2.Field,
             border = if (polished) BorderStroke(1.dp, Color(0xFFE2EEF8)) else null,
             shadowElevation = if (polished) 8.dp else 4.dp
         ) {
             options.forEach { option ->
-                DropdownMenuItem(
+                LabDropdownMenuItem(
                     text = { Text(option, fontSize = 12.5.sp, fontWeight = if (option == value) FontWeight.Bold else FontWeight.SemiBold) },
                     onClick = { expanded = false; onSelect(option) }
                 )
@@ -482,7 +480,7 @@ fun CompactListCard(
 @Composable
 fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        val shape = RoundedCornerShape(22.dp)
+        val shape = LabPopupShapes.Card
         Box(
             modifier = Modifier
                 .fillMaxWidth()

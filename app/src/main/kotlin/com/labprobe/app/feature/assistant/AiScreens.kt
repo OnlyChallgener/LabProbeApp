@@ -1,5 +1,7 @@
 package com.labprobe.app.feature.assistant
 
+import com.labprobe.app.LabPopupShapes
+
 import android.content.Context
 import com.labprobe.app.AppNavigator
 import com.labprobe.app.LabGradientDialogSurface
@@ -19,7 +21,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import com.labprobe.app.labCardCombinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -1235,7 +1237,7 @@ private fun AiUsageEditDialog(
     var quotaText by remember { mutableStateOf(usage.tokenQuota?.toString().orEmpty()) }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         LabGradientDialogSurface(
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Card,
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
             tonalElevation = 0.dp,
@@ -1361,7 +1363,7 @@ private fun AiUsageDeleteDialog(
 ) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         LabGradientDialogSurface(
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Card,
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
             tonalElevation = 0.dp,
@@ -1994,7 +1996,7 @@ private fun AiChatBubble(
     val bubbleInteractionSource = remember { MutableInteractionSource() }
     fun bubbleModifier(maxWidth: Dp): Modifier = Modifier
         .widthIn(max = maxWidth)
-        .combinedClickable(
+        .labCardCombinedClickable(
             interactionSource = bubbleInteractionSource,
             indication = null,
             onClick = { if (multiSelectMode && interactionEnabled) onToggleSelection() },
@@ -2090,7 +2092,7 @@ private fun AiPartialCopyDialog(message: AiMessage, onDismiss: () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Card,
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
             tonalElevation = 0.dp,
@@ -2145,7 +2147,7 @@ private fun AiNotificationInboxDialog(
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth().heightIn(max = 690.dp),
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Card,
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
             tonalElevation = 0.dp,
@@ -2319,7 +2321,7 @@ private fun AiModelPickerDialog(
 ) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         LabGradientDialogSurface(
-            shape = RoundedCornerShape(18.dp),
+            shape = LabPopupShapes.Card,
             color = AiTone.Surface,
             border = BorderStroke(1.dp, AiTone.Border),
             tonalElevation = 0.dp,
@@ -2821,7 +2823,7 @@ fun AiChatScreen(context: Context, prefs: AppPrefs, onBack: () -> Unit, onNaviga
                                                     .background(if (current) AiTone.MintSoft else AiTone.Field),
                                             ) {
                                                 Row(
-                                                    Modifier.fillMaxWidth().combinedClickable(
+                                                    Modifier.fillMaxWidth().labCardCombinedClickable(
                                                         interactionSource = historyInteractionSource,
                                                         indication = null,
                                                         enabled = !sending && !historyBusy,

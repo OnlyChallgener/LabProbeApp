@@ -788,8 +788,7 @@ internal fun RouterHeroCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LabV2.Primary)
-                    else Icon(Icons.Rounded.Refresh, null, Modifier.size(22.dp), tint = LabV2.Primary)
+                    LabRefreshIcon(refreshing, Modifier.size(22.dp))
                     Text(if (refreshing) "刷新中" else "刷新", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
                 }
             }

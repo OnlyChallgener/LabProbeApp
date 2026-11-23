@@ -10,18 +10,24 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import com.labprobe.app.labCardCombinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,10 +45,15 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +62,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -84,6 +99,9 @@ data class FavoriteShortcut(
     val localEndpoint: String = "",
     val remoteEndpoint: String = "",
     val serviceType: String = "",
+    val localBinding: FavoriteEndpointBinding? = null,
+    val remoteBinding: FavoriteEndpointBinding? = null,
+    val iconAutomatic: Boolean = false,
 )
 
 private fun normalizeFavoriteType(value: String?): String = when {
@@ -136,6 +154,9 @@ private fun parseFavoriteShortcutDocument(raw: String): FavoriteShortcutDocument
             localEndpoint = item.optString("localEndpoint").trim(),
             remoteEndpoint = item.optString("remoteEndpoint").trim(),
             serviceType = item.optString("serviceType").trim(),
+            localBinding = parseFavoriteBinding(item.optJSONObject("localBinding")),
+            remoteBinding = parseFavoriteBinding(item.optJSONObject("remoteBinding")),
+            iconAutomatic = item.optBoolean("iconAutomatic", false),
         )
     }.sortedBy { it.order }
     return FavoriteShortcutDocument(items = items, dismissedStunRuleIds = dismissed)
@@ -158,6 +179,9 @@ internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): Stri
         optionalFavoriteId(item.stunRuleId)?.let { json.put("stunRuleId", it) }
         optionalFavoriteId(item.ddnsRecordId)?.let { json.put("ddnsRecordId", it) }
         optionalFavoriteId(item.deviceId)?.let { json.put("deviceId", it) }
+        item.localBinding?.let { json.put("localBinding", it.toJson()) }
+        item.remoteBinding?.let { json.put("remoteBinding", it.toJson()) }
+        json.put("iconAutomatic", item.iconAutomatic)
         item.localEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("localEndpoint", it) }
         item.remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("remoteEndpoint", it) }
         item.serviceType.trim().takeIf { it.isNotBlank() }?.let { json.put("serviceType", it) }
@@ -280,7 +304,7 @@ private fun favoriteIpv6Snapshot(vararg values: String): String? = values.asSequ
     .mapNotNull { normalizeIpv6(it) }
     .firstOrNull { !isInvalidIpv6(it) }
 
-private fun favoriteLocalEndpoint(rule: PortMapRule, fallbackIpv6: String = ""): String = when {
+internal fun favoriteLocalEndpoint(rule: PortMapRule, fallbackIpv6: String = ""): String = when {
     rule.mode == "6to4" && rule.targetIpv4.isNotBlank() -> {
         cleanFavoriteEndpoint("${rule.targetIpv4}:${rule.targetPort}", favoriteServiceType(rule))
     }
@@ -310,7 +334,7 @@ internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0, fallback
         title = rule.name.ifBlank { "IPv6 映射 ${rule.listenPort}" },
         description = "IPv6 映射 · $serviceType 服务",
         iconType = "builtin",
-        iconValue = "server",
+        iconValue = suggestedFavoriteIcon(rule.name, serviceType),
         lanUrl = local,
         wanUrl = "",
         order = order,
@@ -322,6 +346,7 @@ internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0, fallback
         // DDNS hostname or explicit external endpoint is required before opening.
         remoteEndpoint = "",
         serviceType = serviceType,
+        iconAutomatic = true,
     )
 }
 
@@ -454,11 +479,12 @@ internal fun reconcileStunFavoriteItems(
     dismissedStunRuleIds: Set<String> = emptySet(),
 ): List<FavoriteShortcut> {
     val ruleIds = rules.mapTo(hashSetOf()) { it.id }
-    val updated = current.filterNot { optionalFavoriteId(it.stunRuleId)?.let { id -> id !in ruleIds } == true }.toMutableList()
+    val updated = current.toMutableList()
     rules.forEach { rule ->
         val index = updated.indexOfFirst { it.stunRuleId == rule.id }
         val existing = updated.getOrNull(index)
-        if (existing == null && rule.id in dismissedStunRuleIds) return@forEach
+        // Sources are opt-in: synchronization may never create a favorite.
+        if (existing == null) return@forEach
         val synced = favoriteFromStunRule(rule, existing, updated.size, ddnsSnapshot, nativeDdnsRecords)
         if (synced != null) {
             if (index >= 0) updated[index] = synced else updated += synced
@@ -715,6 +741,9 @@ private data class FavoriteDraft(
     val localEndpoint: String = "",
     val remoteEndpoint: String = "",
     val serviceType: String = "",
+    val localBinding: FavoriteEndpointBinding? = null,
+    val remoteBinding: FavoriteEndpointBinding? = null,
+    val iconAutomatic: Boolean = true,
 )
 
 private val favoriteImageClient = OkHttpClient.Builder()
@@ -722,10 +751,18 @@ private val favoriteImageClient = OkHttpClient.Builder()
     .readTimeout(6, TimeUnit.SECONDS)
     .build()
 
-fun AppPrefs.favoriteShortcuts(): List<FavoriteShortcut> {
-    return synchronized(favoriteShortcutPersistenceLock) {
-        parseFavoriteShortcutsJson(favoriteShortcutsJson)
-    }
+internal fun isSourceLinkedFavorite(item: FavoriteShortcut): Boolean =
+    item.localBinding != null || item.remoteBinding != null || item.type in setOf("mapping", "stun") ||
+        !item.mappingId.isNullOrBlank() || !item.stunRuleId.isNullOrBlank() || item.id.startsWith("webhook-")
+
+/** One-time, workspace-scoped reset explicitly requested for existing source-linked cards. */
+fun AppPrefs.favoriteShortcuts(): List<FavoriteShortcut> = synchronized(favoriteShortcutPersistenceLock) {
+    val document = parseFavoriteShortcutDocument(favoriteShortcutsJson)
+    if (favoriteSourceResetVersion >= 1) return@synchronized document.items
+    val kept = document.items.filterNot(::isSourceLinkedFavorite).mapIndexed { index, item -> item.copy(order = index) }
+    favoriteShortcutsJson = serializeFavoriteShortcutDocument(kept, emptySet())
+    favoriteSourceResetVersion = 1
+    kept
 }
 
 fun AppPrefs.saveFavoriteShortcuts(
@@ -733,6 +770,7 @@ fun AppPrefs.saveFavoriteShortcuts(
     dismissedStunRuleIds: Set<String> = emptySet(),
 ) {
     synchronized(favoriteShortcutPersistenceLock) {
+        if (favoriteSourceResetVersion < 1) favoriteShortcuts()
         val existing = parseFavoriteShortcutDocument(favoriteShortcutsJson)
         val activeStunIds = items.mapNotNull { optionalFavoriteId(it.stunRuleId) }.toSet()
         val dismissed = (existing.dismissedStunRuleIds + dismissedStunRuleIds) - activeStunIds
@@ -753,38 +791,24 @@ fun AppPrefs.syncWebhookFavoriteShortcuts(events: List<EventItem>): Int {
         val generatedWanUrl = webhookFavoriteOrigin(address)
         if (generatedWanUrl.isBlank()) return@forEach
         val generatedId = "webhook-${Integer.toHexString(title.lowercase(Locale.ROOT).hashCode())}"
-        val index = current.indexOfFirst { it.id == generatedId || it.title.equals(title, ignoreCase = true) }
+        val index = current.indexOfFirst { it.id == generatedId }
         if (index >= 0) {
             val old = current[index]
             val previousRemote = old.remoteEndpoint.ifBlank { old.wanUrl }
             val wanUrl = mergeWebhookFavoriteUrl(generatedWanUrl, previousRemote)
             val description = old.description.takeUnless { it == "Webhook 自动同步" }.orEmpty()
             if (
-                old.id != generatedId || old.title != title || old.wanUrl != wanUrl ||
+                old.wanUrl != wanUrl ||
                 old.remoteEndpoint != wanUrl || old.description != description
             ) {
                 current[index] = old.copy(
-                    id = generatedId,
-                    title = title,
                     description = description,
                     wanUrl = wanUrl,
                     remoteEndpoint = wanUrl,
                 )
                 changes++
             }
-        } else {
-            current += FavoriteShortcut(
-                id = generatedId,
-                title = title,
-                description = "",
-                iconType = "builtin",
-                iconValue = webhookBuiltinIcon(title),
-                lanUrl = "",
-                wanUrl = generatedWanUrl,
-                order = current.size,
-                remoteEndpoint = generatedWanUrl,
-            )
-            changes++
+
         }
     }
     if (changes > 0) saveFavoriteShortcuts(current)
@@ -895,11 +919,6 @@ internal fun favoriteAddressForCopy(rawAddress: String, serviceType: String = ""
     return cleanFavoriteEndpoint(rawAddress, serviceType)
 }
 
-private fun FavoriteShortcut.addressForCopy(mode: String): String = when (mode) {
-    "wan" -> favoriteAddressForCopy(remoteEndpoint.ifBlank { wanUrl }.ifBlank { lanUrl }, serviceType)
-    else -> favoriteAddressForCopy(localEndpoint.ifBlank { lanUrl }.ifBlank { wanUrl }, serviceType)
-}
-
 private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: String) {
     val target = normalizeFavoriteUrl(shortcut.openUrl(mode))
     if (target.isBlank()) return
@@ -907,6 +926,14 @@ private fun openFavorite(context: Context, shortcut: FavoriteShortcut, mode: Str
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }.onFailure { toast(context, "无法打开该地址") }
 }
+
+/** Copy is intentionally independent of the card's LAN/WAN display mode. */
+internal fun favoriteExternalAddressForCopy(
+    favorite: FavoriteShortcut,
+    snapshot: LabProbeDdnsSnapshot? = null,
+    mappingRules: List<PortMapRule> = emptyList(),
+    nativeDdnsRecords: List<DdnsRecord> = emptyList(),
+): String = favoriteAddressForCopy(resolveFavoriteRemoteEndpoint(favorite, snapshot, mappingRules, nativeDdnsRecords), favorite.serviceType)
 
 @Composable
 fun FavoritesScreen(
@@ -924,6 +951,7 @@ fun FavoritesScreen(
     if (onBack != null) {
         BackHandler { onBack() }
     }
+    var luckyOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
     var mappingRules by remember(mappingCache, prefs.hubDns) { mutableStateOf(PortMappingRuleStore.load(context, prefs).rules) }
@@ -936,7 +964,10 @@ fun FavoritesScreen(
     val latestOperationState by rememberUpdatedState(operationState)
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
-    val ddnsSnapshot = ddnsResource.value
+    var ddnsSnapshot by remember(routerRepository) { mutableStateOf(ddnsResource.value) }
+    var nativeDdnsSnapshot by remember(routerRepository) { mutableStateOf(nativeDdnsResource.value.orEmpty()) }
+    var pageRefreshing by remember { mutableStateOf(false) }
+    val refreshMutex = remember { Mutex() }
     var mappingDevices by remember(mappingCache, prefs.hubDns) { mutableStateOf(emptyList<DeviceItem>()) }
     var stunRules by remember(mappingCache, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
     val scope = rememberCoroutineScope()
@@ -945,84 +976,63 @@ fun FavoritesScreen(
     var shortcuts by remember { mutableStateOf(prefs.favoriteShortcuts()) }
     var editing by remember { mutableStateOf<FavoriteShortcut?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var arranging by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+    var draggedId by remember { mutableStateOf<String?>(null) }
+    var dropJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var dragOrigin by remember { mutableStateOf(Offset.Zero) }
+    var dragDelta by remember { mutableStateOf(Offset.Zero) }
+    val latestShortcuts by rememberUpdatedState(shortcuts)
+    BackHandler(arranging) { arranging = false }
     val accessReports = remember { mutableStateMapOf<String, ServiceAccessReport>() }
 
-    LaunchedEffect(routerRepository) {
-        routerRepository.refreshLabProbeDdns(false)
-        routerRepository.refreshDdns(false)
-        val loaded = runCatching { deviceApi.getDevices(false) }.getOrDefault(mappingDevices)
-        if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@LaunchedEffect
-        mappingDevices = loaded
-    }
-    LaunchedEffect(mappingApi) {
-        val persisted = PortMappingRuleStore.load(context, prefs)
-        val currentRules = mappingCache.rules.ifEmpty { persisted.rules }
-        val currentRulesRevision = maxOf(mappingCache.rulesRevision, persisted.revision)
-        runCatching { kotlinx.coroutines.withTimeout(4_000L) { mappingApi.list() } }.getOrNull()?.let { snapshot ->
-            if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@LaunchedEffect
-            if (shouldAcceptPortMapSnapshot(
-                    snapshot = snapshot,
-                    currentRules = currentRules,
-                    currentRulesRevision = currentRulesRevision,
-                    currentSnapshotRevision = mappingCache.snapshotRevision,
-                    hasPersistedDocument = persisted.hasDocument,
-                )
-            ) {
-                mappingRules = snapshot.rules
-                mappingCache.rules = snapshot.rules
-                mappingCache.rulesRevision = snapshot.rulesRevision
-                mappingCache.rulesUpdatedAt = snapshot.rulesUpdatedAt
-                mappingCache.snapshotRevision = snapshot.revision
-                PortMappingRuleStore.save(context, prefs, snapshot.rules, snapshot.rulesRevision, snapshot.rulesUpdatedAt)
-                if (snapshot.rulesLoaded) {
-                    removeMissingMappingFavorites(prefs, snapshot.rules.mapTo(hashSetOf()) { it.id })
+    suspend fun refreshPage(force: Boolean) = refreshMutex.withLock {
+        val before = latestOperationState
+        if (before?.running == true) return@withLock
+        if (force || stunRules == null) pageRefreshing = true
+        try {
+            coroutineScope {
+                val mappings = async { runCatching { kotlinx.coroutines.withTimeout(4_000) { mappingApi.list() } }.getOrNull() }
+                val stuns = async { runCatching { kotlinx.coroutines.withTimeout(4_000) { stunApi.list() } }.getOrNull() }
+                val devices = async { runCatching { kotlinx.coroutines.withTimeout(4_000) { deviceApi.getDevices(false) } }.getOrNull() }
+                val customDdns = async { routerRepository.refreshLabProbeDdns(force) }
+                val nativeDdns = async { routerRepository.refreshDdns(force) }
+                val mapping = mappings.await()
+                val stun = stuns.await()
+                val deviceRows = devices.await()
+                customDdns.await(); nativeDdns.await()
+                if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@coroutineScope
+                val after = latestOperationState
+                if (after?.running == true || after?.completedVersion != before?.completedVersion) return@coroutineScope
+                // Commit a page snapshot together. No item loading/scale animations.
+                if (mapping != null) {
+                    val persisted = PortMappingRuleStore.load(context, prefs)
+                    if (shouldAcceptPortMapSnapshot(mapping, mappingRules,
+                            maxOf(mappingCache.rulesRevision, persisted.revision), mappingCache.snapshotRevision, persisted.hasDocument)) {
+                        mappingRules = mapping.rules
+                        mappingCache.rules = mapping.rules
+                        mappingCache.rulesRevision = mapping.rulesRevision
+                        mappingCache.rulesUpdatedAt = mapping.rulesUpdatedAt
+                        mappingCache.snapshotRevision = mapping.revision
+                        PortMappingRuleStore.save(context, prefs, mapping.rules, mapping.rulesRevision, mapping.rulesUpdatedAt)
+                    }
                 }
+                if (deviceRows != null) mappingDevices = deviceRows
+                if (stun?.rulesLoaded == true) stunRules = stun.rules
+                ddnsSnapshot = routerRepository.labProbeDdns.value.value
+                nativeDdnsSnapshot = routerRepository.ddns.value.value.orEmpty()
+                mappingRules.forEach { syncExistingMappingFavorite(prefs, it, mappingDevices, ddnsSnapshot, nativeDdnsSnapshot) }
+                stunRules?.let { reconcileStunFavorites(prefs, it, ddnsSnapshot, nativeDdnsSnapshot) }
+                val current = prefs.favoriteShortcuts()
+                val followed = followFavoriteAddressOptions(current, favoriteAddressOptions(prefs, mappingRules, stunRules.orEmpty(), mappingDevices))
+                if (current != followed) prefs.saveFavoriteShortcuts(followed)
                 shortcuts = prefs.favoriteShortcuts()
             }
-        }
+        } finally { pageRefreshing = false }
     }
-    LaunchedEffect(syncVersion) {
-        if (syncVersion > 0) shortcuts = prefs.favoriteShortcuts()
-        mappingRules = PortMappingRuleStore.load(context, prefs).rules
-    }
-    LaunchedEffect(mappingRules, mappingDevices, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
-        mappingRules.forEach {
-            syncExistingMappingFavorite(prefs, it, mappingDevices, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
-        }
-        shortcuts = prefs.favoriteShortcuts()
-    }
-    LaunchedEffect(operationState?.targetId, operationState?.running, operationState?.completedVersion) {
-        if (operationState?.targetId?.startsWith("stun:") == true) {
-            // A pre-mutation snapshot must never remain usable after a STUN
-            // write; opening a favorite will wait for a confirmed refresh.
-            stunRules = null
-        }
-    }
-    LaunchedEffect(stunApi, ddnsResource.updatedAt, nativeDdnsResource.updatedAt) {
+    LaunchedEffect(mappingApi, syncVersion, operationState?.completedVersion) {
         while (true) {
-            val before = latestOperationState
-            if (before?.running == true) {
-                delay(400L)
-                continue
-            }
-            val fetched = try {
-                stunApi.list()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                null
-            }
-            if (mappingCache !== PortMappingMemoryCache.forScope(prefs.hub, prefs.token)) return@LaunchedEffect
-            val after = latestOperationState
-            if (after?.running == true || after?.completedVersion != before?.completedVersion) {
-                delay(400L)
-                continue
-            }
-            fetched?.takeIf { it.rulesLoaded }?.let { snapshot ->
-                stunRules = snapshot.rules
-                reconcileStunFavorites(prefs, snapshot.rules, ddnsSnapshot, nativeDdnsResource.value.orEmpty())
-            }
-            shortcuts = prefs.favoriteShortcuts()
+            refreshPage(false)
             delay(5_000)
         }
     }
@@ -1042,6 +1052,10 @@ fun FavoritesScreen(
         }
     }
 
+    if (luckyOpen) {
+        LuckyManagementScreen(prefs, favoriteAddressOptions(prefs, mappingRules, stunRules.orEmpty(), mappingDevices)) { luckyOpen = false }
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val columns = if (maxWidth >= 720.dp) 3 else 2
         val searchWidth = when {
@@ -1049,8 +1063,31 @@ fun FavoritesScreen(
             maxWidth >= 400.dp -> 150.dp
             else -> 120.dp
         }
+        val density = LocalDensity.current
+        val measurer = rememberTextMeasurer()
+        val baseStyle = LocalTextStyle.current
+        val cardWidth = (maxWidth - LabV2.PageHorizontal * 2 - LabV2.CardGap * (columns - 1)) / columns
+        val textWidth = with(density) { (cardWidth - 82.dp).roundToPx().coerceAtLeast(1) }
+        val equalHeight = with(density) {
+            (visible.maxOfOrNull { card ->
+                val mapping = resolveFavoriteMapping(card, mappingRules)
+                val stun = resolveFavoriteStun(card, stunRules)
+                val address = if (mode == "wan") resolveFavoriteRemoteEndpoint(card, ddnsSnapshot, mappingRules, nativeDdnsSnapshot)
+                    else resolveFavoriteLocalEndpoint(card, mappingRules, mappingDevices)
+                val status = favoriteBoundSourceIssue(card, mode, mappingRules, stunRules) ?: favoriteLinkedRuleStatus(card, mapping, stun)
+                    ?: accessReports[card.id]?.let(::favoriteAccessStatus) ?: favoriteServiceStatus(card, mode, mapping, mappingDevices, stun)
+                val titleHeight = measurer.measure(card.title, baseStyle.copy(fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
+                    constraints = Constraints(maxWidth = (textWidth - if (arranging) 16.dp.roundToPx() else 0).coerceAtLeast(1)), maxLines = 2, overflow = TextOverflow.Ellipsis).size.height
+                val addressHeight = measurer.measure(favoriteAddressForCopy(address, card.serviceType).ifBlank { if (mode == "wan") "未设置外网地址" else "未设置内网地址" },
+                    baseStyle.copy(fontSize = 12.sp, lineHeight = 17.sp), constraints = Constraints(maxWidth = textWidth)).size.height
+                val statusHeight = if (status in setOf("内网", "外网")) 0 else measurer.measure(status,
+                    baseStyle.copy(fontSize = 11.sp, lineHeight = 15.sp), constraints = Constraints(maxWidth = textWidth)).size.height + 5.dp.roundToPx()
+                maxOf(48.dp.roundToPx(), titleHeight + addressHeight + 5.dp.roundToPx() + statusHeight) + 18.dp.roundToPx()
+            } ?: 66.dp.roundToPx()).toDp()
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
+            state = gridState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = LabV2.PageHorizontal, vertical = LabV2.PageTop),
             horizontalArrangement = Arrangement.spacedBy(LabV2.CardGap),
@@ -1063,7 +1100,14 @@ fun FavoritesScreen(
                         subtitle = "常用服务与网页入口",
                         onBack = onBack,
                         action = {
+                            if (arranging) TextButton(onClick = { arranging = false }) { Text("完成", fontSize = 13.sp) }
+                            IconButton(onClick = { scope.launch { refreshPage(true) } }, enabled = !pageRefreshing, modifier = Modifier.size(38.dp)) {
+                                LabRefreshIcon(pageRefreshing, Modifier.size(19.dp), description = "刷新收藏")
+                            }
                             CompactHeaderAction(Icons.Rounded.Add, "添加") { adding = true }
+                            IconButton(onClick = { luckyOpen = true }, modifier = Modifier.size(34.dp)) {
+                                FavoriteIcon("builtin", "lucky", 22)
+                            }
                             Spacer(Modifier.width(4.dp))
                             CompactHeaderAction(Icons.Rounded.Person, "我的") { onOpenSettings() }
                         }
@@ -1112,16 +1156,95 @@ fun FavoritesScreen(
                 }
             } else {
                 items(visible, key = { it.id }) { shortcut ->
+                    val dragging = draggedId == shortcut.id
                     val mappingResolution = resolveFavoriteMapping(shortcut, mappingRules)
                     val stunResolution = resolveFavoriteStun(shortcut, stunRules)
                     FavoriteShortcutCard(
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = tween(280), placementSpec = if (dragging) null else tween(320), fadeOutSpec = tween(240)
+                        ).zIndex(if (dragging) 1f else 0f).graphicsLayer {
+                            val position = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == shortcut.id }?.offset
+                            translationX = if (dragging) dragOrigin.x + dragDelta.x - (position?.x ?: dragOrigin.x.toInt()) else 0f
+                            translationY = if (dragging) dragOrigin.y + dragDelta.y - (position?.y ?: dragOrigin.y.toInt()) else 0f
+                        }.labCardHeldHalo(dragging).pointerInput(shortcut.id, query.isBlank()) {
+                            if (query.isBlank()) detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    dropJob?.cancel()
+                                    arranging = true
+                                    draggedId = shortcut.id
+                                    dragDelta = Offset.Zero
+                                    val item = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == shortcut.id }
+                                    dragOrigin = item?.let { Offset(it.offset.x.toFloat(), it.offset.y.toFloat()) } ?: Offset.Zero
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragDelta += amount
+                                    val y = dragOrigin.y + dragDelta.y
+                                    val layout = gridState.layoutInfo
+                                    val dragged = layout.visibleItemsInfo.firstOrNull { it.key == shortcut.id }
+                                    val center = dragOrigin + dragDelta + Offset((dragged?.size?.width ?: 0) / 2f, (dragged?.size?.height ?: 0) / 2f)
+                                    val hovered = layout.visibleItemsInfo.firstOrNull { info ->
+                                        info.key != shortcut.id && latestShortcuts.any { it.id == info.key } &&
+                                            center.x >= info.offset.x && center.x < info.offset.x + info.size.width &&
+                                            center.y >= info.offset.y && center.y < info.offset.y + info.size.height
+                                    }
+                                    val from = latestShortcuts.indexOfFirst { it.id == shortcut.id }
+                                    val to = latestShortcuts.indexOfFirst { it.id == hovered?.key }
+                                    if (from >= 0 && to >= 0 && from != to) {
+                                        val next = latestShortcuts.toMutableList()
+                                        next.add(to, next.removeAt(from))
+                                        persist(next)
+                                    }
+                                    val step = when {
+                                        y < layout.viewportStartOffset + 80 -> -18f
+                                        y > layout.viewportEndOffset - 160 -> 18f
+                                        else -> 0f
+                                    }
+                                    if (step != 0f) scope.launch { gridState.scrollBy(step) }
+                                },
+                                onDragCancel = { draggedId = null; dragDelta = Offset.Zero },
+                                onDragEnd = {
+                                    val item = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == shortcut.id }
+                                    val center = dragOrigin + dragDelta + Offset((item?.size?.width ?: 0) / 2f, (item?.size?.height ?: 0) / 2f)
+                                    val target = gridState.layoutInfo.visibleItemsInfo.filter { info -> latestShortcuts.any { it.id == info.key } }
+                                        .minByOrNull { info ->
+                                            (center - Offset(info.offset.x + info.size.width / 2f, info.offset.y + info.size.height / 2f)).getDistanceSquared()
+                                        }
+                                    val from = latestShortcuts.indexOfFirst { it.id == shortcut.id }
+                                    val to = latestShortcuts.indexOfFirst { it.id == target?.key }
+                                    if (from >= 0 && to >= 0 && from != to) {
+                                        val next = latestShortcuts.toMutableList()
+                                        next.add(to, next.removeAt(from))
+                                        persist(next)
+                                    }
+                                    // Keep the dragged card under the finger while the grid lays out;
+                                    // then ease the remaining distance into its new cell.
+                                    dropJob = scope.launch {
+                                        withFrameNanos { }
+                                        val placed = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == shortcut.id }
+                                        val newOrigin = placed?.let { Offset(it.offset.x.toFloat(), it.offset.y.toFloat()) } ?: dragOrigin
+                                        val returning = Animatable(dragDelta, Offset.VectorConverter)
+                                        returning.animateTo(newOrigin - dragOrigin, tween(320)) { dragDelta = value }
+                                        if (draggedId == shortcut.id) { draggedId = null; dragDelta = Offset.Zero }
+                                    }
+                                }
+                            )
+                        },
+                        arranging = arranging,
+                        // The outer reorder detector owns long press. A nested
+                        // combinedClickable long-click would consume the drag stream.
+                        onArrange = if (query.isBlank()) null else ({ arranging = true }),
                         shortcut = shortcut,
+                        minimumHeight = equalHeight,
                         mode = mode,
+                        address = if (mode == "wan") resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsSnapshot)
+                            else resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices),
                         columns = columns,
                         mapping = mappingResolution,
                         stun = stunResolution,
                         devices = mappingDevices,
                         accessReport = accessReports[shortcut.id],
+                        sourceIssue = favoriteBoundSourceIssue(shortcut, mode, mappingRules, stunRules),
                         dragEnabled = query.isBlank(),
                         onOpen = {
                             onBeforeOpenShortcut()
@@ -1130,7 +1253,12 @@ fun FavoritesScreen(
                             val currentStun = resolveFavoriteStun(shortcut, stunRules)
                             val linkedRule = currentMapping.rule
                             val serviceType = shortcut.serviceType.ifBlank { linkedRule?.let(::favoriteServiceType).orEmpty() }
-                            if (currentMapping.missing) {
+                            val sourceIssue = favoriteBoundSourceIssue(shortcut, mode, mappingRules, stunRules)
+                            if (latestOperationState?.running == true && latestOperationState?.targetId?.startsWith("stun:") == true) {
+                                toast(context, "规则更新中，请稍后再试")
+                            } else if (sourceIssue != null) {
+                                toast(context, sourceIssue)
+                            } else if (currentMapping.missing) {
                                 toast(context, "关联映射已删除，收藏入口已失效")
                             } else if (currentStun.missing) {
                                 toast(context, "关联 STUN 规则已删除，收藏入口已失效")
@@ -1145,7 +1273,9 @@ fun FavoritesScreen(
                             } else if (!favoriteServiceSupportsDirectOpen(serviceType)) {
                                 toast(context, "该服务请复制地址并使用对应客户端连接")
                             } else if (serviceType.equals("WireGuard", true)) {
-                                launchServiceQuickAccess(context, ServiceQuickAccessTarget.WireGuard, onOpenSsh, onOpenWireGuard)
+                                val target = serviceQuickAccessTarget(serviceType, shortcut.openUrl(mode))
+                                if (target == null) toast(context, "暂未取得可用的快捷访问地址")
+                                else launchServiceQuickAccess(context, target, onOpenSsh, onOpenWireGuard)
                             } else if (shortcut.localEndpoint.isBlank() && shortcut.remoteEndpoint.isBlank() && shortcut.ddnsRecordId == null) {
                                 if (serviceType.isBlank()) {
                                     openFavorite(context, shortcut, mode)
@@ -1156,7 +1286,7 @@ fun FavoritesScreen(
                                 }
                             } else {
                                 scope.launch {
-                                    val remoteEndpoint = resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsResource.value.orEmpty())
+                                    val remoteEndpoint = resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsSnapshot)
                                     val decision = chooseServiceAccess(
                                         localEndpoint = resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices),
                                         remoteEndpoint = remoteEndpoint,
@@ -1170,50 +1300,25 @@ fun FavoritesScreen(
                                             launchServiceQuickAccess(context, it, onOpenSsh, onOpenWireGuard)
                                         } ?: toast(context, "暂未取得可用的快捷访问地址")
                                     } ?: run {
-                                        val fallbackEndpoint = if (mode == "wan") {
-                                            remoteEndpoint
-                                        } else {
-                                            resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices)
-                                        }
+                                        val fallbackEndpoint = if (mode == "wan") remoteEndpoint
+                                            else resolveFavoriteLocalEndpoint(shortcut, mappingRules, mappingDevices)
                                         if (serviceType.equals("HTTP", true) || serviceType.equals("HTTPS", true)) {
                                             if (fallbackEndpoint.isNotBlank()) {
                                                 toast(context, decision.report.reason.ifBlank { "快速检测未确认，继续在浏览器尝试" })
                                                 serviceQuickAccessTarget(serviceType, fallbackEndpoint)?.let {
                                                     launchServiceQuickAccess(context, it, onOpenSsh, onOpenWireGuard)
                                                 }
-                                            } else {
-                                                toast(context, decision.report.reason.ifBlank { "未配置可打开地址" })
-                                            }
-                                        } else {
-                                            toast(context, decision.report.reason.ifBlank { "服务不可达" })
-                                        }
+                                            } else toast(context, decision.report.reason.ifBlank { "未配置可打开地址" })
+                                        } else toast(context, decision.report.reason.ifBlank { "服务不可达" })
                                     }
                                 }
                             }
                         },
                         onEdit = { editing = shortcut },
                         onCopyAddress = {
-                            val currentMapping = resolveFavoriteMapping(shortcut, mappingRules)
-                            val currentStun = resolveFavoriteStun(shortcut, stunRules)
-                            if (currentMapping.missing) {
-                                toast(context, "关联映射已删除，无法复制旧地址")
-                            } else if (currentStun.missing) {
-                                toast(context, "关联 STUN 规则已删除，无法复制旧地址")
-                            } else if (normalizeFavoriteType(shortcut.type) == "stun" && !currentStun.known) {
-                                toast(context, "STUN 状态尚未同步，无法确认最新地址")
-                            } else if (currentStun.rule != null && !currentStun.rule.ready) {
-                                toast(context, "STUN 穿透当前未就绪，无法确认最新地址")
-                            } else {
-                                val address = if (mode == "wan" && shortcut.ddnsRecordId != null) {
-                                    favoriteAddressForCopy(
-                                        resolveFavoriteRemoteEndpoint(shortcut, ddnsSnapshot, mappingRules, nativeDdnsResource.value.orEmpty()),
-                                        shortcut.serviceType,
-                                    )
-                                } else {
-                                    shortcut.addressForCopy(mode)
-                                }
-                                copy(context, address)
-                            }
+                            val address = favoriteExternalAddressForCopy(shortcut, ddnsSnapshot, mappingRules, nativeDdnsSnapshot)
+                            if (address.isBlank()) toast(context, "未配置外网地址")
+                            else copy(context, address)
                         },
                         onViewMapping = {
                             if (resolveFavoriteMapping(shortcut, mappingRules).missing) toast(context, "关联映射不存在") else onOpenPortMapping()
@@ -1252,8 +1357,9 @@ fun FavoritesScreen(
         FavoriteEditorSheet(
             existing = editing,
             ddnsRecords = ddnsSnapshot?.records.orEmpty(),
-            nativeDdnsRecords = nativeDdnsResource.value.orEmpty(),
+            nativeDdnsRecords = nativeDdnsSnapshot,
             mappingRules = mappingRules,
+            addressOptions = favoriteAddressOptions(prefs, mappingRules, stunRules.orEmpty(), mappingDevices),
             onDismiss = { adding = false; editing = null },
             onSave = { saved ->
                 val oldIndex = shortcuts.indexOfFirst { it.id == saved.id }
@@ -1300,116 +1406,57 @@ private fun FavoriteListCard(modifier: Modifier = Modifier, content: @Composable
 }
 
 @Composable
-private fun FavoriteShortcutCard(
+internal fun FavoriteShortcutCard(
     shortcut: FavoriteShortcut,
     mode: String,
+    modifier: Modifier = Modifier,
+    arranging: Boolean = false,
+    onArrange: (() -> Unit)? = null,
+    minimumHeight: Dp = 0.dp,
+    address: String = if (mode == "wan") shortcut.remoteEndpoint.ifBlank { shortcut.wanUrl } else shortcut.localEndpoint.ifBlank { shortcut.lanUrl },
     columns: Int,
     mapping: FavoriteMappingResolution,
     stun: FavoriteStunResolution,
     devices: List<DeviceItem> = emptyList(),
     accessReport: ServiceAccessReport?,
+    sourceIssue: String? = null,
     dragEnabled: Boolean,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onCopyAddress: () -> Unit,
     onViewMapping: () -> Unit,
     onDelete: () -> Unit,
-    onMoveBy: (Int) -> Unit
+    onMoveBy: (Int) -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
-    var dragging by remember(shortcut.id) { mutableStateOf(false) }
-    var dragX by remember(shortcut.id) { mutableFloatStateOf(0f) }
-    var dragY by remember(shortcut.id) { mutableFloatStateOf(0f) }
-    val scale by animateFloatAsState(if (dragging) .965f else 1f, label = "favorite-drag-scale")
-    val density = LocalDensity.current
-    val rowThreshold = with(density) { 110.dp.toPx() }
-    val colThreshold = with(density) { 150.dp.toPx() }
-
-    fun finishDrag() {
-        val row = (dragY / rowThreshold).roundToInt()
-        val col = (dragX / colThreshold).roundToInt()
-        val delta = row * columns + col
-        if (delta != 0) onMoveBy(delta)
-        dragging = false
-        dragX = 0f
-        dragY = 0f
-    }
-
-    FavoriteListCard(
-        Modifier
-            .fillMaxWidth()
-            .offset { IntOffset(if (dragging) dragX.roundToInt() else 0, if (dragging) dragY.roundToInt() else 0) }
-            .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (dragging) .97f else 1f }
-            .shadow(if (dragging) 14.dp else 0.dp, LabV2.CompactCardShape, clip = false)
-            .pointerInput(shortcut.id, dragEnabled) {
-                if (dragEnabled) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { dragging = true },
-                        onDragEnd = ::finishDrag,
-                        onDragCancel = { dragging = false; dragX = 0f; dragY = 0f },
-                        onDrag = { change, amount -> change.consume(); dragX += amount.x; dragY += amount.y }
-                    )
+    val onAddressClick = { if (!arranging) { onCopyAddress(); onOpen() } }
+    val status = sourceIssue ?: favoriteLinkedRuleStatus(shortcut, mapping, stun)
+        ?: accessReport?.let(::favoriteAccessStatus)
+        ?: favoriteServiceStatus(shortcut, mode, mapping, devices, stun)
+    Box(modifier.fillMaxWidth().testTag("favorite-card-${shortcut.id}")) {
+        FavoriteListCard(Modifier.fillMaxWidth().heightIn(min = minimumHeight).labCardCombinedClickable(
+            onClick = onAddressClick, onLongClick = onArrange, onLongClickLabel = "整理收藏")) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).labCardCombinedClickable(
+                    halo = false, onClick = { if (!arranging) onEdit() }, onClickLabel = "编辑收藏", onLongClick = onArrange), contentAlignment = Alignment.Center) {
+                    FavoriteIcon(shortcut.iconType, shortcut.iconValue, 42)
                 }
-            }
-            .clip(LabV2.CompactCardShape)
-            .combinedClickable(onClick = onOpen, onLongClick = {})
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            FavoriteIcon(shortcut.iconType, shortcut.iconValue, 40)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(shortcut.title, fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val status = favoriteLinkedRuleStatus(shortcut, mapping, stun)
-                    ?: accessReport?.let(::favoriteAccessStatus)
-                    ?: favoriteServiceStatus(shortcut, mode, mapping, devices, stun)
-                val statusLabel = when (status) {
-                    "内网", "外网" -> "可达"
-                    "已停止" -> "已停止"
-                    "状态待同步" -> "待同步"
-                    else -> "不可达"
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(
-                        shortcut.serviceType.ifBlank { "网页入口" },
-                        fontSize = 10.5.sp,
-                        lineHeight = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = LabV2.InkMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Box(Modifier.size(3.dp).clip(CircleShape).background(LabV2.InkMuted.copy(alpha = .45f)))
-                    Text(
-                        statusLabel,
-                        fontSize = 10.5.sp,
-                        lineHeight = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = when {
-                            status == "内网" -> LabV2.Green
-                            status == "外网" -> LabV2.Primary
-                            status == "已停止" || status == "状态待同步" -> LabV2.InkMuted
-                            else -> LabV2.Red
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                shortcut.description.takeIf { it.isNotBlank() && it != shortcut.serviceType }?.let { description ->
-                    Text(description, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            Box {
-                IconButton(onClick = { menu = true }, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(18.dp), tint = LabV2.InkMuted)
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(12.dp), containerColor = Color.White) {
-                    DropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("复制地址", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(17.dp)) }, onClick = { menu = false; onCopyAddress() })
-                    if (shortcut.mappingId != null) {
-                        DropdownMenuItem(text = { Text("查看关联映射", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(Icons.Rounded.SwapHoriz, null, Modifier.size(17.dp)) }, onClick = { menu = false; onViewMapping() })
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f).labCardCombinedClickable(
+                    halo = false, onClick = onAddressClick, onClickLabel = "复制外网地址并跳转", onLongClick = onArrange),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(shortcut.title, modifier = Modifier.padding(end = if (arranging) 16.dp else 0.dp), fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold,
+                        color = LabV2.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(favoriteAddressForCopy(address, shortcut.serviceType).ifBlank { if (mode == "wan") "未设置外网地址" else "未设置内网地址" },
+                        fontSize = 12.sp, lineHeight = 17.sp, color = LabV2.InkMuted)
+                    if (status !in setOf("内网", "外网")) {
+                        Text(status, fontSize = 11.sp, lineHeight = 15.sp, color = LabV2.Amber)
                     }
-                    DropdownMenuItem(text = { Text("删除", color = LabV2.Red, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(17.dp), tint = LabV2.Red) }, onClick = { menu = false; onDelete() })
                 }
+            }
+        }
+        if (arranging) {
+            IconButton(onClick = onDelete, modifier = Modifier.align(Alignment.TopEnd).size(32.dp)) {
+                Icon(Icons.Rounded.Close, "移除收藏", Modifier.size(15.dp), tint = LabV2.InkMuted)
             }
         }
     }
@@ -1444,10 +1491,11 @@ private fun FavoriteIcon(type: String, iconValue: String, size: Int) {
             }
         } else null
     }
-    val shape = RoundedCornerShape((size * .28f).dp)
-    Box(Modifier.size(size.dp).clip(shape).background(LabV2.Primary.copy(alpha = .10f)).border(1.dp, LabV2.Primary.copy(alpha = .10f), shape), contentAlignment = Alignment.Center) {
+    if (type == "builtin" && FavoritePresetIcon(iconValue, size)) return
+    val shape = RoundedCornerShape((size * .22f).dp)
+    Box(Modifier.size(size.dp).clip(shape).background(LabV2.Primary.copy(alpha = .06f)), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
-            Image(bitmap!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Image(bitmap!!, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         } else {
             val (icon, color) = favoriteBuiltinIcon(if (type == "builtin") iconValue else "web")
             Icon(icon, null, Modifier.size((size * .52f).dp), tint = color)
@@ -1466,314 +1514,215 @@ private fun favoriteBuiltinIcon(value: String): Pair<ImageVector, Color> = when 
 }
 
 @Composable
-private fun FavoriteEditorSheet(
+internal fun FavoriteEditorSheet(
     existing: FavoriteShortcut?,
     ddnsRecords: List<LabProbeDdnsRecord>,
     nativeDdnsRecords: List<DdnsRecord> = emptyList(),
     mappingRules: List<PortMapRule> = emptyList(),
+    addressOptions: List<FavoriteAddressOption> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (FavoriteShortcut) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var draft by remember(existing?.id) {
-        mutableStateOf(
-            existing?.let {
-                val rawRemote = it.remoteEndpoint.ifBlank { it.wanUrl }
-                FavoriteDraft(
-                    id = it.id,
-                    title = it.title,
-                    description = it.description,
-                    iconType = it.iconType,
-                    iconValue = it.iconValue,
-                    lanUrl = it.lanUrl,
-                    wanUrl = it.wanUrl,
-                    type = it.type,
-                    mappingId = it.mappingId,
-                    stunRuleId = it.stunRuleId,
-                    ddnsRecordId = it.ddnsRecordId,
-                    deviceId = it.deviceId,
-                    localEndpoint = cleanFavoriteEndpoint(it.localEndpoint.ifBlank { it.lanUrl }, it.serviceType),
-                    remoteEndpoint = cleanFavoriteEndpoint(rawRemote, it.serviceType),
-                    serviceType = it.serviceType,
+    var draft by remember(existing?.id) { mutableStateOf(existing?.let {
+        FavoriteDraft(id = it.id, title = it.title, description = it.description,
+            iconType = it.iconType, iconValue = it.iconValue, iconAutomatic = it.iconAutomatic,
+            lanUrl = it.lanUrl, wanUrl = it.wanUrl, type = it.type, mappingId = it.mappingId,
+            stunRuleId = it.stunRuleId, ddnsRecordId = it.ddnsRecordId, deviceId = it.deviceId,
+            localEndpoint = it.localEndpoint.ifBlank { it.lanUrl }, remoteEndpoint = it.remoteEndpoint.ifBlank { it.wanUrl },
+            serviceType = it.serviceType, localBinding = it.localBinding, remoteBinding = it.remoteBinding)
+    } ?: FavoriteDraft()) }
+    var error by remember { mutableStateOf("") }
+    var iconMenu by remember { mutableStateOf(false) }
+    var remoteExplicit by remember(existing?.id) { mutableStateOf(
+        draft.remoteEndpoint.isNotBlank() && (draft.localBinding == null || draft.remoteBinding != draft.localBinding?.copy(side = "wan"))) }
+
+    fun update(next: FavoriteDraft) {
+        draft = if (next.iconAutomatic && next.iconType == "builtin") next.copy(iconValue = suggestedFavoriteIcon(next.title, next.serviceType)) else next
+    }
+    fun choose(option: FavoriteAddressOption, side: String) {
+        var next = draft.copy(title = draft.title.ifBlank { option.name }, serviceType = draft.serviceType.ifBlank { option.serviceType },
+            type = "manual", mappingId = null, stunRuleId = null)
+        if (side == "lan") {
+            next = next.copy(localEndpoint = option.endpoint, localBinding = option.binding)
+            val remote = favoritePairedRemoteOption(option, addressOptions)
+            if (!remoteExplicit && remote != null) next = next.copy(
+                remoteEndpoint = favoriteFollowEndpoint(draft.remoteEndpoint, remote.endpoint), remoteBinding = remote.binding, ddnsRecordId = null)
+        } else {
+            remoteExplicit = true
+            next = next.copy(remoteEndpoint = option.endpoint, remoteBinding = option.binding, ddnsRecordId = null)
+        }
+        update(next)
+    }
+    LaunchedEffect(addressOptions) {
+        val saved = FavoriteShortcut(draft.id, draft.title, draft.description, draft.iconType, draft.iconValue,
+            draft.localEndpoint, draft.remoteEndpoint, 0, localEndpoint = draft.localEndpoint,
+            remoteEndpoint = draft.remoteEndpoint, localBinding = draft.localBinding, remoteBinding = draft.remoteBinding)
+        val followed = followFavoriteAddressOptions(listOf(saved), addressOptions).single()
+        draft = draft.copy(localEndpoint = followed.localEndpoint, remoteEndpoint = followed.remoteEndpoint)
+    }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            runCatching { copyFavoriteImage(context, uri) }
+                .onSuccess { path -> update(draft.copy(iconType = "local", iconValue = path, iconAutomatic = false)); error = "" }
+                .onFailure { error = it.message ?: "图片导入失败" }
+        }
+    }
+    fun save() {
+        val lan = cleanFavoriteEndpoint(draft.localEndpoint, draft.serviceType)
+        val wan = cleanFavoriteEndpoint(draft.remoteEndpoint, draft.serviceType)
+        error = when {
+            draft.title.isBlank() -> "请填写名称"
+            lan.isBlank() && wan.isBlank() -> "请至少填写一个访问入口"
+            draft.iconType in setOf("url", "local") && draft.iconValue.isBlank() -> "请选择或填写图标"
+            else -> ""
+        }
+        if (error.isNotBlank()) return
+        onSave(FavoriteShortcut(draft.id, draft.title.trim(), draft.description.trim(), draft.iconType, draft.iconValue,
+            lan, wan, existing?.order ?: 0, draft.type, draft.mappingId, draft.stunRuleId, draft.ddnsRecordId,
+            draft.deviceId, lan, wan, draft.serviceType.trim(), draft.localBinding, draft.remoteBinding, draft.iconAutomatic))
+    }
+    LabEditorDialog(title = if (existing == null) "添加收藏" else "编辑收藏", onDismiss = onDismiss, actions = {
+        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("取消") }
+        Button(onClick = ::save, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("保存") }
+    }) {
+        FavoriteEditorField("名称", draft.title, { update(draft.copy(title = it)) }, "例如：绿联 NAS")
+        FavoriteEditorField("描述", draft.description, { update(draft.copy(description = it)) }, "简短说明", multiline = true)
+        FavoriteAddressField("内网地址", "lan", draft.localEndpoint, draft.localBinding, addressOptions,
+            onChange = { update(draft.copy(localEndpoint = it, localBinding = null, type = "manual", mappingId = null, stunRuleId = null)) },
+            onPick = { choose(it, "lan") }, onDetach = { draft = draft.copy(localBinding = null) })
+        FavoriteAddressField("外网地址", "wan", draft.remoteEndpoint, draft.remoteBinding, addressOptions,
+            onChange = {
+                val suffixOnly = favoriteSameEndpointAuthority(draft.remoteEndpoint, it)
+                if (!suffixOnly) remoteExplicit = true
+                update(draft.copy(remoteEndpoint = it, remoteBinding = draft.remoteBinding.takeIf { _ -> suffixOnly },
+                    ddnsRecordId = draft.ddnsRecordId.takeIf { _ -> suffixOnly }, type = "manual", mappingId = null, stunRuleId = null))
+            },
+            onPick = { choose(it, "wan") }, onDetach = { remoteExplicit = true; draft = draft.copy(remoteBinding = null) })
+        FavoriteEditorField("协议类型", draft.serviceType, { update(draft.copy(serviceType = it)) }, "HTTP / HTTPS / SSH / RDP")
+        if (ddnsRecords.isNotEmpty() || nativeDdnsRecords.isNotEmpty()) {
+            val choices = ddnsRecords.map { it.id to it.hostname } + nativeDdnsRecords.mapNotNull { row -> routerDdnsHostname(row)?.let { routerDdnsId(row) to it } }
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("关联域名", fontSize = 12.sp, color = LabV2.InkMuted)
+                CompactDropdown(
+                    value = favoriteDdnsHostname(draft.ddnsRecordId, LabProbeDdnsSnapshot(records = ddnsRecords), nativeDdnsRecords) ?: "不关联",
+                    options = listOf("不关联") + choices.map { it.second }.filter { it.isNotBlank() }.distinct(),
+                    modifier = Modifier.fillMaxWidth(),
+                    onSelect = { host ->
+                        val id = choices.firstOrNull { it.second == host }?.first
+                        val next = if (id == null) draft.remoteEndpoint else replaceFavoriteUrlHost(draft.remoteEndpoint, host) ?: draft.remoteEndpoint
+                        draft = draft.copy(ddnsRecordId = id, remoteEndpoint = next)
+                    },
                 )
             }
-                ?: FavoriteDraft()
-        )
-    }
-    var error by remember { mutableStateOf("") }
-    var ddnsMenu by remember { mutableStateOf(false) }
-    var ddnsOriginalRemote by remember(existing?.id) {
-        mutableStateOf((
-            if (existing?.ddnsRecordId != null) {
-                existing.wanUrl.ifBlank { existing.remoteEndpoint }
-            } else {
-                existing?.remoteEndpoint?.ifBlank { existing.wanUrl }.orEmpty()
+        }
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("图标", fontSize = 12.sp, color = LabV2.InkMuted, modifier = Modifier.weight(1f))
+                TextButton(onClick = { update(draft.copy(iconType = "builtin", iconAutomatic = true)) },
+                    modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                    Text(if (draft.iconAutomatic) "自动匹配中" else "自动匹配", fontSize = 12.sp)
+                }
             }
-        ).takeUnless(::isWildcardServiceEndpoint).orEmpty())
-    }
-    LaunchedEffect(existing?.id, ddnsRecords, nativeDdnsRecords, mappingRules) {
-        val current = existing ?: return@LaunchedEffect
-        if (current.ddnsRecordId != null && draft.remoteEndpoint == ddnsOriginalRemote) {
-            val resolved = resolveFavoriteRemoteEndpoint(
-                current.copy(remoteEndpoint = ddnsOriginalRemote),
-                LabProbeDdnsSnapshot(records = ddnsRecords),
-                mappingRules,
-                nativeDdnsRecords,
-            ).ifBlank { ddnsOriginalRemote }
-            if (resolved != ddnsOriginalRemote && resolved.isNotBlank()) {
-                draft = draft.copy(remoteEndpoint = resolved)
-            }
-        }
-    }
-    fun selectDdns(id: String?, hostnameValue: String?) {
-        val mapping = mappingRules.firstOrNull { it.id == draft.mappingId }
-        val isMapping = normalizeFavoriteType(draft.type) == "mapping"
-        if (id == null || hostnameValue.isNullOrBlank()) {
-            draft = draft.copy(
-                ddnsRecordId = null,
-                remoteEndpoint = if (isMapping) "" else ddnsOriginalRemote,
-            )
-            ddnsMenu = false
-            return
-        }
-        val hostname = validFavoriteHostname(hostnameValue) ?: return
-        if (ddnsOriginalRemote.isBlank()) ddnsOriginalRemote = draft.remoteEndpoint
-        val base = draft.remoteEndpoint.ifBlank { ddnsOriginalRemote }
-        val replaced = when {
-            base.isNotBlank() && isMapping -> {
-                val hostPort = if (mapping?.listenPort in 1..65535) "$hostname:${mapping?.listenPort}" else hostname
-                cleanFavoriteEndpoint(hostPort, draft.serviceType.ifBlank { mapping?.let(::favoriteServiceType).orEmpty() })
-            }
-            base.isNotBlank() -> cleanFavoriteEndpoint(replaceFavoriteUrlHost(base, hostname) ?: base, draft.serviceType)
-            mapping != null && mapping.listenPort in 1..65535 -> cleanFavoriteEndpoint("$hostname:${mapping.listenPort}", draft.serviceType.ifBlank { favoriteServiceType(mapping) })
-            else -> cleanFavoriteEndpoint(base, draft.serviceType)
-        }
-        draft = draft.copy(ddnsRecordId = id, remoteEndpoint = replaced)
-        ddnsMenu = false
-    }
-    fun selectLabProbeDdns(record: LabProbeDdnsRecord?) =
-        selectDdns(record?.id, record?.hostname)
-    fun selectRouterDdns(record: DdnsRecord?) =
-        selectDdns(record?.let(::routerDdnsId), record?.let(::routerDdnsHostname))
-    val stunFavorite = normalizeFavoriteType(draft.type) == "stun"
-    val selectableLabProbeDdns = if (stunFavorite) ddnsRecords.filter(::favoriteDdnsSupportsIpv4) else ddnsRecords
-    val selectableNativeDdns = if (stunFavorite) nativeDdnsRecords.filter(::favoriteDdnsSupportsIpv4) else nativeDdnsRecords
-    val webhookManaged = existing?.id?.startsWith("webhook-") == true
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                runCatching { copyFavoriteImage(context, uri) }
-                    .onSuccess { path -> draft = draft.copy(iconType = "local", iconValue = path); error = "" }
-                    .onFailure { error = it.message ?: "图片导入失败" }
-            }
-        }
-    }
-
-    CompactPopup(onDismiss = onDismiss) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(if (existing == null) "添加收藏" else "编辑收藏", fontSize = 19.sp, lineHeight = 22.sp, fontWeight = FontWeight.Black, color = LabV2.Ink)
-                if (webhookManaged) Text("标题和外网基础地址自动维护，可手动添加路径后缀", fontSize = 9.5.sp, color = LabV2.InkMuted, maxLines = 1)
-            }
-            IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(18.dp), tint = LabV2.InkMuted) }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FavoriteInlineField("名称", draft.title, { draft = draft.copy(title = it) }, "Home Assistant", Modifier.weight(1f), labelWidth = 48.dp, readOnly = webhookManaged)
-            FavoriteInlineField("描述", draft.description, { draft = draft.copy(description = it) }, "简短说明", Modifier.weight(1f), labelWidth = 28.dp)
-        }
-        Row(Modifier.fillMaxWidth()) {
-            FavoriteInlineField("内网地址", draft.localEndpoint, { draft = draft.copy(localEndpoint = it) }, "192.168.5.10:8123", Modifier.weight(1f), uri = true)
-        }
-        Row(Modifier.fillMaxWidth()) {
-            FavoriteInlineField("外网地址", draft.remoteEndpoint, { draft = draft.copy(remoteEndpoint = it) }, "example.com/be72", Modifier.weight(1f), uri = true)
-        }
-        Row(Modifier.fillMaxWidth()) {
-            FavoriteInlineField("服务类型", draft.serviceType, { draft = draft.copy(serviceType = it) }, "例如：HTTPS", Modifier.weight(1f))
-        }
-        if (selectableLabProbeDdns.any { it.hostname.isNotBlank() } || selectableNativeDdns.isNotEmpty()) {
-            val selectedDdns = ddnsRecords.firstOrNull { it.id == draft.ddnsRecordId }
-            val selectedRouterDdns = routerDdnsRecord(draft.ddnsRecordId, nativeDdnsRecords)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("关联", modifier = Modifier.width(48.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FavoriteIcon(draft.iconType, draft.iconValue, 36)
                 Box(Modifier.weight(1f)) {
-                    OutlinedButton(
-                        onClick = { ddnsMenu = true },
-                        modifier = Modifier.fillMaxWidth().height(LabV2.FieldHeight),
-                        shape = LabV2.FieldShape,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Ink),
-                        border = BorderStroke(1.dp, LabV2.BorderStrong),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    ) {
-                        Text(selectedDdns?.hostname ?: selectedRouterDdns?.domain ?: "不关联", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Start)
-                        Icon(Icons.Rounded.ArrowDropDown, null, tint = LabV2.Primary)
+                    val iconLabel = when {
+                        draft.iconAutomatic -> "自动匹配"
+                        draft.iconType == "url" -> "图片链接"
+                        draft.iconType == "local" -> "已上传图标"
+                        else -> favoriteIconPresets.firstOrNull { it.id == draft.iconValue }?.label
+                            ?: when (draft.iconValue) { "router" -> "路由器"; "cloud" -> "云服务"; else -> "通用网页" }
                     }
-                    DropdownMenu(
-                        expanded = ddnsMenu,
-                        onDismissRequest = { ddnsMenu = false },
-                        shape = RoundedCornerShape(16.dp),
-                        containerColor = Color.White,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 8.dp,
-                    ) {
-                        DropdownMenuItem(text = { Text("不关联", color = LabV2.Ink) }, onClick = { selectLabProbeDdns(null) })
-                        if (ddnsRecords.any { it.hostname.isNotBlank() }) {
-                            Text(if (stunFavorite) "LabProbe DDNS · A / IPv4" else "LabProbe DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            selectableLabProbeDdns.filter { it.hostname.isNotBlank() }.forEach { record ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(record.hostname, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            val addresses = listOf(
-                                                record.detectedIpv4.ifBlank { record.publishedIpv4 },
-                                                record.detectedIpv6.ifBlank { record.publishedIpv6 },
-                                            ).filter { it.isNotBlank() }.joinToString(" · ")
-                                            if (addresses.isNotBlank()) Text(addresses, color = LabV2.InkMuted, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                    },
-                                    onClick = { selectLabProbeDdns(record) },
-                                )
-                            }
-                        }
-                        if (selectableNativeDdns.isNotEmpty()) {
-                            Text(if (stunFavorite) "路由器 DDNS · A / IPv4" else "路由器 DDNS", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = LabV2.InkMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            selectableNativeDdns.filter { it.domain.isNotBlank() }.forEach { record ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(record.domain, color = LabV2.Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(
-                                                record.ip.ifBlank { "路由器当前解析地址" },
-                                                color = LabV2.InkFaint,
-                                                fontSize = 9.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                    },
-                                    onClick = { selectRouterDdns(record) },
-                                )
-                            }
+                    Surface(onClick = { iconMenu = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                        shape = LabPopupShapes.Field, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(iconLabel, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Icon(Icons.Rounded.ArrowDropDown, "选择图标", Modifier.size(18.dp), tint = LabV2.InkMuted)
                         }
                     }
-                }
-            }
-        }
-        if (webhookManaged) {
-            Text("可在自动生成的端口后添加 /be72；后续同步会保留该后缀。", Modifier.padding(start = 53.dp), fontSize = 9.5.sp, color = LabV2.Primary)
-        }
-
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("图标", modifier = Modifier.width(30.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-            CompactSegmentedControl(listOf("内置图标", "本地上传", "图片网址"), when (draft.iconType) { "local" -> "本地上传"; "url" -> "图片网址"; else -> "内置图标" }, {
-                draft = when (it) {
-                    "本地上传" -> draft.copy(iconType = "local", iconValue = if (draft.iconType == "local") draft.iconValue else "")
-                    "图片网址" -> draft.copy(iconType = "url", iconValue = if (draft.iconType == "url") draft.iconValue else "")
-                    else -> draft.copy(iconType = "builtin", iconValue = if (draft.iconType == "builtin") draft.iconValue else "web")
-                }
-            }, Modifier.weight(1f))
-        }
-
-        when (draft.iconType) {
-            "local" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                FavoriteIcon(draft.iconType, draft.iconValue, 46)
-                OutlinedButton(onClick = { imagePicker.launch("image/*") }, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) {
-                    Icon(Icons.Rounded.Image, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("选择 PNG / JPG / WEBP", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
-            }
-            "url" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FavoriteIcon("url", draft.iconValue, 42)
-                CompactTextField(draft.iconValue, { draft = draft.copy(iconValue = it) }, Modifier.weight(1f), placeholder = "https://example.com/icon.png", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-            }
-            else -> {
-                val choices = listOf("web", "router", "server", "media", "cloud", "home", "download")
-                Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    choices.forEach { value ->
-                        val selected = draft.iconValue == value
-                        Surface(onClick = { draft = draft.copy(iconValue = value) }, modifier = Modifier.size(46.dp), shape = RoundedCornerShape(15.dp), color = if (selected) LabV2.Primary.copy(alpha = .12f) else LabV2.FieldSoft, border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .35f) else LabV2.Border)) {
-                            Box(contentAlignment = Alignment.Center) { val icon = favoriteBuiltinIcon(value); Icon(icon.first, null, Modifier.size(21.dp), tint = icon.second) }
+                    LabDropdownMenu(expanded = iconMenu, onDismissRequest = { iconMenu = false }, modifier = Modifier.heightIn(max = 320.dp).widthIn(max = 300.dp)) {
+                        favoriteIconPresets.forEach { preset ->
+                            LabDropdownMenuItem(text = { Text(preset.label) }, onClick = {
+                                update(draft.copy(iconType = "builtin", iconValue = preset.id, iconAutomatic = false)); iconMenu = false
+                            })
                         }
+                        listOf("web" to "通用网页", "cloud" to "云服务").forEach { (id, label) ->
+                            LabDropdownMenuItem(text = { Text(label) }, onClick = { update(draft.copy(iconType = "builtin", iconValue = id, iconAutomatic = false)); iconMenu = false })
+                        }
+                        LabDropdownMenuItem(text = { Text("图片链接") }, onClick = {
+                            update(draft.copy(iconType = "url", iconValue = if (draft.iconType == "url") draft.iconValue else "", iconAutomatic = false)); iconMenu = false
+                        })
                     }
+                }
+                TextButton(onClick = { imagePicker.launch("image/*") }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+                    Text("上传", fontSize = 12.sp)
                 }
             }
         }
-
-        if (error.isNotBlank()) Text(error, color = LabV2.Red, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onDismiss, Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("取消", fontWeight = FontWeight.SemiBold) }
-            Button(
-                onClick = {
-                    val lan = normalizeFavoriteUrl(draft.localEndpoint)
-                    val wan = normalizeFavoriteUrl(draft.remoteEndpoint)
-                    val wanFallback = if (draft.ddnsRecordId != null || normalizeFavoriteType(draft.type) == "mapping") {
-                        normalizeFavoriteUrl(ddnsOriginalRemote.ifBlank { wan })
-                    } else {
-                        wan
-                    }
-                    error = when {
-                        draft.title.trim().isBlank() -> "请填写名称"
-                        lan.isBlank() && wan.isBlank() -> "请至少填写一个访问入口"
-                        draft.iconType == "local" && draft.iconValue.isBlank() -> "请选择本地图标"
-                        draft.iconType == "url" && draft.iconValue.isBlank() -> "请填写图片网址"
-                        else -> ""
-                    }
-                    if (error.isBlank()) {
-                        onSave(
-                            FavoriteShortcut(
-                                id = draft.id,
-                                title = draft.title.trim(),
-                                description = draft.description.trim(),
-                                iconType = draft.iconType,
-                                iconValue = draft.iconValue.trim(),
-                                lanUrl = lan,
-                                wanUrl = wanFallback,
-                                order = existing?.order ?: 0,
-                                type = normalizeFavoriteType(draft.type),
-                                mappingId = draft.mappingId,
-                                stunRuleId = draft.stunRuleId,
-                                ddnsRecordId = draft.ddnsRecordId,
-                                deviceId = draft.deviceId,
-                                localEndpoint = lan,
-                                remoteEndpoint = wan,
-                                serviceType = draft.serviceType.trim(),
-                            )
-                        )
-                    }
-                },
-                modifier = Modifier.weight(1f).heightIn(min = 40.dp),
-                shape = LabV2.ButtonShape,
-                enabled = draft.title.trim().isNotBlank() &&
-                    (draft.localEndpoint.trim().isNotBlank() || draft.remoteEndpoint.trim().isNotBlank()) &&
-                    !(draft.iconType in setOf("local", "url") && draft.iconValue.trim().isBlank())
-            ) { Text("保存", fontWeight = FontWeight.SemiBold) }
+        if (draft.iconType == "url") {
+            FavoriteEditorField("图片网址", draft.iconValue, { update(draft.copy(iconValue = it)) }, "https://…")
         }
+        if (error.isNotBlank()) Text(error, color = LabV2.Red, fontSize = 13.sp)
     }
 }
 
 @Composable
-private fun RowScope.FavoriteInlineField(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier,
-    labelWidth: Dp = 48.dp,
-    uri: Boolean = false,
-    readOnly: Boolean = false
-) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, modifier = Modifier.width(labelWidth), fontSize = 10.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted, maxLines = 1)
-        CompactTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.weight(1f).height(LabV2.FieldHeight),
-            placeholder = placeholder,
-            keyboardOptions = if (uri) KeyboardOptions(keyboardType = KeyboardType.Uri) else KeyboardOptions.Default,
-            readOnly = readOnly
-        )
+private fun FavoriteEditorField(label: String, value: String, onChange: (String) -> Unit, placeholder: String, multiline: Boolean = false) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, fontSize = 12.sp, color = LabV2.InkMuted, fontWeight = FontWeight.Medium)
+        OutlinedTextField(value, onChange, modifier = Modifier.fillMaxWidth(), singleLine = !multiline, minLines = 1, maxLines = if (multiline) 3 else 1,
+            shape = LabPopupShapes.Field, textStyle = LabTypography.DialogBody,
+            placeholder = { Text(placeholder, fontSize = 13.sp) },
+            colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = LabV2.BorderStrong, focusedBorderColor = LabV2.Primary,
+                unfocusedContainerColor = LabV2.FieldSoft, focusedContainerColor = LabV2.FieldSoft))
     }
 }
 
+@Composable
+private fun FavoriteAddressField(
+    label: String, side: String, value: String, binding: FavoriteEndpointBinding?, options: List<FavoriteAddressOption>,
+    onChange: (String) -> Unit, onPick: (FavoriteAddressOption) -> Unit, onDetach: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var group by remember { mutableStateOf<String?>(null) }
+    val available = options.filter { it.binding.side == side }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(label, fontSize = 12.sp, color = LabV2.InkMuted)
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), textStyle = LabTypography.DialogBody,
+                minLines = 1, maxLines = 3, shape = LabPopupShapes.Field,
+                placeholder = { Text("手动填写或选择地址来源", fontSize = 13.sp) },
+                trailingIcon = { IconButton(onClick = { group = null; expanded = true }) { Icon(Icons.Rounded.ArrowDropDown, "选择" + label + "来源") } },
+                colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = LabV2.BorderStrong, unfocusedContainerColor = LabV2.FieldSoft))
+            LabDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
+                modifier = Modifier.widthIn(max = 320.dp).heightIn(max = 300.dp),
+                shape = LabPopupShapes.Menu, containerColor = Color.White, shadowElevation = 4.dp) {
+                if (group == null) {
+                    if (available.isEmpty()) LabDropdownMenuItem(text = { Text("暂无可用来源，可手动填写", fontSize = 13.sp) }, onClick = { expanded = false })
+                    available.map { it.group }.distinct().forEach { title ->
+                        LabDropdownMenuItem(text = { Text(title, fontSize = 13.sp) }, trailingIcon = { Icon(Icons.Rounded.ChevronRight, null, Modifier.size(18.dp)) }, onClick = { group = title })
+                    }
+                } else {
+                    LabDropdownMenuItem(text = { Text("返回来源分类", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Rounded.ArrowBack, null, Modifier.size(16.dp)) }, onClick = { group = null })
+                    available.filter { it.group == group }.forEach { option ->
+                        LabDropdownMenuItem(text = {
+                            Text(favoriteSourceOptionLabel(option),
+                                fontSize = 13.sp, lineHeight = 18.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }, onClick = { onPick(option); expanded = false })
+                    }
+                }
+            }
+        }
+        if (binding != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val current = options.firstOrNull { it.binding == binding }
+            Text(current?.let { "跟随 ${it.name}" } ?: "来源待更新", modifier = Modifier.weight(1f), fontSize = 11.sp, color = LabV2.Primary)
+            Text("解除关联", fontSize = 11.sp, lineHeight = 16.sp,
+                modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onDetach).padding(horizontal = 4.dp, vertical = 3.dp))
+        }
+    }
+}
 
 private suspend fun copyFavoriteImage(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {
     val mime = context.contentResolver.getType(uri).orEmpty().lowercase()

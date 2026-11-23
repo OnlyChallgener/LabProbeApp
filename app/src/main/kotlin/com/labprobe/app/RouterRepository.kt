@@ -77,6 +77,10 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     )
     val ddns: StateFlow<RouterResource<List<DdnsRecord>>> = _ddns.asStateFlow()
 
+    /** Firmware DDNS protocol in use on the current device ("ddns_view" for new firmware). */
+    private val _ddnsProtocol = MutableStateFlow(cache.ddnsProtocol)
+    val ddnsProtocol: StateFlow<String> = _ddnsProtocol.asStateFlow()
+
     private val _labProbeDdns = MutableStateFlow(RouterResource<LabProbeDdnsSnapshot>())
     val labProbeDdns: StateFlow<RouterResource<LabProbeDdnsSnapshot>> = _labProbeDdns.asStateFlow()
 
@@ -131,6 +135,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                     val parsed = parseDdnsList(data)
                     if (source != "command" && parsed.isEmpty() && !old.value.isNullOrEmpty()) return@launch
                     val seq = sequence("ddns").incrementAndGet()
+                    updateDdnsProtocol(api.ddnsProtocol(data))
                     applyDdnsRead(seq, parsed)
                 }
                 "upnp" -> {
@@ -281,11 +286,28 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
             }
     }
 
+    /** Identity of the connected router; a change means new hardware -> re-probe once. */
+    private val capabilitiesFingerprint: String
+        get() = prefs.routerCapabilitiesFingerprint()
+
     suspend fun refreshCapabilities(force: Boolean = false) {
         val key = "capabilities"
         val seq = sequence(key).incrementAndGet()
         val old = _capabilities.value
-        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
+        val fingerprint = capabilitiesFingerprint
+        // Firmware modules do not change at runtime: probe once per connected
+        // device and reuse the persisted snapshot on every page entry / process
+        // restart. Never re-probe just because a TTL elapsed.
+        val persisted = prefs.loadRouterCapabilities(fingerprint)
+        if (!force && persisted != null) {
+            if (old.value != persisted) {
+                cache.capabilities = persisted
+                cache.capabilitiesAt = System.currentTimeMillis()
+                _capabilities.value = RouterResource(persisted, cache.capabilitiesAt, generation = seq)
+            }
+            return
+        }
+        if (!force && old.value != null) return
         _capabilities.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching { coalesced(key) { api.capabilities() } }
             .onSuccess { latest ->
@@ -293,11 +315,19 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                 val now = System.currentTimeMillis()
                 cache.capabilities = latest
                 cache.capabilitiesAt = now
+                prefs.saveRouterCapabilities(fingerprint, latest)
                 _capabilities.value = RouterResource(latest, now, generation = seq)
             }
             .onFailure { failure ->
                 if (sequence(key).get() != seq) return@onFailure
-                _capabilities.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "功能能力同步失败"), generation = seq)
+                // Probe failed: fall back to any persisted snapshot for this
+                // device rather than hiding features or retrying on every page.
+                val fallback = persisted ?: old.value
+                _capabilities.value = if (fallback != null) {
+                    RouterResource(fallback, cache.capabilitiesAt, generation = seq, stale = true, error = message(failure, "功能能力暂不可用，沿用上次结果"))
+                } else {
+                    old.copy(refreshing = false, error = message(failure, "功能能力同步失败"), generation = seq)
+                }
             }
     }
 
@@ -308,8 +338,10 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         val old = _ddns.value
         if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _ddns.value = old.copy(refreshing = true, error = "", generation = seq)
-        runCatching { coalesced(key) { api.ddns(force) } }
-            .onSuccess { latest ->
+        runCatching { coalesced(key) { api.ddnsPayload(force) } }
+            .onSuccess { payload ->
+                val latest = parseDdnsList(payload)
+                updateDdnsProtocol(api.ddnsProtocol(payload))
                 if (latest.isEmpty() && !old.value.isNullOrEmpty()) {
                     // Hub may answer during a router reconnect before the
                     // native DDNS list is repopulated. Keep the last snapshot
@@ -383,6 +415,13 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         cache.ddnsLoaded = true
         cache.ddnsAt = now
         _ddns.value = RouterResource(latest, now, generation = seq)
+    }
+
+    private fun updateDdnsProtocol(protocol: String) {
+        val normalized = protocol.trim()
+        if (normalized.isBlank() || normalized == _ddnsProtocol.value) return
+        cache.ddnsProtocol = normalized
+        _ddnsProtocol.value = normalized
     }
 
     suspend fun refreshUpnp(force: Boolean = false) {

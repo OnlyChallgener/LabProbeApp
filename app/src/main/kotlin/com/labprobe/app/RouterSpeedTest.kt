@@ -280,7 +280,11 @@ fun RouterToolsScreen(
     onOpen: (String) -> Unit
 ) {
     ScreenShell("路由工具", "路由器原生能力 · 与官方网页端同源接口", topNav = topNav) {
-        if (!isWorkspaceBe50(prefs)) SpeedTestCard(prefs)
+        RouterToolTile(
+            title = "网络测速",
+            subtitle = "路由器 WAN / 手机直连 · GlobalSpeed 节点",
+            icon = Icons.Rounded.Speed
+        ) { onOpen("tool_network_speedtest") }
         // 儿童上网是家长天天用的入口，排在特征库上面；特征库是低频运维页。
         ChildGuardQuickSection(onOpen)
         RdpiSignatureCard(prefs)
@@ -381,7 +385,7 @@ private fun RouterToolTile(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(19.dp), tint = SpeedMuted)
+            LabNavigationIndicator()
         }
     }
 }

@@ -34,8 +34,6 @@ import androidx.compose.material.icons.rounded.Power
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -443,32 +441,7 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
     val selectedRule = deviceTypeRuleForInput(typeId)
     val validMac = isValidMac(cleanMac(mac))
 
-    LabBottomSheet(onDismiss = onDismiss) {
-        Text(if (initial == null) "添加 WOL 设备" else "编辑 WOL 设备", fontWeight = FontWeight.Black, fontSize = 20.sp)
-        Column(verticalArrangement = Arrangement.spacedBy(11.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-            Text("备注名称", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = LabV2.InkMuted)
-            CompactTextField(value = remark, onValueChange = { remark = it }, placeholder = "例如：绿联 DH4300", modifier = Modifier.fillMaxWidth())
-            EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
-            Text("MAC 地址", fontSize = 10.5.sp, fontWeight = FontWeight.Black, color = if (mac.isNotBlank() && !validMac) MaterialTheme.colorScheme.error else LabV2.InkMuted)
-            CompactTextField(
-                value = mac,
-                onValueChange = { mac = it.uppercase() },
-                placeholder = "6C:1F:F7:76:71:04",
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF", fontSize = 10.sp, color = if (validMac) LabV2.InkMuted else MaterialTheme.colorScheme.error)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                DeviceTypeIconPreview(selectedRule, 44)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(selectedRule.label, fontSize = 13.sp, fontWeight = FontWeight.Black)
-                    Text(if (enabled) "启用 WOL，离线时可唤醒" else "关闭 WOL，仅记录设备", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
-                }
-                Switch(checked = enabled, onCheckedChange = { enabled = it })
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    LabEditorDialog(title = if (initial == null) "添加 WOL 设备" else "编辑 WOL 设备", onDismiss = onDismiss, actions = {
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) { Text("取消", fontWeight = FontWeight.SemiBold) }
             Button(
                 enabled = validMac,
@@ -490,8 +463,28 @@ private fun WolEditDialog(initial: WolDeviceConfig?, onDismiss: () -> Unit, onSa
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = DEVICE_ICON_ACCENT)
             ) { Text("保存", fontWeight = FontWeight.SemiBold) }
-        }
-        Spacer(Modifier.heightIn(min = 8.dp))
+    }) {
+            Text("备注名称", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted)
+            CompactTextField(value = remark, onValueChange = { remark = it }, placeholder = "例如：绿联 DH4300", modifier = Modifier.fillMaxWidth())
+            EditableDeviceTypeField(value = typeId, onChange = { typeId = it }, modifier = Modifier.fillMaxWidth(), label = "设备类型（可输入/点箭头选择）")
+            Text("MAC 地址", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (mac.isNotBlank() && !validMac) MaterialTheme.colorScheme.error else LabV2.InkMuted)
+            CompactTextField(
+                value = mac,
+                onValueChange = { mac = it.uppercase() },
+                placeholder = "6C:1F:F7:76:71:04",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, capitalization = KeyboardCapitalization.Characters),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(if (validMac) "图标预览：${selectedRule.label}" else "请输入正确 MAC，格式 AA:BB:CC:DD:EE:FF", fontSize = 10.sp, color = if (validMac) LabV2.InkMuted else MaterialTheme.colorScheme.error)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                DeviceTypeIconPreview(selectedRule, 44)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(selectedRule.label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text(if (enabled) "启用 WOL，离线时可唤醒" else "关闭 WOL，仅记录设备", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
+                }
+                Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
     }
 }
 

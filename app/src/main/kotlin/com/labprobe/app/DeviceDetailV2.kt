@@ -259,7 +259,7 @@ fun DeviceDetailScreen(
                         }
                     }
                 } else {
-                    Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = LabV2.InkFaint)
+                    LabNavigationIndicator()
                 }
             }
         }

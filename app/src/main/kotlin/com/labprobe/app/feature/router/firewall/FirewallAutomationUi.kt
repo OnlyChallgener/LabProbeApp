@@ -1,5 +1,9 @@
 package com.labprobe.app.feature.router.firewall
 
+import com.labprobe.app.LabPopupShapes
+
+import com.labprobe.app.LabNavigationIndicator
+
 import com.labprobe.app.LabGradientDialogSurface
 import androidx.compose.ui.draw.clip
 
@@ -160,8 +164,7 @@ fun FirewallAutomationPage(
                         Text("认领现有规则 · 原位安全更新", fontSize = LabTypography.Caption.fontSize, color = FollowMuted)
                     }
                     IconButton(onClick = onRefreshTargets, enabled = !targetsLoading && !busy, modifier = Modifier.size(36.dp)) {
-                        if (targetsLoading) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Rounded.Refresh, null, Modifier.size(19.dp), tint = FollowBlue)
+                        com.labprobe.app.LabRefreshIcon(targetsLoading, Modifier.size(19.dp), FollowBlue)
                     }
                 }
             }
@@ -375,7 +378,7 @@ private fun TargetPickerCard(title: String, subtitle: String, icon: ImageVector,
                 Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.Bold, color = FollowInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, fontSize = LabTypography.Caption.fontSize, color = FollowMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(18.dp), tint = FollowMuted)
+            LabNavigationIndicator()
         }
     }
 }
@@ -394,7 +397,7 @@ private fun <T> TargetDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LabGradientDialogSurface(
             Modifier.fillMaxWidth().padding(horizontal = 18.dp),
-            shape = RoundedCornerShape(20.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
             shadowElevation = 10.dp,
         ) {

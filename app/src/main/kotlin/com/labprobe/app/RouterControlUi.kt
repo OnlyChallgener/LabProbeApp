@@ -12,6 +12,7 @@ import androidx.compose.foundation.BasicTooltipBox
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -48,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -64,6 +66,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.res.painterResource
 import com.labprobe.app.feature.router.firewall.FirewallAutomationBinding
 import com.labprobe.app.feature.router.firewall.FirewallAutomationPage
 import com.labprobe.app.feature.router.firewall.FirewallAutomationRepository
@@ -224,24 +227,21 @@ private fun RouterFeatureCard(title: String, status: String, accent: Color, glyp
 
 @Composable
 internal fun RouterGlyphIcon(glyph: RouterGlyph, color: Color, modifier: Modifier = Modifier) {
+    if (glyph == RouterGlyph.Mapping || glyph == RouterGlyph.Port) {
+        Image(
+            painter = painterResource(R.drawable.port_mapping),
+            contentDescription = null,
+            modifier = modifier,
+            colorFilter = ColorFilter.tint(color),
+        )
+        return
+    }
     Canvas(modifier) {
         val w = size.width
         val h = size.height
         val stroke = Stroke(width = w * .064f, cap = StrokeCap.Round, join = StrokeJoin.Round)
         when (glyph) {
-            RouterGlyph.Mapping, RouterGlyph.Port -> {
-      // One shared bidirectional mapping symbol across settings, IPv6 mapping and native port mapping.
-      val left = w * .18f
-      val right = w * .82f
-      val upper = h * .36f
-      val lower = h * .64f
-      drawLine(color, Offset(left, upper), Offset(right, upper), stroke.width, StrokeCap.Round)
-      drawLine(color, Offset(right - w * .13f, upper - h * .10f), Offset(right, upper), stroke.width, StrokeCap.Round)
-      drawLine(color, Offset(right - w * .13f, upper + h * .10f), Offset(right, upper), stroke.width, StrokeCap.Round)
-      drawLine(color, Offset(right, lower), Offset(left, lower), stroke.width, StrokeCap.Round)
-      drawLine(color, Offset(left + w * .13f, lower - h * .10f), Offset(left, lower), stroke.width, StrokeCap.Round)
-      drawLine(color, Offset(left + w * .13f, lower + h * .10f), Offset(left, lower), stroke.width, StrokeCap.Round)
-  }
+            RouterGlyph.Mapping, RouterGlyph.Port -> Unit
   RouterGlyph.Ddns -> {
                 // Domain resolution: a compact globe instead of a cloud/node cluster.
                 val center = Offset(w * .50f, h * .50f)
@@ -488,16 +488,15 @@ private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDe
             }
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(17.dp), tint = RouterMuted) }
-                DropdownMenu(
+                LabDropdownMenu(
                     expanded = menu,
                     onDismissRequest = { menu = false },
-                    shape = RoundedCornerShape(22.dp),
+                    shape = LabPopupShapes.Menu,
                     containerColor = Color.White,
                     tonalElevation = 0.dp,
-                    shadowElevation = 9.dp
-                ) {
-                    DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
+                    shadowElevation = 9.dp, actionMenu = true) {
+                    LabDropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
+                    LabDropdownMenuItem(text = { Text("删除", fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -542,9 +541,9 @@ private fun NativePortEditorSheet(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = RouterPage) {
+        LabGradientDialogSurface(modifier = Modifier.fillMaxWidth(.94f).imePadding().heightIn(max = 680.dp), color = RouterPage) {
             Column(
-                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 15.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -641,7 +640,7 @@ private fun NativePortDevicePickerDialog(
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         LabGradientDialogSurface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
-            shape = RoundedCornerShape(26.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
             shadowElevation = 10.dp,
         ) {
@@ -979,7 +978,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             Text("${directionRules.size} 条规则", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                             Spacer(Modifier.weight(1f))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue) }
+                                IconButton(onClick = { scope.launch { repository.refreshFirewall(false); automationRepository.refresh() } }, modifier = Modifier.size(34.dp)) { LabRefreshIcon(resource.refreshing, Modifier.size(18.dp), RouterBlue) }
                                 Surface(onClick = { adding = true }, shape = CircleShape, color = RouterBlue, modifier = Modifier.size(35.dp), shadowElevation = 2.dp) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新增", tint = Color.White, modifier = Modifier.size(19.dp)) } }
                             }
                         }
@@ -1260,21 +1259,25 @@ private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean,
 
 @Composable
 fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    val isBe50 = isWorkspaceBe50(prefs)
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { if (isBe50) 2 else 3 })
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val capabilityResource by repository.capabilities.collectAsState()
+    // 固件原生 DDNS 是按设备探测出的能力，而非型号猜测；自建 DDNS 与证书监控始终显示。
+    val hasNativeDdns = capabilityResource.value?.ddns == true
+    val pageCount = if (hasNativeDdns) 3 else 2
+    val certificatePage = if (hasNativeDdns) 2 else 1
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { pageCount })
     val scope = rememberCoroutineScope()
-    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, if (isBe50) "LabProbe DDNS · 证书监控" else "LabProbe DDNS · 路由器原生 DDNS · 证书监控") }) { padding ->
+    Scaffold(containerColor = RouterPage, topBar = { CompactTopBar("DDNS", onBack, if (hasNativeDdns) "LabProbe DDNS · 路由器原生 DDNS · 证书监控" else "LabProbe DDNS · 证书监控") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CompactSegment("LabProbe DDNS", pagerState.currentPage == 0, Modifier.weight(1f)) {
                     scope.launch { pagerState.animateScrollToPage(0) }
                 }
-                if (!isBe50) {
+                if (hasNativeDdns) {
                     CompactSegment("路由器原生 DDNS", pagerState.currentPage == 1, Modifier.weight(1f)) {
                         scope.launch { pagerState.animateScrollToPage(1) }
                     }
                 }
-                val certificatePage = if (isBe50) 1 else 2
                 CompactSegment("证书监控", pagerState.currentPage == certificatePage, Modifier.weight(1f)) {
                     scope.launch { pagerState.animateScrollToPage(certificatePage) }
                 }
@@ -1284,9 +1287,10 @@ fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    when (page) {
-                        0 -> LabProbeDdnsSection(prefs)
-                        1 -> if (isBe50) CertificateExpirySection(prefs) else DdnsRecordsSection(prefs)
+                    when {
+                        page == 0 -> LabProbeDdnsSection(prefs)
+                        hasNativeDdns && page == 1 -> DdnsRecordsSection(prefs)
+                        page == certificatePage -> CertificateExpirySection(prefs)
                         else -> CertificateExpirySection(prefs)
                     }
                     Spacer(Modifier.height(12.dp))
@@ -1455,7 +1459,7 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
             onDismissRequest = { adding = false; editing = null },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Surface(Modifier.fillMaxSize(), color = RouterPage) {
+            LabGradientDialogSurface(Modifier.fillMaxWidth(.94f).imePadding().heightIn(max = 720.dp)) {
                 LabProbeDdnsEditorPage(
                     initial = editing ?: LabProbeDdnsRecord(provider = "cloudflare"),
                     providers = snapshot?.providers.orEmpty(),
@@ -1574,17 +1578,16 @@ private fun LabProbeDdnsCard(
             Switch(checked = record.enabled, onCheckedChange = { onToggle() }, modifier = Modifier.scale(.76f), colors = SwitchDefaults.colors(checkedTrackColor = RouterBlue))
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(17.dp), tint = RouterMuted) }
-                DropdownMenu(
+                LabDropdownMenu(
                     expanded = menu,
                     onDismissRequest = { menu = false },
-                    shape = RoundedCornerShape(16.dp),
+                    shape = LabPopupShapes.Menu,
                     containerColor = Color.White,
                     tonalElevation = 0.dp,
-                    shadowElevation = 8.dp,
-                ) {
-                    DropdownMenuItem(text = { Text(menuLabels[0], fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text(menuLabels[1], fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onToggle() })
-                    DropdownMenuItem(text = { Text(menuLabels[2], fontSize = LabTypography.Supporting.fontSize, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                    shadowElevation = 8.dp, actionMenu = true) {
+                    LabDropdownMenuItem(text = { Text(menuLabels[0], color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    LabDropdownMenuItem(text = { Text(menuLabels[1], color = RouterInk) }, onClick = { menu = false; onToggle() })
+                    LabDropdownMenuItem(text = { Text(menuLabels[2], color = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -1622,17 +1625,16 @@ private fun LabProbeDdnsDetailPage(
                 }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(20.dp), tint = RouterMuted) }
-                    DropdownMenu(
+                    LabDropdownMenu(
                         expanded = menu,
                         onDismissRequest = { menu = false },
-                        shape = RoundedCornerShape(16.dp),
+                        shape = LabPopupShapes.Menu,
                         containerColor = Color.White,
                         tonalElevation = 0.dp,
-                        shadowElevation = 8.dp,
-                    ) {
-                        DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                        DropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onToggle() })
-                        DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Supporting.fontSize, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                        shadowElevation = 8.dp, actionMenu = true) {
+                        LabDropdownMenuItem(text = { Text("编辑", color = RouterInk) }, onClick = { menu = false; onEdit() })
+                        LabDropdownMenuItem(text = { Text(if (record.enabled) "停用" else "启用", color = RouterInk) }, onClick = { menu = false; onToggle() })
+                        LabDropdownMenuItem(text = { Text("删除", color = RouterRed) }, onClick = { menu = false; onDelete() })
                     }
                 }
             }
@@ -1926,7 +1928,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("${rows.count { it.enabled }} 条启用 · ${rows.count { it.status.contains("error",true) || it.status.contains("fail",true) }} 条异常", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         Spacer(Modifier.weight(1f))
-        IconButton(onClick={scope.launch{repository.refreshDdns(false)}},modifier=Modifier.size(33.dp)){Icon(Icons.Rounded.Refresh,null,Modifier.size(17.dp),tint=RouterBlue)}
+        IconButton(onClick={scope.launch{repository.refreshDdns(false)}},modifier=Modifier.size(33.dp)){LabRefreshIcon(resource.refreshing, Modifier.size(17.dp), RouterBlue)}
         Surface(onClick={adding=true},shape=CircleShape,color=RouterBlue,modifier=Modifier.size(34.dp)){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(18.dp))}}
     }
     if(error.isNotBlank())CompactMessage(error,RouterAmber)
@@ -1944,9 +1946,13 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
             onDismissRequest = { adding = false; editing = null },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Surface(modifier = Modifier.fillMaxSize(), color = RouterPage) {
+            LabGradientDialogSurface(Modifier.fillMaxWidth(.94f).imePadding().heightIn(max = 720.dp)) {
+                // A brand-new record must use the same firmware protocol as the
+                // device, otherwise new-firmware devices would only ever get
+                // the legacy A/AAAA form (even with an empty record list).
+                val deviceProtocol by repository.ddnsProtocol.collectAsState()
                 DdnsEditorPage(
-                    initial = editing ?: DdnsRecord(),
+                    initial = editing ?: DdnsRecord(nativeProtocol = deviceProtocol),
                     externalError = actionError,
                     onBack = { adding = false; editing = null },
                 ) { record, password ->
@@ -1981,8 +1987,9 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
     val accent=RouterCyan
     val warning=record.status.contains("error",true)||record.status.contains("fail",true)
     val domainText=record.domain.ifBlank{"未命名 DDNS 记录"}
-    val providerText=record.provider.ifBlank{"未识别服务商"}
+    val providerText=if(record.provider.isBlank())"未识别服务商" else if(record.modernNative)nativeDdnsProviderLabel(record.provider) else record.provider
     val interfaceText=record.interfaceName.ifBlank{"wan"}.uppercase(Locale.ROOT)
+    val typeText=if(record.modernNative)record.effectiveRecordType else if(record.useIpv6)"IPv6" else "IPv4"
     var menu by remember(record.serviceId){mutableStateOf(false)}
     PremiumCard(accent){
         Row(verticalAlignment=Alignment.CenterVertically){
@@ -1994,7 +2001,7 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
                     Text(domainText,style=LabTypography.ValueStrong,maxLines=2,overflow=TextOverflow.Clip)
-                    Text("$providerText · ${if(record.useIpv6)"IPv6" else "IPv4"} · $interfaceText",fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
+                    Text("$providerText · $typeText · $interfaceText",fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
                     Text(record.ip.ifBlank{record.status.ifBlank{"等待更新"}},style=LabTypography.Caption.copy(color=if(warning)RouterAmber else if(record.ip.isBlank())RouterMuted else RouterBlue),maxLines=2,overflow=TextOverflow.Clip)
                 }
             }
@@ -2003,16 +2010,15 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
                 IconButton(onClick={menu=true},modifier=Modifier.size(28.dp)){
                     Icon(Icons.Rounded.MoreVert,"更多操作",Modifier.size(16.dp),tint=RouterMuted)
                 }
-                DropdownMenu(
+                LabDropdownMenu(
                     expanded = menu,
                     onDismissRequest = { menu = false },
-                    shape = RoundedCornerShape(16.dp),
+                    shape = LabPopupShapes.Menu,
                     containerColor = Color.White,
                     tonalElevation = 0.dp,
-                    shadowElevation = 8.dp,
-                ) {
-                    DropdownMenuItem(text = { Text("编辑", fontSize = LabTypography.Supporting.fontSize, color = RouterInk) }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除", fontSize = LabTypography.Supporting.fontSize, color = RouterRed) }, onClick = { menu = false; onDelete() })
+                    shadowElevation = 8.dp, actionMenu = true) {
+                    LabDropdownMenuItem(text = { Text("编辑", color = RouterInk) }, onClick = { menu = false; onEdit() })
+                    LabDropdownMenuItem(text = { Text("删除", color = RouterRed) }, onClick = { menu = false; onDelete() })
                 }
             }
         }
@@ -2026,31 +2032,83 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",onBack:()-
             interfaceName=initial.interfaceName.trim().ifBlank{"wan"},
             domain=initial.domain.trim(),
             username=initial.username.trim(),
+            txtFamily=initial.txtFamily.trim().ifBlank{"ipv4"},
         )
     }
+    val modern=normalizedInitial.modernNative
     var record by remember(normalizedInitial){mutableStateOf(normalizedInitial)}
     var password by remember(normalizedInitial.serviceId){mutableStateOf("")}
     var showPassword by remember{mutableStateOf(false)}
     var error by remember{mutableStateOf("")}
-    val providerOptions=remember(record.provider){
-        val defaults=listOf("aliyun.com","dnspod.cn","no-ip.com")
-        if(record.provider in defaults)defaults else listOf(record.provider)+defaults
+    val providerOptions=remember(record.provider,modern){
+        if(modern){
+            val defaults=nativeDdnsProviders
+            if(record.provider in defaults)defaults else listOf(record.provider)+defaults
+        }else{
+            val defaults=listOf("aliyun.com","dnspod.cn","no-ip.com")
+            if(record.provider in defaults)defaults else listOf(record.provider)+defaults
+        }
     }
     val interfaceOptions=remember(record.interfaceName){
         val defaults=listOf("wan","wan1")
         if(record.interfaceName in defaults)defaults else listOf(record.interfaceName)+defaults
     }
+    val recordTypes=remember(record.provider){
+        listOf("A","AAAA","TXT").filter{nativeDdnsSupportsRecordType(record.provider,it)}
+    }
+    // Keep the selected record type valid when the provider changes.
+    LaunchedEffect(record.provider){
+        val current=record.effectiveRecordType.uppercase(Locale.ROOT)
+        if(current !in recordTypes){
+            record=record.copy(recordType=recordTypes.firstOrNull()?:"A",useIpv6=false)
+        }
+    }
+    val flags=nativeDdnsProviderFlags(record.provider)
+    val showZone=flags and 0x04!=0
+    val showZoneId=flags and 0x08!=0
+    val showRegion=flags and 0x10!=0
+    val isTxt=record.effectiveRecordType.equals("TXT",ignoreCase=true)
     BackHandler(onBack=onBack)
     RouterFormPage(if(normalizedInitial.serviceId.isBlank())"新增DDNS" else "编辑DDNS","密钥由你输入；留空保持原值",onBack){
-        CompactChoice("服务商",record.provider,providerOptions){record=record.copy(provider=it)}
-        CompactField("域名 / 记录",record.domain,"例如 rj.lab86@shinya.icu"){record=record.copy(domain=it.take(128))}
+        CompactChoice("服务商",record.provider,providerOptions,display={nativeDdnsProviderLabel(it)}){record=record.copy(provider=it)}
+        CompactField("域名 / 记录",record.domain,"例如 rj.example.com"){record=record.copy(domain=it.take(128))}
         CompactField("用户名 / AccessKey",record.username,"AccessKey ID"){record=record.copy(username=it.take(160))}
         CompactPasswordField(if(normalizedInitial.passwordConfigured)"密码 / Secret（留空保持）" else "密码 / Secret",password,"请输入密钥",showPassword,{showPassword=!showPassword}){password=it.take(256)}
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){CompactChoice("接口",record.interfaceName,interfaceOptions,Modifier.weight(1f)){record=record.copy(interfaceName=it)};CompactChoice("记录类型",if(record.useIpv6)"IPv6" else "IPv4",listOf("IPv6","IPv4"),Modifier.weight(1f)){record=record.copy(useIpv6=it=="IPv6")}}
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            CompactChoice("接口",record.interfaceName,interfaceOptions,Modifier.weight(1f)){record=record.copy(interfaceName=it)}
+            if(modern){
+                CompactChoice("记录类型",record.effectiveRecordType.uppercase(Locale.ROOT),recordTypes,Modifier.weight(1f)){
+                    record=record.copy(recordType=it,useIpv6=it.equals("AAAA",ignoreCase=true))
+                }
+            }else{
+                CompactChoice("记录类型",if(record.useIpv6)"IPv6" else "IPv4",listOf("IPv6","IPv4"),Modifier.weight(1f)){record=record.copy(useIpv6=it=="IPv6")}
+            }
+        }
+        if(modern){
+            if(showZone)CompactField("DNS 托管域 / Zone",record.zone,"例如 example.com"){record=record.copy(zone=it.take(160))}
+            if(showZoneId)CompactField("区域 ID / Zone ID",record.zoneId,"Zone ID"){record=record.copy(zoneId=it.take(160))}
+            if(showRegion)CompactField("区域 / Region",record.region,"例如 cn-north-4"){record=record.copy(region=it.take(80))}
+            if(isTxt){
+                CompactField("TXT 模板",record.txtTemplate,"例如 {{ip}}:{{port}}"){record=record.copy(txtTemplate=it.take(256))}
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    CompactChoice("地址类型",record.txtFamily,listOf("ipv4","ipv6"),Modifier.weight(1f)){record=record.copy(txtFamily=it)}
+                    CompactField("外部端口",record.externalPort.toString(),"0",Modifier.weight(1f),keyboardType=KeyboardType.Number){value->record=record.copy(externalPort=value.toIntOrNull()?.coerceIn(0,65535)?:0)}
+                }
+            }
+        }
         Row(verticalAlignment=Alignment.CenterVertically){Text("启用记录",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted);Spacer(Modifier.weight(1f));Switch(record.enabled,{record=record.copy(enabled=it)},modifier=Modifier.scale(.85f),colors=SwitchDefaults.colors(checkedTrackColor=RouterCyan))}
         val visibleError=error.ifBlank{externalError}
         if(visibleError.isNotBlank())Text(visibleError,fontSize = LabTypography.Supporting.fontSize,color=RouterRed)
-        Button(onClick={error=when{record.domain.isBlank()->"请填写域名";record.username.isBlank()->"请填写账号/AccessKey";normalizedInitial.serviceId.isBlank()&&password.isBlank()->"请填写密码/Secret";else->""};if(error.isBlank())onSave(record,password.ifBlank{null})},modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
+        Button(onClick={
+            error=when{
+                record.domain.isBlank()->"请填写域名"
+                modern&&isTxt&&record.txtTemplate.isBlank()->"请填写 TXT 模板"
+                !modern&&record.username.isBlank()->"请填写账号/AccessKey"
+                normalizedInitial.serviceId.isBlank()&&password.isBlank()->"请填写密码/Secret"
+                else->""
+            }
+            if(error.isBlank())onSave(record,password.ifBlank{null})
+        },modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
     }
 }
 @Composable
@@ -2126,7 +2184,7 @@ fun RouterHubStatusScreen(prefs: AppPrefs, onBack: () -> Unit, onOpenSettings: (
             shape = RoundedCornerShape(13.dp),
             colors = ButtonDefaults.buttonColors(containerColor = RouterBlue)
         ) {
-            Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
+            LabRefreshIcon(resource.refreshing, Modifier.size(17.dp), Color.White)
             Spacer(Modifier.width(7.dp))
             Text(if (resource.refreshing) "正在后台刷新" else "刷新 Hub 状态", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
         }
@@ -2168,8 +2226,13 @@ private fun CompactTopBar(title:String,onBack:()->Unit,subtitle:String=""){
 @Composable
 private fun RouterFormPage(title:String,subtitle:String,onBack:()->Unit,topBarColor:Color=Color.White,content:@Composable ColumnScope.()->Unit){
     BackHandler(onBack=onBack)
-    Scaffold(containerColor=RouterPage,topBar={Surface(color=topBarColor){CompactTopBar(title,onBack,subtitle)}}){padding->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal=13.dp,vertical=9.dp),verticalArrangement=Arrangement.spacedBy(8.dp),content=content)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(title, Modifier.fillMaxWidth().padding(horizontal = 30.dp), style = LabTypography.DialogTitle, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterEnd).size(40.dp)) { Icon(Icons.Rounded.Close, "关闭", Modifier.size(20.dp)) }
+        }
+        if (subtitle.isNotBlank()) Text(subtitle, style = LabTypography.DialogBody, color = RouterMuted)
+        Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
     }
 }
 
@@ -2194,11 +2257,7 @@ private fun CompactToolbar(
                     enabled = !loading,
                     modifier = Modifier.size(34.dp)
                 ) {
-                    if (loading) {
-                        CircularProgressIndicator(Modifier.size(16.dp), color = RouterBlue, strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Rounded.Refresh, "刷新", Modifier.size(18.dp), tint = RouterBlue)
-                    }
+                    LabRefreshIcon(loading, Modifier.size(18.dp), RouterBlue)
                 }
             }
             if (onAdd != null) {
@@ -2292,7 +2351,7 @@ private fun CompactChoice(label:String,value:String,options:List<String>,modifie
             Surface(Modifier.fillMaxWidth().height(50.dp).clip(LabCoreSurface.InnerShape).clickable{expanded=true},shape=LabCoreSurface.InnerShape,color=LabCoreSurface.Inner,border=androidx.compose.foundation.BorderStroke(1.dp,LabCoreSurface.Border)){
                 Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(display(value),Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
-            DropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape=RoundedCornerShape(13.dp),containerColor=Color.White){options.forEach{option->DropdownMenuItem(text={Text(display(option),fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
+            LabDropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape = LabPopupShapes.Menu,containerColor=Color.White){options.forEach{option->LabDropdownMenuItem(text={Text(display(option),fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
         }
     }
 }

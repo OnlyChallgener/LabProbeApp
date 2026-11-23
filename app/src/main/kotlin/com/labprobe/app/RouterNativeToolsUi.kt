@@ -167,7 +167,7 @@ private fun NativeSelector(
     modifier: Modifier = Modifier,
     leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null
 ) {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = LabPopupShapes.Field
     Box(modifier) {
         OutlinedButton(
             onClick = { onExpandedChange(true) },
@@ -188,20 +188,20 @@ private fun NativeSelector(
             }
             Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
         }
-        DropdownMenu(
+        LabDropdownMenu(
             expanded = expanded,
             onDismissRequest = { onExpandedChange(false) },
-            modifier = Modifier.widthIn(min = 156.dp).padding(vertical = 4.dp),
-            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.widthIn(max = 280.dp),
+            shape = LabPopupShapes.Menu,
             containerColor = Color.White,
             tonalElevation = 0.dp,
             shadowElevation = 4.dp
         ) {
             options.forEach { (key, title) ->
-                DropdownMenuItem(
-                    text = { Text(title, color = NativeInk, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold) },
+                LabDropdownMenuItem(
+                    text = { Text(title, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
                     onClick = { onSelect(key); onExpandedChange(false) },
-                    modifier = Modifier.heightIn(min = 48.dp),
+                    modifier = Modifier.heightIn(min = 24.dp),
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
                 )
             }
@@ -463,8 +463,6 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.ddns.collectAsState()
     val rows = resource.value.orEmpty()
-    val enabled = rows.count { it.enabled }
-    val failed = rows.count { it.status.contains("error", true) || it.status.contains("fail", true) }
     HealthMiniCard(
         title = "DDNS",
         // 数量只在大字显示一次；副标题只描述运行状态。
@@ -473,19 +471,17 @@ fun HomeDdnsMiniCard(prefs: AppPrefs, onClick: () -> Unit, modifier: Modifier = 
         icon = Icons.Rounded.CloudSync,
         glyph = RouterGlyph.Ddns,
         accent = NativeCyan,
-        subtitle = when {
-            resource.value == null -> "后台预加载中"
-            resource.error.isNotBlank() -> "已保留上次快照"
-            rows.isEmpty() -> "还没有 DDNS 记录"
-            failed == rows.size -> "全部异常"
-            failed > 0 -> "$failed 条异常"
-            enabled == 0 -> "全部停用"
-            enabled < rows.size -> "${rows.size - enabled} 条停用"
-            else -> "全部正常"
-        },
+        subtitle = homeDdnsSubtitle(resource.value, resource.error),
         modifier = modifier,
         onClick = onClick
     )
+}
+
+internal fun homeDdnsSubtitle(rows: List<DdnsRecord>?, error: String = ""): String {
+    if (rows == null) return "同步中"
+    if (error.isNotBlank()) return "同步异常"
+    val failed = rows.count { row -> listOf("error", "fail", "异常", "失败").any { row.status.contains(it, true) } }
+    return if (failed > 0) "${failed}台异常" else "正常"
 }
 
 
@@ -584,20 +580,20 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                         Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
                     }
-                    DropdownMenu(
+                    LabDropdownMenu(
                         expanded = serverMenu,
                         onDismissRequest = { serverMenu = false },
-                        modifier = Modifier.widthIn(min = 300.dp).padding(vertical = 5.dp),
-                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier.widthIn(max = 320.dp),
+                        shape = LabPopupShapes.Menu,
                         containerColor = Color.White,
                         tonalElevation = 0.dp,
                         shadowElevation = 4.dp
                     ) {
                         servers.forEach { host ->
-                            DropdownMenuItem(
-                                text = { Text(host, color = NativeInk, fontSize = LabTypography.SectionTitle.fontSize, fontWeight = FontWeight.SemiBold) },
+                            LabDropdownMenuItem(
+                                text = { Text(host, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
                                 onClick = { server = host; serverMenu = false },
-                                modifier = Modifier.heightIn(min = 50.dp),
+                                modifier = Modifier.heightIn(min = 24.dp),
                                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
                             )
                         }
@@ -899,8 +895,7 @@ fun RouterBetaUpgradeScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     disabledContentColor = Color.White
                 )
             ) {
-                if (task.active) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Color.White)
-                else Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp))
+                LabRefreshIcon(task.active, Modifier.size(17.dp), Color.White)
                 Spacer(Modifier.width(7.dp))
                 Text(if (task.active) "检测进行中" else "检测更新", style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold))
             }

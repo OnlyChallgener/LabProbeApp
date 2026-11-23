@@ -185,7 +185,7 @@ class RouterWorkspaceTest {
     }
 
     @Test
-    fun acceptsDefaultRouterListedWithItsCanonicalPathButStillRoutesToRoot() {
+    fun acceptsDefaultRouterListedWithItsCanonicalPathAndPreservesThatPath() {
         val rows = parseRouterWorkspaces(
             JSONObject(
                 """{"defaultRouterId":"home-reyee","routers":[
@@ -196,7 +196,7 @@ class RouterWorkspaceTest {
         )
         assertEquals(listOf("default", "office"), rows.map { it.routerId })
         assertEquals("家里锐捷", rows.first().name)
-        assertEquals("", rows.first().basePath)
+        assertEquals("/r/home-reyee", rows.first().basePath)
     }
 
     @Test
@@ -304,6 +304,7 @@ class RouterWorkspaceTest {
             {"routerId":"north","name":"书房","basePath":""}
         ]}""")
         val rows = parseRouterWorkspaces(after, RouterWorkspaceStore.legacyServerId(context, hub))
+        RouterWorkspaceStore.cacheList(context, hub, after)
         assertEquals(listOf("north", "default"), rows.map { it.routerId })
         assertTrue(rows.first().isDefault)
         assertFalse(rows.last().isDefault)

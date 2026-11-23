@@ -130,6 +130,7 @@ class RouterControlApi(private val prefs: AppPrefs) {
             nativePortMapping = f.optBoolean("nativePortMapping"),
             upnp = f.optBoolean("upnp"),
             ddns = f.optBoolean("ddns"),
+            wireguard = f.optBoolean("wireguard"),
             diagnostic = f.optBoolean("diagnostic")
         )
     }
@@ -194,7 +195,13 @@ class RouterControlApi(private val prefs: AppPrefs) {
         parseFirewall(send("/api/router/firewall/reorder", "POST", JSONObject().put("scope", scope).put("uuids", JSONArray(uuids))).optJSONObject("data") ?: JSONObject())
 
     suspend fun ddns(force: Boolean = false): List<DdnsRecord> =
-        parseDdnsList(get("/api/router/ddns${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject())
+        parseDdnsList(ddnsPayload(force))
+
+    /** Raw DDNS data envelope, carrying top-level nativeProtocol for new firmware. */
+    suspend fun ddnsPayload(force: Boolean = false): JSONObject =
+        get("/api/router/ddns${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject()
+
+    internal fun ddnsProtocol(payload: JSONObject): String = payload.ddnsText("nativeProtocol")
 
     suspend fun addDdns(record: DdnsRecord, password: String): List<DdnsRecord> =
         parseDdnsList(send("/api/router/ddns", "POST", record.toJson(password)).optJSONObject("data") ?: JSONObject())
@@ -272,8 +279,39 @@ data class RouterCapabilities(
     val nativePortMapping: Boolean = false,
     val upnp: Boolean = false,
     val ddns: Boolean = false,
+    val wireguard: Boolean = false,
     val diagnostic: Boolean = false
-)
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("configured", configured)
+        put("dashboard", dashboard)
+        put("devices", devices)
+        put("firewall", firewall)
+        put("nativePortMapping", nativePortMapping)
+        put("upnp", upnp)
+        put("ddns", ddns)
+        put("wireguard", wireguard)
+        put("diagnostic", diagnostic)
+    }
+
+    companion object {
+        fun fromJson(value: String?): RouterCapabilities? {
+            if (value.isNullOrBlank()) return null
+            val o = runCatching { JSONObject(value) }.getOrNull() ?: return null
+            return RouterCapabilities(
+                configured = o.optBoolean("configured"),
+                dashboard = o.optBoolean("dashboard"),
+                devices = o.optBoolean("devices"),
+                firewall = o.optBoolean("firewall"),
+                nativePortMapping = o.optBoolean("nativePortMapping"),
+                upnp = o.optBoolean("upnp"),
+                ddns = o.optBoolean("ddns"),
+                wireguard = o.optBoolean("wireguard"),
+                diagnostic = o.optBoolean("diagnostic")
+            )
+        }
+    }
+}
 
 data class NativePortMapRule(
     val ruleName: String = "",
@@ -427,16 +465,92 @@ data class DdnsRecord(
     val interfaceName: String = "wan",
     val status: String = "",
     val ip: String = "",
-    val passwordConfigured: Boolean = false
+    val passwordConfigured: Boolean = false,
+    // New firmware (ddns_view) fields. Empty nativeProtocol means the legacy ddnsCfg protocol.
+    val nativeProtocol: String = "",
+    val recordType: String = "",
+    val zone: String = "",
+    val zoneId: String = "",
+    val region: String = "",
+    val txtTemplate: String = "",
+    val txtFamily: String = "ipv4",
+    val externalPort: Int = 0,
 ) {
+    /** New ReyeeOS firmware exposes ddns_view; old firmware only has ddnsCfg. */
+    val modernNative: Boolean get() = nativeProtocol.equals("ddns_view", ignoreCase = true)
+
     fun toJson(password: String?) = JSONObject().apply {
-        put("service_name", provider)
-        put("domain", domain.trim())
-        put("username", username.trim())
-        put("enable", if (enabled) "1" else "0")
-        put("use_ipv6", if (useIpv6) "1" else "0")
-        put("interface", interfaceName)
-        if (password != null) put("password", password)
+        if (modernNative) {
+            // HUB maps service_name -> provider and merges all public fields on update.
+            put("provider", provider)
+            put("service_name", provider)
+            put("domain", domain.trim())
+            put("username", username.trim())
+            put("interface", interfaceName)
+            put("record_type", effectiveRecordType)
+            put("enabled", if (enabled) "1" else "0")
+            if (zone.isNotBlank()) put("zone", zone)
+            if (zoneId.isNotBlank()) put("zone_id", zoneId)
+            if (region.isNotBlank()) put("region", region)
+            if (effectiveRecordType.equals("TXT", ignoreCase = true)) {
+                put("txt_template", txtTemplate)
+                put("txt_family", txtFamily.ifBlank { "ipv4" })
+                put("external_port", externalPort)
+            }
+            if (password != null) put("password", password)
+        } else {
+            put("service_name", provider)
+            put("domain", domain.trim())
+            put("username", username.trim())
+            put("enable", if (enabled) "1" else "0")
+            put("use_ipv6", if (useIpv6) "1" else "0")
+            put("interface", interfaceName)
+            if (password != null) put("password", password)
+        }
+    }
+
+    /** Effective record type for the new firmware, derived from useIpv6 when absent. */
+    val effectiveRecordType: String
+        get() = recordType.ifBlank { if (useIpv6) "AAAA" else "A" }
+}
+
+/** Capability bits per new-firmware provider: 1=TXT, 2=AAAA, 4=zone, 8=zone_id, 16=region. */
+internal fun nativeDdnsProviderFlags(provider: String): Int = when (provider.trim().lowercase(Locale.ROOT)) {
+    "aliyun.com", "dnspod.cn" -> 0x27
+    "tencentcloud.com" -> 0x07
+    "no-ip.com", "dyn.com" -> 0x22
+    "oray.com" -> 0x20
+    "cloudflare.com" -> 0x0b
+    "huaweicloud.com" -> 0x1b
+    "duckdns.org" -> 0x03
+    else -> 0x07
+}
+
+internal val nativeDdnsProviders = listOf(
+    "aliyun.com", "dnspod.cn", "tencentcloud.com", "no-ip.com",
+    "oray.com", "dyn.com", "cloudflare.com", "huaweicloud.com", "duckdns.org"
+)
+
+internal fun nativeDdnsProviderLabel(id: String): String = when (id.trim().lowercase(Locale.ROOT)) {
+    "aliyun.com" -> "阿里云"
+    "dnspod.cn" -> "DNSPod"
+    "tencentcloud.com" -> "腾讯云 API3"
+    "no-ip.com" -> "No-IP"
+    "oray.com" -> "花生壳"
+    "dyn.com" -> "DynDNS"
+    "cloudflare.com" -> "Cloudflare"
+    "huaweicloud.com" -> "华为云"
+    "duckdns.org" -> "DuckDNS"
+    else -> id
+}
+
+internal fun nativeDdnsSupportsRecordType(provider: String, recordType: String): Boolean {
+    val flags = nativeDdnsProviderFlags(provider)
+    return when (recordType.uppercase(Locale.ROOT)) {
+        "A" -> true
+        "AAAA" -> flags and 0x02 != 0
+        "TXT" -> flags and 0x01 != 0
+        else -> false
     }
 }
 
@@ -472,6 +586,9 @@ private fun JSONObject.ddnsFlag(default:Boolean,vararg keys:String):Boolean{
 
 internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
     val arr = data.optJSONArray("list") ?: data.optJSONArray("services") ?: data.optJSONArray("data") ?: data.optJSONArray("records") ?: JSONArray()
+    // HUB puts nativeProtocol both at the top level of data and on each row.
+    // Fall back to the top level so a row without it still opens the new form.
+    val topProtocol = data.ddnsText("nativeProtocol")
     return (0 until arr.length()).mapNotNull { i ->
         arr.optJSONObject(i)?.let { o ->
             DdnsRecord(
@@ -484,7 +601,15 @@ internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
                 interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface").ifBlank { "wan" },
                 status = o.ddnsText("status", "state", "message", "msg"),
                 ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
-                passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password")
+                passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password"),
+                nativeProtocol = o.ddnsText("nativeProtocol").ifBlank { topProtocol },
+                recordType = o.ddnsText("record_type"),
+                zone = o.ddnsText("zone"),
+                zoneId = o.ddnsText("zone_id"),
+                region = o.ddnsText("region"),
+                txtTemplate = o.ddnsText("txt_template"),
+                txtFamily = o.ddnsText("txt_family").ifBlank { "ipv4" },
+                externalPort = o.optInt("external_port", 0),
             )
         }
     }

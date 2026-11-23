@@ -264,17 +264,19 @@ class RealtimeDisplaySmoother {
         var changed = false
         val next = items.map { item ->
             val value = deviceDisplaySnapshot[cleanMac(item.mac)] ?: return@map item
+            val uploadBytes = rateBitsPerSecondToBytesPerSecond(value.uploadBps)
+            val downloadBytes = rateBitsPerSecondToBytesPerSecond(value.downloadBps)
             if (
-                item.realtimeUploadBytes == value.uploadBps &&
-                item.realtimeDownloadBytes == value.downloadBps &&
+                item.realtimeUploadBytes == uploadBytes &&
+                item.realtimeDownloadBytes == downloadBytes &&
                 item.connectionCount == value.connectionCount
             ) {
                 item
             } else {
                 changed = true
                 item.copy(
-                    realtimeUploadBytes = value.uploadBps,
-                    realtimeDownloadBytes = value.downloadBps,
+                    realtimeUploadBytes = uploadBytes,
+                    realtimeDownloadBytes = downloadBytes,
                     connectionCount = value.connectionCount,
                 )
             }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -48,8 +49,6 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -842,7 +841,7 @@ fun StunPenetrationScreen(
         }
         if (loading && snapshot.rules.isEmpty()) {
             LabCoreCard(compact = true) {
-                Text("正在同步 STUN 设置，页面可以继续操作", style = LabTypography.Supporting)
+                Text("正在同步", style = LabTypography.Supporting)
             }
         } else if (!loading && snapshot.rulesLoaded && snapshot.rules.isEmpty()) {
             StunEmpty {
@@ -912,7 +911,7 @@ fun StunPenetrationScreen(
                                 api.delete(deletedId)
                                 mutationGeneration++
                                 snapshot = snapshot.copy(rules = snapshot.rules.filterNot { it.id == deletedId })
-                                withContext(Dispatchers.IO) { removeStunFavorite(prefs, deletedId, rememberDismissal = true) }
+                                // A deleted source leaves its user-owned favorite visible and marked missing.
                                 report("已删除，正在确认列表…")
                                 refresh(true, STUN_OPERATION_PREFIX + deletedId)
                             }) {
@@ -1066,15 +1065,14 @@ fun StunPenetrationScreen(
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("内网服务 STUN 穿透", style = LabTypography.SectionTitle)
-                val presenceText = if (agentOnline) "Agent 在线 · 路由器原生映射，Agent 自动保活" else "Agent 状态暂未同步 · 设置可直接创建"
+                val presenceText = if (agentOnline) "Agent 在线" else "Agent 未同步"
                 Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (agentLastSeenAt.isNotBlank() && !agentOnline) {
                     Text("最近上报 $agentLastSeenAt", style = LabTypography.Caption, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(34.dp)) {
-                if (loading) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = StunBlue)
-                else Icon(Icons.Rounded.Refresh, "刷新", tint = StunBlue, modifier = Modifier.size(20.dp))
+                LabRefreshIcon(loading, Modifier.size(20.dp), StunBlue)
             }
             OutlinedButton(
                 onClick = onAdd,
@@ -1094,7 +1092,7 @@ fun StunPenetrationScreen(
         Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             LabV2ToolIcon(Icons.Rounded.Public, StunBlue, size = 52, muted = true)
             Spacer(Modifier.height(8.dp)); Text("还没有 STUN 穿透", style = LabTypography.CardTitle)
-            Text("选择服务与内网地址即可开始", style = LabTypography.Supporting, color = LabV2.InkMuted)
+
             Spacer(Modifier.height(13.dp)); OutlinedButton(onClick = onAdd, shape = LabV2.ButtonShape) { Text("创建穿透", style = LabTypography.Button) }
         }
     }
@@ -1158,30 +1156,29 @@ fun StunPenetrationScreen(
                 }
                 Box {
                     IconButton(onClick = onMenu, enabled = !deleting && operationLabel == null, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted, modifier = Modifier.size(18.dp)) }
-                    DropdownMenu(
+                    LabDropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = onMenu,
-                        modifier = Modifier.width(154.dp),
-                        shape = LabV2.CompactCardShape,
+                        modifier = Modifier.widthIn(max = 240.dp),
+                        shape = LabPopupShapes.Menu,
                         containerColor = Color.White,
                         tonalElevation = 0.dp,
                         shadowElevation = 8.dp,
-                        border = BorderStroke(1.dp, LabV2.Border),
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("编辑", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
+                        border = BorderStroke(1.dp, LabV2.Border), actionMenu = true) {
+                        LabDropdownMenuItem(
+                            text = { Text("编辑", fontWeight = FontWeight.SemiBold) },
                             leadingIcon = { Icon(Icons.Rounded.Edit, null, tint = LabV2.InkMuted) },
                             onClick = onEdit,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
-                        DropdownMenuItem(
-                            text = { Text(if (rule.enabled) "停止穿透" else "开始穿透", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold) },
+                        LabDropdownMenuItem(
+                            text = { Text(if (rule.enabled) "停止穿透" else "开始穿透", fontWeight = FontWeight.SemiBold) },
                             leadingIcon = { Icon(if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline, null, tint = LabV2.InkMuted) },
                             onClick = onToggle,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
-                        DropdownMenuItem(
-                            text = { Text("删除", style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, color = StunRed) },
+                        LabDropdownMenuItem(
+                            text = { Text("删除", fontWeight = FontWeight.SemiBold, color = StunRed) },
                             leadingIcon = { Icon(LabActionIcons.Delete, null, tint = StunRed) },
                             onClick = onDelete,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
@@ -1320,19 +1317,23 @@ fun StunPenetrationScreen(
     }
     LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) { refreshDevices(force = false) }
 
-    Dialog(onDismissRequest = { if (!saving) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(.94f).heightIn(max = 680.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = Color.White,
-            tonalElevation = 0.dp,
-            shadowElevation = 6.dp,
-        ) {
-            Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透", style = LabTypography.PageTitle)
+    LabEditorDialog(title = if (draft.id.isBlank()) "新建 STUN 穿透" else "编辑 STUN 穿透",
+        onDismiss = { if (!saving) onDismiss() }, actions = {
+                    OutlinedButton(onClick = onDismiss, enabled = !saving, shape = LabV2.ButtonShape, modifier = Modifier.weight(1f)) { Text("取消", style = LabTypography.Button) }
+                    OutlinedButton(
+                        onClick = { onSave(draft) },
+                        enabled = !saving,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1.35f),
+                        border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
+                    ) {
+                        if (saving) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = StunBlue)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(if (saving) "保存中" else if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button.copy(color = StunBlue))
+                    }
+    }) {
                 Text("自动建立路由器映射；Agent 用同端口保活并更新公网地址。", style = LabTypography.Supporting, color = LabV2.InkMuted)
                 Text("服务", style = LabTypography.SectionTitle)
                 PORT_MAP_SERVICE_TEMPLATES.chunked(3).forEach { group ->
@@ -1470,24 +1471,6 @@ fun StunPenetrationScreen(
                         Text(error, color = StunRed, style = LabTypography.Supporting, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(10.dp))
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onDismiss, enabled = !saving, shape = LabV2.ButtonShape, modifier = Modifier.weight(1f)) { Text("取消", style = LabTypography.Button) }
-                    OutlinedButton(
-                        onClick = { onSave(draft) },
-                        enabled = !saving,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.weight(1.35f),
-                        border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
-                    ) {
-                        if (saving) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = StunBlue)
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        Text(if (saving) "保存中" else if (draft.id.isBlank()) "开始穿透" else "保存", style = LabTypography.Button.copy(color = StunBlue))
-                    }
-                }
-            }
-        }
     }
     if (showDevicePicker && draft.targetType == "device") {
         StunDevicePickerDialog(
@@ -1536,7 +1519,7 @@ fun StunPenetrationScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(Icons.Rounded.ChevronRight, null, tint = LabV2.InkMuted, modifier = Modifier.size(20.dp))
+            LabNavigationIndicator()
         }
     }
 }
@@ -1555,7 +1538,7 @@ fun StunPenetrationScreen(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f).heightIn(min = 250.dp, max = 620.dp),
-            shape = RoundedCornerShape(26.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
             border = BorderStroke(1.dp, LabV2.Border),
             tonalElevation = 0.dp,
@@ -1624,7 +1607,7 @@ fun StunPenetrationScreen(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f),
-            shape = RoundedCornerShape(28.dp),
+            shape = LabPopupShapes.Card,
             color = Color.White,
             tonalElevation = 0.dp,
             shadowElevation = 6.dp,
