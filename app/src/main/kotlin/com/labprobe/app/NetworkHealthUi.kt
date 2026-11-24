@@ -1026,7 +1026,7 @@ private fun RouterUrlDialog(
                     CompactTextField(
                         value = lanUrl,
                         onValueChange = onLanChange,
-                        placeholder = "192.168.5.1",
+                        placeholder = "192.168.1.1",
                         leadingIcon = { Icon(Icons.Rounded.Router, null, Modifier.size(16.dp), tint = LabV2.Primary) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                         modifier = Modifier.weight(1f),

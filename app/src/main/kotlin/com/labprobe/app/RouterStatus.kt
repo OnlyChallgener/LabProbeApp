@@ -1333,7 +1333,7 @@ private fun RouterIdentityDialog(
                 CompactTextField(
                     value = lan,
                     onValueChange = { lan = it },
-                    placeholder = "192.168.5.1",
+                    placeholder = "192.168.1.1",
                     leadingIcon = { Icon(Icons.Rounded.Router, null, Modifier.size(16.dp), tint = LabV2.Primary) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),

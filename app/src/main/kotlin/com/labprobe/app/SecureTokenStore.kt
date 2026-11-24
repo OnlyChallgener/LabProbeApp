@@ -82,6 +82,13 @@ class SecureTokenStore(context: Context) {
     fun set(value: String) = delegate.set(value)
 }
 
+/** Stores the default workspace's HOOK_TOKEN separately from APP_TOKEN. */
+class SecureHookTokenStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure_hook_v2", "labprobe_hook_token_v2")
+    fun get(): String = delegate.get()
+    fun set(value: String) = delegate.set(value)
+}
+
 /** Stores an optional SSH password with a separate non-exportable key. */
 class SecureSshPasswordStore(context: Context) {
     private val delegate = SecureStringStore(context, "labprobe_secure_ssh", "labprobe_ssh_password_v1")

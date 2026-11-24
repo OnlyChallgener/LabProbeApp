@@ -326,7 +326,7 @@ data class PortMapDraft(
     val listenPort: String = "20001",
     val targetType: String = "manual",
     val targetMode: String = "ipv6_suffix",
-    val targetIpv4: String = "192.168.5.46",
+    val targetIpv4: String = "",
     val targetIpv6: String = "",
     val targetIpv6Snapshot: String = "",
     val targetIpv6Suffix: String = "",
@@ -1364,7 +1364,7 @@ private fun PortMapEditorSheet(
                         }
                         else -> {
                             if (draft.mode == "6to4") {
-                                PortMapV2Field("目标 IPv4", draft.targetIpv4, "192.168.5.46") { draft = draft.copy(targetIpv4 = it) }
+                                PortMapV2Field("目标 IPv4", draft.targetIpv4, "192.168.1.2") { draft = draft.copy(targetIpv4 = it) }
                             } else {
                                 Text("目标地址方式", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
                                 LabV2SegmentedControl(

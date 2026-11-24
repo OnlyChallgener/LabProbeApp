@@ -455,11 +455,14 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
     private val appContext: Context = context.applicationContext
     private val globalSp: SharedPreferences = appContext.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
+    private val secureHookTokenStore = SecureHookTokenStore(context)
     private val secureSshPasswordStore = SecureSshPasswordStore(context)
     private var scopedSpName = ""
     private var scopedSp: SharedPreferences? = null
     private var scopedTokenRoot = ""
     private var scopedTokenStore: SecureWorkspaceStringStore? = null
+    private var scopedHookRoot = ""
+    private var scopedHookStore: SecureWorkspaceStringStore? = null
     private var scopedSshRoot = ""
     private var scopedSshStore: SecureWorkspaceStringStore? = null
 
@@ -530,6 +533,16 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             scopedTokenRoot = root
         }
         return scopedTokenStore!!
+    }
+
+    @Synchronized
+    private fun workspaceHookTokenStore(): SecureWorkspaceStringStore {
+        val root = boundHubRoot
+        if (scopedHookStore == null || scopedHookRoot != root) {
+            scopedHookStore = SecureWorkspaceStringStore(appContext, workspaceId, root, purpose = "hook_token")
+            scopedHookRoot = root
+        }
+        return scopedHookStore!!
     }
 
     @Synchronized
@@ -661,6 +674,12 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                 sp.edit().putString("token", clean).apply()
             }
         }
+    var hookToken: String
+        get() = if (usesLegacyDefault()) secureHookTokenStore.get() else workspaceHookTokenStore().get()
+        set(v) {
+            val clean = v.trim()
+            if (usesLegacyDefault()) secureHookTokenStore.set(clean) else workspaceHookTokenStore().set(clean)
+        }
     var hubDns: String
         get() = if (usesLegacyDefault()) {
             globalSp.getString("hub_dns", DEFAULT_DNS1) ?: DEFAULT_DNS1
@@ -731,6 +750,10 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) = sp.edit().putString("webhook_port_overrides_v1", v).apply()
     var webhookRemarkOverridesJson: String get() = sp.getString("webhook_remark_overrides_v1", "{}") ?: "{}"
         set(v) = sp.edit().putString("webhook_remark_overrides_v1", v).apply()
+    var webhookCustomEnabled: Boolean get() = sp.getBoolean("webhook_custom_enabled_v1", false)
+        set(v) = sp.edit().putBoolean("webhook_custom_enabled_v1", v).apply()
+    var webhookCustomUrl: String get() = sp.getString("webhook_custom_url_v1", "").orEmpty()
+        set(v) = sp.edit().putString("webhook_custom_url_v1", sanitizeWebhookBaseUrl(v)).apply()
     /** Last good 儿童上网 usage payload per device uid, so the page opens with data instead of blank. */
     var childGuardUsageCacheJson: String get() = sp.getString("child_guard_usage_cache_v1", "{}") ?: "{}"
         set(v) = sp.edit().putString("child_guard_usage_cache_v1", v).apply()
@@ -1120,7 +1143,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
     fun clearPingHistory() { sp.edit().putString("ping_history_v2", "[]").apply() }
 
     var dnsDomain: String
-        get() = sp.getString("dns_domain", "").orEmpty().takeUnless { it == "net86.dynv6.net" } ?: ""
+        get() = sp.getString("dns_domain", "").orEmpty()
         set(v) = sp.edit().putString("dns_domain", v).apply()
     var dns1: String get() = sp.getString("dns1", DEFAULT_DNS1) ?: DEFAULT_DNS1
         set(v) = sp.edit().putString("dns1", v).apply()
@@ -1131,7 +1154,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
     var dnsUseSystem: Boolean get() = sp.getBoolean("dns_use_system", false)
         set(v) = sp.edit().putBoolean("dns_use_system", v).apply()
 
-    var tcpHost: String get() = sp.getString("tcp_host", "192.168.5.46") ?: "192.168.5.46"
+    var tcpHost: String get() = sp.getString("tcp_host", "") ?: ""
         set(v) = sp.edit().putString("tcp_host", v).apply()
     var tcpPort: String get() = sp.getString("tcp_port", "58443") ?: "58443"
         set(v) = sp.edit().putString("tcp_port", v).apply()
@@ -1301,7 +1324,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
 
     fun clearNatHistory() { sp.edit().putString("nat_history_v2", "[]").apply() }
 
-    var sshHost: String get() = sp.getString("ssh_host", "192.168.5.1") ?: "192.168.5.1"
+    var sshHost: String get() = sp.getString("ssh_host", "") ?: ""
         set(v) = sp.edit().putString("ssh_host", v).apply()
     var sshPort: String get() = sp.getString("ssh_port", "54133") ?: "54133"
         set(v) = sp.edit().putString("ssh_port", v).apply()
@@ -1369,7 +1392,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
 
     fun clearSshResults() { sp.edit().putString("ssh_results_v1", "[]").apply() }
 
-    var traceHost: String get() = sp.getString("trace_host", "net86.dynv6.net") ?: "net86.dynv6.net"
+    var traceHost: String get() = sp.getString("trace_host", "") ?: ""
         set(v) = sp.edit().putString("trace_host", v.trim()).apply()
     var traceMaxHops: String get() = sp.getString("trace_max_hops", "16") ?: "16"
         set(v) = sp.edit().putString("trace_max_hops", v.trim()).apply()
@@ -8221,7 +8244,7 @@ fun SpeedTemplateTool(prefs: AppPrefs) {
 
 @Composable
 fun LanSpeedTool(prefs: AppPrefs) {
-    var url by remember { mutableStateOf("http://192.168.5.1:8989/download") }
+    var url by remember { mutableStateOf("") }
     var duration by remember { mutableStateOf("8") }
     var running by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("等待测速") }
@@ -8233,7 +8256,7 @@ fun LanSpeedTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     val blue = Color(0xFF0EA5E9)
     ExpressiveCard("局域网配置", "需要路由器 / NAS 提供 HTTP 大文件或 Homebox 下载地址。", Icons.Rounded.SettingsEthernet, blue) {
-        CompactIconHistoryInput("服务地址", "http://192.168.5.1:8989/download", url, { url = it }, "lan_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
+        CompactIconHistoryInput("服务地址", "填写 HTTP 下载地址", url, { url = it }, "lan_speed_url", prefs, Icons.Rounded.Public, KeyboardType.Text)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("时长", duration, { duration = it.filter { c -> c.isDigit() }.take(3) }, Icons.Rounded.HourglassEmpty, KeyboardType.Number, Modifier.weight(1f))
             TinyInfoParam("模式", "下载峰值", Icons.Rounded.Speed, blue, Modifier.weight(1f))
@@ -8766,7 +8789,7 @@ fun DnsQualityTool(prefs: AppPrefs) {
 
 @Composable
 fun ServiceMonitorTool(prefs: AppPrefs) {
-    var targetsText by remember { mutableStateOf("NAS HTTPS,192.168.5.1,5001,TCP\n路由SSH,192.168.5.1,54133,TCP\n阿里DNS,223.5.5.5,53,UDP\nGitHub,github.com,443,TCP") }
+    var targetsText by remember { mutableStateOf("阿里DNS,223.5.5.5,53,UDP\nGitHub,github.com,443,TCP") }
     var result by remember { mutableStateOf<List<String>>(emptyList()) }
     var running by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -8827,7 +8850,7 @@ fun PingTool(prefs: AppPrefs) {
     }
 
     ExpressiveCard("参数", runMode, Icons.Rounded.Tune, blue) {
-        CompactIconHistoryInput("目标", "net86.dynv6.net / 192.168.0.1", host, { host = it; prefs.pingHost = it }, "ping_host", prefs, Icons.Rounded.Dns)
+        CompactIconHistoryInput("目标", "example.com / 192.168.0.1", host, { host = it; prefs.pingHost = it }, "ping_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("协议", protocol, listOf("ICMP", "TCP", "HTTP HEAD", "HTTP GET"), { protocol = it; prefs.pingProtocol = it }, Icons.Rounded.SettingsEthernet, Modifier.weight(1f))
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.pingIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
@@ -10760,7 +10783,7 @@ fun TcpTool(prefs: AppPrefs) {
     }
 
     ExpressiveCard("TCP 配置", "TCP Connect，等同 telnet / nc 端口连通性。", Icons.Rounded.SettingsEthernet, Color(0xFF0EA5E9)) {
-        CompactIconHistoryInput("主机", "net86.dynv6.net / 240e::1", host, {
+        CompactIconHistoryInput("主机", "example.com / 240e::1", host, {
             val (cHost, cPort) = cleanProbeHost(it)
             host = it
             prefs.tcpHost = it
@@ -11212,7 +11235,7 @@ fun TraceTool(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     ExpressiveCard("追踪配置", "逐跳追踪域名经过的 IP；结果实时追加显示。", Icons.Rounded.AltRoute, Color(0xFF2563EB)) {
-        CompactIconHistoryInput("目标", "net86.dynv6.net / 223.5.5.5", host, { host = it; prefs.traceHost = it }, "trace_host", prefs, Icons.Rounded.Dns)
+        CompactIconHistoryInput("目标", "example.com / 223.5.5.5", host, { host = it; prefs.traceHost = it }, "trace_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamSelectIcon("IP策略", ipMode, listOf("自动", "IPv6优先", "IPv4优先", "仅IPv6", "仅IPv4"), { ipMode = it; prefs.traceIpMode = it }, Icons.Rounded.Router, Modifier.weight(1f))
             TinyParamInputIcon("跳数", maxHops, { maxHops = it; prefs.traceMaxHops = it }, Icons.Rounded.Timeline, KeyboardType.Number, Modifier.weight(1f))
@@ -11357,7 +11380,7 @@ fun SshTool(prefs: AppPrefs, openHistory: () -> Unit) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     ExpressiveCard("连接与命令", "路由器 / NAS 单条命令执行，返回仍在 APP 内。", Icons.Rounded.Terminal, Color(0xFF2563EB), compactTitle = true) {
-        CompactIconHistoryInput("主机", "192.168.5.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs, Icons.Rounded.Dns)
+        CompactIconHistoryInput("主机", "192.168.1.1", host, { host = it; prefs.sshHost = it }, "ssh_host", prefs, Icons.Rounded.Dns)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             TinyParamInputIcon("端口", port, { port = it; prefs.sshPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
             TinyParamInputIcon("用户", user, { user = it; prefs.sshUser = it }, Icons.Rounded.Person, KeyboardType.Text, Modifier.weight(1f))
@@ -12457,8 +12480,8 @@ fun SettingsScreen(
         lineHeight = (LabTypography.PageTitle.lineHeight.value - 1f).coerceAtLeast(1f).sp,
     )
 ) {
-    // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.5.46`
-    // 会被显示成 `192.168.5.46`，看着像把用户输入吃掉了。
+    // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.1.2`
+    // 会被显示成 `192.168.1.2`，看着像把用户输入吃掉了。
     var hub by remember { mutableStateOf(prefs.hub) }
     var hubRouteId by remember { mutableStateOf(prefs.routerHubId) }
     var appToken by remember { mutableStateOf(prefs.token) }
@@ -12539,7 +12562,7 @@ fun SettingsScreen(
                 onValueChange = {
                     hub = hubScheme + it
                 },
-                placeholder = "192.168.5.46:58443",
+                placeholder = "192.168.1.2:58443",
                 trailingIcon = { HistoryDropdown("hub", prefs) { picked -> hub = picked } },
                 modifier = Modifier.weight(1f),
             )
@@ -12603,7 +12626,7 @@ fun SettingsScreen(
                     routerAddress = routerScheme + it
                     userEditedRouter = true
                 },
-                placeholder = "192.168.5.1",
+                placeholder = "192.168.1.1",
                 trailingIcon = { HistoryDropdown("router_address", prefs) { picked -> routerAddress = picked; userEditedRouter = true } },
                 modifier = Modifier.weight(1f),
             )

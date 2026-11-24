@@ -1586,7 +1586,7 @@ fun StunPenetrationScreen(
                             value = draft.targetIpv4,
                             onValueChange = { draft = draft.copy(targetIpv4 = it) },
                             label = { Text(if (draft.targetType == "device") "设备 IPv4" else "内网地址") },
-                            placeholder = { Text("192.168.5.46") },
+                            placeholder = { Text("192.168.1.2") },
                             singleLine = true,
                             readOnly = draft.targetType == "device",
                             enabled = !saving,

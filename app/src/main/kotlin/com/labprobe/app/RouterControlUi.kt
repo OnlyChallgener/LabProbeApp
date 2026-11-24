@@ -566,7 +566,7 @@ private fun NativePortEditorSheet(
                 CompactField("内部端口", draft.destPort, "80", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destPort = it.take(32)) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
-                CompactField("内部设备 / IP", draft.destIp, "192.168.5.46", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
+                CompactField("内部设备 / IP", draft.destIp, "192.168.1.2", Modifier.weight(1f), KeyboardType.Ascii) { draft = draft.copy(destIp = it.take(64)) }
                 OutlinedButton(
                     onClick = { showDevicePicker = true },
                     modifier = Modifier.heightIn(min = 40.dp),

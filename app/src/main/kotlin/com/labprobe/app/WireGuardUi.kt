@@ -1641,7 +1641,7 @@ private fun WireGuardEditorDialog(
                 WireGuardField(allowedIps, { allowedIps = it }, when {
                     isFullTunnel -> "路由网段（全局接管：0.0.0.0/0, ::/0）"
                     source == WireGuardEndpointSource.MANUAL -> "路由网段，例如 10.8.0.0/24"
-                    else -> "路由网段，例如 10.77.0.0/24, 192.168.5.0/24"
+                    else -> "路由网段，例如 10.77.0.0/24, 192.168.1.0/24"
                 })
                 if (source != WireGuardEndpointSource.MANUAL && homeLanRoutes.isNotEmpty()) {
                     Text(

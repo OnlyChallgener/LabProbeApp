@@ -6,11 +6,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -23,10 +21,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
+import java.net.URI
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.Locale
 
 data class WebhookEndpointRecord(
@@ -35,6 +38,85 @@ data class WebhookEndpointRecord(
     val source: String,
     val updatedAt: String = ""
 )
+
+internal data class ParsedWebhookUrl(val baseUrl: String, val token: String)
+
+internal data class WebhookEndpointSettings(
+    val customEnabled: Boolean,
+    val baseUrl: String,
+    val hookToken: String,
+)
+
+private val WEBHOOK_TOKEN_KEYS = setOf("token", "hook_token", "hooktoken")
+
+private fun queryDecode(value: String): String = runCatching {
+    URLDecoder.decode(value, "UTF-8")
+}.getOrDefault(value)
+
+private fun appendWebhookQuery(url: String, query: String): String =
+    if (url.contains('?')) "$url&$query" else "$url?$query"
+
+internal fun parseWebhookUrl(raw: String): ParsedWebhookUrl {
+    val value = raw.trim()
+    require(value.isNotBlank()) { "请输入 Webhook 地址" }
+    val uri = runCatching { URI(value) }.getOrElse { throw IllegalArgumentException("Webhook 地址格式无效") }
+    require(uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) { "Webhook 地址仅支持 HTTP/HTTPS" }
+    require(!uri.host.isNullOrBlank()) { "Webhook 地址缺少有效主机" }
+    require(uri.rawUserInfo == null) { "Webhook 地址不能包含用户信息" }
+    require(uri.rawFragment == null) { "Webhook 地址不能包含片段" }
+    require(uri.port == -1 || uri.port in 1..65535) { "Webhook 端口无效" }
+    val kept = mutableListOf<String>()
+    var token = ""
+    uri.rawQuery?.split('&')?.forEach { pair ->
+        if (pair.isBlank()) return@forEach
+        val rawKey = pair.substringBefore('=')
+        val key = queryDecode(rawKey).trim().lowercase(Locale.ROOT)
+        if (key in WEBHOOK_TOKEN_KEYS) {
+            if (token.isBlank()) token = queryDecode(pair.substringAfter('=', ""))
+        } else {
+            kept += pair
+        }
+    }
+    val base = buildString {
+        append(uri.scheme.lowercase(Locale.ROOT)).append("://").append(uri.rawAuthority).append(uri.rawPath)
+        if (kept.isNotEmpty()) append('?').append(kept.joinToString("&"))
+    }
+    return ParsedWebhookUrl(base, token)
+}
+
+internal fun sanitizeWebhookBaseUrl(raw: String): String =
+    runCatching { parseWebhookUrl(raw).baseUrl }.getOrDefault("")
+
+internal fun defaultWebhookEndpoint(hubUrl: String): String =
+    hubUrl.trim().trimEnd('/').takeIf(String::isNotEmpty)?.let { "$it/hook/lucky" }.orEmpty()
+
+internal fun webhookEndpointSettings(
+    customEnabled: Boolean,
+    customUrl: String,
+    hookToken: String,
+    defaultUrl: String,
+): WebhookEndpointSettings {
+    val parsed = if (customEnabled) parseWebhookUrl(customUrl) else parseWebhookUrl(defaultUrl)
+    val token = hookToken.trim().ifBlank { parsed.token }
+    require(token.isNotBlank()) { "请填写该路由的 HOOK_TOKEN" }
+    return WebhookEndpointSettings(customEnabled, parsed.baseUrl, token)
+}
+
+internal fun buildWebhookUrl(baseUrl: String, token: String): String {
+    if (baseUrl.isBlank()) return ""
+    val parsed = parseWebhookUrl(baseUrl)
+    val effectiveToken = token.trim().ifBlank { parsed.token }
+    if (effectiveToken.isBlank()) return parsed.baseUrl
+    val encoded = URLEncoder.encode(effectiveToken, "UTF-8")
+    return appendWebhookQuery(parsed.baseUrl, "token=$encoded")
+}
+
+internal fun maskWebhookUrl(url: String): String {
+    if (url.isBlank()) return url
+    val parsed = runCatching { parseWebhookUrl(url) }.getOrNull() ?: return url
+    if (parsed.token.isBlank()) return parsed.baseUrl
+    return appendWebhookQuery(parsed.baseUrl, "token=••••••••")
+}
 
 fun parseWebhookEndpoints(status: JSONObject?, events: List<EventItem>): List<WebhookEndpointRecord> {
     val results = mutableListOf<WebhookEndpointRecord>()
@@ -135,6 +217,14 @@ fun RouterWebhookScreen(
     val context = LocalContext.current
     var portOverridesRevision by remember { mutableIntStateOf(0) }
     var remarkOverridesRevision by remember { mutableIntStateOf(0) }
+    var endpointRevision by remember { mutableIntStateOf(0) }
+
+    var showEndpointDialog by remember { mutableStateOf(false) }
+    var endpointCustomMode by remember { mutableStateOf(false) }
+    var endpointInput by remember { mutableStateOf("") }
+    var hookTokenInput by remember { mutableStateOf("") }
+    var hookTokenVisible by remember { mutableStateOf(false) }
+    var endpointError by remember { mutableStateOf("") }
 
     var showPortDialog by remember { mutableStateOf(false) }
     var targetPortItem by remember { mutableStateOf<WebhookEndpointRecord?>(null) }
@@ -146,10 +236,154 @@ fun RouterWebhookScreen(
     var remarkInputValue by remember { mutableStateOf("") }
 
     val webhookList = remember(status, events) { parseWebhookEndpoints(status, events) }
-    val webhookUrl = remember(prefs.hub, prefs.token) {
-        val base = cleanApiText(prefs.hub).trimEnd('/')
-        val tokenParam = if (prefs.token.isNotBlank()) "?token=${prefs.token}" else ""
-        if (base.isNotBlank()) "$base/hook/lucky$tokenParam" else "未配置 Hub 地址"
+    val webhookUrl = remember(prefs.hub, prefs.hookToken, prefs.webhookCustomEnabled, prefs.webhookCustomUrl, endpointRevision) {
+        val base = if (prefs.webhookCustomEnabled && prefs.webhookCustomUrl.isNotBlank()) {
+            prefs.webhookCustomUrl
+        } else {
+            defaultWebhookEndpoint(prefs.hub)
+        }
+        buildWebhookUrl(base, prefs.hookToken)
+    }
+    val displayedWebhookUrl = maskWebhookUrl(webhookUrl).ifBlank { "未配置 Webhook 地址" }
+
+    fun openEndpointEditor() {
+        endpointCustomMode = prefs.webhookCustomEnabled
+        endpointInput = if (prefs.webhookCustomEnabled) prefs.webhookCustomUrl else defaultWebhookEndpoint(prefs.hub)
+        hookTokenInput = prefs.hookToken
+        hookTokenVisible = false
+        endpointError = ""
+        showEndpointDialog = true
+    }
+
+    if (showEndpointDialog) {
+        LabCompactAlertDialog(
+            onDismissRequest = { showEndpointDialog = false },
+            title = { Text("编辑 Webhook 地址", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink) },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(
+                            onClick = { endpointCustomMode = false; endpointError = "" },
+                            shape = RoundedCornerShape(9.dp),
+                            color = if (!endpointCustomMode) Color(0xFF0284C7).copy(alpha = 0.12f) else LabCoreSurface.Inner
+                        ) {
+                            Text(
+                                "自动生成",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (!endpointCustomMode) Color(0xFF0284C7) else LabV2.InkMuted
+                            )
+                        }
+                        Surface(
+                            onClick = { endpointCustomMode = true; endpointError = "" },
+                            shape = RoundedCornerShape(9.dp),
+                            color = if (endpointCustomMode) Color(0xFF0284C7).copy(alpha = 0.12f) else LabCoreSurface.Inner
+                        ) {
+                            Text(
+                                "自定义地址",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (endpointCustomMode) Color(0xFF0284C7) else LabV2.InkMuted
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = endpointInput,
+                        onValueChange = { input ->
+                            val parsed = runCatching { parseWebhookUrl(input) }.getOrNull()
+                            if (parsed != null) {
+                                endpointInput = parsed.baseUrl
+                                if (parsed.token.isNotBlank()) hookTokenInput = parsed.token
+                            } else {
+                                endpointInput = input
+                            }
+                            endpointError = ""
+                        },
+                        enabled = endpointCustomMode,
+                        label = { Text(if (endpointCustomMode) "Webhook 地址" else "自动地址") },
+                        singleLine = false,
+                        maxLines = 3,
+                        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = hookTokenInput,
+                        onValueChange = { hookTokenInput = it; endpointError = "" },
+                        label = { Text("HOOK_TOKEN") },
+                        singleLine = true,
+                        visualTransformation = if (hookTokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            IconButton(onClick = { hookTokenVisible = !hookTokenVisible }) {
+                                Icon(
+                                    if (hookTokenVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                    if (hookTokenVisible) "隐藏 HOOK_TOKEN" else "显示 HOOK_TOKEN"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (endpointError.isNotBlank()) {
+                        Text(endpointError, color = Color(0xFFEF4444), fontSize = 11.5.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val settings = runCatching {
+                            webhookEndpointSettings(
+                                endpointCustomMode,
+                                endpointInput,
+                                hookTokenInput,
+                                defaultWebhookEndpoint(prefs.hub),
+                            )
+                        }.getOrElse {
+                            endpointError = it.message ?: "Webhook 地址格式无效"
+                            return@Button
+                        }
+                        runCatching {
+                            prefs.hookToken = settings.hookToken
+                            prefs.webhookCustomEnabled = settings.customEnabled
+                            prefs.webhookCustomUrl = settings.baseUrl
+                            endpointRevision++
+                            showEndpointDialog = false
+                            toast(context, "Webhook 地址已保存")
+                        }.onFailure {
+                            endpointError = it.message ?: "安全存储失败，请重试"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                ) { Text("保存", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        val settings = runCatching {
+                            webhookEndpointSettings(false, "", hookTokenInput, defaultWebhookEndpoint(prefs.hub))
+                        }.getOrElse {
+                            endpointError = it.message ?: "Webhook 地址格式无效"
+                            return@TextButton
+                        }
+                        runCatching {
+                            prefs.hookToken = settings.hookToken
+                            prefs.webhookCustomEnabled = false
+                            prefs.webhookCustomUrl = ""
+                            endpointRevision++
+                            showEndpointDialog = false
+                            toast(context, "已恢复自动地址")
+                        }.onFailure {
+                            endpointError = it.message ?: "安全存储失败，请重试"
+                        }
+                    }) { Text("恢复默认", color = LabV2.InkMuted) }
+                    TextButton(onClick = { showEndpointDialog = false }) { Text("取消", color = LabV2.InkMuted) }
+                }
+            }
+        )
     }
 
     if (showPortDialog && targetPortItem != null) {
@@ -322,6 +556,9 @@ fun RouterWebhookScreen(
                             Text("Webhook 接收端点", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
                             Text("用于在 Lucky 或脚本中上报公网 IP 与端口", fontSize = 11.5.sp, color = LabV2.InkMuted)
                         }
+                        IconButton(onClick = { openEndpointEditor() }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Rounded.Edit, "编辑 Webhook 地址", tint = Color(0xFF0284C7), modifier = Modifier.size(18.dp))
+                        }
                     }
 
                     Surface(
@@ -337,7 +574,7 @@ fun RouterWebhookScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                webhookUrl,
+                                displayedWebhookUrl,
                                 modifier = Modifier.weight(1f),
                                 fontSize = 11.5.sp,
                                 fontFamily = FontFamily.Monospace,
@@ -352,6 +589,7 @@ fun RouterWebhookScreen(
                                     copy(context, webhookUrl)
                                     toast(context, "已复制 Webhook URL")
                                 },
+                                enabled = webhookUrl.isNotBlank(),
                                 shape = RoundedCornerShape(8.dp),
                                 color = Color(0xFF0284C7),
                             ) {
