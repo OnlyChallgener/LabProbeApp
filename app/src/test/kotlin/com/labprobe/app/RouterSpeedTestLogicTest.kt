@@ -33,6 +33,12 @@ class RouterSpeedTestLogicTest {
             speedTestCollapsedSummary(SpeedProgress("running", false, sample()), running = true))
         assertEquals("路由器直连宽带测速 · 节点可选",
             speedTestCollapsedSummary(null, running = false))
+        assertEquals("上次下行 400.00 Mbps · 时延 1.68 ms",
+            speedTestCollapsedSummary(
+                SpeedProgress(stat = "end", finished = true,
+                    primary = sample(down = listOf(100.0, 200.0, 900.0))),
+                running = false
+            ))
     }
 
     @Test
@@ -128,5 +134,21 @@ class RouterSpeedTestLogicTest {
         assertEquals(2.0, speedSeriesAverage(listOf(1.0, 2.0, 3.0))!!, 0.001)
         assertEquals(null, speedSeriesAverage(emptyList()))
         assertEquals(null, speedSeriesAverage(listOf(Double.NaN, -1.0)))
+    }
+
+    @Test
+    fun firmwareFinalScoreUsesSeriesAverageInsteadOfTailSample() {
+        val series = listOf(100.0, 200.0, 900.0)
+        assertEquals(400.0, speedSeriesAverage(series)!!, 0.001)
+        assertFalse(series.last() == speedSeriesAverage(series))
+    }
+
+    @Test
+    fun routerPollingStopsOnFailureLimitAndDeadline() {
+        assertEquals("finished", routerSpeedPollStopReason("end", 0, 0L))
+        assertEquals("固件测速失败，请重试", routerSpeedPollStopReason("failed", 0, 0L))
+        assertEquals("测速状态读取连续失败，请重试", routerSpeedPollStopReason("running", ROUTER_SPEED_POLL_FAILURE_LIMIT, 0L))
+        assertEquals("测速状态读取超时，请重试", routerSpeedPollStopReason("running", 0, ROUTER_SPEED_POLL_TIMEOUT_MS))
+        assertEquals(null, routerSpeedPollStopReason("running", ROUTER_SPEED_POLL_FAILURE_LIMIT - 1, ROUTER_SPEED_POLL_TIMEOUT_MS - 1))
     }
 }

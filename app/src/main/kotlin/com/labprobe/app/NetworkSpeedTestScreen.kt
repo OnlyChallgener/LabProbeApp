@@ -154,23 +154,44 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
 
     LaunchedEffect(running) {
         if (!running) return@LaunchedEffect
-        while (true) {
-            delay(1000)
-            val result = runCatching { api.progress() }.getOrNull() ?: continue
-            progress = result
-            if (result.finished) {
-                runCatching { api.history() }.onSuccess { history = it }
-                break
+        val startedAt = System.currentTimeMillis()
+        var failures = 0
+        try {
+            while (true) {
+                delay(1000)
+                val result = try {
+                    api.progress().also { failures = 0 }
+                } catch (_: Exception) {
+                    failures++
+                    null
+                }
+                val elapsed = System.currentTimeMillis() - startedAt
+                val stopReason = routerSpeedPollStopReason(result?.stat ?: "running", failures, elapsed)
+                if (stopReason != null) {
+                    if (stopReason != "finished") error = stopReason
+                    if (result?.finished == true) {
+                        progress = result
+                        runCatching { api.history() }.onSuccess { history = it }
+                    }
+                    break
+                }
+                if (result != null) progress = result
             }
+        } finally {
+            running = false
         }
-        running = false
     }
 
     val last = history.firstOrNull()
     val primary = progress?.primary
     // 路由器侧不做任何本地重采样：曲线和仪表都用固件上报的原始序列与数值。
-    val down = primary?.currentDown ?: last?.downMbps
+    val down = when {
+        progress?.finished == true -> speedSeriesAverage(primary?.down.orEmpty()) ?: primary?.currentDown
+        primary != null -> primary.currentDown
+        else -> last?.downMbps
+    }
     val up = when {
+        progress?.finished == true -> speedSeriesAverage(primary?.up.orEmpty()) ?: primary?.currentUp
         primary == null -> last?.upMbps
         primary.up.isEmpty() -> null
         else -> primary.currentUp
@@ -239,6 +260,7 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                         scope.launch {
                             try {
                                 api.start(selectedPort, selectedNode)
+                                progress = null
                                 running = true
                             } catch (throwable: Exception) {
                                 error = speedTestErrorText(throwable.message)
@@ -407,6 +429,7 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
     var selectedNodeId by remember { mutableStateOf("") }
     var network by remember { mutableStateOf<PhoneSpeedTestNetworkInfo?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var probing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var history by remember { mutableStateOf(prefs.phoneSpeedHistory()) }
     var historyExpanded by remember { mutableStateOf(false) }
@@ -451,12 +474,12 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
     val upSettled = speedSeriesAverage(progress.up)
     val down = when {
         !hasSamples -> last?.downAvg
-        over || progress.up.isNotEmpty() -> downSettled ?: progress.avgDown ?: progress.currentDown
+        over || progress.up.isNotEmpty() -> progress.avgDown ?: downSettled ?: progress.currentDown
         else -> progress.currentDown ?: downSettled
     }
     val up = when {
         !hasSamples -> last?.upAvg
-        over -> upSettled ?: progress.avgUp ?: progress.currentUp
+        over -> progress.avgUp ?: upSettled ?: progress.currentUp
         progress.up.isNotEmpty() -> progress.currentUp ?: upSettled
         else -> null
     }
@@ -538,37 +561,40 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
                 else -> SpeedNodeChips(
                     nodes = nodes.map { SpeedTestNode(it.id, it.name) },
                     selected = selectedNodeId,
-                    enabled = !running
+                    enabled = !running && !probing
                 ) { selectedNodeId = it }
             }
             Button(
                 onClick = {
                     if (running) {
                         PhoneSpeedTestCoordinator.cancel()
-                    } else {
+                    } else if (!probing) {
                         val currentNetwork = currentPhoneSpeedTestNetwork(context) ?: network
                         if (currentNetwork != null && !loading && nodes.isNotEmpty()) {
+                            probing = true
                             scope.launch {
-                                // 首选当前选中的节点，连不上就按推荐顺序换下一个；
-                                // 整个探测都在本机做，不经过 Hub。
-                                val ordered = node?.let { listOf(it) + nodes.filter { item -> item.id != it.id } }
-                                    ?: nodes
-                                val reachable = GlobalSpeedProtocol.firstReachableNode(ordered, currentNetwork.network)
-                                if (reachable == null) {
-                                    error = "测速节点都连不上，请检查手机网络后重试"
-                                } else {
-                                    selectedNodeId = reachable.id
-                                    network = currentNetwork
-                                    error = ""
-                                    if (!PhoneSpeedTestCoordinator.start(context, prefs, reachable, currentNetwork)) {
-                                        error = "已有测速在运行"
+                                try {
+                                    val ordered = node?.let { listOf(it) + nodes.filter { item -> item.id != it.id } }
+                                        ?: nodes
+                                    val reachable = GlobalSpeedProtocol.firstReachableNode(ordered, currentNetwork.network)
+                                    if (reachable == null) {
+                                        error = "测速节点都连不上，请检查手机网络后重试"
+                                    } else {
+                                        selectedNodeId = reachable.id
+                                        network = currentNetwork
+                                        error = ""
+                                        if (!PhoneSpeedTestCoordinator.start(context, prefs, reachable, currentNetwork)) {
+                                            error = "已有测速在运行"
+                                        }
                                     }
+                                } finally {
+                                    probing = false
                                 }
                             }
                         }
                     }
                 },
-                enabled = running || (!loading && node != null && network != null),
+                enabled = running || (!loading && !probing && node != null && network != null),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SpeedAccent,
@@ -581,6 +607,7 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
                 Text(
                     when {
                         running -> "取消测速"
+                        probing -> "正在探测节点…"
                         loading -> "正在读取节点"
                         else -> "开始手机测速"
                     },

@@ -14,8 +14,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,6 +37,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.sqrt
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 data class PhoneSpeedTestNode(
     val id: String,
@@ -135,6 +140,18 @@ internal data class PhoneLatencyResult(
     val jitter: Double?,
     val loss: Double
 )
+
+internal fun speedMbps(totalBytes: Long, elapsedMs: Long): Double {
+    if (totalBytes <= 0L || elapsedMs <= 0L) return 0.0
+    return totalBytes * 8.0 / elapsedMs / 1_000.0
+}
+
+internal fun phoneLatencyResult(values: List<Double>, failures: Int, attempts: Int): PhoneLatencyResult {
+    val latency = values.takeIf { it.isNotEmpty() }?.average()
+    val jitter = values.takeIf { it.size >= 2 }?.zipWithNext()?.map { (a, b) -> abs(b - a) }?.average()
+    val loss = if (attempts <= 0) 0.0 else failures * 100.0 / attempts
+    return PhoneLatencyResult(latency, jitter, loss)
+}
 
 internal data class PhoneDirectionResult(
     val samples: List<Double>,
@@ -272,27 +289,24 @@ object GlobalSpeedProtocol {
         candidates: List<PhoneSpeedTestNode>,
         network: Network?
     ): PhoneSpeedTestNode? = withContext(Dispatchers.IO) {
-        // 并发探测 + 整体时限：避免备用节点逐个 1.5s 超时累计成十几秒等待。
-        // 结果按 candidates 原始顺序取第一个可达的，保留「用户选择优先、出口推荐其次」。
+        if (candidates.isEmpty()) return@withContext null
         val limit = candidates.size.coerceAtMost(MAX_PROBE_CONCURRENCY)
         val overall = withTimeoutOrNull(PROBE_TOTAL_TIMEOUT_MS) {
             candidates.chunked(limit).firstNotNullOfOrNull { batch ->
                 val probes = batch.map { node ->
                     async {
-                        val ok = runCatching {
-                            val conn = (network?.openConnection(URL("http://${node.host}:${node.port}/"))
-                                ?: URL("http://${node.host}:${node.port}/").openConnection()) as HttpURLConnection
-                            try {
-                                conn.connectTimeout = PROBE_TIMEOUT_MS.toInt()
-                                conn.readTimeout = PROBE_TIMEOUT_MS.toInt()
+                        val ok = try {
+                            withHttpConnection<Boolean>(network, URL("http://${node.host}:${node.port}/"), PROBE_TIMEOUT_MS.toInt()) { conn ->
                                 conn.requestMethod = "GET"
                                 conn.setRequestProperty("Cache-Control", "no-store")
                                 conn.responseCode
                                 true
-                            } finally {
-                                runCatching { conn.disconnect() }
                             }
-                        }.getOrDefault(false)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            false
+                        }
                         node to ok
                     }
                 }
@@ -308,38 +322,39 @@ object GlobalSpeedProtocol {
             "ip=", "network=4", "province=", "city=", "wifioper=", "mobileoperid=0",
             "ipv6=${if (preferIpv6) "1" else "0"}", "model=Android", "pkg=com.labprobe.app"
         ).joinToString("&")
-        val conn = openHttp(network, URL("$MATCH_URL?$query"), 12_000)
         val live = try {
-            if (conn.responseCode != 200) emptyList()
-            else {
-                val text = decodeBody(conn.inputStream.use { it.readBytes() })
-                val rows = JSONArray(text)
-                val seen = HashSet<String>()
-                buildList {
-                    for (index in 0 until rows.length()) {
-                        val row = rows.optJSONObject(index) ?: continue
-                        val id = row.optString("hostid").trim()
-                        val host = row.optString("hostip").trim()
-                        if (id.isBlank() || host.isBlank() || !seen.add(id)) continue
-                        val name = row.optString("hostname").trim().ifBlank { id }
-                        add(
-                            PhoneSpeedTestNode(
-                                id = id,
-                                name = name,
-                                host = host,
-                                port = row.optString("port").trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: 65499,
-                                province = row.optString("pname").trim(),
-                                city = row.optString("city").trim(),
-                                carrier = row.optString("oper").trim().ifBlank { carrierOf(name) }
+            withHttpConnection<List<PhoneSpeedTestNode>>(network, URL("$MATCH_URL?$query"), 12_000) { conn ->
+                if (conn.responseCode != 200) emptyList()
+                else {
+                    val text = decodeBody(conn.inputStream.use { it.readBytes() })
+                    val rows = JSONArray(text)
+                    val seen = HashSet<String>()
+                    buildList {
+                        for (index in 0 until rows.length()) {
+                            val row = rows.optJSONObject(index) ?: continue
+                            val id = row.optString("hostid").trim()
+                            val host = row.optString("hostip").trim()
+                            if (id.isBlank() || host.isBlank() || !seen.add(id)) continue
+                            val name = row.optString("hostname").trim().ifBlank { id }
+                            add(
+                                PhoneSpeedTestNode(
+                                    id = id,
+                                    name = name,
+                                    host = host,
+                                    port = row.optString("port").trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: 65499,
+                                    province = row.optString("pname").trim(),
+                                    city = row.optString("city").trim(),
+                                    carrier = row.optString("oper").trim().ifBlank { carrierOf(name) }
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Throwable) {
             emptyList()
-        } finally {
-            conn.disconnect()
         }
         // 只有两个以上才算「按出口推荐成功」，一个节点多半是这台出口被服务端限制了。
         if (live.size >= 2) lastGoodNodes = live
@@ -358,26 +373,52 @@ object GlobalSpeedProtocol {
             "key=", "flag=true", "bandwidth=200", "model=Android", "imei=$imei",
             "time=$now", "app=globalspeed", "token=$token", "pkg=com.labprobe.app"
         ).joinToString("&")
-        val conn = openHttp(network, URL("http://${node.host}:${node.port}/speed/dovalid?$query"), 10_000)
-        conn.setRequestProperty("User-Agent", DALVIK_UA)
-        try {
+        withHttpConnection(network, URL("http://${node.host}:${node.port}/speed/dovalid?$query"), 10_000) { conn ->
+            conn.setRequestProperty("User-Agent", DALVIK_UA)
             val body = conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
             Regex("1-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
                 .find(body)?.value ?: error("GlobalSpeed 会话被拒绝")
-        } finally {
-            conn.disconnect()
         }
     }
 
     private fun openHttp(network: Network?, url: URL, timeoutMs: Int): HttpURLConnection {
         val conn = (network?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
-        conn.connectTimeout = 5_000
+        conn.connectTimeout = timeoutMs.coerceAtMost(5_000)
         conn.readTimeout = timeoutMs
         conn.instanceFollowRedirects = false
         conn.setRequestProperty("Accept-Encoding", "identity")
         conn.setRequestProperty("Cache-Control", "no-store")
         conn.setRequestProperty("User-Agent", CHROME_UA)
         return conn
+    }
+
+    internal suspend fun <T> withHttpConnection(
+        network: Network?,
+        url: URL,
+        timeoutMs: Int,
+        block: (HttpURLConnection) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        val conn = openHttp(network, url, timeoutMs)
+        suspendCancellableCoroutine { continuation ->
+            val worker = Thread {
+                try {
+                    val result = block(conn)
+                    if (continuation.isActive) continuation.resume(result)
+                } catch (failure: Throwable) {
+                    if (continuation.isActive) continuation.resumeWithException(failure)
+                } finally {
+                    runCatching { conn.disconnect() }
+                }
+            }.apply {
+                isDaemon = true
+                name = "LabProbe-GlobalSpeed-HTTP"
+                start()
+            }
+            continuation.invokeOnCancellation {
+                runCatching { conn.disconnect() }
+                worker.interrupt()
+            }
+        }
     }
 
     private fun decodeBody(bytes: ByteArray): String {
@@ -398,10 +439,10 @@ class PhoneSpeedTestEngine(private val context: Context) {
     ): PhoneSpeedTestResult = coroutineScope {
         val startedAt = SystemClock.elapsedRealtime()
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        var networkChanged = false
+        val networkChanged = AtomicBoolean(false)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onLost(network: Network) {
-                if (networkInfo.network == null || network == networkInfo.network) networkChanged = true
+                if (networkInfo.network == null || network == networkInfo.network) networkChanged.set(true)
             }
         }
         runCatching { cm?.registerDefaultNetworkCallback(callback) }
@@ -428,7 +469,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
             val down = runDirection(
                 upload = false, node = node, networkInfo = networkInfo, session = session,
                 totalBytes = totalBytes, maxBytes = maxBytes, latency = latency,
-                shouldStop = { networkChanged }, onProgress = onProgress
+                shouldStop = { networkChanged.get() }, onProgress = onProgress
             )
             if (down.message == "网络已切换") {
                 return@coroutineScope result(node, networkInfo, down, null, latency, totalBytes.get(), startedAt, false, down.message)
@@ -454,10 +495,10 @@ class PhoneSpeedTestEngine(private val context: Context) {
                 upload = true, node = node, networkInfo = networkInfo, session = session,
                 totalBytes = totalBytes, maxBytes = maxBytes, latency = latency,
                 downSpanMs = down.effectiveMs,
-                shouldStop = { networkChanged }, onProgress = onProgress
+                shouldStop = { networkChanged.get() }, onProgress = onProgress
             )
             val message = when {
-                networkChanged -> "网络已切换，测速已停止"
+                networkChanged.get() -> "网络已切换，测速已停止"
                 down.message == "节点未返回有效数据" || up.message == "节点未返回有效数据" -> "节点未返回有效数据"
                 up.message == "达到流量保护上限" || down.message == "达到流量保护上限" -> "达到流量保护上限"
                 !down.stable || !up.stable -> "测速完成，速度波动较大"
@@ -465,7 +506,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
             }
             result(
                 node, networkInfo, down, up, latency, totalBytes.get(), startedAt,
-                !networkChanged && down.stable && up.stable, message
+                !networkChanged.get() && down.stable && up.stable, message
             )
                 .also {
                     onProgress(
@@ -511,6 +552,8 @@ class PhoneSpeedTestEngine(private val context: Context) {
         val tracker = SpeedStabilityTracker()
         val recorded = mutableListOf<Double>()
         val baselineBytes = totalBytes.get()
+        var effectiveStartAt: Long? = null
+        var effectiveStartBytes = 0L
         val pool = TransferPool(networkInfo, node, session, upload, totalBytes)
         var connections = 4
         pool.start(connections)
@@ -538,8 +581,14 @@ class PhoneSpeedTestEngine(private val context: Context) {
                 }
                 val oldest = byteHistory.first()
                 val window = (now - oldest.first).coerceAtLeast(1L)
-                val instant = (total - oldest.second) * 8.0 / window / 1_000.0
-                effectiveMs = (elapsed - 2_000L).coerceAtLeast(0L)
+                val instant = speedMbps(total - oldest.second, window)
+                if (elapsed > 2_000L && effectiveStartAt == null) {
+                    effectiveStartAt = now
+                    effectiveStartBytes = total
+                }
+                val effectiveStart = effectiveStartAt
+                effectiveMs = effectiveStart?.let { now - it } ?: 0L
+                val effectiveAverage = effectiveStart?.let { speedMbps(total - effectiveStartBytes, effectiveMs) } ?: 0.0
                 // 预热段既不画也不算；正式段里即使是 0 也要照实记录，那是真的停住了。
                 if (elapsed > 2_000L) recorded += instant
                 val decision = tracker.add(elapsed, instant)
@@ -549,7 +598,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
                             phase = "download",
                             down = recorded.toList(),
                             currentDown = instant,
-                            avgDown = decision.averageMbps,
+                            avgDown = effectiveAverage,
                             peakDown = decision.peakMbps,
                             latency = latency.latency,
                             jitter = latency.jitter,
@@ -566,7 +615,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
                             phase = "upload",
                             up = recorded.toList(),
                             currentUp = instant,
-                            avgUp = decision.averageMbps,
+                            avgUp = effectiveAverage,
                             peakUp = decision.peakMbps,
                             latency = latency.latency,
                             jitter = latency.jitter,
@@ -597,7 +646,6 @@ class PhoneSpeedTestEngine(private val context: Context) {
                 }
                 if (decision.done) {
                     stable = decision.stable
-                    average = decision.averageMbps
                     peak = decision.peakMbps
                     message = decision.reason
                     break
@@ -606,10 +654,13 @@ class PhoneSpeedTestEngine(private val context: Context) {
         } finally {
             pool.stop()
         }
-        if (average <= 0.0) {
-            average = recorded.takeIf { it.isNotEmpty() }?.average() ?: 0.0
-            peak = recorded.maxOrNull() ?: 0.0
+        val effectiveStart = effectiveStartAt
+        average = if (effectiveStart != null && effectiveMs > 0L) {
+            speedMbps(totalBytes.get() - effectiveStartBytes, effectiveMs)
+        } else {
+            recorded.takeIf { it.isNotEmpty() }?.average() ?: 0.0
         }
+        peak = recorded.maxOrNull() ?: 0.0
         if (totalBytes.get() - baselineBytes < 64L * 1024L) {
             message = "节点未返回有效数据"
             stable = false
@@ -617,30 +668,33 @@ class PhoneSpeedTestEngine(private val context: Context) {
         PhoneDirectionResult(recorded, average, peak, stable, message, effectiveMs)
     }
 
-    private fun measureLatency(networkInfo: PhoneSpeedTestNetworkInfo, node: PhoneSpeedTestNode): PhoneLatencyResult {
+    private suspend fun measureLatency(networkInfo: PhoneSpeedTestNetworkInfo, node: PhoneSpeedTestNode): PhoneLatencyResult {
         val values = mutableListOf<Double>()
         var failures = 0
-        repeat(5) {
+        var attempts = 0
+        while (attempts < 5 && failures < 3) {
+            currentCoroutineContext().ensureActive()
+            attempts++
             val started = SystemClock.elapsedRealtime()
             try {
-                val conn = (networkInfo.network?.openConnection(URL("http://${node.host}:${node.port}/"))
-                    ?: URL("http://${node.host}:${node.port}/").openConnection()) as HttpURLConnection
-                conn.connectTimeout = 4_000
-                conn.readTimeout = 4_000
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("Cache-Control", "no-store")
-                conn.responseCode
-                values += (SystemClock.elapsedRealtime() - started).toDouble()
-                conn.disconnect()
+                val elapsed = GlobalSpeedProtocol.withHttpConnection(
+                    networkInfo.network,
+                    URL("http://${node.host}:${node.port}/"),
+                    4_000,
+                ) { conn ->
+                    conn.requestMethod = "GET"
+                    conn.setRequestProperty("Cache-Control", "no-store")
+                    conn.responseCode
+                    (SystemClock.elapsedRealtime() - started).toDouble()
+                }
+                values += elapsed
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Throwable) {
                 failures++
-                // 连续三个探测都超时就没必要再耗两个 4s 超时了。
-                if (failures >= 3) return@repeat
             }
         }
-        val latency = values.takeIf { it.isNotEmpty() }?.average()
-        val jitter = values.takeIf { it.size >= 2 }?.zipWithNext()?.map { (a, b) -> abs(b - a) }?.average()
-        return PhoneLatencyResult(latency, jitter, failures * 100.0 / 5.0)
+        return phoneLatencyResult(values, failures, attempts)
     }
 
     private fun result(
@@ -709,7 +763,6 @@ private class TransferPool(
             var socket: Socket? = null
             try {
                 socket = connect()
-                sockets.add(socket)
                 if (upload) uploadWorker(socket) else downloadWorker(socket)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -732,16 +785,25 @@ private class TransferPool(
         } else {
             addresses.firstOrNull { it is Inet4Address } ?: addresses.first()
         }
+        if (!active.get() || !scope.isActive) throw CancellationException("测速已取消")
         val socket = Socket()
-        networkInfo.network?.bindSocket(socket)
-        if (upload) {
-            // 默认的发送缓冲攒一大坨再排空，write() 只算「交给内核」不算真的发出去，
-            // 250ms 取值就会看到规律锯齿。收窄到 64KB 让写入速度贴着链路实际吞吐走。
-            socket.sendBufferSize = 64 * 1024
+        sockets.add(socket)
+        try {
+            networkInfo.network?.bindSocket(socket)
+            if (upload) {
+                // 默认的发送缓冲攒一大坨再排空，write() 只算「交给内核」不算真的发出去，
+                // 250ms 取值就会看到规律锯齿。收窄到 64KB 让写入速度贴着链路实际吞吐走。
+                socket.sendBufferSize = 64 * 1024
+            }
+            if (!active.get() || !scope.isActive) throw CancellationException("测速已取消")
+            socket.connect(InetSocketAddress(address, node.port), 5_000)
+            socket.soTimeout = 5_000
+            return socket
+        } catch (failure: Throwable) {
+            sockets.remove(socket)
+            runCatching { socket.close() }
+            throw failure
         }
-        socket.connect(InetSocketAddress(address, node.port), 5_000)
-        socket.soTimeout = 5_000
-        return socket
     }
 
     private fun downloadWorker(socket: Socket) {

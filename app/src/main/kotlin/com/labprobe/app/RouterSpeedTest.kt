@@ -216,8 +216,10 @@ class SpeedTestApi(private val prefs: AppPrefs) {
                 SpeedHistoryRecord(
                     epoch = row.optLong("epoch"),
                     intf = primary.optString("intf"),
-                    downMbps = number(primary.opt("currentDown")),
-                    upMbps = number(primary.opt("currentUp")),
+                    downMbps = speedSeriesAverage(primary.optJSONArray("downspeed").toSpeedSeries())
+                        ?: number(primary.opt("currentDown")),
+                    upMbps = speedSeriesAverage(primary.optJSONArray("upspeed").toSpeedSeries())
+                        ?: number(primary.opt("currentUp")),
                     latency = number(primary.opt("latency"))
                 )
             )
@@ -260,6 +262,17 @@ internal fun formatSpeedWithUnit(mbps: Double?): String = "${formatSpeed(mbps)} 
 internal fun isSpeedTestUploadPhase(running: Boolean, progress: SpeedProgress?): Boolean {
     val current = progress ?: return false
     return running && current.stat == "running" && !current.finished && current.primary?.up?.isNotEmpty() == true
+}
+
+internal const val ROUTER_SPEED_POLL_TIMEOUT_MS = 120_000L
+internal const val ROUTER_SPEED_POLL_FAILURE_LIMIT = 5
+
+internal fun routerSpeedPollStopReason(stat: String, failures: Int, elapsedMs: Long): String? = when {
+    stat == "end" -> "finished"
+    stat == "failed" || stat == "error" -> "固件测速失败，请重试"
+    failures >= ROUTER_SPEED_POLL_FAILURE_LIMIT -> "测速状态读取连续失败，请重试"
+    elapsedMs >= ROUTER_SPEED_POLL_TIMEOUT_MS -> "测速状态读取超时，请重试"
+    else -> null
 }
 
 /**
@@ -328,8 +341,13 @@ internal fun visibleSpeedHistory(
 /** 折叠状态下标题下面那一行：把上次结果直接报出来，别让卡片看起来是空的。 */
 internal fun speedTestCollapsedSummary(progress: SpeedProgress?, running: Boolean): String {
     if (running) return "测速进行中…"
-    val down = progress?.primary?.currentDown ?: return "路由器直连宽带测速 · 节点可选"
-    val latency = progress.primary?.latency
+    val current = progress ?: return "路由器直连宽带测速 · 节点可选"
+    val down = if (current.finished) {
+        speedSeriesAverage(current.primary?.down.orEmpty()) ?: current.primary?.currentDown
+    } else {
+        current.primary?.currentDown
+    } ?: return "路由器直连宽带测速 · 节点可选"
+    val latency = current.primary?.latency
         ?.let { " · 时延 ${String.format(java.util.Locale.US, "%.2f", it)} ms" }
         ?: ""
     return "上次下行 ${formatSpeed(down)} Mbps$latency"
