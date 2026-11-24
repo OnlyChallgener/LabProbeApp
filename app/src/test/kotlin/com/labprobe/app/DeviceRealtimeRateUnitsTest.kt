@@ -108,6 +108,34 @@ class DeviceRealtimeRateUnitsTest {
     }
 
     @Test
+    fun standardBitsPerSecondMarkerIsNotByteUnit() {
+        val parsed = parseDeviceArray("""
+            [{"mac":"AA:BB:CC:DD:EE:01","realtimeRateUnit":"b/s","realtimeUpload":2680,"realtimeDownload":12000}]
+        """.trimIndent()).single()
+
+        assertEquals(335L, parsed.realtimeUploadBytes)
+        assertEquals(1500L, parsed.realtimeDownloadBytes)
+    }
+
+    @Test
+    fun firstPartialDeltaPreservesMissingDeviceValues() {
+        val existing = device("AA:BB:CC:DD:EE:01").copy(
+            realtimeUploadBytes = 100L,
+            realtimeDownloadBytes = 200L,
+            connectionCount = 7,
+        )
+        val smoother = RealtimeDisplaySmoother()
+        smoother.acceptDevices(JSONObject("""
+            {"sampleEpochMs":1700000000000,"delta":true,"devices":[{"mac":"AA:BB:CC:DD:EE:01","uploadBps":800}]}
+        """.trimIndent()), now = 1000L)
+
+        val rendered = smoother.renderDevices(listOf(existing), now = 1000L).single()
+        assertEquals(100L, rendered.realtimeUploadBytes)
+        assertEquals(200L, rendered.realtimeDownloadBytes)
+        assertEquals(7, rendered.connectionCount)
+    }
+
+    @Test
     fun missingRatesDoNotOverwritePreviousSmoothedValues() {
         val smoother = RealtimeDisplaySmoother()
         smoother.acceptDevices(JSONObject("""

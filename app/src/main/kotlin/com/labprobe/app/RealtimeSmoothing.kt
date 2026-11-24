@@ -67,9 +67,9 @@ class RealtimeDisplaySmoother {
     )
 
     private data class DeviceDisplay(
-        val uploadBps: Long,
-        val downloadBps: Long,
-        val connectionCount: Int,
+        val uploadBps: Long?,
+        val downloadBps: Long?,
+        val connectionCount: Int?,
     )
 
     private var routerInitialized = false
@@ -173,7 +173,7 @@ class RealtimeDisplaySmoother {
                     displayedDownload = targetDownload ?: -1.0,
                     targetUpload = targetUpload ?: -1.0,
                     targetDownload = targetDownload ?: -1.0,
-                    connectionCount = if (hasConnectionCount) row.optInt("connectionCount", 0).coerceAtLeast(0) else 0,
+                    connectionCount = if (hasConnectionCount) row.optInt("connectionCount", 0).coerceAtLeast(0) else -1,
                     dirty = true,
                 )
             } else {
@@ -266,12 +266,13 @@ class RealtimeDisplaySmoother {
         var changed = false
         val next = items.map { item ->
             val value = deviceDisplaySnapshot[cleanMac(item.mac)] ?: return@map item
-            val uploadBytes = rateBitsPerSecondToBytesPerSecond(value.uploadBps)
-            val downloadBytes = rateBitsPerSecondToBytesPerSecond(value.downloadBps)
+            val uploadBytes = value.uploadBps?.let(::rateBitsPerSecondToBytesPerSecond) ?: item.realtimeUploadBytes
+            val downloadBytes = value.downloadBps?.let(::rateBitsPerSecondToBytesPerSecond) ?: item.realtimeDownloadBytes
+            val connections = value.connectionCount ?: item.connectionCount
             if (
                 item.realtimeUploadBytes == uploadBytes &&
                 item.realtimeDownloadBytes == downloadBytes &&
-                item.connectionCount == value.connectionCount
+                item.connectionCount == connections
             ) {
                 item
             } else {
@@ -279,7 +280,7 @@ class RealtimeDisplaySmoother {
                 item.copy(
                     realtimeUploadBytes = uploadBytes,
                     realtimeDownloadBytes = downloadBytes,
-                    connectionCount = value.connectionCount,
+                    connectionCount = connections,
                 )
             }
         }
@@ -298,9 +299,9 @@ class RealtimeDisplaySmoother {
             deviceDisplaySnapshot.clear()
             for ((mac, track) in deviceTracks) {
                 deviceDisplaySnapshot[mac] = DeviceDisplay(
-                    uploadBps = track.displayedUpload.roundToLong().coerceAtLeast(0L),
-                    downloadBps = track.displayedDownload.roundToLong().coerceAtLeast(0L),
-                    connectionCount = track.connectionCount,
+                    uploadBps = track.displayedUpload.takeIf { it >= 0.0 }?.roundToLong(),
+                    downloadBps = track.displayedDownload.takeIf { it >= 0.0 }?.roundToLong(),
+                    connectionCount = track.connectionCount.takeIf { it >= 0 },
                 )
             }
             devicesDirty = false

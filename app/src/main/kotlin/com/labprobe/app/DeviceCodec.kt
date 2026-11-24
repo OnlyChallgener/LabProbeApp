@@ -30,7 +30,7 @@ internal fun hasDeviceDownloadRate(value: JSONObject): Boolean =
 private fun JSONObject.legacyRealtimeBitsPerSecond(key: String): Long {
     val raw = optLong(key, 0L).coerceAtLeast(0L)
     val unit = optString("realtimeRateUnit").trim().lowercase(Locale.ROOT)
-    return if (unit == "bytes/s" || unit == "byte/s" || unit == "b/s") {
+    return if (unit == "bytes/s" || unit == "byte/s") {
         rateBytesPerSecondToBitsPerSecond(raw)
     } else {
         raw
