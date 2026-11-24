@@ -60,6 +60,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 internal fun JSONArray.luckyRows(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 
+internal fun JSONObject.luckyCertificatePayload(): Pair<List<JSONObject>, List<JSONObject>?> =
+    getJSONArray("items").luckyRows() to optJSONArray("accounts")?.luckyRows()
+
 internal class LuckyApi(prefs: AppPrefs) {
     private val hub = HubApi(prefs)
     suspend fun call(path: String, method: String = "GET", body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
@@ -72,6 +75,12 @@ internal class LuckyApi(prefs: AppPrefs) {
         hub.requestJsonShortCancellable("/api/lucky$path").also {
             check(it.optBoolean("ok")) { it.optString("error", "Lucky 读取失败") }
         }
+    }
+
+    suspend fun readAccounts(instanceId: String): JSONObject? = try {
+        read("/$instanceId/accounts")
+    } catch (error: HubHttpException) {
+        if (error.statusCode == 404 || error.statusCode == 405) null else throw error
     }
 
     suspend fun downloadCertificate(instanceId: String, certificateId: String, output: java.io.OutputStream) {
@@ -196,6 +205,7 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
     var rules by remember(snapshots) { mutableStateOf(initialSnapshot?.rules.orEmpty()) }
     var certs by remember(snapshots) { mutableStateOf(initialSnapshot?.certificates.orEmpty()) }
     var accounts by remember(snapshots) { mutableStateOf(initialSnapshot?.accounts.orEmpty()) }
+    var accountsApiSupported by remember { mutableStateOf(true) }
     var tab by remember(snapshots) { mutableIntStateOf(snapshots.selectedTab) }
     var busy by remember { mutableStateOf(false) }
     var activeRefreshes by remember { mutableIntStateOf(0) }
@@ -259,16 +269,24 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
         withContext(Dispatchers.IO) { snapshots.saveRules(id, it) }
     }
     fun refreshCertsNow(id: String, replace: Boolean = false) = launchRefresh("certificates:$id", replace, {
-        withContext(Dispatchers.IO) { api.read("/$id/certificates").getJSONArray("items").luckyRows() }
-    }) {
-        certs = it
-        withContext(Dispatchers.IO) { snapshots.saveCertificates(id, it) }
+        withContext(Dispatchers.IO) { api.read("/$id/certificates").luckyCertificatePayload() }
+    }) { (newCerts, newAccounts) ->
+        certs = newCerts
+        if (newAccounts != null) accounts = newAccounts
+        withContext(Dispatchers.IO) {
+            snapshots.saveCertificates(id, newCerts)
+            if (newAccounts != null) snapshots.saveAccounts(id, newAccounts)
+        }
     }
     fun refreshAccountsNow(id: String, replace: Boolean = false) = launchRefresh("accounts:$id", replace, {
-        withContext(Dispatchers.IO) { api.read("/$id/accounts").getJSONArray("items").luckyRows() }
-    }) {
-        accounts = it
-        withContext(Dispatchers.IO) { snapshots.saveAccounts(id, it) }
+        withContext(Dispatchers.IO) { api.readAccounts(id)?.getJSONArray("items")?.luckyRows() }
+    }) { newAccounts ->
+        if (newAccounts != null) {
+            accounts = newAccounts
+            withContext(Dispatchers.IO) { snapshots.saveAccounts(id, newAccounts) }
+        } else {
+            accountsApiSupported = false
+        }
     }
     fun refreshInstance(id: String, force: Boolean = false, replace: Boolean = false) {
         val cached = snapshots.instance(id)
@@ -430,8 +448,8 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
                             Text(cert.optJSONArray("domains")?.let { a -> (0 until a.length()).joinToString(", ") { a.optString(it) } }.orEmpty().ifBlank { cert.optString("name") }, Modifier.weight(1f), fontSize = 14.sp)
                             Box { IconButton({ menu = true }, enabled = !busy, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, "证书操作", Modifier.size(19.dp)) }
                                 LabDropdownMenu(menu, { menu = false }, minWidth = 68.dp, actionMenu = true) {
-                                    LabDropdownMenuItem({ Text("下载证书") }, { menu = false; confirmDownload = cert }, enabled = !downloading)
-                                    LabDropdownMenuItem({ Text("导入证书") }, { menu = false; importCertificate = true }, enabled = !busy)
+                                    LabDropdownMenuItem({ Text("下载证书") }, { menu = false; confirmDownload = cert }, enabled = accountsApiSupported && !downloading)
+                                    LabDropdownMenuItem({ Text("导入证书") }, { menu = false; importCertificate = true }, enabled = accountsApiSupported && !busy)
                                     LabDropdownMenuItem({ Text("检查续签") }, { menu = false; run {
                                         api.call("/${selected!!.getString("id")}/certificates/${cert.getString("id")}/renew", "POST"); refreshCertsNow(selected!!.getString("id"), replace = true)
                                     } }, enabled = cert.optBoolean("automatic"))

@@ -12,6 +12,8 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureScreenRoboImage
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -26,6 +28,38 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi")
 class LuckyUiContractTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun certificateResponseRetainsLegacyAccounts() {
+        val payload = JSONObject("""
+            {"ok":true,"items":[{"id":"cert","name":"NAS"}],"accounts":[{"id":"account","name":"Aliyun","provider":"alidns"}]}
+        """.trimIndent()).luckyCertificatePayload()
+
+        assertEquals("cert", payload.first.single().getString("id"))
+        assertEquals("account", payload.second!!.single().getString("id"))
+        assertNull(JSONObject("""{"ok":true,"items":[]}""").luckyCertificatePayload().second)
+    }
+
+    @Test fun legacyAccountsEndpointIsOptional() {
+        val server = HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/api/lucky/nas/accounts") { exchange ->
+            val body = """{"ok":false,"error":"method not allowed"}""".toByteArray()
+            exchange.sendResponseHeaders(405, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+            exchange.close()
+        }
+        server.start()
+        try {
+            val context = org.robolectric.RuntimeEnvironment.getApplication()
+            context.getSharedPreferences(routerWorkspacePreferencesName("lucky-legacy-accounts", ""), android.content.Context.MODE_PRIVATE)
+                .edit().putString("token", "test-token").commit()
+            val prefs = AppPrefs(context, "lucky-legacy-accounts")
+            prefs.hub = "http://127.0.0.1:${server.address.port}"
+            assertNull(runBlocking { LuckyApi(prefs).readAccounts("nas") })
+        } finally {
+            server.stop(0)
+        }
+    }
+
     @Test fun openTokenEyeTogglesMaskWithoutChangingInput() {
         compose.setContent { MaterialTheme {
             LuckyConnectionForm("Lucky", "http://nas/be72", "sample-long-test-token", false, false, "", {}, {}, {}, {})
