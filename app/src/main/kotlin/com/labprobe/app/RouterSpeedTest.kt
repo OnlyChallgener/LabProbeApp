@@ -58,6 +58,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
@@ -105,7 +108,9 @@ data class SpeedSampleSet(
     val currentUp: Double?,
     val latency: Double?,
     val jitter: Double?,
-    val loss: Double?
+    val loss: Double?,
+    /** Cadence of [down] / [up]; the X axis is derived from it instead of the point count. */
+    val sampleIntervalMs: Long = ROUTER_SPEED_SAMPLE_MS
 )
 
 data class SpeedProgress(
@@ -255,6 +260,64 @@ internal fun formatSpeedWithUnit(mbps: Double?): String = "${formatSpeed(mbps)} 
 internal fun isSpeedTestUploadPhase(running: Boolean, progress: SpeedProgress?): Boolean {
     val current = progress ?: return false
     return running && current.stat == "running" && !current.finished && current.primary?.up?.isNotEmpty() == true
+}
+
+/**
+ * 固件每 100ms 回调一次速率（每秒 10 个点），不是一秒一个点。
+ * 2026-11-23 从 BE72 的 /tmp/speedtest/speedtest.log 逐秒核对：
+ * 18:51:02~08 下行每秒 10 个 speedtest_sdk_downspeed_cb，18:51:10~16 上行同样每秒 10 个；
+ * 单方向约 80 点即 8 秒，整轮 18 秒。按 1000ms 算会把 X 轴放大 10 倍。
+ */
+internal const val ROUTER_SPEED_SAMPLE_MS = 100L
+
+/** The phone engine reads its byte counter every 250 ms. */
+internal const val PHONE_SPEED_SAMPLE_MS = 250L
+
+private val SpeedAxisLadder = doubleArrayOf(1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0)
+
+/**
+ * Mean of one direction over the samples the producer already handed over.
+ * The phone engine drops its own 2 s ramp-up before recording, and the firmware
+ * reports its finished series, so no extra trimming happens here.
+ */
+internal fun speedSeriesAverage(values: List<Double>): Double? {
+    val usable = values.filter { it.isFinite() && it >= 0.0 }
+    if (usable.isEmpty()) return null
+    return usable.average()
+}
+
+/**
+ * Sampling window covered by a series, shared by the curve and its tick labels.
+ * 每个点代表一个完整的采样窗口，所以 N 个点覆盖 N × 采样间隔（不是 N-1 个）。
+ */
+internal fun speedSeriesSpanMs(values: List<Double>, sampleMs: Long): Long =
+    values.size.coerceAtLeast(0) * sampleMs
+
+internal fun formatSpeedSpan(ms: Long): String {
+    // 100ms 一段的固件采样算出来是 7.9s、8.1s 这种数，按整秒四舍五入再显示。
+    val seconds = ((ms.coerceAtLeast(0L) + 500L) / 1_000L)
+    return if (seconds < 60L) {
+        "${seconds}s"
+    } else {
+        String.format(java.util.Locale.US, "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+/**
+ * Upper bound of the trend chart. The P90 of the samples plus a small headroom
+ * is snapped onto a 1/1.2/1.5/2/2.5/3/4/5/6/8 ladder, so an isolated spike no
+ * longer flattens the whole curve and the quantised ladder keeps the scale still
+ * while the series grows.
+ */
+internal fun speedAxisMax(values: List<Double>): Double {
+    val usable = values.filter { it.isFinite() && it >= 0.0 }.sorted()
+    if (usable.isEmpty()) return 10.0
+    val index = ((usable.size - 1) * 0.9).roundToInt().coerceIn(0, usable.size - 1)
+    val target = (usable[index] * 1.15).coerceAtLeast(1.0)
+    val power = 10.0.pow(floor(log10(target)))
+    val normalized = target / power
+    val step = SpeedAxisLadder.firstOrNull { normalized <= it } ?: 10.0
+    return step * power
 }
 
 internal fun visibleSpeedHistory(

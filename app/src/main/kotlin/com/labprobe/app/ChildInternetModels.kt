@@ -180,7 +180,12 @@ data class ChildUsageStats(
     val hasData: Boolean = false,
     val generatedAtEpoch: Long? = null,
     val lastSampleAtEpoch: Long? = null,
-    val stale: Boolean = false
+    val stale: Boolean = false,
+    /**
+     * 路由器/Hub 下发的真实每日时长限额（分钟）。null = 没有限额，
+     * 设备卡进度条才退回 8 小时展示参考值；有值时它才是分母与「已用完」的依据。
+     */
+    val dailyLimitMinutes: Int? = null,
 )
 
 /** `totalMinutes` 为 null 表示 Hub 这一天没有统计，界面显示 `--`，不是 0分钟。 */

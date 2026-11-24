@@ -1,10 +1,11 @@
 package com.labprobe.app
 
+import android.app.ActivityManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import com.wireguard.android.backend.GoBackend
-import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
 import com.wireguard.crypto.Key
@@ -537,6 +538,8 @@ data class WireGuardRuntimeStatus(
     val latestHandshakeAt: Long = 0L,
     val lastError: String = "",
     val otherWorkspaceActive: Boolean = false,
+    /** 换进程后官方后端取不到统计：隧道在跑，但字节数/握手时间未知。 */
+    val statsAvailable: Boolean = true,
 )
 
 sealed interface WireGuardStartResult {
@@ -616,7 +619,14 @@ class WireGuardTunnelController private constructor(context: Context) {
     suspend fun stop(operationPrefs: AppPrefs): WireGuardRuntimeStatus = withContext(Dispatchers.IO) {
         val operationWorkspace = workspaceKey(operationPrefs)
         operationMutex.withLock {
-            if (tunnelWorkspace != operationWorkspace || tunnel == null) {
+            if (tunnelWorkspace != operationWorkspace) {
+                operationPrefs.wireGuardActiveProfileId = ""
+                return@withLock WireGuardRuntimeStatus()
+            }
+            if (tunnel == null) {
+                // 句柄跟着进程一起丢过，但系统里的隧道可能还在跑：直接收掉服务，
+                // 否则页面会一直停在「连得上、停不掉」。
+                if (vpnServiceRunning()) runCatching { stopVpnService() }
                 operationPrefs.wireGuardActiveProfileId = ""
                 return@withLock WireGuardRuntimeStatus()
             }
@@ -630,31 +640,48 @@ class WireGuardTunnelController private constructor(context: Context) {
                     errorsByWorkspace.remove(operationWorkspace)
                 }
                 .onFailure { errorsByWorkspace[operationWorkspace] = it.message ?: "WireGuard 停止失败" }
-            readStatusFor(operationWorkspace)
+            readStatusFor(operationWorkspace, operationPrefs)
         }
     }
 
     suspend fun status(operationPrefs: AppPrefs): WireGuardRuntimeStatus = withContext(Dispatchers.IO) {
         val operationWorkspace = workspaceKey(operationPrefs)
-        operationMutex.withLock { readStatusFor(operationWorkspace) }
+        operationMutex.withLock { readStatusFor(operationWorkspace, operationPrefs) }
     }
 
-    private fun readStatusFor(operationWorkspace: String): WireGuardRuntimeStatus {
+    private fun readStatusFor(operationWorkspace: String, prefs: AppPrefs): WireGuardRuntimeStatus {
         if (tunnelWorkspace != operationWorkspace) {
             return WireGuardRuntimeStatus(otherWorkspaceActive = tunnel != null)
         }
-        val current = tunnel ?: return WireGuardRuntimeStatus(lastError = errorFor(operationWorkspace))
+        val serviceUp = vpnServiceRunning()
+        val current = tunnel
+        if (current == null) {
+            // 进程被系统回收后句柄就没了，但 VpnService 会自己活着：隧道明明在转发流量，
+            // 页面却一直显示「未连接」。用「上次启用的配置 + 服务是否还在」把它认回来。
+            val saved = prefs.wireGuardActiveProfileId
+            if (saved.isNotBlank() && serviceUp) {
+                adoptLostTunnel(saved, operationWorkspace, prefs)
+                return WireGuardRuntimeStatus(profileId = saved, running = true, statsAvailable = false)
+            }
+            return WireGuardRuntimeStatus(lastError = errorFor(operationWorkspace))
+        }
         return runCatching {
-            val running = backend.getState(current) == Tunnel.State.UP
-            val stats: Statistics = backend.getStatistics(current)
-            val latestHandshake = stats.peers().maxOfOrNull { key -> stats.peer(key)?.latestHandshakeEpochMillis() ?: 0L } ?: 0L
+            val state = backend.getState(current)
+            // 统计失败不能代表隧道断了：换进程后后端统计表是空的，会直接抛。
+            val stats = runCatching { backend.getStatistics(current) }.getOrNull()
+            val latestHandshake = stats?.let { value ->
+                value.peers().maxOfOrNull { key -> value.peer(key)?.latestHandshakeEpochMillis() ?: 0L } ?: 0L
+            } ?: 0L
             WireGuardRuntimeStatus(
                 profileId = tunnelProfileId,
-                running = running,
-                receivedBytes = stats.totalRx(),
-                sentBytes = stats.totalTx(),
+                // getState 读的也是进程内的状态表，进程重来一遍它只会说 DOWN，
+                // 所以服务还在跑时以服务为准。
+                running = state == Tunnel.State.UP || (serviceUp && tunnelProfileId.isNotBlank()),
+                receivedBytes = stats?.totalRx() ?: 0L,
+                sentBytes = stats?.totalTx() ?: 0L,
                 latestHandshakeAt = latestHandshake,
                 lastError = errorFor(operationWorkspace),
+                statsAvailable = stats != null,
             )
         }.getOrElse { error ->
             val message = error.message ?: "无法读取 WireGuard 状态"
@@ -663,7 +690,31 @@ class WireGuardTunnelController private constructor(context: Context) {
         }
     }
 
+    private fun adoptLostTunnel(profileId: String, workspace: String, prefs: AppPrefs) {
+        val adopted = LabProbeTunnel(profileId)
+        adopted.state = Tunnel.State.UP
+        tunnel = adopted
+        tunnelProfileId = profileId
+        tunnelWorkspace = workspace
+        tunnelPrefs = prefs
+    }
+
+    /** 官方后端的隧道跑在自家 VpnService 里；只有本进程能查到，不会看到别的 VPN。 */
+    @Suppress("DEPRECATION")
+    private fun vpnServiceRunning(): Boolean = runCatching {
+        val manager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            ?: return@runCatching false
+        manager.getRunningServices(Int.MAX_VALUE).any { it.service.className == GO_BACKEND_VPN_SERVICE }
+    }.getOrDefault(false)
+
+    private fun stopVpnService() {
+        appContext.stopService(Intent().setComponent(ComponentName(appContext, GO_BACKEND_VPN_SERVICE)))
+    }
+
     companion object {
+        /** 清单里声明的官方后端组件名，用来判断隧道服务是否还活着。 */
+        private const val GO_BACKEND_VPN_SERVICE = "com.wireguard.android.backend.GoBackend\$VpnService"
+
         @Volatile private var instance: WireGuardTunnelController? = null
         fun get(context: Context): WireGuardTunnelController = instance ?: synchronized(this) {
             instance ?: WireGuardTunnelController(context).also { instance = it }

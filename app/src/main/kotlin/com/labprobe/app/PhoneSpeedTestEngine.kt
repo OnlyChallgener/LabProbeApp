@@ -64,6 +64,9 @@ data class PhoneSpeedTestProgress(
     val loss: Double? = null,
     val totalBytes: Long = 0L,
     val durationMs: Long = 0L,
+    /** 两个方向各自真实采到的有效时长（已扣预热），曲线 X 轴直接采用。 */
+    val downSpanMs: Long = 0L,
+    val upSpanMs: Long = 0L,
     val stable: Boolean = false,
     val message: String = ""
 ) {
@@ -135,18 +138,23 @@ internal data class PhoneDirectionResult(
     val averageMbps: Double,
     val peakMbps: Double,
     val stable: Boolean,
-    val message: String
+    val message: String,
+    /** 去掉 2s 预热之后真正采了多少毫秒，X 轴用它而不是「点数 × 间隔」预估。 */
+    val effectiveMs: Long = 0L
 )
 
 internal class SpeedStabilityTracker(
     private val warmupMs: Long = 2_000L,
-    private val minEffectiveMs: Long = 6_000L,
-    private val windowMs: Long = 4_000L,
-    private val maxMs: Long = 25_000L,
-    private val sampleIntervalMs: Long = 250L,
-    private val cvLimit: Double = .08,
-    private val adjacentChangeLimit: Double = .05,
-    private val stableMs: Long = 3_000L
+    /** 每个方向至少 8 秒有效采样，预热不算在内。 */
+    private val minEffectiveMs: Long = 8_000L,
+    private val windowMs: Long = 3_000L,
+    /** 单方向 15 秒封顶，包含 2 秒预热，所以有效采样最多 13 秒。 */
+    private val maxTotalMs: Long = 15_000L,
+    /** 看「近期平均速率是否还在明显增长」而不是 250ms 的瞬时抖动。 */
+    private val growthLimit: Double = .12,
+    /** 只在「大幅来回跳」时兜底，正常 10–20% 的真实波动照样能结束。 */
+    private val dispersionLimit: Double = .35,
+    private val stableMs: Long = 1_500L
 ) {
     data class Sample(val atMs: Long, val mbps: Double)
     data class Snapshot(
@@ -165,31 +173,38 @@ internal class SpeedStabilityTracker(
         val effective = samples.filter { it.atMs > warmupMs }
         val average = effective.takeIf { it.isNotEmpty() }?.map { it.mbps }?.average() ?: 0.0
         val peak = effective.maxOfOrNull { it.mbps } ?: 0.0
-        if (elapsedMs >= maxMs) {
-            return Snapshot(true, false, average, peak, "达到单方向时限，速度波动较大")
+        // 15 秒是包含预热的总时长；到点就结束，成绩照常用有效采样算。
+        if (elapsedMs >= maxTotalMs) {
+            return Snapshot(true, false, average, peak, "达到单方向时限，按已采样本计算")
         }
-        val enough = effective.size >= (minEffectiveMs / sampleIntervalMs).toInt().coerceAtLeast(1)
-        if (!enough) return Snapshot(false, false, average, peak, "正在采集有效样本")
-        val recent = samples.filter { it.atMs >= elapsedMs - windowMs }
-        if (recent.size < 4) return Snapshot(false, false, average, peak, "正在采集有效样本")
-        val values = recent.map { it.mbps }
-        val mean = values.average()
-        val cv = if (mean <= 0.0) 1.0 else sqrt(values.sumOf { (it - mean) * (it - mean) } / values.size) / mean
-        val lastTwo = samples.filter { it.atMs in (elapsedMs - 2_000L)..elapsedMs }.map { it.mbps }
-        val previousTwo = samples.filter { it.atMs in (elapsedMs - 4_000L)..(elapsedMs - 2_000L) }.map { it.mbps }
-        val lastAvg = lastTwo.takeIf { it.isNotEmpty() }?.average() ?: 0.0
-        val previousAvg = previousTwo.takeIf { it.isNotEmpty() }?.average() ?: 0.0
-        val change = if (lastAvg <= 0.0 || previousAvg <= 0.0) 1.0 else abs(lastAvg - previousAvg) / maxOf(lastAvg, previousAvg)
-        val stableNow = cv < cvLimit && change < adjacentChangeLimit
-        if (stableNow) {
+        if (elapsedMs - warmupMs < minEffectiveMs) {
+            return Snapshot(false, false, average, peak, "正在采集有效样本")
+        }
+        // 相邻两个 3 秒窗口的平均吞吐：只要不再明显上升/下降就收工。
+        // 真实波动留在曲线里，不再拿瞬时 CV<8% 把每次测速都拖到上限。
+        val recent = samples.filter { it.atMs > warmupMs && it.atMs > elapsedMs - windowMs }.map { it.mbps }
+        val previous = samples.filter {
+            it.atMs > warmupMs && it.atMs <= elapsedMs - windowMs && it.atMs > elapsedMs - windowMs * 2
+        }.map { it.mbps }
+        if (recent.size < 4 || previous.size < 4) {
+            return Snapshot(false, false, average, peak, "正在采集有效样本")
+        }
+        val recentAvg = recent.average()
+        val previousAvg = previous.average()
+        val change = if (previousAvg <= 0.0) 1.0 else abs(recentAvg - previousAvg) / previousAvg
+        // 例如 120/20 来回横跳时两个窗口均值可能一样，不能误判成「已稳定」。
+        val dispersion = if (recentAvg <= 0.0) 1.0 else
+            sqrt(recent.sumOf { (it - recentAvg) * (it - recentAvg) } / recent.size) / recentAvg
+        val settled = change < growthLimit && dispersion < dispersionLimit
+        if (settled) {
             val since = stableSince ?: elapsedMs.also { stableSince = it }
             if (elapsedMs - since >= stableMs) {
-                return Snapshot(true, true, average, peak, "速度已稳定，自动结束")
+                return Snapshot(true, true, average, peak, "采样充分，自动结束")
             }
         } else {
             stableSince = null
         }
-        return Snapshot(false, false, average, peak, "正在确认稳定窗口")
+        return Snapshot(false, false, average, peak, "正在确认速率平台")
     }
 }
 
@@ -198,40 +213,118 @@ object GlobalSpeedProtocol {
     private const val CHROME_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     private const val DALVIK_UA = "Dalvik/2.1.0 (Linux; U; Android 14)"
 
+    /**
+     * 匹配接口在部分网络出口只返回 1 个节点，选它还连不上就整页像「测速坏了」。
+     * 这些是接口自己下发过的公共节点，作为兜底名单与实时结果合并；实时结果永远排前面，
+     * 所以按出口推荐的排序不会被兜底节点盖掉。
+     */
+    private val BaselineNodes = listOf(
+        "1105|广东|深圳|深圳电信|113.108.72.2",
+        "1101|广东|广州|广州电信|61.144.6.18",
+        "3030|福建|福州|福州电信|61.154.8.38",
+        "31791|江西|南昌|南昌电信|59.52.20.90",
+        "301000301|湖南|长沙|长沙电信|222.247.30.246",
+        "72|海南|海口|海口电信|202.100.215.94",
+        "80|广西|南宁|南宁电信|113.12.69.218"
+    ).map { row ->
+        val parts = row.split("|")
+        PhoneSpeedTestNode(
+            id = parts[0], province = parts[1], city = parts[2], name = parts[3],
+            host = parts[4], port = 65499, carrier = carrierOf(parts[3])
+        )
+    }
+
+    @Volatile
+    private var lastGoodNodes: List<PhoneSpeedTestNode> = emptyList()
+
+    internal fun carrierOf(name: String): String = when {
+        name.contains("电信") -> "电信"
+        name.contains("联通") -> "联通"
+        name.contains("移动") -> "移动"
+        else -> ""
+    }
+
+    /** 服务端结果 + 兜底名单，按 id 去重；服务端顺序在前，保留它按出口做的推荐。 */
+    internal fun mergeNodes(live: List<PhoneSpeedTestNode>): List<PhoneSpeedTestNode> {
+        val merged = LinkedHashMap<String, PhoneSpeedTestNode>()
+        (live + baselineFallback()).forEach { node ->
+            if (node.id.isNotBlank() && node.host.isNotBlank()) merged.putIfAbsent(node.id, node)
+        }
+        return merged.values.toList()
+    }
+
+    private fun baselineFallback(): List<PhoneSpeedTestNode> = lastGoodNodes + BaselineNodes
+
+    /**
+     * 节点不可达时 HTTP 探测会瞬间全失败，看起来像「点一下就 100% 丢包」。
+     * 开测前用与实际测速**完全相同**的 Network 绑定 HTTP 请求做探测：裸 TCP 能握手
+     * 不代表 HTTP 层能收到响应（实测有出口只放 SYN、不放应用层数据），那种节点
+     * 必须在这里被淘汰掉，否则选了它一开测就立刻失败。
+     * 404 也算可达——只要服务端回了 HTTP 响应头就说明链路通。
+     */
+    internal suspend fun firstReachableNode(
+        candidates: List<PhoneSpeedTestNode>,
+        network: Network?
+    ): PhoneSpeedTestNode? = withContext(Dispatchers.IO) {
+        candidates.firstNotNullOfOrNull { node ->
+            runCatching {
+                val conn = (network?.openConnection(URL("http://${node.host}:${node.port}/"))
+                    ?: URL("http://${node.host}:${node.port}/").openConnection()) as HttpURLConnection
+                try {
+                    conn.connectTimeout = 1_500
+                    conn.readTimeout = 1_500
+                    conn.requestMethod = "GET"
+                    conn.setRequestProperty("Cache-Control", "no-store")
+                    conn.responseCode
+                    node
+                } finally {
+                    runCatching { conn.disconnect() }
+                }
+            }.getOrNull()
+        }
+    }
+
     suspend fun fetchNodes(network: Network?, preferIpv6: Boolean): List<PhoneSpeedTestNode> = withContext(Dispatchers.IO) {
         val query = listOf(
             "ip=", "network=4", "province=", "city=", "wifioper=", "mobileoperid=0",
             "ipv6=${if (preferIpv6) "1" else "0"}", "model=Android", "pkg=com.labprobe.app"
         ).joinToString("&")
         val conn = openHttp(network, URL("$MATCH_URL?$query"), 12_000)
-        try {
-            if (conn.responseCode != 200) return@withContext emptyList()
-            val bytes = conn.inputStream.use { it.readBytes() }
-            val text = decodeBody(bytes)
-            val rows = JSONArray(text)
-            val seen = HashSet<String>()
-            buildList {
-                for (index in 0 until rows.length()) {
-                    val row = rows.optJSONObject(index) ?: continue
-                    val id = row.optString("hostid").trim()
-                    val host = row.optString("hostip").trim()
-                    if (id.isBlank() || host.isBlank() || !seen.add(id)) continue
-                    add(
-                        PhoneSpeedTestNode(
-                            id = id,
-                            name = row.optString("hostname").trim().ifBlank { id },
-                            host = host,
-                            port = row.optString("port").trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: 65499,
-                            province = row.optString("pname").trim(),
-                            city = row.optString("city").trim(),
-                            carrier = row.optString("oper").trim()
+        val live = try {
+            if (conn.responseCode != 200) emptyList()
+            else {
+                val text = decodeBody(conn.inputStream.use { it.readBytes() })
+                val rows = JSONArray(text)
+                val seen = HashSet<String>()
+                buildList {
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val id = row.optString("hostid").trim()
+                        val host = row.optString("hostip").trim()
+                        if (id.isBlank() || host.isBlank() || !seen.add(id)) continue
+                        val name = row.optString("hostname").trim().ifBlank { id }
+                        add(
+                            PhoneSpeedTestNode(
+                                id = id,
+                                name = name,
+                                host = host,
+                                port = row.optString("port").trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: 65499,
+                                province = row.optString("pname").trim(),
+                                city = row.optString("city").trim(),
+                                carrier = row.optString("oper").trim().ifBlank { carrierOf(name) }
+                            )
                         )
-                    )
+                    }
                 }
             }
+        } catch (_: Throwable) {
+            emptyList()
         } finally {
             conn.disconnect()
         }
+        // 只有两个以上才算「按出口推荐成功」，一个节点多半是这台出口被服务端限制了。
+        if (live.size >= 2) lastGoodNodes = live
+        mergeNodes(live)
     }
 
     suspend fun openSession(network: Network?, node: PhoneSpeedTestNode): String = withContext(Dispatchers.IO) {
@@ -296,6 +389,11 @@ class PhoneSpeedTestEngine(private val context: Context) {
         try {
             onProgress(PhoneSpeedTestProgress(phase = "latency", message = "测量延迟"))
             val latency = measureLatency(networkInfo, node)
+            if (latency.latency == null) {
+                // 节点探测一个包都回不来，直接给出可操作的原因；别让用户看着按钮闪一下
+                // 又回到等待状态，也别拿失败覆盖上一次的成绩。
+                throw IllegalStateException("节点「${node.name}」无响应，请换一个节点或检查手机网络")
+            }
             onProgress(
                 PhoneSpeedTestProgress(
                     phase = "download",
@@ -328,6 +426,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
                     loss = latency.loss,
                     totalBytes = totalBytes.get(),
                     durationMs = SystemClock.elapsedRealtime() - startedAt,
+                    downSpanMs = down.effectiveMs,
                     stable = down.stable,
                     message = "上传预热"
                 )
@@ -335,6 +434,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
             val up = runDirection(
                 upload = true, node = node, networkInfo = networkInfo, session = session,
                 totalBytes = totalBytes, maxBytes = maxBytes, latency = latency,
+                downSpanMs = down.effectiveMs,
                 shouldStop = { networkChanged }, onProgress = onProgress
             )
             val message = when {
@@ -365,6 +465,8 @@ class PhoneSpeedTestEngine(private val context: Context) {
                             loss = latency.loss,
                             totalBytes = totalBytes.get(),
                             durationMs = SystemClock.elapsedRealtime() - startedAt,
+                            downSpanMs = down.effectiveMs,
+                            upSpanMs = up.effectiveMs,
                             stable = down.stable && up.stable,
                             message = message
                         )
@@ -383,6 +485,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
         totalBytes: AtomicLong,
         maxBytes: Long,
         latency: PhoneLatencyResult,
+        downSpanMs: Long = 0L,
         shouldStop: () -> Boolean,
         onProgress: (PhoneSpeedTestProgress) -> Unit
     ): PhoneDirectionResult = coroutineScope {
@@ -393,23 +496,33 @@ class PhoneSpeedTestEngine(private val context: Context) {
         var connections = 4
         pool.start(connections)
         val startedAt = SystemClock.elapsedRealtime()
-        var lastBytes = totalBytes.get()
-        var lastAt = startedAt
+        // 250ms 的字节差会被内核发送缓冲「攒满—排空」切成锯齿：上行 4~8 条连接同时写，
+        // write() 只是把数据交给内核，下一次采样可能一粒都没走。改用 1 秒滑动窗口里的
+        // 实际吞吐，曲线 / 实时值 / 峰值 / 均速都用同一口径，真实波动照旧保留。
+        val byteHistory = ArrayDeque<Pair<Long, Long>>()
+        byteHistory.addLast(startedAt to baselineBytes)
         var earlyRate = 0.0
         var stable = false
         var average = 0.0
         var peak = 0.0
         var message = ""
+        var effectiveMs = 0L
         try {
             while (isActive) {
                 delay(250)
                 val now = SystemClock.elapsedRealtime()
                 val elapsed = now - startedAt
                 val total = totalBytes.get()
-                val instant = if (now > lastAt) (total - lastBytes) * 8.0 / (now - lastAt) / 1_000.0 else 0.0
-                lastBytes = total
-                lastAt = now
-                if (elapsed > 2_000L && instant > 0.0) recorded += instant
+                byteHistory.addLast(now to total)
+                while (byteHistory.size > 1 && now - byteHistory.first().first > 1_000L) {
+                    byteHistory.removeFirst()
+                }
+                val oldest = byteHistory.first()
+                val window = (now - oldest.first).coerceAtLeast(1L)
+                val instant = (total - oldest.second) * 8.0 / window / 1_000.0
+                effectiveMs = (elapsed - 2_000L).coerceAtLeast(0L)
+                // 预热段既不画也不算；正式段里即使是 0 也要照实记录，那是真的停住了。
+                if (elapsed > 2_000L) recorded += instant
                 val decision = tracker.add(elapsed, instant)
                 if (!upload) {
                     onProgress(
@@ -424,6 +537,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
                             loss = latency.loss,
                             totalBytes = total,
                             durationMs = elapsed,
+                            downSpanMs = effectiveMs,
                             message = "下载测速"
                         )
                     )
@@ -440,6 +554,8 @@ class PhoneSpeedTestEngine(private val context: Context) {
                             loss = latency.loss,
                             totalBytes = total,
                             durationMs = elapsed,
+                            downSpanMs = downSpanMs,
+                            upSpanMs = effectiveMs,
                             message = "上传测速"
                         )
                     )
@@ -479,7 +595,7 @@ class PhoneSpeedTestEngine(private val context: Context) {
             message = "节点未返回有效数据"
             stable = false
         }
-        PhoneDirectionResult(recorded, average, peak, stable, message)
+        PhoneDirectionResult(recorded, average, peak, stable, message, effectiveMs)
     }
 
     private fun measureLatency(networkInfo: PhoneSpeedTestNetworkInfo, node: PhoneSpeedTestNode): PhoneLatencyResult {
@@ -499,6 +615,8 @@ class PhoneSpeedTestEngine(private val context: Context) {
                 conn.disconnect()
             } catch (_: Throwable) {
                 failures++
+                // 连续三个探测都超时就没必要再耗两个 4s 超时了。
+                if (failures >= 3) return@repeat
             }
         }
         val latency = values.takeIf { it.isNotEmpty() }?.average()
@@ -597,6 +715,11 @@ private class TransferPool(
         }
         val socket = Socket()
         networkInfo.network?.bindSocket(socket)
+        if (upload) {
+            // 默认的发送缓冲攒一大坨再排空，write() 只算「交给内核」不算真的发出去，
+            // 250ms 取值就会看到规律锯齿。收窄到 64KB 让写入速度贴着链路实际吞吐走。
+            socket.sendBufferSize = 64 * 1024
+        }
         socket.connect(InetSocketAddress(address, node.port), 5_000)
         socket.soTimeout = 5_000
         return socket

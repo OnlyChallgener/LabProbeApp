@@ -43,7 +43,12 @@ internal suspend fun toggleWireGuardShortcut(
     }
 }
 
-internal data class WireGuardShortcutState(val tunnelUp: Boolean, val handshaked: Boolean)
+internal data class WireGuardShortcutState(
+    val tunnelUp: Boolean,
+    val handshaked: Boolean,
+    /** 换进程后官方后端读不到统计：隧道在跑，但握手里程碑未知。 */
+    val statsAvailable: Boolean = true,
+)
 
 /**
  * 隧道接口起来了不等于连上了：路由器不认这把公钥时接口照样 UP，却一个包都收不到。
@@ -58,5 +63,6 @@ internal suspend fun wireGuardShortcutState(context: Context, prefs: AppPrefs): 
             tunnelUp = status?.running == true,
             handshaked = status?.running == true && status.latestHandshakeAt > 0L &&
                 System.currentTimeMillis() - status.latestHandshakeAt < 180_000L,
+            statsAvailable = status?.statsAvailable ?: true,
         )
     }

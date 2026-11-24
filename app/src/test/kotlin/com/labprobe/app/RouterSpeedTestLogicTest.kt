@@ -96,4 +96,37 @@ class RouterSpeedTestLogicTest {
         assertEquals("587.07 Mbps", formatSpeedWithUnit(587.07))
         assertEquals("-- Mbps", formatSpeedWithUnit(null))
     }
+
+    @Test
+    fun trendAxisIgnoresTheStartupSpikeInsteadOfFlatteningTheCurve() {
+        // 固件第一个点是刚起测的瞬时尖峰（实测 1840.90），按峰值定上限会把几百兆的
+        // 正常段压成一条贴底的直线；按 P90 取档后尖峰只留在顶部标签里。
+        val firmware = listOf(1840.9) + List(80) { 580.0 }
+        assertEquals(800.0, speedAxisMax(firmware), 0.001)
+        assertEquals(150.0, speedAxisMax(listOf(120.0)), 0.001)
+        assertEquals(1.2, speedAxisMax(listOf(1.0)), 0.001)
+        assertEquals(10.0, speedAxisMax(emptyList()), 0.001)
+        assertEquals(10.0, speedAxisMax(listOf(Double.NaN)), 0.001)
+    }
+
+    @Test
+    fun timeAxisFollowsTheSamplingClockNotThePointCount() {
+        // 手机每 250ms 一个采样点：27 个点只过了 6.75 秒，以前会标成「27s」。
+        assertEquals(6_750L, speedSeriesSpanMs(List(27) { 1.0 }, PHONE_SPEED_SAMPLE_MS))
+        assertEquals("7s", formatSpeedSpan(6_750L))
+        // 固件每 100ms 一个点（每秒 10 个）：APP 每秒轮询一次，数组多 10 个点时
+        // 时间轴只能多 1 秒。81 个点是一条 8.1 秒的曲线，不是 81 秒。
+        assertEquals(100L, ROUTER_SPEED_SAMPLE_MS)
+        assertEquals(8_100L, speedSeriesSpanMs(List(81) { 1.0 }, ROUTER_SPEED_SAMPLE_MS))
+        assertEquals("8s", formatSpeedSpan(8_100L))
+        assertEquals(1_000L, speedSeriesSpanMs(List(10) { 1.0 }, ROUTER_SPEED_SAMPLE_MS))
+        assertEquals(0L, speedSeriesSpanMs(emptyList(), ROUTER_SPEED_SAMPLE_MS))
+    }
+
+    @Test
+    fun averageCoversEveryReportedSampleAndSurvivesEmptySeries() {
+        assertEquals(2.0, speedSeriesAverage(listOf(1.0, 2.0, 3.0))!!, 0.001)
+        assertEquals(null, speedSeriesAverage(emptyList()))
+        assertEquals(null, speedSeriesAverage(listOf(Double.NaN, -1.0)))
+    }
 }

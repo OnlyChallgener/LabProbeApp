@@ -76,10 +76,20 @@ class NativeDdnsNewFirmwareTest {
         assertEquals("DynDNS", nativeDdnsProviderLabel("dyn.com"))
     }
 
+    /**
+     * 固件原生只有这 9 项；dynv6 / deSEC / Dynu / IPv64 是 LabProbe 自己 DDNS 的
+     * 服务商，混进来的话用户选了固件不认识的值，保存必失败。
+     */
     @Test
-    fun providerListHasNoDynv6() {
+    fun providerListStaysOnTheFirmwareSet() {
         assertFalse(nativeDdnsProviders.any { it.contains("dynv6", ignoreCase = true) })
         assertTrue(nativeDdnsProviders.contains("oray.com"))
         assertEquals(9, nativeDdnsProviders.size)
+        // 每一项都要有中文名，否则选择器里会出现裸的域名串。
+        assertTrue(nativeDdnsProviders.all { nativeDdnsProviderLabel(it) != it })
+        // 新增记录时表单能不能给出完整清单，取决于设备能力而不是记录上的协议字段。
+        assertTrue(ddnsEditorUsesModernForm(nativeProtocol = "", nativeDdns = true))
+        assertFalse(ddnsEditorUsesModernForm(nativeProtocol = "", nativeDdns = false))
+        assertTrue(ddnsEditorUsesModernForm(nativeProtocol = "ddns_view", nativeDdns = false))
     }
 }

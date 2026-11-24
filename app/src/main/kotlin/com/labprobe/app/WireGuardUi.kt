@@ -556,6 +556,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         when {
                             runtime.otherWorkspaceActive -> "另一台路由器的隧道正在连接；启动本路由配置会切换隧道"
                             !runtime.running -> "未连接 · 同一时间只启用一个配置"
+                            !runtime.statsAvailable -> "已连接 · 流量统计要重新连接后才能恢复"
                             isHandshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)}) · ${formatWireGuardBytes(runtime.receivedBytes)} 下行 / ${formatWireGuardBytes(runtime.sentBytes)} 上行"
                             else -> "正在尝试握手… (未收到服务端回包，请排查密钥/端口/网络) · 发送 ${formatWireGuardBytes(runtime.sentBytes)}"
                         },
@@ -563,15 +564,26 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             runtime.otherWorkspaceActive -> WireGuardAmber
                             !runtime.running -> LabV2.InkMuted
                             isHandshaked -> WireGuardGreen
+                            !runtime.statsAvailable -> WireGuardGreen
                             else -> WireGuardAmber
                         }),
                         maxLines = 2,
                     )
                 }
                 if (runtime.running) {
-                    val badgeColor = if (isHandshaked) WireGuardGreen else WireGuardAmber
+                    val badgeColor = if (isHandshaked || !runtime.statsAvailable) WireGuardGreen else WireGuardAmber
                     Surface(color = badgeColor.copy(alpha = .12f), shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp)) {
-                        Text(if (isHandshaked) "已握手" else "握手中", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = badgeColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            when {
+                                isHandshaked -> "已握手"
+                                !runtime.statsAvailable -> "已连接"
+                                else -> "握手中"
+                            },
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            color = badgeColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
             }
@@ -1168,6 +1180,9 @@ private fun WireGuardProfileCard(
 ) {
     val accent = wireGuardSourceColor(profile.endpointSource)
     val isHandshaked = active && runtime != null && runtime.latestHandshakeAt > 0L && (System.currentTimeMillis() - runtime.latestHandshakeAt) < 180_000L
+    // 换进程认回来的隧道拿不到官方后端的统计：0B / 无握手时间不等于没连上。
+    val statsUnknown = active && runtime?.statsAvailable == false
+    val linkOk = isHandshaked || statsUnknown
     LabCoreCard {
         // Only the read-only body is clickable. Action buttons below are siblings,
         // so tapping Connect, Stop, or Edit cannot open the details dialog.
@@ -1182,32 +1197,32 @@ private fun WireGuardProfileCard(
                 Text(profile.name, style = LabTypography.CardTitle.copy(fontSize = 14.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(profile.endpointSource.displayName, style = LabTypography.Caption.copy(color = accent), fontWeight = FontWeight.SemiBold)
             }
-            if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = if (isHandshaked) WireGuardGreen else WireGuardAmber, modifier = Modifier.size(20.dp))
+            if (active) Icon(Icons.Rounded.CheckCircle, "已启用", tint = if (linkOk) WireGuardGreen else WireGuardAmber, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(5.dp))
             Text("详情 ›", style = LabTypography.Caption.copy(color = WireGuardBlue))
         }
         if (active && runtime != null) {
             // 发出去了却一个回包都没有 = 连不上，不是还在连；红叉比一直转圈诚实。
-            val connectFailed = runtime.lastError.isNotBlank() ||
-                (runtime.latestHandshakeAt == 0L && runtime.sentBytes > 0L)
+            val connectFailed = !statsUnknown && (runtime.lastError.isNotBlank() ||
+                (runtime.latestHandshakeAt == 0L && runtime.sentBytes > 0L))
             Surface(
                 color = when {
-                    isHandshaked -> WireGuardGreen.copy(alpha = .08f)
+                    linkOk -> WireGuardGreen.copy(alpha = .08f)
                     connectFailed -> WireGuardRed.copy(alpha = .07f)
                     else -> WireGuardAmber.copy(alpha = .08f)
                 },
                 shape = LabCoreSurface.InnerShape,
                 border = BorderStroke(1.dp, when {
-                    isHandshaked -> WireGuardGreen.copy(alpha = .24f)
+                    linkOk -> WireGuardGreen.copy(alpha = .24f)
                     connectFailed -> WireGuardRed.copy(alpha = .24f)
                     else -> WireGuardAmber.copy(alpha = .24f)
                 }),
             ) {
 
                 Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val statusColor = if (isHandshaked) WireGuardGreen else if (connectFailed) WireGuardRed else WireGuardAmber
+                    val statusColor = if (linkOk) WireGuardGreen else if (connectFailed) WireGuardRed else WireGuardAmber
                     when {
-                        isHandshaked -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(15.dp), tint = statusColor)
+                        linkOk -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(15.dp), tint = statusColor)
                         connectFailed -> Icon(Icons.Rounded.Cancel, null, Modifier.size(15.dp), tint = statusColor)
                         else -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = statusColor)
                     }
@@ -1215,6 +1230,7 @@ private fun WireGuardProfileCard(
                     Text(
                         when {
                             isHandshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)})"
+                            statsUnknown -> "已连接 · 流量统计待重新连接恢复"
                             connectFailed -> "连接失败 (未收到服务端回包)"
                             else -> "正在握手 (等待服务端响应…)"
                         },
@@ -1332,8 +1348,9 @@ private fun WireGuardProfileDetailsDialog(
                 Text("WireGuard 配置详情", style = LabTypography.PageTitle)
                 Text(profile.name, style = LabTypography.CardTitle)
                 WireGuardDetailItem("连接状态", when {
-                    runtime == null -> "未连接"
+                    runtime == null || !runtime.running -> "未连接"
                     handshaked -> "已握手 (${formatHandshakeTime(runtime.latestHandshakeAt)}) · ${formatWireGuardBytes(runtime.receivedBytes)} 下行 / ${formatWireGuardBytes(runtime.sentBytes)} 上行"
+                    !runtime.statsAvailable -> "隧道已连接 · 流量统计暂不可用"
                     else -> "隧道已启动，等待服务端握手"
                 })
                 Text("本地 (Interface)", style = LabTypography.SectionTitle, color = LabV2.Ink)
