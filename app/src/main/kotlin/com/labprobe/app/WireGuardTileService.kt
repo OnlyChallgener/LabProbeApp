@@ -59,6 +59,7 @@ class WireGuardTileService : TileService() {
             tile.state = if (tunnelState.tunnelUp) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
             tile.label = when {
                 tunnelState.handshaked -> "已连回家"
+                tunnelState.tunnelUp && !tunnelState.statsAvailable -> "已连回家"
                 tunnelState.tunnelUp -> "握手中"
                 else -> "连回家庭网"
             }

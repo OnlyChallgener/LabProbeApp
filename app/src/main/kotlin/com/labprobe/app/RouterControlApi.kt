@@ -526,6 +526,16 @@ internal fun nativeDdnsProviderFlags(provider: String): Int = when (provider.tri
     else -> 0x07
 }
 
+/**
+ * 固件原生 DDNS（`ddnsCfg`）的服务商全集，顺序照固件选择器。
+ *
+ * 每一项都是固件认的 provider 串（域名形式，和 `/etc/config/ddns` 里的
+ * `service_name` 同源）。注意 dynv6 / deSEC / Dynu / IPv64 属于 LabProbe 自己的
+ * DDNS（`labProbeProviderIds`），固件原生这边没有，别混进来。
+ *
+ * 之前「新增只给三项」不是因为这张表短，而是编辑器拿记录上的协议字段判断新旧固件，
+ * 新建记录没有该字段，于是永远掉进 legacy 分支。
+ */
 internal val nativeDdnsProviders = listOf(
     "aliyun.com", "dnspod.cn", "tencentcloud.com", "no-ip.com",
     "oray.com", "dyn.com", "cloudflare.com", "huaweicloud.com", "duckdns.org"
@@ -543,6 +553,16 @@ internal fun nativeDdnsProviderLabel(id: String): String = when (id.trim().lower
     "duckdns.org" -> "DuckDNS"
     else -> id
 }
+
+/**
+ * 这张表单该用新固件（`ddnsCfg`）还是老固件（`ddns.service`）的 schema。
+ *
+ * 记录自带协议就听它的；新建记录没有协议字段，只能看设备能力 —— Hub 的 DDNS 快照
+ * 并不下发 `nativeProtocol`，光看记录的话新增永远只会给三个服务商。
+ */
+internal fun ddnsEditorUsesModernForm(nativeProtocol: String, nativeDdns: Boolean): Boolean =
+    nativeProtocol.trim().equals("ddns_view", ignoreCase = true) ||
+        (nativeProtocol.isBlank() && nativeDdns)
 
 internal fun nativeDdnsSupportsRecordType(provider: String, recordType: String): Boolean {
     val flags = nativeDdnsProviderFlags(provider)

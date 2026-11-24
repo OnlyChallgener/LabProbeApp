@@ -1,6 +1,8 @@
 package com.labprobe.app
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,6 +14,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
@@ -44,8 +48,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.platform.LocalContext
@@ -60,8 +72,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import java.time.DayOfWeek
 import java.time.Instant
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import kotlin.math.roundToInt
 
 private const val CHILD_GUARD_OVERVIEW_POLL_MS = 20_000L
 
@@ -125,17 +139,23 @@ fun ChildInternetOverviewScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         ChildGuardOperationHud(overview.pendingHud)
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = LabV2.Ink, modifier = Modifier.size(22.dp))
+        // 返回在左、添加在右、标题正好居中：三个元素互不挤占，标题不会随按钮宽度偏移。
+        Box(Modifier.fillMaxWidth().padding(horizontal = 2.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = LabV2.Ink, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onAddDevice, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.PersonAdd, contentDescription = "添加守护", tint = LabV2.Ink, modifier = Modifier.size(22.dp))
+                }
             }
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = onAddDevice, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Rounded.PersonAdd, contentDescription = "添加守护", tint = LabV2.Ink, modifier = Modifier.size(22.dp))
-            }
+            Text(
+                "儿童上网",
+                modifier = Modifier.align(Alignment.Center),
+                style = LabTypography.PageTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+                color = LabV2.Ink
+            )
         }
 
         ChildInternetOfficialHero(
@@ -156,6 +176,9 @@ fun ChildInternetOverviewScreen(
             known = overview.masterKnown,
             onEnabledChange = repository::setMasterEnabled
         )
+
+        val dayTotals = remember(effectiveDevices) { childGuardDayTotals(effectiveDevices) }
+        ChildGuardTodayUsageCard(dayTotals)
 
         if (overview.error.isNotBlank()) {
             // 失败只加一条横幅，下面那一屏缓存内容原样留着。
@@ -216,35 +239,285 @@ fun ChildInternetOverviewScreen(
 internal fun ChildInternetOfficialHero(guardedCount: Int, onlineCount: Int, offlineCount: Int, freshness: String) {
     val unknownCount = (guardedCount - onlineCount - offlineCount).coerceAtLeast(0)
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color.Transparent) {
-        Column(Modifier.background(Brush.horizontalGradient(listOf(Color(0xFFE3F0FF), Color(0xFFEDF6FF), Color(0xFFEAF9F8))))
-            .padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("儿童上网守护", style = LabTypography.PageTitle.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold))
-                    Text("${guardedCount} 台设备加入守护", style = LabTypography.Supporting)
-                }
-                Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
-                    Surface(Modifier.size(46.dp), shape = CircleShape, color = Color(0xFFD3E7FE)) {}
-                    Icon(Icons.Rounded.LaptopMac, null, tint = Color(0xFF3B82F6), modifier = Modifier.size(28.dp))
-                    Surface(Modifier.size(20.dp).align(Alignment.TopEnd), shape = CircleShape,
-                        color = Color(0xFFFFEDD5), border = BorderStroke(1.5.dp, Color.White)) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.ChildCare, null, tint = Color(0xFFEA580C), modifier = Modifier.size(12.dp))
-                        }
+        Row(
+            Modifier
+                .background(Brush.horizontalGradient(listOf(Color(0xFFE8F3FF), Color(0xFFEEF7FF), Color(0xFFF7FBFF))))
+                .padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    "儿童上网守护",
+                    style = LabTypography.PageTitle.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                )
+                Text("共 $guardedCount 台设备加入守护", style = LabTypography.Supporting.copy(fontSize = 12.sp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    StatusDot(LabV2.Green)
+                    Text("在线 $onlineCount", style = LabTypography.Caption.copy(color = LabV2.Green, fontSize = 11.sp))
+                    StatusDot(LabV2.InkMuted.copy(alpha = .55f))
+                    Text("离线 $offlineCount", style = LabTypography.Caption.copy(fontSize = 11.sp))
+                    if (unknownCount > 0) {
+                        StatusDot(LabV2.InkMuted.copy(alpha = .3f))
+                        Text("待确认 $unknownCount", style = LabTypography.Caption.copy(fontSize = 11.sp))
                     }
+                    Box(Modifier.width(1.dp).height(9.dp).background(Color(0xFFD9E6F2)))
+                    Text(freshness, style = LabTypography.Caption.copy(fontSize = 11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("在线 $onlineCount", style = LabTypography.Caption.copy(color = LabV2.Green))
-                Text("· 离线 $offlineCount" + if (unknownCount > 0) " · 待确认 $unknownCount" else "",
-                    style = LabTypography.Caption)
-                Text(freshness, modifier = Modifier.weight(1f), textAlign = TextAlign.End,
-                    style = LabTypography.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // 插画是这张卡的视觉重心，但不该撑高卡片：78dp 刚好跟三行文字齐平。
+            Image(
+                painter = painterResource(R.drawable.child_guard_hero),
+                contentDescription = null,
+                modifier = Modifier.height(78.dp).padding(start = 2.dp),
+                contentScale = ContentScale.Fit
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusDot(color: Color) {
+    Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+}
+
+/**
+ * 概览统计卡的唯一口径：所有受守护设备当日有效活跃分钟之和。
+ *
+ * 小时桶按每台设备自己的 `hourly[]` 逐小时累加，多设备同时上网时单桶可以超过
+ * 60 分钟；总时长优先取桶之和，保证「柱状图加起来」永远等于「今日总时长」。
+ * 未知（`hasData == false`）的设备不计入，但也绝不把总数压成 0。
+ */
+internal data class ChildGuardDayTotals(
+    val minutes: Int?,
+    val yesterdayMinutes: Int?,
+    val hourly: List<Int>,
+    val hasData: Boolean,
+)
+
+internal fun childGuardDayTotals(
+    devices: List<ChildInternetDeviceState>,
+    today: String = childGuardStatisticsDate(),
+    yesterday: String = LocalDate.parse(today).minusDays(1).toString(),
+): ChildGuardDayTotals {
+    val buckets = IntArray(24)
+    var barTotal = 0
+    devices.forEach { device ->
+        device.todayUsage.bars.forEach { bar ->
+            if (bar.hour in 0..23) {
+                val minutes = bar.minutes.coerceAtLeast(0)
+                buckets[bar.hour] += minutes
+                barTotal += minutes
             }
         }
     }
+    val knownMinutes = devices.mapNotNull { device ->
+        device.usage?.takeIf { it.hasData }?.onlineMinutes
+    }
+    val minutes = when {
+        barTotal > 0 -> barTotal
+        knownMinutes.isNotEmpty() -> knownMinutes.sum()
+        else -> null
+    }
+    // 只有每台设备都拿到了昨天那一格，才谈「较昨日」；缺一台就不下结论。
+    val yesterdayBars = devices.map { device ->
+        device.recentUsage.bars.firstOrNull { it.date == yesterday }
+    }
+    val yesterdayMinutes = if (devices.isNotEmpty() && yesterdayBars.all { it != null }) {
+        yesterdayBars.filterNotNull().sumOf { it.minutes }
+    } else {
+        null
+    }
+    return ChildGuardDayTotals(
+        minutes = minutes,
+        yesterdayMinutes = yesterdayMinutes,
+        hourly = buckets.toList(),
+        hasData = devices.any { it.usage?.hasData == true } || barTotal > 0,
+    )
+}
+
+/** 今日总时长 + 分时段柱状图；左右两栏用一条淡色竖线分开。 */
+@Composable
+internal fun ChildGuardTodayUsageCard(totals: ChildGuardDayTotals) {
+    Surface(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = LabCoreSurface.Card,
+        border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+    ) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Icon(Icons.Rounded.BarChart, null, tint = Color(0xFF8FB4D6), modifier = Modifier.size(12.dp))
+                    Text(
+                        "今日上网总时长",
+                        style = LabTypography.Caption.copy(fontSize = 11.5.sp),
+                        maxLines = 1
+                    )
+                }
+                ChildGuardDurationValue(totals.minutes)
+                ChildGuardDayDelta(totals)
+            }
+            Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFEAF1F8)))
+            Column(
+                Modifier
+                    .weight(1.06f)
+                    .padding(start = 10.dp, end = 12.dp, top = 10.dp, bottom = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    "今日分时段上网（小时）",
+                    style = LabTypography.Caption.copy(fontSize = 11.5.sp),
+                    maxLines = 1
+                )
+                ChildGuardHourChart(totals.hourly, Modifier.fillMaxWidth().height(64.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChildGuardDurationValue(minutes: Int?) {
+    // 左栏只有屏幕的一半宽，「10小时47分钟」在 27sp 下会折行成「10小时47分 / 钟」。
+    if (minutes == null) {
+        Text("--", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF94A3B8))
+        return
+    }
+    val hours = minutes / 60
+    val rest = minutes % 60
+    val numberStyle = androidx.compose.ui.text.TextStyle(
+        fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+        color = Color(0xFF172233), letterSpacing = (-0.4).sp
+    )
+    val unitStyle = androidx.compose.ui.text.TextStyle(
+        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+        color = Color(0xFF475569), letterSpacing = (-0.2).sp
+    )
+    Row(verticalAlignment = Alignment.Bottom) {
+        // 一行只用一行的高度：每段都锁死 maxLines/softWrap，窄屏上宁可挤也不要折行。
+        if (hours > 0) {
+            Text("$hours", style = numberStyle, maxLines = 1, softWrap = false)
+            Text("小时", style = unitStyle, maxLines = 1, softWrap = false,
+                modifier = Modifier.padding(bottom = 1.5.dp))
+        }
+        Text("$rest", style = numberStyle, maxLines = 1, softWrap = false)
+        Text("分钟", style = unitStyle, maxLines = 1, softWrap = false,
+            modifier = Modifier.padding(bottom = 1.5.dp))
+    }
+}
+
+@Composable
+private fun ChildGuardDayDelta(totals: ChildGuardDayTotals) {
+    val today = totals.minutes
+    val yesterday = totals.yesterdayMinutes
+    val label: String
+    val tone: Color
+    val direction: Int
+    when {
+        today == null -> {
+            label = "今日暂无统计"; tone = Color(0xFF94A3B8); direction = 0
+        }
+        yesterday == null -> {
+            label = "昨日数据不足"; tone = Color(0xFF94A3B8); direction = 0
+        }
+        today == yesterday -> {
+            label = "与昨日持平"; tone = Color(0xFF64748B); direction = 0
+        }
+        today > yesterday -> {
+            label = "较昨日 +${formatChildDuration(today - yesterday)}"
+            tone = Color(0xFFDC2626); direction = 1
+        }
+        else -> {
+            label = "较昨日 -${formatChildDuration(yesterday - today)}"
+            tone = LabV2.Green; direction = -1
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            label,
+            style = LabTypography.Caption.copy(fontSize = 11.sp, color = tone, fontWeight = FontWeight.SemiBold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (direction != 0) {
+            Icon(
+                if (direction > 0) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
+                null,
+                tint = tone,
+                modifier = Modifier.size(11.dp)
+            )
+        }
+    }
+}
+
+/**
+ * 24 个小时桶。桶值可以超过 60 分钟（多设备叠加），所以纵轴按最大桶动态取值，
+ * 单位是小时。没有采集到的小时只画浅色底槽，不编造柱子。
+ */
+@Composable
+private fun ChildGuardHourChart(hourly: List<Int>, modifier: Modifier = Modifier) {
+    val values = if (hourly.size == 24) hourly else List(24) { 0 }
+    val peakMinutes = values.maxOrNull()?.coerceAtLeast(0) ?: 0
+    Column(modifier) {
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.Top) {
+            Column(
+                Modifier.width(16.dp).fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.End
+            ) {
+                Text(hourAxisLabel(peakMinutes), style = LabTypography.Caption.copy(fontSize = 8.5.sp, color = Color(0xFFA9B6C6)))
+                Text(hourAxisLabel((peakMinutes + 1) / 2), style = LabTypography.Caption.copy(fontSize = 8.5.sp, color = Color(0xFFA9B6C6)))
+                Text("0", style = LabTypography.Caption.copy(fontSize = 8.5.sp, color = Color(0xFFA9B6C6)))
+            }
+            Spacer(Modifier.width(4.dp))
+            Canvas(Modifier.weight(1f).fillMaxHeight()) {
+                val gap = 2.dp.toPx()
+                val barWidth = ((size.width - gap * 23f) / 24f).coerceAtLeast(1f)
+                val radius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                val gradient = Brush.verticalGradient(
+                    listOf(Color(0xFF8FD3F8), Color(0xFF2F8FE0)),
+                    startY = 0f,
+                    endY = size.height
+                )
+                values.forEachIndexed { index, minutes ->
+                    val x = index * (barWidth + gap)
+                    drawRoundRect(
+                        color = Color(0xFFEEF4FB),
+                        topLeft = Offset(x, 0f),
+                        size = Size(barWidth, size.height),
+                        cornerRadius = radius
+                    )
+                    if (minutes > 0 && peakMinutes > 0) {
+                        val height = (size.height * minutes / peakMinutes).coerceAtLeast(2.dp.toPx())
+                        drawRoundRect(
+                            brush = gradient,
+                            topLeft = Offset(x, size.height - height),
+                            size = Size(barWidth, height),
+                            cornerRadius = radius
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(start = 20.dp, top = 3.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            listOf("0", "4", "8", "12", "16", "20").forEach {
+                Text(it, style = LabTypography.Caption.copy(fontSize = 8.5.sp, color = Color(0xFFA9B6C6)))
+            }
+        }
+    }
+}
+
+private fun hourAxisLabel(minutes: Int): String {
+    if (minutes <= 0) return "0"
+    val hours = minutes / 60f
+    return if (hours >= 10f) "%.0f".format(hours) else "%.1f".format(hours)
 }
 
 @Composable
@@ -256,8 +529,29 @@ internal fun MasterGuardCard(enabled: Boolean, busy: Boolean, known: Boolean, on
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text("全设备上网计划", style = LabTypography.CardTitle.copy(fontWeight = FontWeight.SemiBold))
-                    if (known) Text(if (enabled) "已开启" else "已暂停",
-                        style = LabTypography.Caption.copy(color = if (enabled) LabV2.Cyan else LabV2.InkMuted))
+                    // 状态只认 Hub/路由器确认的结果；本地开关值不参与这段文案。
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = when {
+                            !known -> LabV2.Field
+                            enabled -> Color(0xFFE6F8F8)
+                            else -> Color(0xFFF1F5F9)
+                        }
+                    ) {
+                        Text(
+                            if (!known) "正在同步" else if (enabled) "已开启" else "已暂停",
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            style = LabTypography.Caption.copy(
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = when {
+                                    !known -> LabV2.InkMuted
+                                    enabled -> Color(0xFF0E9AA0)
+                                    else -> Color(0xFF64748B)
+                                }
+                            )
+                        )
+                    }
                 }
                 Text(if (known) "统一暂停或恢复计划，统计照常记录" else "等待路由器确认总开关状态",
                     style = LabTypography.Supporting.copy(fontWeight = FontWeight.Normal))
@@ -406,34 +700,34 @@ private fun ProtectedDeviceCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         color = LabCoreSurface.Card,
         border = BorderStroke(1.dp, Color(0xFFF1F5F9))
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            // 「一键禁网」那行和「家长请注意」那行之间留 9dp 会显得卡片很松，
-            // 官方是贴着排的。
-            verticalArrangement = Arrangement.spacedBy(5.dp)
+                .padding(horizontal = 13.dp, vertical = 8.dp),
+            // 三行内容（身份 / 今日 / 进度）贴着排，中间不再留大块空白。
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(11.dp),
                     color = accent.copy(alpha = .08f),
                     border = BorderStroke(1.dp, Color(0xFFF1F5F9))
                 ) {
-                    Box(Modifier.padding(5.dp)) {
-                        LabMiniDeviceIcon(iconKey, accent, sizeDp = 40)
+                    Box(Modifier.padding(4.dp)) {
+                        LabMiniDeviceIcon(iconKey, accent, sizeDp = 32)
                     }
                 }
-                Spacer(Modifier.size(10.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Spacer(Modifier.size(9.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         displayName,
                         style = LabTypography.CardTitle.copy(
-                            fontSize = 15.sp,
+                            fontSize = 14.5.sp,
+                            lineHeight = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E293B)
                         ),
@@ -466,7 +760,8 @@ private fun ProtectedDeviceCard(
                     Text(
                         statusText,
                         style = LabTypography.Supporting.copy(
-                            fontSize = 12.sp,
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp,
                             color = statusColor,
                             fontWeight = if (isBlocked) FontWeight.SemiBold else FontWeight.Normal
                         )
@@ -500,14 +795,14 @@ private fun ProtectedDeviceCard(
                 Surface(
                     shape = RoundedCornerShape(4.dp),
                     color = Color(0xFFEEF2FF),
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             Icons.Rounded.BarChart,
                             null,
                             tint = Color(0xFF6366F1),
-                            modifier = Modifier.size(13.dp)
+                            modifier = Modifier.size(12.dp)
                         )
                     }
                 }
@@ -517,7 +812,8 @@ private fun ProtectedDeviceCard(
                     childGuardTodayLine(device, if (onlineKnown) isOnline else null),
                     style = LabTypography.Body.copy(
                         color = if (device.usage?.onlineMinutes == null) Color(0xFF94A3B8) else Color(0xFF64748B),
-                        fontSize = 12.5.sp
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
                     ),
                     modifier = Modifier.weight(1f)
                 )
@@ -619,6 +915,58 @@ private fun ProtectedDeviceCard(
                 }
             }
 
+            // 分母一律写出来：有真实额度用真实额度，没有就用 8 小时参考值。
+            // 右边这段文字同时把进度条压短，不再横到卡片边上。
+            val progressMinutes = device.usage?.onlineMinutes
+            val dailyLimit = device.usage?.dailyLimitMinutes
+            if (progressMinutes != null) {
+                val percent = childGuardUsagePercent(progressMinutes, dailyLimit)
+                val exhausted = dailyLimit != null && percent >= 100
+                val barBrush = if (exhausted) {
+                    Brush.horizontalGradient(listOf(Color(0xFFFCA5A5), Color(0xFFEF4444)))
+                } else {
+                    Brush.horizontalGradient(listOf(Color(0xFF5FD3D6), Color(0xFF16B9BE)))
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(3.5.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFFEEF4FB))
+                    ) {
+                        if (percent > 0) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(percent / 100f)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(barBrush)
+                            )
+                        }
+                    }
+                    Text(
+                        buildAnnotatedString {
+                            withStyle(
+                                SpanStyle(
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (exhausted) Color(0xFFEF4444) else Color(0xFF64748B)
+                                )
+                            ) { append("$percent%") }
+                            withStyle(SpanStyle(color = Color(0xFFA9B6C6))) {
+                                append(" / ${childGuardLimitLabel(dailyLimit ?: CHILD_GUARD_PROGRESS_REFERENCE_MINUTES)}")
+                            }
+                        },
+                        style = LabTypography.Caption.copy(fontSize = 10.5.sp),
+                        maxLines = 1
+                    )
+                }
+            }
+
             // 深夜提醒只认报告写出的 ALERT；未知/无记录都不是「一切正常」，也就都不报喜。
             val lateNightMinutes = device.usage?.lateNightMinutes
             if (device.usage?.attention == ChildAttentionState.ALERT && (lateNightMinutes ?: 0) > 0) {
@@ -658,6 +1006,19 @@ private fun ProtectedDeviceCard(
             }
         }
     }
+}
+
+/** 没有真实限额时进度条按 8 小时折算，只用于百分比展示，不是限额，也不参与任何禁网判断。 */
+internal const val CHILD_GUARD_PROGRESS_REFERENCE_MINUTES = 8 * 60
+
+/**
+ * 有真实每日限额（Hub 下发 `dailyLimitMinutes`）就用它做分母，没有才退回 8 小时参考值。
+ * 额度用完时封顶 100%，不显示 120% 这种越过限额的数字。
+ */
+internal fun childGuardUsagePercent(minutes: Int?, limitMinutes: Int? = null): Int {
+    if (minutes == null || minutes <= 0) return 0
+    val denominator = limitMinutes?.takeIf { it > 0 } ?: CHILD_GUARD_PROGRESS_REFERENCE_MINUTES
+    return ((minutes * 100.0) / denominator).roundToInt().coerceIn(0, 100)
 }
 
 /** 时长格式化一律接受 null：没统计过就是 `--`，绝不塌成 0分钟。 */

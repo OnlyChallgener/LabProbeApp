@@ -41,6 +41,13 @@ interface ChildInternetRepository {
     fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int? = null, onResult: (Result<Unit>) -> Unit = {})
     /** 临时放行：只报时长代号（today/10m/30m/1h/cancel），绝对截止时间由 Hub 按北京时间算。 */
     fun setDevicePass(deviceId: String, preset: String, onResult: (Result<Unit>) -> Unit = {})
+    /**
+     * 每日上网总时长上限（分钟）；0 = 取消限额。
+     *
+     * 固件没有「每天最多上多久」这个概念，额度只存在 Hub 的聚合库里，由 Hub 判定
+     * `limitState`，所以这条不经过路由器命令队列。
+     */
+    fun setDeviceDailyLimit(deviceId: String, minutes: Int, onResult: (Result<Unit>) -> Unit = {})
     fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit = {})
     fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit = {})
     fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit = {})
@@ -489,6 +496,33 @@ class RealChildInternetRepository internal constructor(
             })
     }
 
+    override fun setDeviceDailyLimit(deviceId: String, minutes: Int, onResult: (Result<Unit>) -> Unit) {
+        val value = minutes.coerceIn(0, 24 * 60)
+        mutate(deviceId, onResult,
+            request = {
+                try {
+                    api.setDeviceDailyLimit(resolveRouterUid(deviceId), value)
+                } catch (error: HubHttpException) {
+                    // 老 Hub 没有这条路由，Flask 回的是 HTML，解析不出 error 字段，
+                    // 直接抛到界面就是「HTTP 404: <!doctype html>…」。
+                    val raw = error.message.orEmpty()
+                    if (error.statusCode in listOf(404, 405) && raw.startsWith("HTTP ")) {
+                        throw IllegalStateException("Hub 版本过旧，暂不支持每日时长，请先更新 Hub")
+                    }
+                    throw error
+                }
+            },
+            hudText = if (value > 0) "保存每日时长…" else "取消每日时长…",
+            accepted = { response ->
+                // Hub 回的是落库后的值；界面只认它，不拿请求值自说自话。
+                val saved = response.data().intOrNull("dailyLimitMinutes") ?: value
+                updateDevice(deviceId) { d ->
+                    val usage = d.usage ?: return@updateDevice d
+                    d.copy(usage = usage.copy(dailyLimitMinutes = saved.takeIf { it > 0 }))
+                }
+            })
+    }
+
     override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) {
         if (plan.repeatDays.isEmpty()) {
             onResult(Result.failure(IllegalArgumentException("请至少选择一个重复日期")))
@@ -547,7 +581,16 @@ class RealChildInternetRepository internal constructor(
         expirePreviousDay()
         val expected = revision
         val uid = resolveRouterUid(deviceId)
-        if (usageJobs[uid]?.isActive == true) return
+        val running = usageJobs[uid]
+        if (running?.isActive == true) {
+            // 已有一次读取在飞：等它结束后再发这次请求，而不是把回调丢掉。
+            // 丢掉回调会让「刷新」按钮和详情页一直等不到结果。
+            scope.launch {
+                running.join()
+                loadUsageReport(deviceId, onResult)
+            }
+            return
+        }
         usageJobs[uid] = scope.launch {
             setUsageLoading(uid, true)
             var cachedVisible = false
@@ -1001,6 +1044,12 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
     fun passDevice(uid: String, preset: String) = write(
         "$base/devices/${pathPart(uid)}/pass$routerQuery", "POST", JSONObject().put("preset", preset)
     )
+    /** 每日时长上限只落在 Hub 的聚合库：0 用 DELETE 表达「不限」，不做 0 分钟的限额。 */
+    fun setDeviceDailyLimit(uid: String, minutes: Int): JSONObject {
+        val path = "$base/devices/${pathPart(uid)}/limit$routerQuery"
+        return if (minutes > 0) write(path, "PUT", JSONObject().put("minutes", minutes))
+        else write(path, "DELETE")
+    }
     fun usage(uid: String) = get("$base/devices/${pathPart(uid)}/usage$routerQuery")
     fun candidates() = parseChildGuardCandidates(get("$base/devices/candidates$routerQuery"))
     fun addDevice(macs: List<String>, name: String? = null) = write("$base/devices$routerQuery", "POST", JSONObject().apply {
@@ -1339,7 +1388,12 @@ internal fun parseChildGuardUsageReport(root: JSONObject, todayLabel: String = "
         hasData = hasRecords,
         generatedAtEpoch = d.longOrNull("generatedAt"),
         lastSampleAtEpoch = d.longOrNull("lastSampleAt"),
-        stale = d.bool("stale", default = false)
+        stale = d.bool("stale", default = false),
+        // 只有 Hub 明确给出正数限额才算「真实限额」；0/负数当作没有限额。
+        dailyLimitMinutes = (d.intOrNull("dailyLimitMinutes")
+            ?: d.intOrNull("daily_limit_minutes")
+            ?: d.optJSONObject("limit")?.intOrNull("minutes"))
+            ?.takeIf { it > 0 }
     )
     return ChildGuardUsageReport(
         today = InternetUsageSummary(todayMinutes, todayBars, todayEntries),
@@ -1748,6 +1802,7 @@ object FakeChildInternetRepository : ChildInternetRepository {
     override fun setMasterEnabled(enabled: Boolean) { state = state.copy(masterEnabled = enabled) }
     override fun setDeviceBlocked(deviceId: String, blocked: Boolean, durationMinutes: Int?, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = if (blocked) GuardStatus.BLOCKED else GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun setDevicePass(deviceId: String, preset: String, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(summary = it.summary.copy(status = GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
+    override fun setDeviceDailyLimit(deviceId: String, minutes: Int, onResult: (Result<Unit>) -> Unit) { state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(usage = it.usage?.copy(dailyLimitMinutes = minutes.takeIf { m -> m > 0 })) else it }); onResult(Result.success(Unit)) }
     override fun savePlan(deviceId: String, plan: DeviceGuardPlan, onResult: (Result<Unit>) -> Unit) { val saved = plan.copy(id = plan.id.ifBlank { "preview-plan" }, configured = true, enabled = true); state = state.copy(devices = state.devices.map { if (it.summary.deviceId == deviceId) it.copy(plan = saved, plans = listOf(saved), summary = it.summary.copy(status = GuardStatus.GUARDED)) else it }); onResult(Result.success(Unit)) }
     override fun deletePlan(deviceId: String, planId: String, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }
     override fun setPlanEnabled(deviceId: String, planId: String, enabled: Boolean, onResult: (Result<Unit>) -> Unit) { onResult(Result.success(Unit)) }

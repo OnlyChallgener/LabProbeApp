@@ -219,7 +219,66 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 连接稳定性与能力探测修复" to listOf(
+            "v$NAME build$CODE · 手机测速节点探测修正" to listOf(
+                "节点预探测从裸 TCP 改为与实测完全相同的 HTTP 请求：只放 SYN 不放应用数据的节点会被直接淘汰，不会选中后立刻失败",
+                "广州等节点在当前出口 TCP 能握手但 HTTP 不通时，自动换到真正可用的节点"
+            ),
+            "v0.14.7 build351 · 手机测速回归修复" to listOf(
+                "手机测速完全走本机网络：节点发现不再跟着 Hub / 工作区变化重新拉取，也不使用路由器测速的任何前置状态",
+                "节点只剩一个时自动补齐公共节点清单：服务端按出口推荐的节点仍排在最前，手动选择保留",
+                "节点探测全部无响应时直接给出可操作的原因，失败状态留在页面上，不覆盖上次成绩",
+                "单方向 15 秒封顶（含 2 秒预热），至少 8 秒有效采样；改为判断相邻 3 秒窗口均速是否还在明显变化，正常约 10–12 秒完成"
+            ),
+            "v0.14.6 build350 · 手机测速采样与停止逻辑" to listOf(
+                "上行速率改按 1 秒滑动窗口计算：原先 250ms 字节差被内核发送缓冲的攒满/排空切成规律锯齿，峰值 178Mbps 明显高于均速就是这个采样口径造成的",
+                "上行连接发送缓冲收窄到 64KB，让写入速度贴近真实链路吞吐，不丢真实网络波动",
+                "上下行都按至少 8 秒有效采样判断停止，25 秒上限只算预热之后的时长；下载与上传各自独立计时",
+                "预热 2 秒不画不入均速；正式段即使瞬时为 0 也照实记录，X 轴改用引擎实测有效时长",
+                "仪表测速中显示实时速率，该方向结束后保留正式采样的均速，峰值单独显示"
+            ),
+            "v0.14.5 build349 · 测速时间轴校正" to listOf(
+                "SSH 逐秒核对固件日志后确认：路由器每 100ms 上报一个速率点（每秒 10 个），之前按 1 点/秒换算导致时间轴每次轮询跳增十几秒",
+                "80 点左右的曲线现在显示为约 8 秒，与实际单方向测速时长一致；APP 每秒轮询一次，时间轴也只前进 1 秒",
+                "时间轴按完整采样窗口计算（N 个点覆盖 N × 间隔），整秒四舍五入显示"
+            ),
+            "v0.14.4 build348 · 测速曲线与隧道状态修正" to listOf(
+                "测速曲线的 X 轴改用真实采样时钟：手机按 250ms 一点，不再拿点数推算秒数",
+                "隐藏 Y 轴数字与竖线，改按 P90 自适应缩放并带过渡动画，孤立尖峰不再压平整条曲线",
+                "绘图区去掉左侧预留宽度并加高，线宽降到 1.5dp，网格与面积填充同步减淡",
+                "路由器侧曲线与仪表直接使用固件上报的原始序列，不在本地重采样",
+                "手机测速仪表按阶段切换：下载中显示实时值，该段结束后转为均速并保留",
+                "右上角路由器图片换成无线信号图标",
+                "修复 WireGuard 已连上却显示未连接：进程被回收后按隧道服务是否还在把状态认回来",
+                "儿童上网设备页「更新于 / 刷新」那行改成紧凑文本，去掉标签下的多余空白"
+            ),
+            "v0.14.3 build347 · 原生 DDNS 服务商补齐与瀑布式选择" to listOf(
+                "新增 DDNS 记录时不再只给阿里云 / DNSPod / No-IP 三项：按设备能力判定表单类型，直接给出固件支持的 9 个服务商",
+                "服务商改成就地展开的瀑布式下拉：选中项浅青底 + 勾选标记，其余项细线分隔",
+                "LabProbe DDNS 的服务商选择同步换成同一种展开方式",
+                "记录卡片按设备能力显示中文服务商名，不再出现 aliyun.com 这种原始串",
+                "新固件的记录卡片记录类型显示 A / AAAA / TXT，不再是 IPv4 / IPv6"
+            ),
+            "v0.14.2 build346 · 儿童上网页排版收紧" to listOf(
+                "顶栏补上居中的「儿童上网」标题，返回与添加按钮分列两侧",
+                "顶部守护卡缩矮约三成：插画 104dp → 78dp，字号与内边距同步收紧",
+                "今日总时长数字 27sp → 20sp，不再折行成「…分 / 钟」",
+                "设备卡进度条右侧写明分母（默认 8小时，配了额度显示真实额度），进度条随之变短",
+                "设备卡整体收紧：图标 40dp → 32dp，行距与内边距压到 4dp/8dp"
+            ),
+            "v0.14.1 build345 · 每日上网时长上限" to listOf(
+                "上网计划页新增「每日上网时长」：可设 30 分钟到 6 小时，也可设回不限",
+                "额度存在 Hub 侧，配了限额后设备卡按真实额度算百分比并显示分母",
+                "只做记录与显示，不会自动断网；没配额度时进度条仍按 8 小时参考值折算",
+                "没有排上网时段时也能设置额度，不会被空状态挡住入口"
+            ),
+            "v0.14.0 build344 · 儿童上网守护视觉升级" to listOf(
+                "概览卡改为浅蓝渐变卡并加入儿童守护插画，在线 / 离线 / 待确认分开统计",
+                "新增今日上网统计卡：今日总时长、较昨日变化与 24 小时分时段柱状图",
+                "总时长与小时桶按各设备上网报告合并，柱状图之和恒等于今日总时长",
+                "昨日缺少任一设备记录时不显示变化值，不用不完整数据编造对比",
+                "全设备上网计划增加已开启 / 已暂停 / 正在同步状态标签"
+            ),
+            "v0.13.100 build343 · 连接稳定性与能力探测修复" to listOf(
                 "儿童守护读取请求遇到旧连接被回收时自动换新连接重试，不再频繁提示「和 Hub 的连接中断」",
                 "单台设备上网报告补抓失败只在设备卡片提示，不再点亮整屏红色横幅",
                 "切换路由器后重新探测功能能力，不再沿用上一台的 WireGuard / DDNS / 防火墙显隐",
@@ -4836,6 +4895,7 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
     var handshaked by remember { mutableStateOf(false) }
+    var statsAvailable by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
@@ -4843,8 +4903,9 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
             val tunnelState = wireGuardShortcutState(context, prefs)
             running = tunnelState.tunnelUp
             handshaked = tunnelState.handshaked
+            statsAvailable = tunnelState.statsAvailable
             // 本地读隧道统计，不碰网络；等握手时读得勤一点，免得状态停在「握手中」。
-            delay(if (tunnelState.tunnelUp && !tunnelState.handshaked) 2_000L else 8_000L)
+            delay(if (tunnelState.tunnelUp && !tunnelState.handshaked && tunnelState.statsAvailable) 2_000L else 8_000L)
         }
     }
     CompactListCard(coreSurface = true) {
@@ -4868,10 +4929,10 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
                 ) {
                     Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
                         when {
-                            busy || (running && !handshaked) -> CircularProgressIndicator(
+                            busy || (running && !handshaked && statsAvailable) -> CircularProgressIndicator(
                                 Modifier.size(13.dp), strokeWidth = 2.dp, color = LabV2.Amber
                             )
-                            handshaked -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(14.dp), tint = LabV2.Green)
+                            handshaked || (running && !statsAvailable) -> Icon(Icons.Rounded.CheckCircle, null, Modifier.size(14.dp), tint = LabV2.Green)
                             hint.isNotBlank() -> Icon(Icons.Rounded.Cancel, null, Modifier.size(14.dp), tint = LabV2.Red)
                             else -> Icon(Icons.Rounded.HourglassEmpty, "等待连接", Modifier.size(14.dp), tint = LabV2.InkMuted)
                         }
@@ -4880,6 +4941,7 @@ private fun HomeWireGuardQuickRow(prefs: AppPrefs, onOpenPage: () -> Unit) {
                         when {
                             busy -> "正在切换…"
                             handshaked -> "已连接"
+                            running && !statsAvailable -> "已连接"
                             running -> "隧道已起，等待握手"
                             hint.isNotBlank() -> hint
                             else -> "未连接"

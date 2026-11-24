@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -63,6 +64,7 @@ import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.EditCalendar
 import androidx.compose.material.icons.rounded.FormatListBulleted
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NotificationImportant
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
@@ -205,6 +207,8 @@ fun ChildInternetDeviceScreen(
         stateSaver = deviceGuardPlanSaver(draftBase)
     ) { mutableStateOf(draftBase) }
     val selectedTab = ChildInternetTab.valueOf(selectedTabName)
+    // 标签页内容在 AnimatedContent 的 lambda 里，够不到上面那个局部 context，这里另取一个。
+    val pageContext = LocalContext.current
     LaunchedEffect(repository, resolvedId, selectedTab) {
         if (selectedTab == ChildInternetTab.PLAN) repository.loadDeviceSettings(resolvedId)
     }
@@ -332,15 +336,36 @@ fun ChildInternetDeviceScreen(
                         onSelectDay = { date -> repository.loadUsageForDate(resolvedId, date) {} }
                     )
                     ChildInternetTab.PLAN -> {
+                        // 「每日上网时长」和时段是两条独立策略：不管有没有排时段，入口都在。
+                        val limitHeader: @Composable ColumnScope.() -> Unit = {
+                            ChildInternetDailyLimitCard(
+                                limitMinutes = deviceState.usage?.dailyLimitMinutes,
+                                todayMinutes = deviceState.usage?.onlineMinutes,
+                                saving = repository.state.pendingDeviceIds.isNotEmpty(),
+                                onSelect = { minutes ->
+                                    repository.setDeviceDailyLimit(resolvedId, minutes) { result ->
+                                        result.onSuccess {
+                                            toast(pageContext, if (minutes > 0)
+                                                "每日时长已设为 ${childGuardLimitLabel(minutes)}"
+                                            else "已取消每日时长上限")
+                                        }.onFailure { toast(pageContext, it.userMessage()) }
+                                    }
+                                }
+                            )
+                        }
                         if (editingPlanId == null && deviceState.plans.isEmpty()) {
-                            ChildInternetPlanEmptyState(onOpen = { editingPlanId = "" })
+                            ChildInternetPlanEmptyState(
+                                onOpen = { editingPlanId = "" },
+                                header = limitHeader
+                            )
                         } else if (editingPlanId == null) {
                             ChildInternetPlanOverview(
                                 plans = deviceState.plans,
                                 selectedDay = planDay,
                                 onSelectDay = { planDay = it },
                                 onOpenRule = { id -> editingPlanId = id },
-                                onAddRule = { editingPlanId = "" }
+                                onAddRule = { editingPlanId = "" },
+                                header = limitHeader
                             )
                         } else {
                             ChildInternetPlanEditor(
@@ -475,7 +500,7 @@ internal val ChildInternetSheet = Color(0xFFF5F8FC)
 private fun ChildInternetTabs(selected: ChildInternetTab, onSelect: (ChildInternetTab) -> Unit) {
     val tabs = ChildInternetTab.entries.toList()
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
             tabs.forEach { tab ->
                 val active = tab == selected
                 Column(
@@ -483,7 +508,7 @@ private fun ChildInternetTabs(selected: ChildInternetTab, onSelect: (ChildIntern
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { onSelect(tab) }
-                        .padding(vertical = 6.dp),
+                        .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -764,7 +789,19 @@ internal fun ChildInternetReportScreen(
                 style = LabTypography.Caption.copy(color = LabV2.InkMuted)
               )
             }
-            TextButton(onClick = onRefresh, enabled = !device.usageLoading) { Text("刷新") }
+            // TextButton 自带 40dp 最小高度，这一行下面就被撑出一大片空白；紧凑文本
+            // 刚好和左边的「更新于」一行高。
+            Text(
+                text = "刷新",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = !device.usageLoading) { onRefresh() }
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                style = LabTypography.Caption.copy(
+                    color = if (device.usageLoading) LabV2.InkMuted else LabV2.Primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            )
         }
         ChildUsagePeriodToggle(
             options = listOf("今日", "最近10天"),
@@ -1359,28 +1396,171 @@ private fun AppUsageTimelineDialog(
 }
 
 @Composable
-private fun ChildInternetPlanEmptyState(onOpen: () -> Unit) {
+private fun ChildInternetPlanEmptyState(
+    onOpen: () -> Unit,
+    header: @Composable ColumnScope.() -> Unit = {}
+) {
+    // 没有时段也不该藏掉「每日上网时长」：额度是可以单独配的一条策略，所以空态也
+    // 跟着一起滚动，而不是把整屏占满、把入口挤到屏幕外面去。
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = LabV2.PageHorizontal, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Box(Modifier.size(164.dp), contentAlignment = Alignment.Center) {
-            Surface(shape = CircleShape, color = LabV2.BackgroundTop, modifier = Modifier.size(132.dp)) {
-                Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ChildCare, null, tint = LabV2.Primary.copy(alpha = .78f), modifier = Modifier.size(68.dp)) }
+        header()
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(Modifier.size(164.dp), contentAlignment = Alignment.Center) {
+                Surface(shape = CircleShape, color = LabV2.BackgroundTop, modifier = Modifier.size(132.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.ChildCare, null, tint = LabV2.Primary.copy(alpha = .78f), modifier = Modifier.size(68.dp)) }
+                }
+                DashboardAppIcon("douyin", sizeDp = 44, modifier = Modifier.align(Alignment.TopStart))
+                DashboardAppIcon("wechat", sizeDp = 44, modifier = Modifier.align(Alignment.TopEnd))
+                DashboardAppIcon("bilibili", sizeDp = 44, modifier = Modifier.align(Alignment.BottomEnd))
             }
-            DashboardAppIcon("douyin", sizeDp = 44, modifier = Modifier.align(Alignment.TopStart))
-            DashboardAppIcon("wechat", sizeDp = 44, modifier = Modifier.align(Alignment.TopEnd))
-            DashboardAppIcon("bilibili", sizeDp = 44, modifier = Modifier.align(Alignment.BottomEnd))
+            Spacer(Modifier.height(20.dp))
+            Text("培养健康上网好习惯", style = LabTypography.PageTitle)
+            Spacer(Modifier.height(8.dp))
+            Text("设置允许上网的时段，并选择时段内允许使用的应用。", style = LabTypography.Body.copy(color = LabV2.InkMuted), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth(.70f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp), shape = RoundedCornerShape(50), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
+                Text("去开启", style = LabTypography.Button)
+            }
         }
-        Spacer(Modifier.height(20.dp))
-        Text("培养健康上网好习惯", style = LabTypography.PageTitle)
-        Spacer(Modifier.height(8.dp))
-        Text("设置允许上网的时段，并选择时段内允许使用的应用。", style = LabTypography.Body.copy(color = LabV2.InkMuted), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = onOpen, modifier = Modifier.fillMaxWidth(.70f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp), shape = RoundedCornerShape(50), colors = ButtonDefaults.buttonColors(containerColor = LabV2.Cyan)) {
-            Text("去开启", style = LabTypography.Button)
+    }
+}
+
+/** 额度的取值：分钟；0 = 不限。都落在整点半与常用时长上，不逼家长算分钟。 */
+private val childGuardDailyLimitPresets = listOf(0, 30, 60, 90, 120, 180, 240, 360)
+
+/** 限额只说有用的那一位：2小时、1小时30分钟 ——「2小时0分钟」不像人说的话。 */
+internal fun childGuardLimitLabel(minutes: Int?): String {
+    if (minutes == null || minutes <= 0) return "不限"
+    val hours = minutes / 60
+    val remain = minutes % 60
+    return when {
+        hours <= 0 -> "${remain}分钟"
+        remain == 0 -> "${hours}小时"
+        else -> "${hours}小时${remain}分钟"
+    }
+}
+
+/**
+ * 每日上网总时长上限。
+ *
+ * 这一项和「时段」是两回事：时段管「几点能上」，它管「今天一共能上多久」。值只存在
+ * Hub 的聚合库里（固件没有这个概念），所以设置成功后界面认 Hub 回写的数字，不拿
+ * 请求值自说自话。
+ */
+@Composable
+private fun ChildInternetDailyLimitCard(
+    limitMinutes: Int?,
+    todayMinutes: Int?,
+    saving: Boolean,
+    onSelect: (Int) -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val limit = limitMinutes?.takeIf { it > 0 }
+    val reached = limit != null && todayMinutes != null && todayMinutes >= limit
+    LabCoreCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 13.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = Color(0xFFEEF2FF),
+                modifier = Modifier.size(18.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Rounded.Schedule,
+                        null,
+                        tint = Color(0xFF6366F1),
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+            Text(
+                "每日上网时长",
+                modifier = Modifier.weight(1f),
+                style = LabTypography.SectionTitle
+            )
+            Box {
+                Surface(
+                    onClick = { menuOpen = true },
+                    enabled = !saving,
+                    shape = RoundedCornerShape(50),
+                    color = Color.Transparent,
+                    border = BorderStroke(1.dp, Color(0xFF16B9BE))
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            if (saving) "保存中…" else childGuardLimitLabel(limit),
+                            style = LabTypography.CompactButton.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = Color(0xFF16B9BE)
+                        )
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            null,
+                            tint = Color(0xFF16B9BE),
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                }
+                LabDropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    modifier = Modifier.widthIn(max = 220.dp),
+                    shape = LabPopupShapes.Menu,
+                    containerColor = LabCoreSurface.Card,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 10.dp, actionMenu = true
+                ) {
+                    childGuardDailyLimitPresets.forEach { preset ->
+                        LabDropdownMenuItem(
+                            text = {
+                                Text(
+                                    childGuardLimitLabel(preset),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center,
+                                    style = LabTypography.Body.copy(
+                                        fontSize = 14.sp,
+                                        fontWeight = if (preset == (limit ?: 0)) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                )
+                            },
+                            onClick = {
+                                menuOpen = false
+                                if (preset != (limit ?: 0)) onSelect(preset)
+                            },
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+            }
         }
+        Spacer(Modifier.height(4.dp))
+        // 已用的数字归上网报告：null 是还没统计，0 才是「今天没上网」。
+        Text(
+            when {
+                todayMinutes == null -> "今日时长待统计"
+                todayMinutes <= 0 -> "今天还没上网"
+                reached -> "今天已用 ${formatChildDuration(todayMinutes)} · 额度已用完"
+                else -> "今天已用 ${formatChildDuration(todayMinutes)}"
+            },
+            style = LabTypography.Caption.copy(
+                fontSize = 11.5.sp,
+                color = if (reached) Color(0xFFEF4444) else Color(0xFF94A3B8)
+            )
+        )
     }
 }
 
@@ -1391,7 +1571,8 @@ private fun ChildInternetPlanOverview(
     selectedDay: Int,
     onSelectDay: (Int) -> Unit,
     onOpenRule: (String) -> Unit,
-    onAddRule: () -> Unit
+    onAddRule: () -> Unit,
+    header: @Composable ColumnScope.() -> Unit = {}
 ) {
     val segments = remember(selectedDay, plans) { dayPlanSegments(selectedDay, plans) }
     val dayRules = remember(selectedDay, plans) { plans.filter { selectedDay in it.repeatDays } }
@@ -1401,6 +1582,7 @@ private fun ChildInternetPlanOverview(
             .padding(horizontal = LabV2.PageHorizontal, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        header()
         LabCoreCard(contentPadding = PaddingValues(16.dp)) {
             PlanWeekStrip(
                 selectedDays = dayRules.flatMap { it.repeatDays }.toSet(),

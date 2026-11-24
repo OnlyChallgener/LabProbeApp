@@ -14,6 +14,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -1296,7 +1297,7 @@ fun RouterDdnsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     when {
                         page == 0 -> LabProbeDdnsSection(prefs)
-                        hasNativeDdns && page == 1 -> DdnsRecordsSection(prefs)
+                        hasNativeDdns && page == 1 -> DdnsRecordsSection(prefs, nativeDdns = hasNativeDdns)
                         page == certificatePage -> CertificateExpirySection(prefs)
                         else -> CertificateExpirySection(prefs)
                     }
@@ -1845,7 +1846,7 @@ private fun LabProbeDdnsEditorPage(
     val providerChanged = normalized.id.isNotBlank() && normalized.provider != record.provider
     BackHandler(onBack = onBack)
     RouterFormPage(if (normalized.id.isBlank()) "新增 LabProbe DDNS" else "编辑 LabProbe DDNS", "凭据不会回显；留空保持原凭据", onBack) {
-        CompactChoice("服务商", labProbeProviderLabel(record.provider), providerOptions) { selected ->
+        CompactWaterfallChoice("服务商", labProbeProviderLabel(record.provider), providerOptions) { selected ->
             val id = providerIds.getOrNull(providerOptions.indexOf(selected)) ?: record.provider
             val nextSpec = providers.firstOrNull { it.id.equals(id, ignoreCase = true) }
             val nextSupported = nextSpec?.recordTypes?.toSet() ?: setOf("A", "AAAA")
@@ -1921,7 +1922,7 @@ private fun LabProbeDdnsEditorPage(
 }
 
 @Composable
-private fun DdnsRecordsSection(prefs: AppPrefs) {
+private fun DdnsRecordsSection(prefs: AppPrefs, nativeDdns: Boolean = false) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.ddns.collectAsState()
     val rows = resource.value.orEmpty()
@@ -1943,7 +1944,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
     if(resource.value==null)CompactMessage("DDNS 快照正在后台预加载",RouterCyan)
     if(resource.value!=null&&rows.isEmpty())CompactEmpty("暂无DDNS记录","新增后由路由器原生服务更新",RouterGlyph.Ddns){adding=true}
     rows.forEach { record ->
-        DdnsCard(record,onEdit={editing=record},onToggle={scope.launch{
+        DdnsCard(record,nativeDdns=nativeDdns,onEdit={editing=record},onToggle={scope.launch{
             repository.updateDdns(record.copy(enabled=!record.enabled),null)
                 .onSuccess{actionError=""}.onFailure{actionError=it.message.orEmpty()}
         }},onDelete={deleteTarget=record})
@@ -1961,6 +1962,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
                 DdnsEditorPage(
                     initial = editing ?: DdnsRecord(nativeProtocol = deviceProtocol),
                     externalError = actionError,
+                    nativeDdns = nativeDdns,
                     onBack = { adding = false; editing = null },
                 ) { record, password ->
                     scope.launch {
@@ -1987,16 +1989,19 @@ private fun DdnsRecordsSection(prefs: AppPrefs) {
 }
 
 @Composable
-private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelete:()->Unit){
+private fun DdnsCard(record:DdnsRecord,nativeDdns:Boolean=false,onEdit:()->Unit,onToggle:()->Unit,onDelete:()->Unit){
     // whole card must never turn red
     // Editing, switching and the overflow menu are separate hit targets.  The
     // overflow icon must never bubble into the card's edit action.
     val accent=RouterCyan
     val warning=record.status.contains("error",true)||record.status.contains("fail",true)
     val domainText=record.domain.ifBlank{"未命名 DDNS 记录"}
-    val providerText=if(record.provider.isBlank())"未识别服务商" else if(record.modernNative)nativeDdnsProviderLabel(record.provider) else record.provider
+    // 记录上的协议字段可能是空的（Hub 快照不带它），这时按设备能力判，别把
+    // 阿里云显示成 "aliyun.com"。
+    val modernCard=ddnsEditorUsesModernForm(record.nativeProtocol,nativeDdns)
+    val providerText=if(record.provider.isBlank())"未识别服务商" else if(modernCard)nativeDdnsProviderLabel(record.provider) else record.provider
     val interfaceText=record.interfaceName.ifBlank{"wan"}.uppercase(Locale.ROOT)
-    val typeText=if(record.modernNative)record.effectiveRecordType else if(record.useIpv6)"IPv6" else "IPv4"
+    val typeText=if(modernCard)record.effectiveRecordType else if(record.useIpv6)"IPv6" else "IPv4"
     var menu by remember(record.serviceId){mutableStateOf(false)}
     PremiumCard(accent){
         Row(verticalAlignment=Alignment.CenterVertically){
@@ -2032,7 +2037,7 @@ private fun DdnsCard(record:DdnsRecord,onEdit:()->Unit,onToggle:()->Unit,onDelet
     }
 }
 @Composable
-private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
+private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns:Boolean=false,onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
     val normalizedInitial=remember(initial){
         initial.copy(
             provider=initial.provider.trim().ifBlank{"aliyun.com"},
@@ -2042,7 +2047,9 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",onBack:()-
             txtFamily=initial.txtFamily.trim().ifBlank{"ipv4"},
         )
     }
-    val modern=normalizedInitial.modernNative
+    // 记录自带协议就直接用；新建记录没有协议字段，只能靠设备能力判 —— Hub 的 DDNS
+    // 快照并不下发 nativeProtocol，光看记录会永远掉回三选项的老表单。
+    val modern=ddnsEditorUsesModernForm(normalizedInitial.nativeProtocol,nativeDdns)
     var record by remember(normalizedInitial){mutableStateOf(normalizedInitial)}
     var password by remember(normalizedInitial.serviceId){mutableStateOf("")}
     var showPassword by remember{mutableStateOf(false)}
@@ -2077,7 +2084,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",onBack:()-
     val isTxt=record.effectiveRecordType.equals("TXT",ignoreCase=true)
     BackHandler(onBack=onBack)
     RouterFormPage(if(normalizedInitial.serviceId.isBlank())"新增DDNS" else "编辑DDNS","密钥由你输入；留空保持原值",onBack){
-        CompactChoice("服务商",record.provider,providerOptions,display={nativeDdnsProviderLabel(it)}){record=record.copy(provider=it)}
+        CompactWaterfallChoice("服务商",record.provider,providerOptions,display={nativeDdnsProviderLabel(it)}){record=record.copy(provider=it)}
         CompactField("域名 / 记录",record.domain,"例如 rj.example.com"){record=record.copy(domain=it.take(128))}
         CompactField("用户名 / AccessKey",record.username,"AccessKey ID"){record=record.copy(username=it.take(160))}
         CompactPasswordField(if(normalizedInitial.passwordConfigured)"密码 / Secret（留空保持）" else "密码 / Secret",password,"请输入密钥",showPassword,{showPassword=!showPassword}){password=it.take(256)}
@@ -2359,6 +2366,65 @@ private fun CompactChoice(label:String,value:String,options:List<String>,modifie
                 Row(Modifier.fillMaxSize().padding(horizontal=11.dp),verticalAlignment=Alignment.CenterVertically){Text(display(value),Modifier.weight(1f),fontSize = LabTypography.Supporting.fontSize,lineHeight = LabTypography.Supporting.lineHeight,fontWeight=FontWeight.SemiBold,color=RouterInk,maxLines=1,overflow=TextOverflow.Clip);Icon(Icons.Rounded.KeyboardArrowDown,null,Modifier.size(17.dp),tint=RouterMuted)}
             }
             LabDropdownMenu(expanded=expanded,onDismissRequest={expanded=false},shape = LabPopupShapes.Menu,containerColor=Color.White){options.forEach{option->LabDropdownMenuItem(text={Text(display(option),fontSize = LabTypography.Supporting.fontSize,fontWeight=if(option==value)FontWeight.SemiBold else FontWeight.SemiBold)},leadingIcon=if(option==value)({Icon(Icons.Rounded.Check,null,Modifier.size(15.dp),tint=RouterBlue)})else null,onClick={expanded=false;onPick(option)})}}
+        }
+    }
+}
+
+/**
+ * 瀑布式下拉：点开后面板就地在原位向下展开，选项一条条淌下来。
+ *
+ * 和弹层菜单的区别在于它不抢层级 —— 选项长（服务商有十来个）、又在弹窗里的时候，
+ * 弹层会被弹窗裁掉或者盖住表单，展开式列表只是把下面的内容推下去。
+ */
+@Composable
+private fun CompactWaterfallChoice(
+    label: String,
+    value: String,
+    options: List<String>,
+    modifier: Modifier = Modifier,
+    display: (String) -> String = { it },
+    onPick: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val shape = LabCoreSurface.InnerShape
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (label.isNotBlank()) Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
+        Column(
+            Modifier.fillMaxWidth().clip(shape).background(LabCoreSurface.Inner)
+                .border(androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border), shape)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().height(50.dp).clickable { expanded = !expanded }.padding(horizontal = 11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(display(value), Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Clip)
+                Icon(if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp), tint = RouterMuted)
+            }
+            if (expanded) {
+                options.forEachIndexed { index, option ->
+                    val selected = option == value
+                    if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(LabCoreSurface.Border))
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(if (selected) Color(0xFFE9F7F8) else Color.Transparent)
+                            .clickable { expanded = false; onPick(option) }
+                            .padding(horizontal = 11.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            display(option),
+                            fontSize = LabTypography.Supporting.fontSize,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (selected) RouterCyan else RouterInk,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        if (selected) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(Icons.Rounded.Check, null, Modifier.size(15.dp), tint = RouterCyan)
+                        }
+                    }
+                }
+            }
         }
     }
 }

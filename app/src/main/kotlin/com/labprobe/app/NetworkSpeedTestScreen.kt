@@ -1,8 +1,9 @@
 package com.labprobe.app
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.ShowChart
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -41,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -50,9 +53,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,9 +68,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.floor
-import kotlin.math.log10
-import kotlin.math.pow
 
 private val SpeedPageInk = LabV2.Ink
 private val SpeedPageMuted = LabV2.InkMuted
@@ -80,9 +78,8 @@ private val SpeedAccent = Color(0xFF20B8B8)
 
 @Composable
 fun NetworkSpeedTestScreen(prefs: AppPrefs, onBack: () -> Unit) {
-    var channel by remember {
-        mutableStateOf(if (isWorkspaceBe50(prefs)) SpeedTestChannel.PHONE else SpeedTestChannel.ROUTER)
-    }
+    // 手机测速只靠本机网络，进门默认就是它；路由器测速要 Hub 在线才用得上。
+    var channel by remember { mutableStateOf(SpeedTestChannel.PHONE) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -170,8 +167,14 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
     }
 
     val last = history.firstOrNull()
-    val down = progress?.primary?.currentDown ?: last?.downMbps
-    val up = progress?.primary?.currentUp ?: last?.upMbps
+    val primary = progress?.primary
+    // 路由器侧不做任何本地重采样：曲线和仪表都用固件上报的原始序列与数值。
+    val down = primary?.currentDown ?: last?.downMbps
+    val up = when {
+        primary == null -> last?.upMbps
+        primary.up.isEmpty() -> null
+        else -> primary.currentUp
+    }
     val latency = progress?.primary?.latency ?: last?.latency
     val summary = when {
         running -> "测速进行中"
@@ -398,6 +401,7 @@ private fun SpeedTestChannelPill(
 @Composable
 private fun PhoneSpeedTestContent(prefs: AppPrefs) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val progress by PhoneSpeedTestCoordinator.state.collectAsState()
     var nodes by remember { mutableStateOf<List<PhoneSpeedTestNode>>(emptyList()) }
     var selectedNodeId by remember { mutableStateOf("") }
@@ -407,7 +411,9 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
     var history by remember { mutableStateOf(prefs.phoneSpeedHistory()) }
     var historyExpanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(prefs.hub, prefs.workspaceId) {
+    // 手机测速只走本机网络：节点发现、延迟探测、传输都不碰 Hub，
+    // 所以这里不能跟着 Hub / 工作区变化重新拉节点。
+    LaunchedEffect(Unit) {
         loading = true
         error = ""
         val info = currentPhoneSpeedTestNetwork(context)
@@ -438,12 +444,26 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
 
     val last = history.firstOrNull()
     val running = progress.running
-    val down = progress.currentDown ?: progress.down.lastOrNull() ?: last?.downAvg
-    val up = progress.currentUp ?: progress.up.lastOrNull() ?: last?.upAvg
+    val hasSamples = progress.down.isNotEmpty() || progress.up.isNotEmpty()
+    val over = progress.phase == "complete" || progress.phase == "cancelled" || progress.phase == "failed"
+    // 手机侧引擎自己丢掉了前 2s 预热样本，这里只按阶段决定显示实时值还是均速。
+    val downSettled = speedSeriesAverage(progress.down)
+    val upSettled = speedSeriesAverage(progress.up)
+    val down = when {
+        !hasSamples -> last?.downAvg
+        over || progress.up.isNotEmpty() -> downSettled ?: progress.avgDown ?: progress.currentDown
+        else -> progress.currentDown ?: downSettled
+    }
+    val up = when {
+        !hasSamples -> last?.upAvg
+        over -> upSettled ?: progress.avgUp ?: progress.currentUp
+        progress.up.isNotEmpty() -> progress.currentUp ?: upSettled
+        else -> null
+    }
     val latency = progress.latency ?: last?.latency
     val jitter = progress.jitter ?: last?.jitter
     val loss = progress.loss ?: last?.loss
-    val sampleSet = if (progress.down.isNotEmpty() || progress.up.isNotEmpty()) {
+    val sampleSet = if (hasSamples) {
         SpeedSampleSet(
             intf = "phone",
             down = progress.down,
@@ -452,7 +472,8 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
             currentUp = progress.currentUp,
             latency = latency,
             jitter = jitter,
-            loss = loss
+            loss = loss,
+            sampleIntervalMs = PHONE_SPEED_SAMPLE_MS
         )
     } else null
     val node = nodes.firstOrNull { it.id == selectedNodeId }
@@ -479,7 +500,7 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
             PhoneSpeedSummary(summary = summary, network = network, node = node)
             DualSpeedGauges(down = down, up = up)
             Text("速度波动曲线", style = LabTypography.SectionTitle.copy(color = SpeedPageInk))
-            DualSpeedCharts(sampleSet)
+            DualSpeedCharts(sampleSet, progress.downSpanMs, progress.upSpanMs)
             SpeedMetrics(latency = latency, jitter = jitter, loss = loss)
             Text(
                 "延迟 / 抖动 / 丢包为手机侧 HTTP 探测，不代表 ICMP。",
@@ -491,6 +512,12 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
 
     if (error.isNotBlank()) {
         Text(error, style = LabTypography.Supporting.copy(color = LabV2.Red))
+    }
+    // 失败原因必须留在页面上，不能闪一下就退回「等待测速」让人以为没点中。
+    if (progress.phase == "failed" || progress.phase == "cancelled") {
+        if (progress.message.isNotBlank()) {
+            Text(progress.message, style = LabTypography.Supporting.copy(color = LabV2.Red))
+        }
     }
 
     Surface(
@@ -519,13 +546,24 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
                     if (running) {
                         PhoneSpeedTestCoordinator.cancel()
                     } else {
-                        val current = node
                         val currentNetwork = currentPhoneSpeedTestNetwork(context) ?: network
-                        if (current != null && currentNetwork != null && !loading) {
-                            network = currentNetwork
-                            error = ""
-                            if (!PhoneSpeedTestCoordinator.start(context, prefs, current, currentNetwork)) {
-                                error = "已有测速在运行"
+                        if (currentNetwork != null && !loading && nodes.isNotEmpty()) {
+                            scope.launch {
+                                // 首选当前选中的节点，连不上就按推荐顺序换下一个；
+                                // 整个探测都在本机做，不经过 Hub。
+                                val ordered = node?.let { listOf(it) + nodes.filter { item -> item.id != it.id } }
+                                    ?: nodes
+                                val reachable = GlobalSpeedProtocol.firstReachableNode(ordered, currentNetwork.network)
+                                if (reachable == null) {
+                                    error = "测速节点都连不上，请检查手机网络后重试"
+                                } else {
+                                    selectedNodeId = reachable.id
+                                    network = currentNetwork
+                                    error = ""
+                                    if (!PhoneSpeedTestCoordinator.start(context, prefs, reachable, currentNetwork)) {
+                                        error = "已有测速在运行"
+                                    }
+                                }
                             }
                         }
                     }
@@ -699,12 +737,7 @@ private fun RouterSpeedSummary(summary: String) {
             Text("路由器测速", style = LabTypography.CardTitle.copy(color = SpeedPageInk))
             Text(summary, style = LabTypography.Supporting.copy(color = SpeedPageMuted), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Image(
-            painter = painterResource(R.drawable.router_skeuomorphic_v3),
-            contentDescription = null,
-            modifier = Modifier.size(56.dp),
-            contentScale = ContentScale.Fit
-        )
+        Icon(Icons.Rounded.Wifi, null, Modifier.size(34.dp), tint = SpeedAccent.copy(alpha = .55f))
     }
 }
 
@@ -786,33 +819,62 @@ private fun SpeedRingGauge(
 }
 
 @Composable
-private fun DualSpeedCharts(sample: SpeedSampleSet?) {
+private fun DualSpeedCharts(sample: SpeedSampleSet?, downSpanMs: Long = 0L, upSpanMs: Long = 0L) {
+    val sampleMs = sample?.sampleIntervalMs ?: ROUTER_SPEED_SAMPLE_MS
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        SpeedTrendCard("下行速率", sample?.down.orEmpty(), SpeedDown, up = false, modifier = Modifier.weight(1f))
-        SpeedTrendCard("上行速率", sample?.up.orEmpty(), SpeedUp, up = true, modifier = Modifier.weight(1f))
+        SpeedTrendCard(
+            title = "下行速率",
+            values = sample?.down.orEmpty(),
+            sampleMs = sampleMs,
+            spanMs = downSpanMs.takeIf { it > 0L },
+            color = SpeedDown,
+            up = false,
+            modifier = Modifier.weight(1f)
+        )
+        SpeedTrendCard(
+            title = "上行速率",
+            values = sample?.up.orEmpty(),
+            sampleMs = sampleMs,
+            spanMs = upSpanMs.takeIf { it > 0L },
+            color = SpeedUp,
+            up = true,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
+
+/** Plot height of one trend card; both cards share it so the pair stays aligned. */
+private val SpeedPlotHeight = 144.dp
 
 @Composable
 private fun SpeedTrendCard(
     title: String,
     values: List<Double>,
+    sampleMs: Long,
+    spanMs: Long? = null,
     color: Color,
     up: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val peak = values.maxOrNull()
-    val maxY = niceSpeedChartMax(peak ?: 0.0)
+    val targetAxis = remember(values) { speedAxisMax(values).toFloat() }
+    // Animate to the next scale step so a growing series never makes the curve jump.
+    val axisMax by animateFloatAsState(
+        targetValue = targetAxis.coerceAtLeast(1f),
+        animationSpec = tween(durationMillis = 320),
+        label = "speedAxisMax"
+    )
+    val span = spanMs ?: speedSeriesSpanMs(values, sampleMs)
+    val peak = values.maxOrNull()?.takeIf { it > 0.0 }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
         color = Color(0xFFF8FAFC),
         border = BorderStroke(1.dp, Color(0xFFE2E8F0))
     ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     Icon(
@@ -823,7 +885,7 @@ private fun SpeedTrendCard(
                     )
                     Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = SpeedPageInk, maxLines = 1)
                 }
-                if (peak != null && peak > 0) {
+                if (peak != null) {
                     Text(
                         "峰值 ${formatSpeed(peak)} Mbps",
                         modifier = Modifier
@@ -838,80 +900,69 @@ private fun SpeedTrendCard(
                 }
             }
             if (values.isEmpty()) {
-                Box(Modifier.fillMaxWidth().height(112.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height(SpeedPlotHeight), contentAlignment = Alignment.Center) {
                     Text("等待测速", fontSize = 11.sp, color = SpeedPageMuted)
                 }
             } else {
-                Row(Modifier.fillMaxWidth().height(112.dp)) {
-                    Column(
-                        Modifier.width(30.dp).fillMaxHeight(),
-                        verticalArrangement = Arrangement.SpaceBetween,
-                        horizontalAlignment = Alignment.End
-                    ) {
-                        Text(formatAxis(maxY), fontSize = 8.sp, color = SpeedPageMuted)
-                        Text(formatAxis(maxY / 2), fontSize = 8.sp, color = SpeedPageMuted)
-                        Text("0", fontSize = 8.sp, color = SpeedPageMuted)
-                    }
-                    Spacer(Modifier.width(5.dp))
-                    Canvas(Modifier.weight(1f).fillMaxHeight()) {
-                        val top = 3.dp.toPx()
-                        val bottom = size.height - 3.dp.toPx()
-                        val left = 1.dp.toPx()
-                        val right = size.width - 2.dp.toPx()
-                        repeat(3) { index ->
-                            val y = top + (bottom - top) * index / 2f
-                            drawLine(
-                                color = Color(0xFFE2E8F0),
-                                start = Offset(left, y),
-                                end = Offset(right, y),
-                                strokeWidth = 1.dp.toPx(),
-                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx()))
-                            )
-                        }
-                        fun point(index: Int, value: Double): Offset {
-                            val x = if (values.size <= 1) left else left + (right - left) * index / (values.size - 1).toFloat()
-                            val y = bottom - ((value / maxY).coerceIn(0.0, 1.0).toFloat() * (bottom - top))
-                            return Offset(x, y)
-                        }
-                        val points = values.mapIndexed { index, value -> point(index, value) }
-                        val line = Path().apply {
-                            moveTo(points.first().x, points.first().y)
-                            for (index in 1 until points.size) {
-                                val previous = points[index - 1]
-                                val current = points[index]
-                                val midX = (previous.x + current.x) / 2f
-                                quadraticTo(previous.x, previous.y, midX, (previous.y + current.y) / 2f)
-                            }
-                            if (points.size > 1) lineTo(points.last().x, points.last().y)
-                        }
-                        val fill = Path().apply {
-                            addPath(line)
-                            lineTo(points.last().x, bottom)
-                            lineTo(points.first().x, bottom)
-                            close()
-                        }
-                        drawPath(
-                            fill,
-                            brush = Brush.verticalGradient(
-                                listOf(color.copy(alpha = .20f), color.copy(alpha = .02f)),
-                                startY = top,
-                                endY = bottom
-                            )
+                Canvas(Modifier.fillMaxWidth().height(SpeedPlotHeight).clipToBounds()) {
+                    val left = 1.dp.toPx()
+                    val right = size.width - 2.dp.toPx()
+                    val top = 6.dp.toPx()
+                    val bottom = size.height - 3.dp.toPx()
+                    repeat(3) { index ->
+                        val y = top + (bottom - top) * index / 2f
+                        drawLine(
+                            color = Color(0xFFE9EFF7),
+                            start = Offset(left, y),
+                            end = Offset(right, y),
+                            strokeWidth = 1.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 4.dp.toPx()))
                         )
-                        drawPath(
-                            line,
-                            color = color,
-                            style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                        val peakIndex = values.indices.maxByOrNull { values[it] } ?: 0
-                        drawCircle(Color.White, 3.dp.toPx(), points[peakIndex])
-                        drawCircle(color, 2.dp.toPx(), points[peakIndex])
                     }
+                    fun point(index: Int, value: Double): Offset {
+                        val x = if (values.size <= 1) left else left + (right - left) * index / (values.size - 1).toFloat()
+                        val y = bottom - ((value.toFloat() / axisMax).coerceIn(0f, 1f) * (bottom - top))
+                        return Offset(x, y)
+                    }
+                    val points = values.mapIndexed { index, value -> point(index, value) }
+                    val line = Path().apply {
+                        moveTo(points.first().x, points.first().y)
+                        for (index in 1 until points.size) {
+                            val previous = points[index - 1]
+                            val current = points[index]
+                            val midX = (previous.x + current.x) / 2f
+                            quadraticTo(previous.x, previous.y, midX, (previous.y + current.y) / 2f)
+                        }
+                        if (points.size > 1) lineTo(points.last().x, points.last().y)
+                    }
+                    val fill = Path().apply {
+                        addPath(line)
+                        lineTo(points.last().x, bottom)
+                        lineTo(points.first().x, bottom)
+                        close()
+                    }
+                    drawPath(
+                        fill,
+                        brush = Brush.verticalGradient(
+                            listOf(color.copy(alpha = .16f), color.copy(alpha = .01f)),
+                            startY = top,
+                            endY = bottom
+                        )
+                    )
+                    drawPath(
+                        line,
+                        color = color,
+                        style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    drawCircle(Color.White, 2.6.dp.toPx(), points.last())
+                    drawCircle(color, 1.5.dp.toPx(), points.last())
                 }
+                // Ticks come from the same sampling clock as the curve, so the labels
+                // can no longer disagree with the plotted seconds.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("0s", fontSize = 8.sp, color = SpeedPageMuted)
-                    Text("${values.size / 2}s", fontSize = 8.sp, color = SpeedPageMuted)
-                    Text("${values.size}s", fontSize = 8.sp, color = SpeedPageMuted)
+                    Text(formatSpeedSpan(span / 2), fontSize = 8.sp, color = SpeedPageMuted)
+                    Text(formatSpeedSpan(span), fontSize = 8.sp, color = SpeedPageMuted)
                 }
             }
         }
@@ -1025,24 +1076,4 @@ private fun SpeedHistoryLine(record: SpeedHistoryRecord) {
         )
         Text("时延 ${formatSpeed(record.latency)} ms", fontSize = 11.sp, color = SpeedPageMuted, maxLines = 1)
     }
-}
-
-private fun niceSpeedChartMax(value: Double): Double {
-    if (!value.isFinite() || value <= 0.0) return 10.0
-    val power = 10.0.pow(floor(log10(value)))
-    val normalized = value / power
-    val nice = when {
-        normalized <= 1.0 -> 1.0
-        normalized <= 2.0 -> 2.0
-        normalized <= 5.0 -> 5.0
-        else -> 10.0
-    }
-    return (nice * power).coerceAtLeast(10.0)
-}
-
-private fun formatAxis(value: Double): String = when {
-    value >= 1000 -> String.format(Locale.US, "%.0f", value)
-    value >= 100 -> String.format(Locale.US, "%.0f", value)
-    value >= 10 -> String.format(Locale.US, "%.0f", value)
-    else -> String.format(Locale.US, "%.1f", value)
 }
