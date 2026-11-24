@@ -282,6 +282,7 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
         withContext(Dispatchers.IO) { api.readAccounts(id)?.getJSONArray("items")?.luckyRows() }
     }) { newAccounts ->
         if (newAccounts != null) {
+            accountsApiSupported = true
             accounts = newAccounts
             withContext(Dispatchers.IO) { snapshots.saveAccounts(id, newAccounts) }
         } else {
@@ -289,6 +290,7 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
         }
     }
     fun refreshInstance(id: String, force: Boolean = false, replace: Boolean = false) {
+        if (force) accountsApiSupported = true
         val cached = snapshots.instance(id)
         val now = System.currentTimeMillis()
         val rulesFresh = !force && cached != null && cached.rulesAt > 0L && now - cached.rulesAt < LUCKY_RULES_TTL_MS
@@ -325,6 +327,7 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
         selected?.optString("id")?.takeIf { it.isNotBlank() }?.let { refreshInstance(it, force, replace) }
     }
     LaunchedEffect(selected?.optString("id"), tab) {
+        accountsApiSupported = true
         snapshots.select(selected?.optString("id").orEmpty(), tab)
         selected?.optString("id")?.takeIf { it.isNotBlank() }?.let { refreshInstance(it) }
     }

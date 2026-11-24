@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
@@ -57,6 +59,9 @@ class CompactActionsLayoutTest {
         compose.waitForIdle()
         compose.onRoot().captureRoboImage("build/outputs/roborazzi/compact-actions-wireguard.png")
         compose.onNodeWithText("UDP · 自动管理").assertIsDisplayed()
+        compose.onNodeWithText("路由器直连 → 192.168.5.1:51820").assertIsDisplayed()
+        compose.onAllNodesWithText("动态地址").assertCountEquals(0)
+        compose.onAllNodesWithText("流量不经过 LabRelay").assertCountEquals(0)
         val layouts = mutableListOf<TextLayoutResult>()
         compose.onNodeWithText("WireGuard").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertTrue(layouts.isNotEmpty())

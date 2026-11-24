@@ -224,7 +224,13 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 映射、Webhook 与管理稳定性" to listOf(
+            "v$NAME build$CODE · 映射卡片与手机测速收尾" to listOf(
+                "映射总览降低高度并补齐分隔线，卡片移除上行包/下行包，端口与地址连续展示",
+                "STUN 卡片精简重复说明，UPnP 默认线路改为 AUTO/WAN 按钮，状态轮询降至 15/30 秒",
+                "手机测速保存并恢复上次上下行曲线，单方向封顶调整为 8 秒",
+                "Lucky 证书能力在切换连接和强制刷新后重新探测；原生 DDNS 进入页面时主动刷新"
+            ),
+            "v0.14.9 build353 · 映射、Webhook 与管理稳定性" to listOf(
                 "IPv6 映射、端口映射与 UPnP 页面重设计：保留真实运行状态，五项运行统计常显，零值照实显示，缺失指标明确降级",
                 "收藏夹按 IP、内部端口与传输协议精确匹配服务，同一台 NAS 上的 SSH、Lucky、Plex 不再互相覆盖",
                 "Webhook 接收地址独立配置，HOOK_TOKEN 使用安全存储并默认掩码，不再回退使用 APP_TOKEN",
@@ -916,6 +922,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             .getOrElse { JSONArray() }
         fun nullableDouble(row: JSONObject, key: String): Double? =
             if (row.has(key) && !row.isNull(key)) row.optDouble(key) else null
+        fun doubles(row: JSONObject, key: String): List<Double> =
+            row.optJSONArray(key)?.let { values -> (0 until values.length()).map { values.optDouble(it) } }.orEmpty()
         return (0 until arr.length()).mapNotNull { index ->
             val row = arr.optJSONObject(index) ?: return@mapNotNull null
             PhoneSpeedHistoryEntry(
@@ -933,7 +941,11 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                 totalBytes = row.optLong("totalBytes"),
                 durationMs = row.optLong("durationMs"),
                 stable = row.optBoolean("stable"),
-                message = row.optString("message")
+                message = row.optString("message"),
+                samplesDown = doubles(row, "samplesDown"),
+                samplesUp = doubles(row, "samplesUp"),
+                downSpanMs = row.optLong("downSpanMs"),
+                upSpanMs = row.optLong("upSpanMs"),
             )
         }.take(30)
     }
@@ -958,6 +970,10 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
                     .put("durationMs", row.durationMs)
                     .put("stable", row.stable)
                     .put("message", row.message)
+                    .put("samplesDown", JSONArray().also { values -> row.samplesDown.forEach(values::put) })
+                    .put("samplesUp", JSONArray().also { values -> row.samplesUp.forEach(values::put) })
+                    .put("downSpanMs", row.downSpanMs)
+                    .put("upSpanMs", row.upSpanMs)
             )
         }
         sp.edit().putString("phone_speed_history_v1", arr.toString()).apply()

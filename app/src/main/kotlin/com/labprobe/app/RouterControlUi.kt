@@ -955,7 +955,7 @@ private fun UpnpPage(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("默认线路", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
-                            CompactChoice("", state.wan, listOf("AUTO", "WAN"), Modifier.width(112.dp)) { wan ->
+                            UpnpWanSelector(state.wan) { wan ->
                                 scope.launch {
                                     repository.setUpnp(state.enabled, wan)
                                         .onSuccess { actionError = "" }
@@ -985,6 +985,32 @@ private fun UpnpPage(prefs: AppPrefs) {
                 .onFailure { actionError = it.message.orEmpty() }
         }
     }) { confirmDisable = false }
+}
+
+@Composable
+private fun UpnpWanSelector(value: String, onPick: (String) -> Unit) {
+    Row(
+        Modifier.width(112.dp).height(32.dp).clip(RoundedCornerShape(99.dp))
+            .background(LabCoreSurface.Inner).border(1.dp, LabCoreSurface.Border, RoundedCornerShape(99.dp))
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        listOf("AUTO", "WAN").forEach { option ->
+            val selected = option == value
+            Surface(
+                onClick = { if (!selected) onPick(option) },
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                shape = RoundedCornerShape(99.dp),
+                color = if (selected) RouterCyan.copy(alpha = .12f) else Color.Transparent,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(option, fontSize = 11.sp, lineHeight = 14.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                        color = if (selected) RouterBlue else RouterMuted, maxLines = 1)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -2216,6 +2242,9 @@ private fun DdnsRecordsSection(prefs: AppPrefs, nativeDdns: Boolean = false) {
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<DdnsRecord?>(null) }
     val error = actionError.ifBlank { resource.error }
+    LaunchedEffect(repository, nativeDdns) {
+        if (nativeDdns && rows.isEmpty()) repository.refreshDdns(force = true)
+    }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("${rows.count { it.enabled }} 条启用 · ${rows.count { it.status.contains("error",true) || it.status.contains("fail",true) }} 条异常", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)

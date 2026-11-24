@@ -96,7 +96,9 @@ data class PhoneSpeedTestResult(
     val stable: Boolean,
     val message: String,
     val samplesDown: List<Double> = emptyList(),
-    val samplesUp: List<Double> = emptyList()
+    val samplesUp: List<Double> = emptyList(),
+    val downSpanMs: Long = 0L,
+    val upSpanMs: Long = 0L,
 ) {
     fun toHistory(): PhoneSpeedHistoryEntry = PhoneSpeedHistoryEntry(
         epoch = System.currentTimeMillis() / 1000L,
@@ -113,7 +115,11 @@ data class PhoneSpeedTestResult(
         totalBytes = totalBytes,
         durationMs = durationMs,
         stable = stable,
-        message = message
+        message = message,
+        samplesDown = samplesDown,
+        samplesUp = samplesUp,
+        downSpanMs = downSpanMs,
+        upSpanMs = upSpanMs,
     )
 }
 
@@ -132,7 +138,11 @@ data class PhoneSpeedHistoryEntry(
     val totalBytes: Long = 0L,
     val durationMs: Long = 0L,
     val stable: Boolean = false,
-    val message: String = ""
+    val message: String = "",
+    val samplesDown: List<Double> = emptyList(),
+    val samplesUp: List<Double> = emptyList(),
+    val downSpanMs: Long = 0L,
+    val upSpanMs: Long = 0L,
 )
 
 internal data class PhoneLatencyResult(
@@ -165,11 +175,11 @@ internal data class PhoneDirectionResult(
 
 internal class SpeedStabilityTracker(
     private val warmupMs: Long = 2_000L,
-    /** 每个方向至少 8 秒有效采样，预热不算在内。 */
-    private val minEffectiveMs: Long = 8_000L,
+    /** 每个方向至少 4 秒有效采样，预热不算在内。 */
+    private val minEffectiveMs: Long = 4_000L,
     private val windowMs: Long = 3_000L,
-    /** 单方向 15 秒封顶，包含 2 秒预热，所以有效采样最多 13 秒。 */
-    private val maxTotalMs: Long = 15_000L,
+    /** 单方向 8 秒封顶，包含 2 秒预热。 */
+    private val maxTotalMs: Long = 8_000L,
     /** 看「近期平均速率是否还在明显增长」而不是 250ms 的瞬时抖动。 */
     private val growthLimit: Double = .12,
     /** 只在「大幅来回跳」时兜底，正常 10–20% 的真实波动照样能结束。 */
@@ -193,7 +203,7 @@ internal class SpeedStabilityTracker(
         val effective = samples.filter { it.atMs > warmupMs }
         val average = effective.takeIf { it.isNotEmpty() }?.map { it.mbps }?.average() ?: 0.0
         val peak = effective.maxOfOrNull { it.mbps } ?: 0.0
-        // 15 秒是包含预热的总时长；到点就结束，成绩照常用有效采样算。
+        // 8 秒是包含预热的总时长；到点就结束，成绩照常用有效采样算。
         if (elapsedMs >= maxTotalMs) {
             return Snapshot(true, false, average, peak, "达到单方向时限，按已采样本计算")
         }
@@ -722,7 +732,9 @@ class PhoneSpeedTestEngine(private val context: Context) {
         stable = stable,
         message = message,
         samplesDown = down.samples,
-        samplesUp = up?.samples.orEmpty()
+        samplesUp = up?.samples.orEmpty(),
+        downSpanMs = down.effectiveMs,
+        upSpanMs = up?.effectiveMs ?: 0L,
     )
 
     private fun trafficLimit(transport: String): Long = when {

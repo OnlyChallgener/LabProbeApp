@@ -155,7 +155,7 @@ class MappingUpnpUiTest {
         compose.onNodeWithText(longName).assertIsDisplayed()
         compose.onNodeWithText("等待 Agent").assertIsDisplayed()
         compose.onNodeWithText("6→6").assertIsDisplayed()
-        listOf("连接 0", "累计上传 0B", "累计下载 0B", "上行包 0", "下行包 0").forEach { text ->
+        listOf("连接 0", "累计上传 0B", "累计下载 0B").forEach { text ->
             compose.onNodeWithText(text).assertIsDisplayed()
             val bounds = compose.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertTrue("$text exceeds card width", bounds.right <= root.right + 1 && bounds.left >= root.left - 1)
@@ -170,9 +170,11 @@ class MappingUpnpUiTest {
             "waiting status wrapped: height=$statusHeight limit=${with(compose.density) { 20.dp.roundToPx() }}",
             statusHeight <= with(compose.density) { 20.dp.roundToPx() },
         )
-        compose.onAllNodesWithText(":9443", useUnmergedTree = true).fetchSemanticsNodes().forEach {
+        compose.onAllNodesWithText(":9443", substring = true, useUnmergedTree = true).fetchSemanticsNodes().forEach {
             assertTrue(it.boundsInRoot.right <= root.right + 1)
         }
+        compose.onAllNodesWithText("上行包").assertCountEquals(0)
+        compose.onAllNodesWithText("下行包").assertCountEquals(0)
     }
 
     @Test
@@ -197,8 +199,8 @@ class MappingUpnpUiTest {
         compose.onNodeWithText("连接 0").assertIsDisplayed()
         compose.onNodeWithText("累计上传 0B").assertIsDisplayed()
         compose.onNodeWithText("累计下载 0B").assertIsDisplayed()
-        compose.onNodeWithText("上行包 0").assertIsDisplayed()
-        compose.onNodeWithText("下行包 0").assertIsDisplayed()
+        compose.onAllNodesWithText("上行包").assertCountEquals(0)
+        compose.onAllNodesWithText("下行包").assertCountEquals(0)
         compose.onNodeWithText("已运行", substring = true).assertIsDisplayed()
         compose.onNodeWithText("剩余", substring = true).assertIsDisplayed()
 
@@ -208,6 +210,8 @@ class MappingUpnpUiTest {
 
         compose.onNodeWithText("UPnP").performClick()
         compose.onNodeWithText("UPnP 服务").assertIsDisplayed()
+        compose.onNodeWithText("AUTO").assertIsDisplayed()
+        compose.onNodeWithText("WAN").assertIsDisplayed()
         compose.onNodeWithText("Plex").assertIsDisplayed()
         compose.onNodeWithText("NAT-PMP Mapping").assertIsDisplayed()
         compose.onAllNodesWithText("已映射").assertCountEquals(3)
@@ -257,9 +261,11 @@ class MappingUpnpUiTest {
         val rule = waitingRule(name, "2409:8a50:2e41:b700:1111:2222:3333:4444")
             .copy(runtime = PortMapRuntime(state = "waiting_agent"))
         renderRuleCard(336, rule, emptyList())
-        listOf("连接 —", "累计上传 —", "累计下载 —", "上行包 —", "下行包 —").forEach {
+        listOf("连接 —", "累计上传 —", "累计下载 —").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
+        compose.onAllNodesWithText("上行包").assertCountEquals(0)
+        compose.onAllNodesWithText("下行包").assertCountEquals(0)
     }
 
     @Test

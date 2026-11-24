@@ -839,7 +839,7 @@ fun PortMappingScreen(
     }
     LaunchedEffect(cache, agent.online) {
         while (true) {
-            kotlinx.coroutines.delay(if (agent.online) 3_000L else 8_000L)
+            kotlinx.coroutines.delay(if (agent.online) 15_000L else 30_000L)
             refresh(true)
         }
     }
@@ -920,14 +920,17 @@ fun PortMappingScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
-                MappingOverviewSurface(height = 84.dp) {
+                MappingOverviewSurface(height = 72.dp) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             MappingStat(rules.size.toString(), "条映射", icon = Icons.Rounded.SwapHoriz, numberSize = 14, labelSize = 14)
                             Box(Modifier.width(1.dp).height(24.dp).background(LabCoreSurface.Border))
                             MappingStat(runningCount.toString(), "个运行中", icon = Icons.Rounded.CheckCircle, iconTint = PortGreen, numberSize = 14, labelSize = 14)
                         }
-                        MappingStatusPill(if (agent.online) "Agent 在线" else "Agent 离线", if (agent.online) PortGreen else PortRed, textSize = 14)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(Modifier.width(1.dp).height(24.dp).background(LabCoreSurface.Border))
+                            MappingStatusPill(if (agent.online) "Agent 在线" else "Agent 离线", if (agent.online) PortGreen else PortRed, textSize = 14)
+                        }
                     }
                 }
             }
@@ -1122,10 +1125,6 @@ private fun PortMapRuntimeStats(rule: PortMapRule) {
         PortMapRuntimeStat("累计上传", value(PortMapRuntimeMetric.UPLOAD_BYTES, formatPortBytes(rule.runtime.totalUploadBytes)), Icons.Rounded.ArrowUpward, PortCyan)
         PortMapRuntimeStat("累计下载", value(PortMapRuntimeMetric.DOWNLOAD_BYTES, formatPortBytes(rule.runtime.totalDownloadBytes)), Icons.Rounded.ArrowDownward, PortGreen)
     }
-    Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        PortMapRuntimeStat("上行包", value(PortMapRuntimeMetric.UPLOAD_PACKETS, rule.runtime.totalUploadPackets.toString()), Icons.Rounded.SwapVert, PortBlue)
-        PortMapRuntimeStat("下行包", value(PortMapRuntimeMetric.DOWNLOAD_PACKETS, rule.runtime.totalDownloadPackets.toString()), Icons.Rounded.SwapVert, PortGreen)
-    }
 }
 
 private fun portMapTimeSummary(rule: PortMapRule): String =
@@ -1133,17 +1132,15 @@ private fun portMapTimeSummary(rule: PortMapRule): String =
 
 @Composable
 private fun PortMapEndpointLine(label: String, endpoint: String) {
-    val parsed = parseQuickAccessEndpoint(endpoint)
-    if (parsed?.port != null) {
-        val host = formatServiceHostPort(parsed.host)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Text("$label：", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
-            Text(host, Modifier.weight(1f), fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, softWrap = true, overflow = TextOverflow.Clip)
-            Text(":${parsed.port}", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink, softWrap = false, maxLines = 1)
-        }
-    } else {
-        Text("$label：${endpoint.ifBlank { "--" }}", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, softWrap = true, overflow = TextOverflow.Clip)
-    }
+    Text(
+        "$label：${endpoint.ifBlank { "--" }}",
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = LabV2.Ink,
+        softWrap = true,
+        overflow = TextOverflow.Clip,
+    )
 }
 
 @Composable

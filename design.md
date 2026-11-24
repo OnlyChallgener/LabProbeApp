@@ -102,3 +102,10 @@
 
 - Edit/copy/enable-disable/delete and child-control action popups use the Star Home HUB proportions with the user's narrower width refinement: 88dp minimum width, 34dp minimum row height, 14sp text with 20sp line height, 12dp outer corners, 8dp outer horizontal inset and 10dp row horizontal padding. Keep centered labels, white surfaces, restrained shadows and red destructive text. Long labels may grow the menu naturally; font scaling may grow rows.
 - This supersedes the earlier compact action-menu sizing and Lucky action-menu width. Field selectors, address histories, source cascades and instance/account pickers retain their existing sizing and placement. Preserve all callbacks and safe-area flipping/scrolling.
+
+## November 24 — Mapping and STUN density refinement
+
+- IPv6 mapping overview uses a 72dp surface with unchanged 14sp stats; a fine vertical divider separates running count from Agent status.
+- Mapping rule cards show only connection count, cumulative upload and cumulative download. Packet counters remain available in details, not on the card. Endpoint and port render as one flowing address string instead of pinning the port to the card edge.
+- STUN cards remove the repeated dynamic-address badge, duplicated native-mechanism caption and the refresh/add divider. Keep the public endpoint, one concise target line, traffic for Relay rules, history and quick actions.
+- UPnP default route uses a compact two-button AUTO/WAN selector instead of a dropdown. Preserve the existing mutation callbacks and disabled-service behavior.

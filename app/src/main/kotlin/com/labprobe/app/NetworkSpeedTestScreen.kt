@@ -486,19 +486,25 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
     val latency = progress.latency ?: last?.latency
     val jitter = progress.jitter ?: last?.jitter
     val loss = progress.loss ?: last?.loss
-    val sampleSet = if (hasSamples) {
+    val chartDown = if (hasSamples) progress.down else last?.samplesDown.orEmpty()
+    val chartUp = if (hasSamples) progress.up else last?.samplesUp.orEmpty()
+    val sampleSet = if (chartDown.isNotEmpty() || chartUp.isNotEmpty()) {
         SpeedSampleSet(
             intf = "phone",
-            down = progress.down,
-            up = progress.up,
-            currentDown = progress.currentDown,
-            currentUp = progress.currentUp,
+            down = chartDown,
+            up = chartUp,
+            currentDown = if (hasSamples) progress.currentDown else last?.downAvg,
+            currentUp = if (hasSamples) progress.currentUp else last?.upAvg,
             latency = latency,
             jitter = jitter,
             loss = loss,
             sampleIntervalMs = PHONE_SPEED_SAMPLE_MS
         )
     } else null
+    val chartDownSpanMs = if (hasSamples) progress.downSpanMs else
+        last?.downSpanMs?.takeIf { it > 0L } ?: (chartDown.size * PHONE_SPEED_SAMPLE_MS)
+    val chartUpSpanMs = if (hasSamples) progress.upSpanMs else
+        last?.upSpanMs?.takeIf { it > 0L } ?: (chartUp.size * PHONE_SPEED_SAMPLE_MS)
     val node = nodes.firstOrNull { it.id == selectedNodeId }
     val timeout = last?.epoch?.takeIf { it > 0 }?.let {
         SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(it * 1000L))
@@ -523,7 +529,7 @@ private fun PhoneSpeedTestContent(prefs: AppPrefs) {
             PhoneSpeedSummary(summary = summary, network = network, node = node)
             DualSpeedGauges(down = down, up = up)
             Text("速度波动曲线", style = LabTypography.SectionTitle.copy(color = SpeedPageInk))
-            DualSpeedCharts(sampleSet, progress.downSpanMs, progress.upSpanMs)
+            DualSpeedCharts(sampleSet, chartDownSpanMs, chartUpSpanMs)
             SpeedMetrics(latency = latency, jitter = jitter, loss = loss)
             Text(
                 "延迟 / 抖动 / 丢包为手机侧 HTTP 探测，不代表 ICMP。",

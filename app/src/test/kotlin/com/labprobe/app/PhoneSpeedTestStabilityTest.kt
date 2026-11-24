@@ -26,7 +26,7 @@ class PhoneSpeedTestStabilityTest {
         val tracker = SpeedStabilityTracker()
         var last: SpeedStabilityTracker.Snapshot? = null
         var elapsed = 0L
-        while (elapsed < 15_000L) {
+        while (elapsed < 8_000L) {
             elapsed += 250L
             last = tracker.add(elapsed, 100.0)
             if (last.done) break
@@ -36,7 +36,7 @@ class PhoneSpeedTestStabilityTest {
         assertTrue(last.stable)
         assertEquals(100.0, last.averageMbps, 0.01)
         assertEquals(100.0, last.peakMbps, 0.01)
-        assertTrue(elapsed >= 9_000L)
+        assertEquals(7_500L, elapsed)
     }
 
     @Test
@@ -44,7 +44,7 @@ class PhoneSpeedTestStabilityTest {
         val tracker = SpeedStabilityTracker()
         var last: SpeedStabilityTracker.Snapshot? = null
         var elapsed = 0L
-        while (elapsed < 15_000L) {
+        while (elapsed < 8_000L) {
             elapsed += 250L
             last = tracker.add(elapsed, if (elapsed <= 2_000L) 1_000.0 else 100.0)
             if (last.done) break
@@ -71,29 +71,36 @@ class PhoneSpeedTestStabilityTest {
         assertTrue(last.done)
         assertFalse(last.stable)
         assertTrue(last.reason.contains("时限"))
-        // 单方向 15 秒封顶，包含预热。
-        assertEquals(15_000L, elapsed)
+        // 单方向 8 秒封顶，包含预热。
+        assertEquals(8_000L, elapsed)
     }
 
     @Test
-    fun bothDirectionsNeedEightEffectiveSecondsBeforeTheyCanStop() {
+    fun bothDirectionsUseFourEffectiveSecondsBeforeTheyCanStop() {
         val tracker = SpeedStabilityTracker()
         var last: SpeedStabilityTracker.Snapshot? = null
         var elapsed = 0L
-        while (elapsed < 20_000L) {
+        while (elapsed < 8_000L) {
             elapsed += 250L
             last = tracker.add(elapsed, 100.0)
             if (last.done) break
         }
         requireNotNull(last)
         assertTrue(last.stable)
-        // 2s 预热 + 8s 最少有效 + 1.5s 平台确认
-        assertEquals(11_500L, elapsed)
+        // 2s 预热 + 4s 最少有效 + 1.5s 平台确认
+        assertEquals(7_500L, elapsed)
 
         // 上下行各建一个 tracker：下载完成后上行从零重新计时，互不借用稳定窗口。
         val upload = SpeedStabilityTracker()
-        assertFalse(upload.add(10_000L, 100.0).done)
-        assertFalse(upload.add(12_000L, 100.0).done)
+        var uploadElapsed = 0L
+        var uploadLast: SpeedStabilityTracker.Snapshot? = null
+        while (uploadElapsed < 8_000L) {
+            uploadElapsed += 250L
+            uploadLast = upload.add(uploadElapsed, 100.0)
+            if (uploadLast.done) break
+        }
+        assertTrue(requireNotNull(uploadLast).stable)
+        assertEquals(7_500L, uploadElapsed)
     }
 
     @Test
@@ -170,6 +177,41 @@ class PhoneSpeedTestStabilityTest {
             server.close()
             worker.interrupt()
         }
+    }
+
+    @Test
+    fun resultHistoryAndPrefsKeepCurveSamplesAndSpans() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = AppPrefs(context)
+        prefs.clearPhoneSpeedHistory()
+        val result = PhoneSpeedTestResult(
+            node = PhoneSpeedTestNode("node", "node", "127.0.0.1", 65499),
+            network = PhoneSpeedTestNetworkInfo("Wi-Fi", "IPv4", "Wi-Fi · IPv4", null),
+            downAvgMbps = 70.0,
+            downPeakMbps = 80.0,
+            upAvgMbps = 15.0,
+            upPeakMbps = 20.0,
+            latency = 60.0,
+            jitter = 10.0,
+            loss = 0.0,
+            totalBytes = 1000L,
+            durationMs = 15_000L,
+            stable = true,
+            message = "ok",
+            samplesDown = listOf(70.0, 71.0),
+            samplesUp = listOf(15.0, 16.0),
+            downSpanMs = 5_800L,
+            upSpanMs = 5_600L,
+        )
+        val entry = result.toHistory()
+        assertEquals(result.samplesDown, entry.samplesDown)
+        assertEquals(result.downSpanMs, entry.downSpanMs)
+        prefs.addPhoneSpeedHistory(entry)
+        val loaded = AppPrefs(context).phoneSpeedHistory().single()
+        assertEquals(result.samplesDown, loaded.samplesDown)
+        assertEquals(result.samplesUp, loaded.samplesUp)
+        assertEquals(result.downSpanMs, loaded.downSpanMs)
+        assertEquals(result.upSpanMs, loaded.upSpanMs)
     }
 
     @Test

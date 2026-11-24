@@ -755,7 +755,7 @@ fun StunPenetrationScreen(
     }
     LaunchedEffect(liveAgent?.lastSeenAt, snapshot.agentOnline) {
         while (!leaving) {
-            delay(if (liveAgent?.online == true || snapshot.agentOnline) 4_000L else 8_000L)
+            delay(if (liveAgent?.online == true || snapshot.agentOnline) 15_000L else 30_000L)
             if (!leaving) refresh(true)
         }
     }
@@ -1164,7 +1164,6 @@ fun StunPenetrationScreen(
             IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(34.dp)) {
                 LabRefreshIcon(loading, Modifier.size(20.dp), StunBlue)
             }
-            Box(Modifier.size(1.dp, 30.dp).background(Color(0xFFD5E3F0)))
             Box(
                 Modifier.size(34.dp).clip(androidx.compose.foundation.shape.CircleShape).background(StunBlue).clickable(onClick = onAdd),
                 contentAlignment = Alignment.Center,
@@ -1374,19 +1373,19 @@ fun StunPenetrationScreen(
                                 color = if (endpoint.isBlank() || !liveReady) LabV2.InkMuted else StunGreen,
                                 fontSize = 14.sp,
                                 lineHeight = 19.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                maxLines = 2,
+                                softWrap = true,
+                                overflow = TextOverflow.Clip,
                                 modifier = Modifier.weight(1f),
                             )
-                            if (endpoint.isNotBlank()) Surface(shape = RoundedCornerShape(99.dp), color = StunAmber.copy(alpha = .12f)) {
-                                Text("动态地址", color = StunAmber, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
-                            }
                         }
                         val targetText = if (rule.targetType == "router_self") "路由器本机:${rule.targetPort}" else "${rule.targetIpv4}:${rule.targetPort}"
                         Text(
-                            if (!agentOnline && endpoint.isNotBlank()) "上次映射至 $targetText · 当前未验证"
-                            else if (rule.usesRouterNativeMapping) "路由器直连至 $targetText · 外网可达性取决于上级 NAT"
-                            else "LabRelay 本地代理至 $targetText",
+                            when {
+                                !agentOnline && endpoint.isNotBlank() -> "上次地址 · 当前未验证"
+                                rule.usesRouterNativeMapping -> "路由器直连 → $targetText"
+                                else -> "LabRelay → $targetText"
+                            },
                             color = LabV2.InkMuted,
                             fontSize = LabTypography.Caption.fontSize,
                             maxLines = 1,
@@ -1397,15 +1396,7 @@ fun StunPenetrationScreen(
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    if (rule.usesRouterNativeMapping) {
-                        Text(
-                            "路由器直连 · 流量不经过 LabRelay",
-                            color = LabV2.InkMuted,
-                            fontSize = LabTypography.Caption.fontSize,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    } else {
+                    if (!rule.usesRouterNativeMapping) {
                         StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
                         Spacer(Modifier.width(12.dp))
                         StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
