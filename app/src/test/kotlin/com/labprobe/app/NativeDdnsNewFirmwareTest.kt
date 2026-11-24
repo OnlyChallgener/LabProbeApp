@@ -19,6 +19,7 @@ class NativeDdnsNewFirmwareTest {
           "zone":"example.com","zone_id":"","region":"cn-north-4",
           "txt_template":"{{ip}}:{{port}}","txt_family":"ipv4","external_port":6500,
           "nativeProtocol":"ddns_view","passwordConfigured":true,
+          "last_log":1795143849,
           "status":"succeed","ip":"1.2.3.4"
         }]}
     """.trimIndent())
@@ -34,6 +35,7 @@ class NativeDdnsNewFirmwareTest {
         assertEquals("cn-north-4", record.region)
         assertEquals("example.com", record.zone)
         assertTrue(record.passwordConfigured)
+        assertEquals(1795143849L, record.lastUpdatedAt)
     }
 
     @Test
@@ -86,6 +88,16 @@ class NativeDdnsNewFirmwareTest {
         val record = parseDdnsList(payload).single()
         assertEquals("id-1", record.serviceId)
         assertTrue(record.modernNative)
+    }
+
+    @Test
+    fun parsesLastUpdateWhenFirmwareDoesNotExposeCurrentIp() {
+        val payload = JSONObject("""
+            {"nativeProtocol":"ddns_view","entries":[{"id":"id-1","provider":"aliyun.com","domain":"a.example.com","last_log":1795143849}]}
+        """.trimIndent())
+        val record = parseDdnsList(payload).single()
+        assertEquals("", record.ip)
+        assertEquals(1795143849L, record.lastUpdatedAt)
     }
 
     @Test

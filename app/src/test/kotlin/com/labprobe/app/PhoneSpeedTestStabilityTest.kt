@@ -26,7 +26,7 @@ class PhoneSpeedTestStabilityTest {
         val tracker = SpeedStabilityTracker()
         var last: SpeedStabilityTracker.Snapshot? = null
         var elapsed = 0L
-        while (elapsed < 8_000L) {
+        while (elapsed < 10_000L) {
             elapsed += 250L
             last = tracker.add(elapsed, 100.0)
             if (last.done) break
@@ -36,7 +36,7 @@ class PhoneSpeedTestStabilityTest {
         assertTrue(last.stable)
         assertEquals(100.0, last.averageMbps, 0.01)
         assertEquals(100.0, last.peakMbps, 0.01)
-        assertEquals(7_500L, elapsed)
+        assertEquals(9_500L, elapsed)
     }
 
     @Test
@@ -44,7 +44,7 @@ class PhoneSpeedTestStabilityTest {
         val tracker = SpeedStabilityTracker()
         var last: SpeedStabilityTracker.Snapshot? = null
         var elapsed = 0L
-        while (elapsed < 8_000L) {
+        while (elapsed < 10_000L) {
             elapsed += 250L
             last = tracker.add(elapsed, if (elapsed <= 2_000L) 1_000.0 else 100.0)
             if (last.done) break
@@ -71,36 +71,36 @@ class PhoneSpeedTestStabilityTest {
         assertTrue(last.done)
         assertFalse(last.stable)
         assertTrue(last.reason.contains("时限"))
-        // 单方向 8 秒封顶，包含预热。
-        assertEquals(8_000L, elapsed)
+        // 单方向 10 秒封顶，包含预热。
+        assertEquals(10_000L, elapsed)
     }
 
     @Test
-    fun bothDirectionsUseFourEffectiveSecondsBeforeTheyCanStop() {
+    fun bothDirectionsUseSixEffectiveSecondsBeforeTheyCanStop() {
         val tracker = SpeedStabilityTracker()
         var last: SpeedStabilityTracker.Snapshot? = null
         var elapsed = 0L
-        while (elapsed < 8_000L) {
+        while (elapsed < 10_000L) {
             elapsed += 250L
             last = tracker.add(elapsed, 100.0)
             if (last.done) break
         }
         requireNotNull(last)
         assertTrue(last.stable)
-        // 2s 预热 + 4s 最少有效 + 1.5s 平台确认
-        assertEquals(7_500L, elapsed)
+        // 2s 预热 + 6s 最少有效 + 1.5s 平台确认
+        assertEquals(9_500L, elapsed)
 
         // 上下行各建一个 tracker：下载完成后上行从零重新计时，互不借用稳定窗口。
         val upload = SpeedStabilityTracker()
         var uploadElapsed = 0L
         var uploadLast: SpeedStabilityTracker.Snapshot? = null
-        while (uploadElapsed < 8_000L) {
+        while (uploadElapsed < 10_000L) {
             uploadElapsed += 250L
             uploadLast = upload.add(uploadElapsed, 100.0)
             if (uploadLast.done) break
         }
         assertTrue(requireNotNull(uploadLast).stable)
-        assertEquals(7_500L, uploadElapsed)
+        assertEquals(9_500L, uploadElapsed)
     }
 
     @Test

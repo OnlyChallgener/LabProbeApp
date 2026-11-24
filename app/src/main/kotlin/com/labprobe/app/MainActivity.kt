@@ -224,7 +224,13 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 映射卡片与手机测速收尾" to listOf(
+            "v$NAME build$CODE · DDNS 与映射排版收尾" to listOf(
+                "原生 DDNS 在固件不返回当前 IP 时显示真实最后更新时间，刷新失败保留缓存并不再误报连接异常",
+                "手机测速单方向封顶调整为 10 秒",
+                "STUN 同步显示骨架卡片不再白屏，路由器直连卡片补充简洁页脚",
+                "IPv6 映射顶部统计缩小、筛选按钮收紧，外部标签与地址连续排列"
+            ),
+            "v0.14.10 build354 · 映射卡片与手机测速收尾" to listOf(
                 "映射总览降低高度并补齐分隔线，卡片移除上行包/下行包，端口与地址连续展示",
                 "STUN 卡片精简重复说明，UPnP 默认线路改为 AUTO/WAN 按钮，状态轮询降至 15/30 秒",
                 "手机测速保存并恢复上次上下行曲线，单方向封顶调整为 8 秒",

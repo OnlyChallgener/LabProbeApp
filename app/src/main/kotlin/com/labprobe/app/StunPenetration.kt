@@ -876,9 +876,7 @@ fun StunPenetrationScreen(
             )
         }
         if (loading && snapshot.rules.isEmpty()) {
-            LabCoreCard(compact = true) {
-                Text("正在同步", style = LabTypography.Supporting)
-            }
+            StunLoadingCards()
         } else if (!loading && snapshot.rulesLoaded && snapshot.rules.isEmpty()) {
             StunEmpty {
                 if (uncertainCreateRuleId != null) {
@@ -1258,6 +1256,19 @@ fun StunPenetrationScreen(
     }
 }
 
+@Composable private fun StunLoadingCards() {
+    repeat(3) {
+        LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.width(132.dp).height(15.dp).clip(RoundedCornerShape(5.dp)).background(LabCoreSurface.Inner))
+                Box(Modifier.width(88.dp).height(11.dp).clip(RoundedCornerShape(5.dp)).background(LabCoreSurface.Inner))
+                Box(Modifier.fillMaxWidth().height(44.dp).clip(LabCoreSurface.InnerShape).background(LabCoreSurface.Inner))
+                Box(Modifier.width(156.dp).height(12.dp).clip(RoundedCornerShape(5.dp)).background(LabCoreSurface.Inner))
+            }
+        }
+    }
+}
+
 @Composable private fun StunEmpty(onAdd: () -> Unit) {
     LabCoreCard {
         Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1396,7 +1407,9 @@ fun StunPenetrationScreen(
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    if (!rule.usesRouterNativeMapping) {
+                    if (rule.usesRouterNativeMapping) {
+                        Text("路由器直连", color = LabV2.InkMuted, style = LabTypography.Caption, maxLines = 1)
+                    } else {
                         StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
                         Spacer(Modifier.width(12.dp))
                         StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)

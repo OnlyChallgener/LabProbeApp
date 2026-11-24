@@ -175,11 +175,11 @@ internal data class PhoneDirectionResult(
 
 internal class SpeedStabilityTracker(
     private val warmupMs: Long = 2_000L,
-    /** 每个方向至少 4 秒有效采样，预热不算在内。 */
-    private val minEffectiveMs: Long = 4_000L,
+    /** 每个方向至少 6 秒有效采样，预热不算在内。 */
+    private val minEffectiveMs: Long = 6_000L,
     private val windowMs: Long = 3_000L,
-    /** 单方向 8 秒封顶，包含 2 秒预热。 */
-    private val maxTotalMs: Long = 8_000L,
+    /** 单方向 10 秒封顶，包含 2 秒预热。 */
+    private val maxTotalMs: Long = 10_000L,
     /** 看「近期平均速率是否还在明显增长」而不是 250ms 的瞬时抖动。 */
     private val growthLimit: Double = .12,
     /** 只在「大幅来回跳」时兜底，正常 10–20% 的真实波动照样能结束。 */
@@ -203,7 +203,7 @@ internal class SpeedStabilityTracker(
         val effective = samples.filter { it.atMs > warmupMs }
         val average = effective.takeIf { it.isNotEmpty() }?.map { it.mbps }?.average() ?: 0.0
         val peak = effective.maxOfOrNull { it.mbps } ?: 0.0
-        // 8 秒是包含预热的总时长；到点就结束，成绩照常用有效采样算。
+        // 10 秒是包含预热的总时长；到点就结束，成绩照常用有效采样算。
         if (elapsedMs >= maxTotalMs) {
             return Snapshot(true, false, average, peak, "达到单方向时限，按已采样本计算")
         }

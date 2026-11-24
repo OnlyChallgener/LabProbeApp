@@ -477,6 +477,7 @@ data class DdnsRecord(
     val interfaceName: String = "wan",
     val status: String = "",
     val ip: String = "",
+    val lastUpdatedAt: Long = 0L,
     val passwordConfigured: Boolean = false,
     // New firmware (ddns_view) fields. Empty nativeProtocol means the legacy ddnsCfg protocol.
     val nativeProtocol: String = "",
@@ -642,6 +643,7 @@ internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
             interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface").ifBlank { "wan" },
             status = o.ddnsText("status", "state", "message", "msg"),
             ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
+            lastUpdatedAt = o.optLong("last_log", o.optLong("last_updated_at", o.optLong("lastUpdatedAt", 0L))),
             passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password"),
             nativeProtocol = protocol,
             recordType = o.ddnsText("record_type"),

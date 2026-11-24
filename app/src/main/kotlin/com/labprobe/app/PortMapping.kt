@@ -923,13 +923,12 @@ fun PortMappingScreen(
                 MappingOverviewSurface(height = 72.dp) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            MappingStat(rules.size.toString(), "条映射", icon = Icons.Rounded.SwapHoriz, numberSize = 14, labelSize = 14)
-                            Box(Modifier.width(1.dp).height(24.dp).background(LabCoreSurface.Border))
-                            MappingStat(runningCount.toString(), "个运行中", icon = Icons.Rounded.CheckCircle, iconTint = PortGreen, numberSize = 14, labelSize = 14)
+                            MappingStat(rules.size.toString(), "条映射", icon = Icons.Rounded.SwapHoriz, numberSize = 12, labelSize = 12)
+                            MappingStat(runningCount.toString(), "个运行中", icon = Icons.Rounded.CheckCircle, iconTint = PortGreen, numberSize = 12, labelSize = 12)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Box(Modifier.width(1.dp).height(24.dp).background(LabCoreSurface.Border))
-                            MappingStatusPill(if (agent.online) "Agent 在线" else "Agent 离线", if (agent.online) PortGreen else PortRed, textSize = 14)
+                            Box(Modifier.width(1.dp).height(22.dp).background(LabCoreSurface.Border))
+                            MappingStatusPill(if (agent.online) "Agent 在线" else "Agent 离线", if (agent.online) PortGreen else PortRed, textSize = 12)
                         }
                     }
                 }
@@ -938,13 +937,24 @@ fun PortMappingScreen(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                         filterCounts.forEach { (item, count) ->
-                            FilterChip(
-                                selected = filter == item,
+                            val selected = filter == item
+                            Surface(
                                 onClick = { filter = item },
-                                label = { Text("$item $count", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) },
-                                modifier = Modifier.padding(end = 5.dp),
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PortBlue, selectedLabelColor = Color.White),
-                            )
+                                shape = RoundedCornerShape(99.dp),
+                                color = if (selected) PortBlue else Color.White,
+                                border = BorderStroke(1.dp, if (selected) PortBlue else LabCoreSurface.Border),
+                                modifier = Modifier.height(32.dp).padding(end = 3.dp),
+                            ) {
+                                Text(
+                                    "$item $count",
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selected) Color.White else LabV2.InkMuted,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.width(6.dp))
@@ -1132,15 +1142,26 @@ private fun portMapTimeSummary(rule: PortMapRule): String =
 
 @Composable
 private fun PortMapEndpointLine(label: String, endpoint: String) {
-    Text(
-        "$label：${endpoint.ifBlank { "--" }}",
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = LabV2.Ink,
-        softWrap = true,
-        overflow = TextOverflow.Clip,
-    )
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(
+            "$label：",
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = LabV2.InkMuted,
+            maxLines = 1,
+        )
+        Text(
+            endpoint.ifBlank { "--" },
+            modifier = Modifier.weight(1f),
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = LabV2.Ink,
+            softWrap = true,
+            overflow = TextOverflow.Clip,
+        )
+    }
 }
 
 @Composable

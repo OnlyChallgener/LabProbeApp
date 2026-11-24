@@ -105,7 +105,7 @@
 
 ## November 24 — Mapping and STUN density refinement
 
-- IPv6 mapping overview uses a 72dp surface with unchanged 14sp stats; a fine vertical divider separates running count from Agent status.
-- Mapping rule cards show only connection count, cumulative upload and cumulative download. Packet counters remain available in details, not on the card. Endpoint and port render as one flowing address string instead of pinning the port to the card edge.
-- STUN cards remove the repeated dynamic-address badge, duplicated native-mechanism caption and the refresh/add divider. Keep the public endpoint, one concise target line, traffic for Relay rules, history and quick actions.
+- IPv6 mapping overview uses a 72dp surface with compact 12sp stats and Agent status; a fine vertical divider separates the statistics segment from Agent status. Filter chips use 32dp height and tighter horizontal spacing.
+- Mapping rule cards show only connection count, cumulative upload and cumulative download. Packet counters remain available in details, not on the card. Endpoint labels and addresses share one row; the port remains inside the flowing address string instead of pinning to the card edge.
+- STUN cards remove the repeated dynamic-address badge, duplicated native-mechanism caption and the refresh/add divider. Keep the public endpoint, one concise target line, traffic for Relay rules, a short router-direct footer for native rules, history and quick actions. Initial sync shows skeleton cards instead of a blank page.
 - UPnP default route uses a compact two-button AUTO/WAN selector instead of a dropdown. Preserve the existing mutation callbacks and disabled-service behavior.

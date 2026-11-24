@@ -383,7 +383,8 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _ddns.value = old.copy(refreshing = true, error = "", generation = seq)
         runCatching {
-            val payload = coalesced(key) { api.ddnsPayload(force) }
+            val requestKey = if (force) "ddns:force" else key
+            val payload = coalesced(requestKey) { api.ddnsPayload(force) }
             payload to parseDdnsList(payload)
         }
             .onSuccess { (payload, latest) ->
@@ -407,7 +408,14 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                     applyDdnsRead(seq, latest)
                 }
             }
-            .onFailure { failure -> if (sequence(key).get() == seq) _ddns.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "DDNS 同步失败"), generation = seq) }
+            .onFailure { failure ->
+                if (sequence(key).get() != seq) return@onFailure
+                _ddns.value = if (!old.value.isNullOrEmpty()) {
+                    old.copy(refreshing = false, stale = true, error = "", generation = seq)
+                } else {
+                    old.copy(refreshing = false, error = message(failure, "DDNS 同步失败"), generation = seq)
+                }
+            }
     }
 
     suspend fun refreshLabProbeDdns(force: Boolean = false) {
