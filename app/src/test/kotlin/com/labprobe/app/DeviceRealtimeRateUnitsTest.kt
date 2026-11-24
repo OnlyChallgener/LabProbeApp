@@ -88,9 +88,9 @@ class DeviceRealtimeRateUnitsTest {
     }
 
     @Test
-    fun legacyUnmarkedRealtimeFieldsAreBitRates() {
+    fun legacyUnmarkedRealtimeFieldsRemainByteRates() {
         val parsed = parseDeviceArray("""
-            [{"mac":"AA:BB:CC:DD:EE:01","realtimeUpload":2680,"realtimeDownload":12000}]
+            [{"mac":"AA:BB:CC:DD:EE:01","realtimeUpload":335,"realtimeDownload":1500}]
         """.trimIndent()).single()
 
         assertEquals(335L, parsed.realtimeUploadBytes)
