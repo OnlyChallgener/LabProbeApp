@@ -136,8 +136,19 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                     // A realtime config frame can be emitted while the router
                     // driver is still rebuilding its DDNS snapshot. Never let
                     // that transient empty frame erase a known-good list.
-                    val parsed = parseDdnsList(data)
+                    val parsed = try {
+                        parseDdnsList(data)
+                    } catch (_: Exception) {
+                        if (_ddns.value.generation != old.generation || _ddns.value.mutating) return@launch
+                        _ddns.value = old.copy(
+                            refreshing = false,
+                            stale = old.value != null,
+                            error = "DDNS 响应结构异常，已保留上次数据",
+                        )
+                        return@launch
+                    }
                     if (source != "command" && parsed.isEmpty() && !old.value.isNullOrEmpty()) return@launch
+                    if (_ddns.value.generation != old.generation || _ddns.value.mutating) return@launch
                     val seq = sequence("ddns").incrementAndGet()
                     updateDdnsProtocol(api.ddnsProtocol(data))
                     applyDdnsRead(seq, parsed)
@@ -351,12 +362,14 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         val old = _ddns.value
         if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.SETTINGS_TTL_MS)) return
         _ddns.value = old.copy(refreshing = true, error = "", generation = seq)
-        runCatching { coalesced(key) { api.ddnsPayload(force) } }
-            .onSuccess { payload ->
-                val latest = parseDdnsList(payload)
+        runCatching {
+            val payload = coalesced(key) { api.ddnsPayload(force) }
+            payload to parseDdnsList(payload)
+        }
+            .onSuccess { (payload, latest) ->
+                if (sequence(key).get() != seq) return@onSuccess
                 val protocol = api.ddnsProtocol(payload)
-                // An empty protocol is the old firmware contract, not "unknown":
-                // reset so a firmware downgrade cannot keep the ddns_view form.
+                // Only a structurally valid response may change the remembered protocol.
                 if (protocol.isBlank()) resetDdnsProtocol() else updateDdnsProtocol(protocol)
                 if (latest.isEmpty() && !old.value.isNullOrEmpty()) {
                     // Hub may answer during a router reconnect before the

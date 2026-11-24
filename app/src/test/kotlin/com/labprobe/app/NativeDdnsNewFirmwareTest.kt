@@ -1,8 +1,10 @@
 package com.labprobe.app
 
+import org.json.JSONException
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -74,6 +76,33 @@ class NativeDdnsNewFirmwareTest {
         assertEquals("花生壳", nativeDdnsProviderLabel("oray.com"))
         assertEquals("腾讯云 API3", nativeDdnsProviderLabel("tencentcloud.com"))
         assertEquals("DynDNS", nativeDdnsProviderLabel("dyn.com"))
+    }
+
+    @Test
+    fun parsesEntriesArrayWithoutProtocolOnEveryRow() {
+        val payload = JSONObject("""
+            {"nativeProtocol":"ddns_view","entries":[{"id":"id-1","provider":"aliyun.com","domain":"a.example.com"}]}
+        """.trimIndent())
+        val record = parseDdnsList(payload).single()
+        assertEquals("id-1", record.serviceId)
+        assertTrue(record.modernNative)
+    }
+
+    @Test
+    fun rejectsMissingMalformedAndNonObjectRecordArrays() {
+        assertThrows(JSONException::class.java) { parseDdnsList(JSONObject()) }
+        assertThrows(JSONException::class.java) { parseDdnsList(JSONObject("""{"list":{}}""")) }
+        assertThrows(JSONException::class.java) { parseDdnsList(JSONObject("""{"list":[1]}""")) }
+    }
+
+    @Test
+    fun rejectsMissingOrDuplicateIdsAndNeverUsesDomainAsId() {
+        assertThrows(JSONException::class.java) {
+            parseDdnsList(JSONObject("""{"nativeProtocol":"ddns_view","entries":[{"domain":"a.example.com"}]}"""))
+        }
+        assertThrows(JSONException::class.java) {
+            parseDdnsList(JSONObject("""{"list":[{"id":"same"},{"id":"same"}]}"""))
+        }
     }
 
     /**

@@ -206,11 +206,17 @@ class RouterControlApi(private val prefs: AppPrefs) {
     suspend fun addDdns(record: DdnsRecord, password: String): List<DdnsRecord> =
         parseDdnsList(send("/api/router/ddns", "POST", record.toJson(password)).optJSONObject("data") ?: JSONObject())
 
-    suspend fun updateDdns(record: DdnsRecord, password: String?): List<DdnsRecord> =
-        parseDdnsList(send("/api/router/ddns/${record.serviceId}", "PUT", record.toJson(password)).optJSONObject("data") ?: JSONObject())
+    suspend fun updateDdns(record: DdnsRecord, password: String?): List<DdnsRecord> {
+        require(record.serviceId.isNotBlank()) { "DDNS 记录 ID 不能为空" }
+        val safe = URLEncoder.encode(record.serviceId, StandardCharsets.UTF_8.toString()).replace("+", "%20")
+        return parseDdnsList(send("/api/router/ddns/$safe", "PUT", record.toJson(password)).optJSONObject("data") ?: JSONObject())
+    }
 
-    suspend fun deleteDdns(serviceId: String): List<DdnsRecord> =
-        parseDdnsList(send("/api/router/ddns/$serviceId", "DELETE").optJSONObject("data") ?: JSONObject())
+    suspend fun deleteDdns(serviceId: String): List<DdnsRecord> {
+        require(serviceId.isNotBlank()) { "DDNS 记录 ID 不能为空" }
+        val safe = URLEncoder.encode(serviceId, StandardCharsets.UTF_8.toString()).replace("+", "%20")
+        return parseDdnsList(send("/api/router/ddns/$safe", "DELETE").optJSONObject("data") ?: JSONObject())
+    }
 
     /** LabProbe-owned DDNS API. Kept separate from the router-native DDNS model above. */
     suspend fun labProbeDdns(force: Boolean = false): LabProbeDdnsSnapshot =
@@ -605,33 +611,41 @@ private fun JSONObject.ddnsFlag(default:Boolean,vararg keys:String):Boolean{
 }
 
 internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
-    val arr = data.optJSONArray("list") ?: data.optJSONArray("services") ?: data.optJSONArray("data") ?: data.optJSONArray("records") ?: JSONArray()
-    // HUB puts nativeProtocol both at the top level of data and on each row.
-    // Fall back to the top level so a row without it still opens the new form.
+    val arrayKey = listOf("list", "services", "data", "records", "entries")
+        .firstOrNull { data.has(it) && !data.isNull(it) }
+        ?: throw org.json.JSONException("DDNS 响应缺少记录数组")
+    val arr = data.optJSONArray(arrayKey)
+        ?: throw org.json.JSONException("DDNS 记录数组结构异常")
     val topProtocol = data.ddnsText("nativeProtocol")
-    return (0 until arr.length()).mapNotNull { i ->
-        arr.optJSONObject(i)?.let { o ->
-            DdnsRecord(
-                serviceId = o.ddnsText("serviceId", "service_id", "id", "domain", "uuid", "service"),
-                provider = o.ddnsText("service_name", "serviceName", "provider", "providerName").ifBlank { "aliyun.com" },
-                domain = o.ddnsText("domain", "host", "hostname", "record"),
-                username = o.ddnsText("username", "user", "accessKey", "accessKeyId", "access_key_id"),
-                enabled = o.ddnsFlag(true, "enable", "enabled", "isEnabled"),
-                useIpv6 = o.ddnsFlag(true, "use_ipv6", "useIpv6", "ipv6", "ipVersion"),
-                interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface").ifBlank { "wan" },
-                status = o.ddnsText("status", "state", "message", "msg"),
-                ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
-                passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password"),
-                nativeProtocol = o.ddnsText("nativeProtocol").ifBlank { topProtocol },
-                recordType = o.ddnsText("record_type"),
-                zone = o.ddnsText("zone"),
-                zoneId = o.ddnsText("zone_id"),
-                region = o.ddnsText("region"),
-                txtTemplate = o.ddnsText("txt_template"),
-                txtFamily = o.ddnsText("txt_family").ifBlank { "ipv4" },
-                externalPort = o.optInt("external_port", 0),
-            )
+    val ids = mutableSetOf<String>()
+    return (0 until arr.length()).map { i ->
+        val o = arr.optJSONObject(i)
+            ?: throw org.json.JSONException("DDNS 包含无效记录")
+        val protocol = o.ddnsText("nativeProtocol").ifBlank { topProtocol }
+        val serviceId = o.ddnsText("serviceId", "service_id", "id", "service")
+        if (serviceId.isBlank() || !ids.add(serviceId)) {
+            throw org.json.JSONException("DDNS 记录 ID 缺失或重复")
         }
+        DdnsRecord(
+            serviceId = serviceId,
+            provider = o.ddnsText("service_name", "serviceName", "provider", "providerName").ifBlank { "aliyun.com" },
+            domain = o.ddnsText("domain", "host", "hostname", "record"),
+            username = o.ddnsText("username", "user", "accessKey", "accessKeyId", "access_key_id"),
+            enabled = o.ddnsFlag(true, "enable", "enabled", "isEnabled"),
+            useIpv6 = o.ddnsFlag(true, "use_ipv6", "useIpv6", "ipv6", "ipVersion"),
+            interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface").ifBlank { "wan" },
+            status = o.ddnsText("status", "state", "message", "msg"),
+            ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
+            passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password"),
+            nativeProtocol = protocol,
+            recordType = o.ddnsText("record_type"),
+            zone = o.ddnsText("zone"),
+            zoneId = o.ddnsText("zone_id"),
+            region = o.ddnsText("region"),
+            txtTemplate = o.ddnsText("txt_template"),
+            txtFamily = o.ddnsText("txt_family").ifBlank { "ipv4" },
+            externalPort = o.optInt("external_port", 0),
+        )
     }
 }
 
