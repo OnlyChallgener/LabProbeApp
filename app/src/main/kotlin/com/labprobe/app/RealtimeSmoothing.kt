@@ -162,23 +162,25 @@ class RealtimeDisplaySmoother {
             val mac = cleanMac(row.optString("mac"))
             if (mac.isBlank()) continue
             seen += mac
-            val targetUpload = row.optLong("uploadBps", 0L).coerceAtLeast(0L).toDouble()
-            val targetDownload = row.optLong("downloadBps", 0L).coerceAtLeast(0L).toDouble()
+            val targetUpload = deviceUploadBitsPerSecondOrNull(row)?.toDouble()
+            val targetDownload = deviceDownloadBitsPerSecondOrNull(row)?.toDouble()
+            val hasConnectionCount = row.hasRate("connectionCount")
             val previous = deviceTracks[mac]
             if (previous == null) {
+                if (targetUpload == null && targetDownload == null && !hasConnectionCount) continue
                 deviceTracks[mac] = DeviceTrack(
-                    displayedUpload = targetUpload,
-                    displayedDownload = targetDownload,
-                    targetUpload = targetUpload,
-                    targetDownload = targetDownload,
-                    connectionCount = row.optInt("connectionCount", 0).coerceAtLeast(0),
+                    displayedUpload = targetUpload ?: -1.0,
+                    displayedDownload = targetDownload ?: -1.0,
+                    targetUpload = targetUpload ?: -1.0,
+                    targetDownload = targetDownload ?: -1.0,
+                    connectionCount = if (hasConnectionCount) row.optInt("connectionCount", 0).coerceAtLeast(0) else 0,
                     dirty = true,
                 )
             } else {
-                previous.targetUpload = targetUpload
-                previous.targetDownload = targetDownload
-                previous.connectionCount = row.optInt("connectionCount", 0).coerceAtLeast(0)
-                previous.dirty = true
+                if (targetUpload != null) previous.targetUpload = targetUpload
+                if (targetDownload != null) previous.targetDownload = targetDownload
+                if (hasConnectionCount) previous.connectionCount = row.optInt("connectionCount", 0).coerceAtLeast(0)
+                if (targetUpload != null || targetDownload != null || hasConnectionCount) previous.dirty = true
             }
         }
         if (!delta) deviceTracks.keys.retainAll(seen)

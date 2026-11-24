@@ -167,36 +167,44 @@ fun mergeLiteRouterRealtime(base: JSONObject?, sample: JSONObject): JSONObject {
     return root
 }
 
+private data class LiteDeviceRate(
+    val uploadBytes: Long?,
+    val downloadBytes: Long?,
+    val connectionCount: Int?,
+)
+
 fun mergeLiteDeviceRealtime(items: List<DeviceItem>, payload: JSONObject): List<DeviceItem> {
     val rows = payload.optJSONArray("devices") ?: JSONArray()
     if (rows.length() == 0) return items
-    val runtime = HashMap<String, Triple<Long, Long, Int>>(rows.length())
+    val runtime = HashMap<String, LiteDeviceRate>(rows.length())
     for (index in 0 until rows.length()) {
         val row = rows.optJSONObject(index) ?: continue
         val mac = cleanMac(row.optString("mac"))
         if (mac.isBlank()) continue
-        runtime[mac] = Triple(
-            rateBitsPerSecondToBytesPerSecond(row.optLong("uploadBps", 0L)),
-            rateBitsPerSecondToBytesPerSecond(row.optLong("downloadBps", 0L)),
-            row.optInt("connectionCount", 0).coerceAtLeast(0),
-        )
+        val upload = deviceUploadBitsPerSecondOrNull(row)?.let(::rateBitsPerSecondToBytesPerSecond)
+        val download = deviceDownloadBitsPerSecondOrNull(row)?.let(::rateBitsPerSecondToBytesPerSecond)
+        val connections = if (row.hasRate("connectionCount")) row.optInt("connectionCount", 0).coerceAtLeast(0) else null
+        if (upload != null || download != null || connections != null) runtime[mac] = LiteDeviceRate(upload, download, connections)
     }
     if (runtime.isEmpty()) return items
     var changed = false
     val next = items.map { item ->
         val value = runtime[cleanMac(item.mac)] ?: return@map item
+        val upload = value.uploadBytes ?: item.realtimeUploadBytes
+        val download = value.downloadBytes ?: item.realtimeDownloadBytes
+        val connections = value.connectionCount ?: item.connectionCount
         if (
-            item.realtimeUploadBytes == value.first &&
-            item.realtimeDownloadBytes == value.second &&
-            item.connectionCount == value.third
+            item.realtimeUploadBytes == upload &&
+            item.realtimeDownloadBytes == download &&
+            item.connectionCount == connections
         ) {
             item
         } else {
             changed = true
             item.copy(
-                realtimeUploadBytes = value.first,
-                realtimeDownloadBytes = value.second,
-                connectionCount = value.third,
+                realtimeUploadBytes = upload,
+                realtimeDownloadBytes = download,
+                connectionCount = connections,
             )
         }
     }

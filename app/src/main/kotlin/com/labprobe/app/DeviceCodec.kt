@@ -12,6 +12,53 @@ internal fun rateBitsPerSecondToBytesPerSecond(bitsPerSecond: Long): Long {
     return safe / 8L + if (safe % 8L >= 4L) 1L else 0L
 }
 
+internal fun rateBytesPerSecondToBitsPerSecond(bytesPerSecond: Long): Long {
+    val safe = bytesPerSecond.coerceAtLeast(0L)
+    return if (safe > Long.MAX_VALUE / 8L) Long.MAX_VALUE else safe * 8L
+}
+
+internal fun JSONObject.hasRate(key: String): Boolean = has(key) && !isNull(key)
+
+internal fun hasDeviceUploadRate(value: JSONObject): Boolean =
+    value.hasRate("uploadBps") || value.hasRate("realtimeUpBytes") ||
+        value.hasRate("realtimeUploadBytes") || value.hasRate("realtimeUpload") || value.hasRate("flowUp")
+
+internal fun hasDeviceDownloadRate(value: JSONObject): Boolean =
+    value.hasRate("downloadBps") || value.hasRate("realtimeDownBytes") ||
+        value.hasRate("realtimeDownloadBytes") || value.hasRate("realtimeDownload") || value.hasRate("flowDown")
+
+private fun JSONObject.legacyRealtimeBitsPerSecond(key: String): Long {
+    val raw = optLong(key, 0L).coerceAtLeast(0L)
+    val unit = optString("realtimeRateUnit").trim().lowercase(Locale.ROOT)
+    return if (unit == "bytes/s" || unit == "byte/s" || unit == "b/s") {
+        rateBytesPerSecondToBitsPerSecond(raw)
+    } else {
+        raw
+    }
+}
+
+internal fun deviceUploadBitsPerSecondOrNull(value: JSONObject): Long? = when {
+    value.hasRate("uploadBps") -> value.optLong("uploadBps", 0L).coerceAtLeast(0L)
+    value.hasRate("realtimeUpBytes") -> rateBytesPerSecondToBitsPerSecond(value.optLong("realtimeUpBytes", 0L))
+    value.hasRate("realtimeUploadBytes") -> rateBytesPerSecondToBitsPerSecond(value.optLong("realtimeUploadBytes", 0L))
+    value.hasRate("realtimeUpload") -> value.legacyRealtimeBitsPerSecond("realtimeUpload")
+    value.hasRate("flowUp") -> value.optLong("flowUp", 0L).coerceAtLeast(0L)
+    else -> null
+}
+
+internal fun deviceDownloadBitsPerSecondOrNull(value: JSONObject): Long? = when {
+    value.hasRate("downloadBps") -> value.optLong("downloadBps", 0L).coerceAtLeast(0L)
+    value.hasRate("realtimeDownBytes") -> rateBytesPerSecondToBitsPerSecond(value.optLong("realtimeDownBytes", 0L))
+    value.hasRate("realtimeDownloadBytes") -> rateBytesPerSecondToBitsPerSecond(value.optLong("realtimeDownloadBytes", 0L))
+    value.hasRate("realtimeDownload") -> value.legacyRealtimeBitsPerSecond("realtimeDownload")
+    value.hasRate("flowDown") -> value.optLong("flowDown", 0L).coerceAtLeast(0L)
+    else -> null
+}
+
+internal fun deviceUploadBitsPerSecond(value: JSONObject): Long = deviceUploadBitsPerSecondOrNull(value) ?: 0L
+
+internal fun deviceDownloadBitsPerSecond(value: JSONObject): Long = deviceDownloadBitsPerSecondOrNull(value) ?: 0L
+
 fun parseDeviceArray(json: String): List<DeviceItem> {
     if (json.isBlank()) return emptyList()
     val arr = runCatching { JSONArray(json) }.getOrElse { return emptyList() }
@@ -69,14 +116,8 @@ private fun parseDevice(o: JSONObject?): DeviceItem? {
     val name = f("name").ifBlank { f("devRecommend") }.ifBlank { f("hostName") }.ifBlank { mac }
     val ipv6Candidates = collectDeviceIpv6Candidates(o).take(24)
     val ipv6List = ipv6Candidates.map { it.address }
-    val realtimeUploadBytes = o.optLong(
-        "realtimeUploadBytes",
-        o.optLong("realtimeUpload", o.optLong("realtimeUpBytes", rateBitsPerSecondToBytesPerSecond(o.optLong("flowUp", 0L))))
-    ).coerceAtLeast(0L)
-    val realtimeDownloadBytes = o.optLong(
-        "realtimeDownloadBytes",
-        o.optLong("realtimeDownload", o.optLong("realtimeDownBytes", rateBitsPerSecondToBytesPerSecond(o.optLong("flowDown", 0L))))
-    ).coerceAtLeast(0L)
+    val realtimeUploadBytes = rateBitsPerSecondToBytesPerSecond(deviceUploadBitsPerSecond(o))
+    val realtimeDownloadBytes = rateBitsPerSecondToBytesPerSecond(deviceDownloadBitsPerSecond(o))
 
     return DeviceItem(
         name = name,

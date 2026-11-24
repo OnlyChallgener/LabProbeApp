@@ -38,6 +38,106 @@ class DeviceRealtimeRateUnitsTest {
     }
 
     @Test
+    fun realtimeByteFieldsAreNotDividedAgain() {
+        val parsed = parseDeviceArray("""
+            [{"mac":"AA:BB:CC:DD:EE:01","realtimeUpBytes":335,"realtimeDownBytes":1500}]
+        """.trimIndent()).single()
+
+        assertEquals(335L, parsed.realtimeUploadBytes)
+        assertEquals(1500L, parsed.realtimeDownloadBytes)
+    }
+
+    @Test
+    fun liteRealtimeAcceptsLegacyByteFieldsWithoutDoubleConversion() {
+        val devices = listOf(device("AA:BB:CC:DD:EE:01"))
+        val result = mergeLiteDeviceRealtime(devices, JSONObject("""
+            {"devices":[{"mac":"AA:BB:CC:DD:EE:01","realtimeUpBytes":335,"realtimeDownBytes":1500,"connectionCount":2}]}
+        """.trimIndent()))
+
+        assertEquals(335L, result[0].realtimeUploadBytes)
+        assertEquals(1500L, result[0].realtimeDownloadBytes)
+        assertEquals(2, result[0].connectionCount)
+    }
+
+    @Test
+    fun fullSnapshotByteFieldsReachTheSingleAppSmoother() {
+        val smoother = RealtimeDisplaySmoother()
+        smoother.acceptDevices(JSONObject("""
+            {"sampleEpochMs":1700000000000,"fullSnapshot":true,"devices":[
+              {"mac":"AA:BB:CC:DD:EE:01","realtimeUpBytes":335,"realtimeDownBytes":1500,"connectionCount":3}
+            ]}
+        """.trimIndent()), now = 1000L)
+
+        val rendered = smoother.renderDevices(listOf(device("AA:BB:CC:DD:EE:01")), now = 1000L).single()
+        assertEquals(335L, rendered.realtimeUploadBytes)
+        assertEquals(1500L, rendered.realtimeDownloadBytes)
+        assertEquals(3, rendered.connectionCount)
+    }
+
+    @Test
+    fun canonicalBitRateTakesPrecedenceOverLegacyByteFields() {
+        val row = JSONObject("""
+            {"mac":"AA:BB:CC:DD:EE:01","uploadBps":2680,"downloadBps":12000,"realtimeUpBytes":999,"realtimeDownBytes":999}
+        """.trimIndent())
+        val smoother = RealtimeDisplaySmoother()
+        smoother.acceptDevices(JSONObject().put("sampleEpochMs", 1700000000000L).put("devices", org.json.JSONArray().put(row)), now = 1000L)
+
+        val rendered = smoother.renderDevices(listOf(device("AA:BB:CC:DD:EE:01")), now = 1000L).single()
+        assertEquals(335L, rendered.realtimeUploadBytes)
+        assertEquals(1500L, rendered.realtimeDownloadBytes)
+    }
+
+    @Test
+    fun legacyUnmarkedRealtimeFieldsAreBitRates() {
+        val parsed = parseDeviceArray("""
+            [{"mac":"AA:BB:CC:DD:EE:01","realtimeUpload":2680,"realtimeDownload":12000}]
+        """.trimIndent()).single()
+
+        assertEquals(335L, parsed.realtimeUploadBytes)
+        assertEquals(1500L, parsed.realtimeDownloadBytes)
+    }
+
+    @Test
+    fun markedRealtimeFieldsUseDeclaredByteUnit() {
+        val parsed = parseDeviceArray("""
+            [{"mac":"AA:BB:CC:DD:EE:01","realtimeRateUnit":"bytes/s","realtimeUpload":335,"realtimeDownload":1500}]
+        """.trimIndent()).single()
+
+        assertEquals(335L, parsed.realtimeUploadBytes)
+        assertEquals(1500L, parsed.realtimeDownloadBytes)
+    }
+
+    @Test
+    fun missingRatesDoNotOverwritePreviousSmoothedValues() {
+        val smoother = RealtimeDisplaySmoother()
+        smoother.acceptDevices(JSONObject("""
+            {"sampleEpochMs":1700000000000,"devices":[{"mac":"AA:BB:CC:DD:EE:01","uploadBps":2680,"downloadBps":12000}]}
+        """.trimIndent()), now = 1000L)
+        smoother.renderDevices(listOf(device("AA:BB:CC:DD:EE:01")), now = 1000L)
+        smoother.acceptDevices(JSONObject("""
+            {"sampleEpochMs":1700000001000,"devices":[{"mac":"AA:BB:CC:DD:EE:01"}]}
+        """.trimIndent()), now = 2000L)
+
+        val rendered = smoother.renderDevices(listOf(device("AA:BB:CC:DD:EE:01")), now = 2000L).single()
+        assertEquals(335L, rendered.realtimeUploadBytes)
+        assertEquals(1500L, rendered.realtimeDownloadBytes)
+    }
+
+    @Test
+    fun liteRealtimeMissingRatesPreserveExistingValues() {
+        val existing = device("AA:BB:CC:DD:EE:01").copy(
+            realtimeUploadBytes = 335L,
+            realtimeDownloadBytes = 1500L,
+            connectionCount = 3,
+        )
+        val result = mergeLiteDeviceRealtime(listOf(existing), JSONObject("""
+            {"devices":[{"mac":"AA:BB:CC:DD:EE:01"}]}
+        """.trimIndent()))
+
+        assertEquals(existing, result.single())
+    }
+
+    @Test
     fun smoothedLiveRatesAreConvertedOnlyWhenProjectedToDeviceRows() {
         val smoother = RealtimeDisplaySmoother()
         smoother.acceptDevices(JSONObject("""
