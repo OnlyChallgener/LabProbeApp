@@ -8,6 +8,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.TimeZone
 
 class ChildInternetRepositoryTest {
     private companion object {
@@ -590,8 +591,14 @@ class ChildInternetRepositoryTest {
         assertEquals("当前时段禁网，3 小时 15 分钟后允许上网",
             childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 13_500L), 1_800L))
         // 两天以上报的是真实边界那一刻（北京时间 1970-01-03 08:00 是周六），不是「2 天」。
-        assertEquals("当前时段禁网，本周周六 08:00后允许上网",
-            childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 172_800L), 0L))
+        val previousZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(SHANGHAI))
+            assertEquals("当前时段禁网，本周周六 08:00后允许上网",
+                childGuardScheduleText(ChildGuardSchedule(state = "blocked", nextChangeAtEpoch = 172_800L), 0L))
+        } finally {
+            TimeZone.setDefault(previousZone)
+        }
     }
 
     /** 规则列表里「重复时间」那一列：全选说「每天」，其余按周一到周日列，不掺排序。 */
