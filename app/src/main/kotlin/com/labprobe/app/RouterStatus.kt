@@ -76,8 +76,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import android.os.SystemClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,6 +100,7 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -110,6 +113,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -570,6 +574,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
             ui = ui,
             isBe50 = be50,
             routerImage = routerImage,
+            trendSamples = state.routerTrendSamples,
             refreshing = refreshing,
             onRefresh = ::refresh,
             onOpenDevices = onOpenDevices,
@@ -635,8 +640,15 @@ internal fun RouterHeroCard(
     onRefresh: () -> Unit,
     onOpenDevices: () -> Unit,
     onEdit: () -> Unit,
-    onOpenRouter: () -> Unit
+    onOpenRouter: () -> Unit,
+    trendSamples: StateFlow<List<RouterTrendSample>>? = null,
 ) {
+    val trend by trendSamples?.collectAsState() ?: remember { mutableStateOf(emptyList<RouterTrendSample>()) }
+    val now = SystemClock.elapsedRealtime()
+    // 只画最近 60 秒的真实采样，不足 2 个点时不画，避免伪造波形。
+    val recent = trend.filter { it.elapsedMs >= now - 60_000L }.takeLast(120)
+    val downTrend = recent.map { it.downloadBps.coerceAtLeast(0L) }
+    val upTrend = recent.map { it.uploadBps.coerceAtLeast(0L) }
     RouterGlassCard(contentPadding = PaddingValues(0.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
@@ -696,6 +708,22 @@ internal fun RouterHeroCard(
                             center = node
                         )
                     }
+                    // 路由器底部的浅蓝椭圆发光底座，形成轻微悬浮感。
+                    val baseY = size.height * .88f
+                    drawOval(
+                        brush = Brush.verticalGradient(
+                            listOf(Color(0x4A9CD8FF), Color(0x1A9CD8FF)),
+                            startY = baseY - 12.dp.toPx(),
+                            endY = baseY + 10.dp.toPx(),
+                        ),
+                        topLeft = Offset(size.width * .16f, baseY - 11.dp.toPx()),
+                        size = Size(size.width * .68f, 20.dp.toPx()),
+                    )
+                    drawOval(
+                        Color(0x8AE8F6FF),
+                        topLeft = Offset(size.width * .30f, baseY - 7.dp.toPx()),
+                        size = Size(size.width * .40f, 11.dp.toPx()),
+                    )
                 }
                 val isBe50 = isModelBe50(ui.model, ui.name, "")
                 androidx.compose.foundation.Image(
@@ -749,8 +777,18 @@ internal fun RouterHeroCard(
                         )
                     }
                 }
-                SpeedValue(if (ui.frameEpochMs > 0) ui.downloadBps else -1, "下载速率", LabV2.Green, Modifier.fillMaxWidth(), icon = Icons.Rounded.South)
-                SpeedValue(if (ui.frameEpochMs > 0) ui.uploadBps else -1, "上传速率", LabV2.Primary, Modifier.fillMaxWidth(), icon = Icons.Rounded.North)
+                SpeedValue(
+                    if (ui.frameEpochMs > 0) ui.downloadBps else -1,
+                    "下载速率", LabV2.Green, Modifier.fillMaxWidth(),
+                    icon = Icons.Rounded.South,
+                    trend = downTrend,
+                )
+                SpeedValue(
+                    if (ui.frameEpochMs > 0) ui.uploadBps else -1,
+                    "上传速率", LabV2.Primary, Modifier.fillMaxWidth(),
+                    icon = Icons.Rounded.North,
+                    trend = upTrend,
+                )
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -770,6 +808,18 @@ internal fun RouterHeroCard(
                 .background(Brush.horizontalGradient(listOf(Color(0xFFF8FBFF), Color(0xFFF2F7FF), Color(0xFFF8FBFF))))
                 .border(1.dp, Color(0xFFE2EAF5), RoundedCornerShape(21.dp))
         ) {
+            Canvas(Modifier.matchParentSize()) {
+                val wave = Path().apply {
+                    moveTo(0f, size.height * .78f)
+                    quadraticTo(size.width * .18f, size.height * .58f, size.width * .38f, size.height * .76f)
+                    quadraticTo(size.width * .62f, size.height * .94f, size.width * .82f, size.height * .70f)
+                    quadraticTo(size.width * .93f, size.height * .58f, size.width, size.height * .72f)
+                    lineTo(size.width, size.height)
+                    lineTo(0f, size.height)
+                    close()
+                }
+                drawPath(wave, Brush.verticalGradient(listOf(Color(0x00BBD9F8), Color(0x55BBD9F8)), startY = size.height * .58f, endY = size.height))
+            }
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 HeroMetric(Icons.Rounded.DeviceThermostat, "温度", temperatureText(ui.temperature), LabV2.Green, Modifier.weight(1f))
                 HeroDivider()
@@ -797,41 +847,95 @@ internal fun RouterHeroCard(
 }
 
 @Composable
-private fun SpeedValue(bps: Long, label: String, color: Color, modifier: Modifier, icon: ImageVector) {
+private fun SpeedValue(
+    bps: Long,
+    label: String,
+    color: Color,
+    modifier: Modifier,
+    icon: ImageVector,
+    trend: List<Long> = emptyList(),
+) {
     val rate = bitRateParts(bps)
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                shape = CircleShape,
-                color = Color.Transparent,
-                border = BorderStroke(.9.dp, color),
-                modifier = Modifier.size(18.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, null, Modifier.size(10.dp), tint = color)
-                }
+    Row(modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(2.5.dp, 40.dp).background(color.copy(alpha = .75f), RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, Modifier.size(14.dp), tint = color)
+                Spacer(Modifier.width(4.dp))
+                Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
             }
-            Spacer(Modifier.width(2.dp))
-            Text("${rate.first} ${rate.second}".trim(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(rate.first, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+                Spacer(Modifier.width(3.dp))
+                Text(rate.second, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = color.copy(alpha = .85f), maxLines = 1, modifier = Modifier.padding(bottom = 3.dp))
+            }
         }
-        Text(label, Modifier.padding(start = 21.dp), fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted)
+        if (trend.size >= 2) {
+            HeroSparkline(values = trend, color = color, modifier = Modifier.size(width = 76.dp, height = 36.dp))
+        }
+    }
+}
+
+/** 最近 60 秒真实速率的微型波动曲线：细线 + 由上至下渐隐填充，无坐标轴。 */
+@Composable
+private fun HeroSparkline(values: List<Long>, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.clip(RoundedCornerShape(4.dp))) {
+        val usable = values.filter { it >= 0L }
+        if (usable.size < 2) return@Canvas
+        val min = usable.min().toFloat()
+        val max = usable.max().toFloat()
+        val span = (max - min).coerceAtLeast(maxOf(1f, max * .05f))
+        val left = 1.dp.toPx()
+        val right = size.width - 1.dp.toPx()
+        val top = 5.dp.toPx()
+        val bottom = size.height - 3.dp.toPx()
+        fun point(index: Int, value: Long): Offset {
+            val x = left + (right - left) * index / (usable.size - 1).toFloat()
+            val y = bottom - ((value.toFloat() - min) / span).coerceIn(0f, 1f) * (bottom - top)
+            return Offset(x, y)
+        }
+        val points = usable.mapIndexed { index, value -> point(index, value) }
+        val line = Path().apply {
+            moveTo(points.first().x, points.first().y)
+            for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+        }
+        val fill = Path().apply {
+            addPath(line)
+            lineTo(points.last().x, bottom)
+            lineTo(points.first().x, bottom)
+            close()
+        }
+        drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = .28f), color.copy(alpha = 0f)), startY = top, endY = bottom))
+        drawPath(line, color, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
 @Composable
 private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier, unsupported: Boolean = false) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = color.copy(alpha = .065f),
-        border = BorderStroke(1.dp, color.copy(alpha = .13f))
+    Box(
+        modifier.clip(RoundedCornerShape(16.dp)).background(
+            Brush.verticalGradient(listOf(Color(0xFFEAF3FF), Color(0xFFDCEBFF))),
+        ).border(1.dp, Color(0xFFD8E8FA), RoundedCornerShape(16.dp)),
     ) {
+        Canvas(Modifier.matchParentSize()) {
+            // 底部柔和蓝色渐变波浪，纯装饰。
+            val wave = Path().apply {
+                moveTo(0f, size.height * .72f)
+                quadraticTo(size.width * .25f, size.height * .52f, size.width * .5f, size.height * .70f)
+                quadraticTo(size.width * .75f, size.height * .86f, size.width, size.height * .62f)
+                lineTo(size.width, size.height)
+                lineTo(0f, size.height)
+                close()
+            }
+            drawPath(wave, Brush.verticalGradient(listOf(Color(0x00BBD9F8), Color(0x66BBD9F8)), startY = size.height * .52f, endY = size.height))
+        }
         Column(
-            Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 9.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
-            Text(if (unsupported) "不支持" else if (count < 0) "--" else count.toString(), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
+            Text(if (unsupported) "不支持" else if (count < 0) "--" else count.toString(), fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
         }
     }
 }

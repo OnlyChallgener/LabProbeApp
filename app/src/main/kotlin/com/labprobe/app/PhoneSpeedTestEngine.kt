@@ -12,8 +12,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -210,6 +213,9 @@ internal class SpeedStabilityTracker(
 
 object GlobalSpeedProtocol {
     private const val MATCH_URL = "https://dlcv2.cnspeedtest.cn:8443/dataServer/mobilematch_many.php"
+    private const val MAX_PROBE_CONCURRENCY = 3
+    private const val PROBE_TIMEOUT_MS = 1_500L
+    private const val PROBE_TOTAL_TIMEOUT_MS = 5_000L
     private const val CHROME_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     private const val DALVIK_UA = "Dalvik/2.1.0 (Linux; U; Android 14)"
 
@@ -266,22 +272,35 @@ object GlobalSpeedProtocol {
         candidates: List<PhoneSpeedTestNode>,
         network: Network?
     ): PhoneSpeedTestNode? = withContext(Dispatchers.IO) {
-        candidates.firstNotNullOfOrNull { node ->
-            runCatching {
-                val conn = (network?.openConnection(URL("http://${node.host}:${node.port}/"))
-                    ?: URL("http://${node.host}:${node.port}/").openConnection()) as HttpURLConnection
-                try {
-                    conn.connectTimeout = 1_500
-                    conn.readTimeout = 1_500
-                    conn.requestMethod = "GET"
-                    conn.setRequestProperty("Cache-Control", "no-store")
-                    conn.responseCode
-                    node
-                } finally {
-                    runCatching { conn.disconnect() }
+        // 并发探测 + 整体时限：避免备用节点逐个 1.5s 超时累计成十几秒等待。
+        // 结果按 candidates 原始顺序取第一个可达的，保留「用户选择优先、出口推荐其次」。
+        val limit = candidates.size.coerceAtMost(MAX_PROBE_CONCURRENCY)
+        val overall = withTimeoutOrNull(PROBE_TOTAL_TIMEOUT_MS) {
+            candidates.chunked(limit).firstNotNullOfOrNull { batch ->
+                val probes = batch.map { node ->
+                    async {
+                        val ok = runCatching {
+                            val conn = (network?.openConnection(URL("http://${node.host}:${node.port}/"))
+                                ?: URL("http://${node.host}:${node.port}/").openConnection()) as HttpURLConnection
+                            try {
+                                conn.connectTimeout = PROBE_TIMEOUT_MS.toInt()
+                                conn.readTimeout = PROBE_TIMEOUT_MS.toInt()
+                                conn.requestMethod = "GET"
+                                conn.setRequestProperty("Cache-Control", "no-store")
+                                conn.responseCode
+                                true
+                            } finally {
+                                runCatching { conn.disconnect() }
+                            }
+                        }.getOrDefault(false)
+                        node to ok
+                    }
                 }
-            }.getOrNull()
+                val results = probes.awaitAll()
+                batch.firstOrNull { node -> results.first { it.first.id == node.id }.second }
+            }
         }
+        overall
     }
 
     suspend fun fetchNodes(network: Network?, preferIpv6: Boolean): List<PhoneSpeedTestNode> = withContext(Dispatchers.IO) {

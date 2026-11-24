@@ -1936,7 +1936,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs, nativeDdns: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("${rows.count { it.enabled }} 条启用 · ${rows.count { it.status.contains("error",true) || it.status.contains("fail",true) }} 条异常", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         Spacer(Modifier.weight(1f))
-        IconButton(onClick={scope.launch{repository.refreshDdns(false)}},modifier=Modifier.size(33.dp)){LabRefreshIcon(resource.refreshing, Modifier.size(17.dp), RouterBlue)}
+        IconButton(onClick={scope.launch{repository.refreshDdns(true)}},modifier=Modifier.size(33.dp)){LabRefreshIcon(resource.refreshing, Modifier.size(17.dp), RouterBlue)}
         Surface(onClick={adding=true},shape=CircleShape,color=RouterBlue,modifier=Modifier.size(34.dp)){Box(contentAlignment=Alignment.Center){Icon(Icons.Rounded.Add,null,tint=Color.White,modifier=Modifier.size(18.dp))}}
     }
     if(error.isNotBlank())CompactMessage(error,RouterAmber)
