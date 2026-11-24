@@ -224,7 +224,13 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 手机测速节点探测修正" to listOf(
+            "v$NAME build$CODE · 映射、Webhook 与管理稳定性" to listOf(
+                "IPv6 映射、端口映射与 UPnP 页面重设计：保留真实运行状态，五项运行统计常显，零值照实显示，缺失指标明确降级",
+                "收藏夹按 IP、内部端口与传输协议精确匹配服务，同一台 NAS 上的 SSH、Lucky、Plex 不再互相覆盖",
+                "Webhook 接收地址独立配置，HOOK_TOKEN 使用安全存储并默认掩码，不再回退使用 APP_TOKEN",
+                "Lucky 证书下载、反代管理、DDNS 新固件适配与实时网速单位修正，提升异常恢复与数据一致性"
+            ),
+            "v0.14.8 build352 · 手机测速节点探测修正" to listOf(
                 "节点预探测从裸 TCP 改为与实测完全相同的 HTTP 请求：只放 SYN 不放应用数据的节点会被直接淘汰，不会选中后立刻失败",
                 "广州等节点在当前出口 TCP 能握手但 HTTP 不通时，自动换到真正可用的节点"
             ),
