@@ -8,7 +8,7 @@ class FavoriteSelectionModelTest {
         "https://192.168.5.46:5001/a%2Fb?q=x%20y#section", "https://old.example:1234/login", 0,
         localEndpoint = "https://192.168.5.46:5001/a%2Fb?q=x%20y#section", remoteEndpoint = "https://old.example:1234/login",
         localBinding = FavoriteEndpointBinding("mapping", "map-1", "lan"),
-        remoteBinding = FavoriteEndpointBinding("stun", "stun-1", "wan"))
+        remoteBinding = FavoriteEndpointBinding("stun", "stun-1", "wan"), protocol = "TCP")
 
     @Test fun copyAlwaysUsesExternalAddressAndNeverFallsBackToLan() {
         val old = card()

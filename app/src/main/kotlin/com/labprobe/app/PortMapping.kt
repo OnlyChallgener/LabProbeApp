@@ -80,6 +80,14 @@ private val PortSlate = Color(0xFF718096)
 private val PortSheetBg = Color(0xFFFFFFFF)
 private val PortPopupBg = Color(0xFFFFFFFF)
 
+enum class PortMapRuntimeMetric {
+    CONNECTIONS,
+    UPLOAD_BYTES,
+    DOWNLOAD_BYTES,
+    UPLOAD_PACKETS,
+    DOWNLOAD_PACKETS,
+}
+
 data class PortMapRuntime(
     val state: String = "stopped",
     val resolvedTarget: String = "",
@@ -92,7 +100,8 @@ data class PortMapRuntime(
     val startedAt: Long? = null,
     val expiresAt: Long? = null,
     val lastResolvedAt: Long? = null,
-    val lastError: String = ""
+    val lastError: String = "",
+    val availableMetrics: Set<PortMapRuntimeMetric> = emptySet(),
 )
 
 data class PortMapRule(
@@ -163,7 +172,7 @@ data class PortMapHistoryPoint(
     val downloadBytes: Long
 )
 
-private fun parsePortMapRule(o: JSONObject): PortMapRule {
+internal fun parsePortMapRule(o: JSONObject): PortMapRule {
     val r = o.optJSONObject("runtime") ?: JSONObject()
     fun nullableEpoch(obj: JSONObject, key: String): Long? {
         if (!obj.has(key) || obj.isNull(key)) return null
@@ -213,7 +222,17 @@ private fun parsePortMapRule(o: JSONObject): PortMapRule {
             startedAt = nullableEpoch(r, "startedAt"),
             expiresAt = nullableEpoch(r, "expiresAt") ?: nullableEpoch(o, "expiresAt"),
             lastResolvedAt = nullableEpoch(r, "lastResolvedAt"),
-            lastError = cleanApiText(r.optString("lastError"))
+            lastError = cleanApiText(r.optString("lastError")),
+            availableMetrics = buildSet {
+                val fields = mapOf(
+                    PortMapRuntimeMetric.CONNECTIONS to "activeConnections",
+                    PortMapRuntimeMetric.UPLOAD_BYTES to "totalUploadBytes",
+                    PortMapRuntimeMetric.DOWNLOAD_BYTES to "totalDownloadBytes",
+                    PortMapRuntimeMetric.UPLOAD_PACKETS to "totalUploadPackets",
+                    PortMapRuntimeMetric.DOWNLOAD_PACKETS to "totalDownloadPackets",
+                )
+                fields.forEach { (metric, key) -> if (r.has(key) && !r.isNull(key)) add(metric) }
+            },
         )
     )
 }
@@ -669,7 +688,6 @@ fun PortMappingScreen(
     var selectedId by remember(cache) { mutableStateOf<String?>(null) }
     var editDraft by remember(cache) { mutableStateOf<PortMapDraft?>(null) }
     var deleteTarget by remember(cache) { mutableStateOf<PortMapRule?>(null) }
-    var expandedIds by remember(cache) { mutableStateOf(emptySet<String>()) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(cache) {
@@ -827,7 +845,7 @@ fun PortMappingScreen(
     }
 
     val favoriteShortcuts = prefs.favoriteShortcuts()
-    val favoriteHints = remember(favoriteShortcuts) { favoriteServiceHintsByIp(favoriteShortcuts) }
+    val favoriteHints = remember(favoriteShortcuts) { favoriteServiceHints(favoriteShortcuts) }
     val visible = rules.filter {
         when (filter) {
             "运行中" -> it.isRunning
@@ -974,12 +992,8 @@ fun PortMappingScreen(
                         devices = devices,
                         favoriteHints = favoriteHints,
                         quickEndpoint = quickEndpoint,
-                        expanded = rule.id in expandedIds,
                         onOpenSsh = onOpenSsh,
                         onOpenWireGuard = onOpenWireGuard,
-                        onToggleExpand = {
-                            expandedIds = if (rule.id in expandedIds) expandedIds - rule.id else expandedIds + rule.id
-                        },
                         onOpen = { selectedId = rule.id },
                         onEdit = { editDraft = PortMapDraft.from(rule) },
                         onToggle = {
@@ -1084,10 +1098,35 @@ private fun portMapCardStatus(rule: PortMapRule): PortMapStatusUi = when {
     else -> PortMapStatusUi("已停止", PortSlate)
 }
 
-internal fun hasPortMapRuntimeData(rule: PortMapRule): Boolean =
-    rule.runtime.activeConnections > 0L || rule.runtime.totalUploadBytes > 0L ||
-        rule.runtime.totalDownloadBytes > 0L || rule.runtime.totalUploadPackets > 0L ||
-        rule.runtime.totalDownloadPackets > 0L
+internal fun portMapMetricValue(rule: PortMapRule, metric: PortMapRuntimeMetric, raw: String): String =
+    if (metric in rule.runtime.availableMetrics) raw else "—"
+
+@Composable
+private fun PortMapRuntimeStat(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Icon(icon, null, Modifier.size(12.dp), tint = color)
+        Text("$label $value", fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+    }
+}
+
+@Composable
+private fun PortMapRuntimeStats(rule: PortMapRule) {
+    fun value(metric: PortMapRuntimeMetric, raw: String): String = portMapMetricValue(rule, metric, raw)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        PortMapRuntimeStat("连接", value(PortMapRuntimeMetric.CONNECTIONS, rule.runtime.activeConnections.toString()), Icons.Rounded.Link, LabV2.InkMuted)
+        PortMapRuntimeStat("累计上传", value(PortMapRuntimeMetric.UPLOAD_BYTES, formatPortBytes(rule.runtime.totalUploadBytes)), Icons.Rounded.ArrowUpward, PortCyan)
+        PortMapRuntimeStat("累计下载", value(PortMapRuntimeMetric.DOWNLOAD_BYTES, formatPortBytes(rule.runtime.totalDownloadBytes)), Icons.Rounded.ArrowDownward, PortGreen)
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        PortMapRuntimeStat("上行包", value(PortMapRuntimeMetric.UPLOAD_PACKETS, rule.runtime.totalUploadPackets.toString()), Icons.Rounded.SwapVert, PortBlue)
+        PortMapRuntimeStat("下行包", value(PortMapRuntimeMetric.DOWNLOAD_PACKETS, rule.runtime.totalDownloadPackets.toString()), Icons.Rounded.SwapVert, PortGreen)
+    }
+}
 
 private fun portMapTimeSummary(rule: PortMapRule): String =
     if (rule.isRunning) "${portMapRunningText(rule)} · 剩余 ${portMapRemainingText(rule)}" else ""
@@ -1108,15 +1147,13 @@ private fun PortMapEndpointLine(label: String, endpoint: String) {
 }
 
 @Composable
-private fun PortMapRuleCard(
+internal fun PortMapRuleCard(
     rule: PortMapRule,
     devices: List<DeviceItem>,
-    favoriteHints: Map<String, String>,
+    favoriteHints: List<FavoriteServiceHint>,
     quickEndpoint: String,
-    expanded: Boolean,
     onOpenSsh: (String, Int) -> Unit,
     onOpenWireGuard: () -> Unit,
-    onToggleExpand: () -> Unit,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onToggle: () -> Unit,
@@ -1140,13 +1177,22 @@ private fun PortMapRuleCard(
         }
     }
     val profile = remember(device) { device?.let(::inferDeviceProfile) }
-    val recognition = remember(rule, devices, favoriteHints) {
+    val favoriteClientIp = when {
+        rule.targetType == "router_self" && rule.mode == "6to4" -> "127.0.0.1"
+        rule.targetType == "router_self" -> "::1"
+        rule.mode == "6to4" -> rule.targetIpv4
+        else -> listOf(rule.targetIpv6Snapshot, rule.targetIpv6)
+            .firstNotNullOfOrNull { normalizeIpv6(it) }
+            ?: device?.pickIpv6()?.best
+            ?: device?.ip.orEmpty()
+    }
+    val recognition = remember(rule, devices, favoriteHints, favoriteClientIp) {
         recognizeMappingService(
             name = rule.name,
             explicitType = rule.serviceType,
             protocol = rule.transportProtocol,
             internalPort = rule.targetPort.toString(),
-            clientIp = device?.ip.orEmpty(),
+            clientIp = favoriteClientIp,
             devices = devices,
             favoriteHints = favoriteHints,
         )
@@ -1177,7 +1223,7 @@ private fun PortMapRuleCard(
     val error = portMapErrorText(rule.runtime.lastError)
 
     Surface(
-        onClick = onToggleExpand,
+        onClick = onOpen,
         modifier = Modifier.fillMaxWidth(),
         shape = LabCoreSurface.CardShape,
         color = Color.White,
@@ -1253,23 +1299,7 @@ private fun PortMapRuleCard(
                 if (rule.enabled && rule.firewallState.isNotBlank() && rule.firewallState != "ready") {
                     Text(rule.firewallMessage.ifBlank { "IPv6 入站规则未就绪" }, fontSize = 10.sp, lineHeight = 13.sp, color = PortRed, softWrap = true, overflow = TextOverflow.Clip)
                 }
-                if (expanded && hasPortMapRuntimeData(rule)) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text("连接 ${rule.runtime.activeConnections}", fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Icon(Icons.Rounded.ArrowUpward, null, Modifier.size(12.dp), tint = PortCyan)
-                            Text(formatPortBytes(rule.runtime.totalUploadBytes), fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = PortCyan, maxLines = 1)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Icon(Icons.Rounded.ArrowDownward, null, Modifier.size(12.dp), tint = PortGreen)
-                            Text(formatPortBytes(rule.runtime.totalDownloadBytes), fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = PortGreen, maxLines = 1)
-                        }
-                    }
-                }
+                PortMapRuntimeStats(rule)
             }
         }
     }
@@ -2022,18 +2052,16 @@ private fun PortMapDetailPage(
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("流量统计", fontSize = LabTypography.Value.fontSize, lineHeight = LabTypography.Value.lineHeight, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        PortMapBigMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
-                        PortMapBigMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
-                        PortMapBigMetric(if (rule.transportProtocol.equals("UDP", true)) "活跃 Peer" else "当前连接", if (rule.transportProtocol.equals("UDP", true)) rule.runtime.activePeers.toString() else rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
+                        PortMapBigMetric("累计上传", portMapMetricValue(rule, PortMapRuntimeMetric.UPLOAD_BYTES, formatPortBytes(rule.runtime.totalUploadBytes)), PortBlue, Modifier.weight(1f))
+                        PortMapBigMetric("累计下载", portMapMetricValue(rule, PortMapRuntimeMetric.DOWNLOAD_BYTES, formatPortBytes(rule.runtime.totalDownloadBytes)), PortGreen, Modifier.weight(1f))
+                        PortMapBigMetric("当前连接", portMapMetricValue(rule, PortMapRuntimeMetric.CONNECTIONS, rule.runtime.activeConnections.toString()), PortCyan, Modifier.weight(1f))
                         PortMapBigMetric("最大连接", rule.maxConnections.toString(), PortSlate, Modifier.weight(1f))
                     }
-                    if (rule.transportProtocol.equals("UDP", true)) {
-                        Text(
-                            "上行包 ${rule.runtime.totalUploadPackets} · 下行包 ${rule.runtime.totalDownloadPackets}",
-                            fontSize = LabTypography.Caption.fontSize,
-                            color = LabV2.InkMuted,
-                        )
-                    }
+                    Text(
+                        "上行包 ${portMapMetricValue(rule, PortMapRuntimeMetric.UPLOAD_PACKETS, rule.runtime.totalUploadPackets.toString())} · 下行包 ${portMapMetricValue(rule, PortMapRuntimeMetric.DOWNLOAD_PACKETS, rule.runtime.totalDownloadPackets.toString())}",
+                        fontSize = LabTypography.Caption.fontSize,
+                        color = LabV2.InkMuted,
+                    )
                 }
             }
 

@@ -503,7 +503,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     LaunchedEffect(mappingCache) { refreshDevices() }
 
     val favorites = prefs.favoriteShortcuts()
-    val favoriteHints = remember(favorites) { favoriteServiceHintsByIp(favorites) }
+    val favoriteHints = remember(favorites) { favoriteServiceHints(favorites) }
     val listState = rememberLazyListState()
     val syncLabel = when {
         resource.value == null && resource.refreshing -> "读取中"
@@ -620,7 +620,7 @@ internal fun MappingTag(text: String, accent: Boolean = false, modifier: Modifie
 private fun NativePortRuleCard(
     rule: NativePortMapRule,
     devices: List<DeviceItem>,
-    favoriteHints: Map<String, String>,
+    favoriteHints: List<FavoriteServiceHint>,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -892,7 +892,7 @@ private fun UpnpPage(prefs: AppPrefs) {
     var actionError by remember { mutableStateOf("") }
     var confirmDisable by remember { mutableStateOf(false) }
     val favorites = prefs.favoriteShortcuts()
-    val favoriteHints = remember(favorites) { favoriteServiceHintsByIp(favorites) }
+    val favoriteHints = remember(favorites) { favoriteServiceHints(favorites) }
     val listState = rememberLazyListState()
     val error = actionError.ifBlank { resource.error }
     val mappingStatus = upnpMappingStatus(resource.value, resource.stale, resource.error)
@@ -991,7 +991,7 @@ private fun UpnpPage(prefs: AppPrefs) {
 private fun UpnpRuleCard(
     row: UpnpMapping,
     devices: List<DeviceItem>,
-    favoriteHints: Map<String, String>,
+    favoriteHints: List<FavoriteServiceHint>,
     status: String,
     statusColor: Color,
 ) {

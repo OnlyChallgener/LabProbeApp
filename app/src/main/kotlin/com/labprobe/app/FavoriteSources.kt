@@ -24,6 +24,7 @@ internal data class FavoriteAddressOption(
     val name: String,
     val endpoint: String,
     val serviceType: String,
+    val protocol: String = "",
 )
 
 internal fun favoriteSourceOptionLabel(option: FavoriteAddressOption): String {
@@ -70,18 +71,18 @@ internal fun favoriteAddressOptions(
     devices: List<DeviceItem> = emptyList(),
 ): List<FavoriteAddressOption> {
     val options = mutableListOf<FavoriteAddressOption>()
-    fun add(source: String, id: String, side: String, group: String, name: String, raw: String, type: String) {
+    fun add(source: String, id: String, side: String, group: String, name: String, raw: String, type: String, protocol: String = "") {
         if (raw.isBlank()) return
         val endpoint = cleanFavoriteEndpoint(raw, type)
         if (endpoint.isBlank() || isWildcardServiceEndpoint(endpoint)) return
         val uri = favoriteEndpointUri(endpoint) ?: return
         if (uri.host.isNullOrBlank()) return
-        options += FavoriteAddressOption(FavoriteEndpointBinding(source, id, side), group, name, endpoint, type)
+        options += FavoriteAddressOption(FavoriteEndpointBinding(source, id, side), group, name, endpoint, type, protocol)
     }
     stuns.forEach { rule ->
         val name = rule.name.ifBlank { "STUN ${rule.serviceType}" }
-        add("stun", rule.id, "lan", "STUN 规则", name, formatServiceHostPort(rule.targetIpv4, rule.targetPort), rule.serviceType)
-        if (rule.ready) add("stun", rule.id, "wan", "STUN 规则", name, rule.runtime.publicEndpoint, rule.serviceType)
+        add("stun", rule.id, "lan", "STUN 规则", name, formatServiceHostPort(rule.targetIpv4, rule.targetPort), rule.serviceType, rule.transportProtocol)
+        if (rule.ready) add("stun", rule.id, "wan", "STUN 规则", name, rule.runtime.publicEndpoint, rule.serviceType, rule.transportProtocol)
     }
     val status = runCatching { JSONObject(prefs.cacheStatus) }.getOrNull()
     val data = status?.optJSONObject("data") ?: status
@@ -91,8 +92,8 @@ internal fun favoriteAddressOptions(
     mappings.forEach { rule ->
         val type = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }
         val fallback = devices.firstOrNull { cleanMac(it.mac) == cleanMac(rule.targetMac) }?.pickIpv6()?.best.orEmpty()
-        add("mapping", rule.id, "lan", "IPv6 端口映射", rule.name, favoriteLocalEndpoint(rule, fallback), type)
-        if (publicV6 != null) add("mapping", rule.id, "wan", "IPv6 端口映射", rule.name, "[$publicV6]:${rule.listenPort}", type)
+        add("mapping", rule.id, "lan", "IPv6 端口映射", rule.name, favoriteLocalEndpoint(rule, fallback), type, rule.transportProtocol)
+        if (publicV6 != null) add("mapping", rule.id, "wan", "IPv6 端口映射", rule.name, "[$publicV6]:${rule.listenPort}", type, rule.transportProtocol)
     }
     val events = parseEvents(prefs.cacheEvents)
     parseWebhookEndpoints(status, events).forEach { row ->

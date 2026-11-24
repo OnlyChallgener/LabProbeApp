@@ -102,6 +102,7 @@ data class FavoriteShortcut(
     val localBinding: FavoriteEndpointBinding? = null,
     val remoteBinding: FavoriteEndpointBinding? = null,
     val iconAutomatic: Boolean = false,
+    val protocol: String = "",
 )
 
 private fun normalizeFavoriteType(value: String?): String = when {
@@ -157,6 +158,7 @@ private fun parseFavoriteShortcutDocument(raw: String): FavoriteShortcutDocument
             localBinding = parseFavoriteBinding(item.optJSONObject("localBinding")),
             remoteBinding = parseFavoriteBinding(item.optJSONObject("remoteBinding")),
             iconAutomatic = item.optBoolean("iconAutomatic", false),
+            protocol = item.optString("protocol").trim(),
         )
     }.sortedBy { it.order }
     return FavoriteShortcutDocument(items = items, dismissedStunRuleIds = dismissed)
@@ -185,6 +187,7 @@ internal fun serializeFavoriteShortcutsJson(items: List<FavoriteShortcut>): Stri
         item.localEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("localEndpoint", it) }
         item.remoteEndpoint.trim().takeIf { it.isNotBlank() }?.let { json.put("remoteEndpoint", it) }
         item.serviceType.trim().takeIf { it.isNotBlank() }?.let { json.put("serviceType", it) }
+        item.protocol.trim().takeIf { it.isNotBlank() }?.let { json.put("protocol", it) }
         array.put(json)
     }
     return array.toString()
@@ -347,6 +350,7 @@ internal fun favoriteFromPortMapRule(rule: PortMapRule, order: Int = 0, fallback
         remoteEndpoint = "",
         serviceType = serviceType,
         iconAutomatic = true,
+        protocol = rule.transportProtocol,
     )
 }
 
@@ -388,6 +392,7 @@ internal fun upsertMappingFavorite(
             localEndpoint = cleanFavoriteEndpoint(local, generated.serviceType),
             remoteEndpoint = cleanFavoriteEndpoint(syncedRemote.ifBlank { generated.remoteEndpoint }, generated.serviceType),
             serviceType = generated.serviceType,
+            protocol = rule.transportProtocol,
             lanUrl = cleanFavoriteEndpoint(local, generated.serviceType),
             wanUrl = cleanFavoriteEndpoint(wan.ifBlank { generated.wanUrl }, generated.serviceType),
         ).also { current[index] = it }
@@ -403,7 +408,7 @@ internal fun upsertMappingFavorite(
  * A STUN shortcut owns only its association and live remote endpoint.  The
  * rest is user-authored metadata and must survive routine endpoint refreshes.
  */
-private fun favoriteFromStunRule(
+internal fun favoriteFromStunRule(
     rule: StunRule,
     existing: FavoriteShortcut? = null,
     order: Int = 0,
@@ -448,6 +453,7 @@ private fun favoriteFromStunRule(
             localEndpoint = local,
             remoteEndpoint = remote,
             serviceType = rule.serviceType,
+            protocol = rule.transportProtocol,
         )
     }
 
@@ -461,11 +467,11 @@ private fun favoriteFromStunRule(
     } else {
         previousRemote
     }
-    // Do not regenerate title, icon, local address, scheme, path/query, or
-    // DDNS association.  Only the confirmed live remote endpoint is mutable.
+    // Keep user-authored metadata; sync the source-owned protocol and live remote endpoint.
     return existing.copy(
         type = "stun",
         stunRuleId = rule.id,
+        protocol = rule.transportProtocol,
         remoteEndpoint = liveRemote,
         wanUrl = liveRemote,
     )
@@ -659,6 +665,7 @@ internal fun syncExistingMappingFavorite(
         remoteEndpoint = cleanFavoriteEndpoint(syncedRemote, favoriteServiceType(rule)),
         wanUrl = cleanFavoriteEndpoint(wan, favoriteServiceType(rule)),
         serviceType = favoriteServiceType(rule),
+        protocol = rule.transportProtocol,
     )
     if (updated == old) return false
     current[index] = updated
@@ -741,6 +748,7 @@ private data class FavoriteDraft(
     val localEndpoint: String = "",
     val remoteEndpoint: String = "",
     val serviceType: String = "",
+    val protocol: String = "",
     val localBinding: FavoriteEndpointBinding? = null,
     val remoteBinding: FavoriteEndpointBinding? = null,
     val iconAutomatic: Boolean = true,
@@ -1534,19 +1542,24 @@ internal fun FavoriteEditorSheet(
             lanUrl = it.lanUrl, wanUrl = it.wanUrl, type = it.type, mappingId = it.mappingId,
             stunRuleId = it.stunRuleId, ddnsRecordId = it.ddnsRecordId, deviceId = it.deviceId,
             localEndpoint = it.localEndpoint.ifBlank { it.lanUrl }, remoteEndpoint = it.remoteEndpoint.ifBlank { it.wanUrl },
-            serviceType = it.serviceType, localBinding = it.localBinding, remoteBinding = it.remoteBinding)
+            serviceType = it.serviceType, protocol = it.protocol, localBinding = it.localBinding, remoteBinding = it.remoteBinding)
     } ?: FavoriteDraft()) }
     var error by remember { mutableStateOf("") }
     var iconMenu by remember { mutableStateOf(false) }
     var remoteExplicit by remember(existing?.id) { mutableStateOf(
         draft.remoteEndpoint.isNotBlank() && (draft.localBinding == null || draft.remoteBinding != draft.localBinding?.copy(side = "wan"))) }
 
-    fun update(next: FavoriteDraft) {
-        draft = if (next.iconAutomatic && next.iconType == "builtin") next.copy(iconValue = suggestedFavoriteIcon(next.title, next.serviceType)) else next
+    fun update(next: FavoriteDraft, preserveProtocol: Boolean = false) {
+        val adjusted = if (preserveProtocol || next.serviceType.equals(draft.serviceType, ignoreCase = true)) next else next.copy(
+            protocol = inferredFavoriteProtocol(next.serviceType).ifBlank { next.protocol },
+        )
+        draft = if (adjusted.iconAutomatic && adjusted.iconType == "builtin") {
+            adjusted.copy(iconValue = suggestedFavoriteIcon(adjusted.title, adjusted.serviceType))
+        } else adjusted
     }
     fun choose(option: FavoriteAddressOption, side: String) {
         var next = draft.copy(title = draft.title.ifBlank { option.name }, serviceType = draft.serviceType.ifBlank { option.serviceType },
-            type = "manual", mappingId = null, stunRuleId = null)
+            protocol = option.protocol.ifBlank { draft.protocol }, type = "manual", mappingId = null, stunRuleId = null)
         if (side == "lan") {
             next = next.copy(localEndpoint = option.endpoint, localBinding = option.binding)
             val remote = favoritePairedRemoteOption(option, addressOptions)
@@ -1556,7 +1569,7 @@ internal fun FavoriteEditorSheet(
             remoteExplicit = true
             next = next.copy(remoteEndpoint = option.endpoint, remoteBinding = option.binding, ddnsRecordId = null)
         }
-        update(next)
+        update(next, preserveProtocol = true)
     }
     LaunchedEffect(addressOptions) {
         val saved = FavoriteShortcut(draft.id, draft.title, draft.description, draft.iconType, draft.iconValue,
@@ -1584,7 +1597,8 @@ internal fun FavoriteEditorSheet(
         if (error.isNotBlank()) return
         onSave(FavoriteShortcut(draft.id, draft.title.trim(), draft.description.trim(), draft.iconType, draft.iconValue,
             lan, wan, existing?.order ?: 0, draft.type, draft.mappingId, draft.stunRuleId, draft.ddnsRecordId,
-            draft.deviceId, lan, wan, draft.serviceType.trim(), draft.localBinding, draft.remoteBinding, draft.iconAutomatic))
+            draft.deviceId, lan, wan, draft.serviceType.trim(), draft.localBinding, draft.remoteBinding, draft.iconAutomatic,
+            draft.protocol.trim()))
     }
     LabEditorDialog(title = if (existing == null) "添加收藏" else "编辑收藏", onDismiss = onDismiss, actions = {
         OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).heightIn(min = 40.dp), shape = LabV2.ButtonShape) { Text("取消") }

@@ -159,6 +159,37 @@ private fun applicationFromPort(protocol: String, port: Int): MappingApplication
     }
 }
 
+internal data class FavoriteServiceHint(
+    val host: String,
+    val port: Int,
+    val serviceType: String,
+    val protocol: String,
+    val iconId: String,
+    val title: String,
+    val mappingOwned: Boolean,
+)
+
+internal fun inferredFavoriteProtocol(serviceType: String): String = when (serviceType.uppercase(Locale.ROOT)) {
+    "SSH", "RDP", "HTTP", "HTTPS", "FTP", "SFTP", "PLEX", "EMBY", "JELLYFIN", "DLNA", "QBITTORRENT" -> "TCP"
+    "WIREGUARD", "UDP" -> "UDP"
+    "TCP" -> "TCP"
+    else -> ""
+}
+
+private fun favoriteHostMatches(left: String, right: String): Boolean {
+    if (left.equals(right.trim(), ignoreCase = true)) return true
+    val normalizedLeft = normalizeIpv6(left) ?: return false
+    return normalizedLeft == normalizeIpv6(right)
+}
+
+private fun favoriteProtocolMatches(favoriteProtocol: String, mappingProtocol: String): Boolean {
+    val favorite = favoriteProtocol.trim().uppercase(Locale.ROOT)
+    val mapping = mappingProtocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" }
+    if (favorite.isBlank() || favorite in setOf("ANY", "TCP+UDP")) return true
+    if (mapping in setOf("ANY", "TCP+UDP")) return true
+    return favorite == mapping
+}
+
 internal fun recognizeMappingService(
     name: String = "",
     explicitType: String = "",
@@ -166,17 +197,42 @@ internal fun recognizeMappingService(
     internalPort: String = "",
     clientIp: String = "",
     devices: List<DeviceItem> = emptyList(),
-    favoriteHints: Map<String, String> = emptyMap(),
+    favoriteHints: List<FavoriteServiceHint> = emptyList(),
 ): MappingServiceRecognition {
+    val normalizedProtocol = protocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" }
+    val mechanism = if (wordsIn(name.lowercase(Locale.ROOT), "nat-pmp") || "natpmp" in name.lowercase(Locale.ROOT).replace("-", ""))
+        "NAT-PMP" else ""
+    fun result(serviceType: String, iconId: String) = MappingServiceRecognition(serviceType, iconId, mechanism)
+
     val explicit = explicitType.trim()
     if (explicit.isNotBlank()) {
-        val icon = if (explicit.equals("Custom", ignoreCase = true)) favoriteIconForServiceType(protocol)
+        val icon = if (explicit.equals("Custom", ignoreCase = true)) favoriteIconForServiceType(normalizedProtocol)
         else favoriteIconForServiceType(explicit)
-        return MappingServiceRecognition(explicit, icon)
+        return result(explicit, icon)
     }
-    recognizeMappingApplication(name)?.let { return MappingServiceRecognition(it.serviceType, it.iconId) }
-    favoriteHints[clientIp.trim()]?.trim()?.takeIf(String::isNotBlank)?.let {
-        return MappingServiceRecognition(it, favoriteIconForServiceType(it))
+    recognizeMappingApplication(name)?.let { return result(it.serviceType, it.iconId) }
+    val port = internalPort.trim().toIntOrNull()
+    if (port != null) {
+        val hint = favoriteHints.asSequence()
+            .filter {
+                favoriteHostMatches(it.host, clientIp) && it.port == port &&
+                    favoriteProtocolMatches(it.protocol, normalizedProtocol)
+            }
+            .sortedWith(
+                compareByDescending<FavoriteServiceHint> { it.title.equals(name.trim(), ignoreCase = true) }
+                    .thenByDescending { it.mappingOwned }
+                    .thenBy { it.serviceType.isBlank() }
+            )
+            .firstOrNull()
+        if (hint != null) {
+            val type = hint.serviceType.ifBlank { recognizeMappingApplication(hint.title)?.serviceType.orEmpty() }
+            if (type.isNotBlank()) return result(type, hint.iconId)
+        }
+    }
+    if (port != null) {
+        applicationFromPort(normalizedProtocol, port)?.let {
+            return result(it.serviceType, it.iconId)
+        }
     }
     val device = devices.firstOrNull { it.ip.trim() == clientIp.trim() }
     val deviceText = device?.let {
@@ -184,39 +240,54 @@ internal fun recognizeMappingService(
             .joinToString(" ")
     }.orEmpty()
     val deviceMatch = recognizeMappingApplication(deviceText)
-    if (deviceMatch != null) return MappingServiceRecognition(deviceMatch.serviceType, deviceMatch.iconId)
-    val port = internalPort.trim().toIntOrNull()
-    val normalizedProtocol = protocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" }
+    if (deviceMatch != null) return result(deviceMatch.serviceType, deviceMatch.iconId)
     if (port != null) {
         val nasContext = deviceText.lowercase(Locale.ROOT).let {
             "fnos" in it || "飞牛" in it || "ugreen" in it || "绿联" in it
         }
         if (port in setOf(5666, 5667) && normalizedProtocol == "TCP") {
             return if ("fnos" in deviceText.lowercase(Locale.ROOT) || "飞牛" in deviceText)
-                MappingServiceRecognition("飞牛NAS", "fnos")
-            else if (nasContext) MappingServiceRecognition("NAS", "nas") else MappingServiceRecognition("", "tcp")
+                result("飞牛NAS", "fnos")
+            else if (nasContext) result("NAS", "nas") else result("", "tcp")
         }
         if (port in setOf(9443, 9999) && normalizedProtocol == "TCP") {
             return if ("ugreen" in deviceText.lowercase(Locale.ROOT) || "绿联" in deviceText)
-                MappingServiceRecognition("绿联NAS", "ugreen")
-            else if (nasContext) MappingServiceRecognition("NAS", "nas") else MappingServiceRecognition("", "tcp")
-        }
-        applicationFromPort(normalizedProtocol, port)?.let {
-            return MappingServiceRecognition(it.serviceType, it.iconId)
+                result("绿联NAS", "ugreen")
+            else if (nasContext) result("NAS", "nas") else result("", "tcp")
         }
     }
-    val mechanism = if (wordsIn(name.lowercase(Locale.ROOT), "nat-pmp") || "natpmp" in name.lowercase(Locale.ROOT).replace("-", ""))
-        "NAT-PMP" else ""
-    return MappingServiceRecognition("", if (normalizedProtocol == "UDP") "udp" else "tcp", mechanism)
+    return result("", if (normalizedProtocol == "UDP") "udp" else "tcp")
 }
 
-internal fun favoriteServiceHintsByIp(favorites: List<FavoriteShortcut>): Map<String, String> = buildMap {
+internal fun favoriteServiceHints(favorites: List<FavoriteShortcut>): List<FavoriteServiceHint> = buildList {
     favorites.forEach { favorite ->
-        val type = favorite.serviceType.trim()
+        val type = favorite.serviceType.trim().ifBlank {
+            recognizeMappingApplication(favorite.title)?.serviceType.orEmpty()
+        }
         if (type.isBlank()) return@forEach
         val endpoint = favorite.localEndpoint.ifBlank { favorite.lanUrl }
-        val host = parseQuickAccessEndpoint(endpoint)?.host?.trim().orEmpty()
-        if (host.isNotBlank()) putIfAbsent(host, type)
+        val parsed = parseQuickAccessEndpoint(endpoint) ?: return@forEach
+        val port = parsed.port ?: when (type.uppercase(Locale.ROOT)) {
+            "HTTPS" -> 443
+            "HTTP" -> 80
+            "SSH" -> 22
+            "RDP" -> 3389
+            else -> return@forEach
+        }
+        val protocol = favorite.protocol.trim().ifBlank { inferredFavoriteProtocol(type) }
+        val icon = if (favorite.iconType == "builtin") favorite.iconValue.ifBlank { favoriteIconForServiceType(type) }
+        else favoriteIconForServiceType(type)
+        add(
+            FavoriteServiceHint(
+                host = parsed.host.trim(),
+                port = port,
+                serviceType = type,
+                protocol = protocol,
+                iconId = icon,
+                title = favorite.title,
+                mappingOwned = favorite.type == "mapping",
+            )
+        )
     }
 }
 
