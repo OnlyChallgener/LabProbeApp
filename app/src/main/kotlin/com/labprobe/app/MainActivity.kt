@@ -159,6 +159,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -167,12 +168,15 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okhttp3.Call
 import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import org.json.JSONArray
 import org.json.JSONObject
 import android.graphics.Paint
@@ -12933,22 +12937,15 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
             if (method.equals("GET", true)) childGuardReadClient else childGuardClient,
         ))
 
-    internal fun requestText(
-        path: String,
-        method: String = "GET",
-        json: String? = null,
-        requestClient: OkHttpClient = client
-    ): String {
-        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+    private fun jsonRequest(path: String, method: String, json: String?, requestClient: OkHttpClient): Request {
         if (prefs.pendingHubIdentity && !(path == "/api/router/config" && method.equals("GET", true)))
             throw java.io.IOException("设置已保存，等待确认目标路由器身份")
         if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
-        val safeHub = validateHubTransportAddress(targetHub)
         val requestBuilder = Request.Builder()
-            .url(joinUrl(safeHub, path))
+            .url(joinUrl(validateHubTransportAddress(targetHub), path))
             .header("Accept", "application/json")
         val body = json?.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = when (method.uppercase(Locale.ROOT)) {
+        return when (method.uppercase(Locale.ROOT)) {
             "GET" -> requestBuilder.get().build()
             "POST" -> requestBuilder.post(body ?: "{}".toRequestBody("application/json; charset=utf-8".toMediaType())).build()
             "PUT" -> requestBuilder.put(body ?: "{}".toRequestBody("application/json; charset=utf-8".toMediaType())).build()
@@ -12956,45 +12953,74 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
             "DELETE" -> if (body == null) requestBuilder.delete().build() else requestBuilder.delete(body).build()
             else -> error("Unsupported method $method")
         }
+    }
 
+    private fun readTextResponse(request: Request, call: Call, response: okhttp3.Response): String {
+        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+        val text = response.body?.string().orEmpty()
+        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+        if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止")
+        routerApiException(request.url.encodedPath, text)?.let { throw it }
+        if (response.code == 401 || response.code == 403) {
+            throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
+        }
+        if (!response.isSuccessful) {
+            val serverMsg = runCatching {
+                JSONObject(text).let { root ->
+                    root.optString("error").ifBlank { root.optString("message") }.ifBlank { root.optString("errorCode") }
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+            if (serverMsg != null) throw HubHttpException(response.code, serverMsg)
+            if (request.url.encodedPath.contains("/api/router/") &&
+                !request.url.encodedPath.contains("/config") &&
+                !request.url.encodedPath.contains("/child-guard")
+            ) {
+                throw RouterStatusUnavailableException()
+            }
+            throw HubHttpException(response.code, "HTTP ${response.code}: $text")
+        }
+        return text
+    }
+
+    internal fun requestText(
+        path: String,
+        method: String = "GET",
+        json: String? = null,
+        requestClient: OkHttpClient = client
+    ): String {
+        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+        val request = jsonRequest(path, method, json, requestClient)
         val call = requestClient.newCall(request)
         HubConnectionRequests.register(connectionKey, connectionGeneration, call)
-        try { call.execute().use { response ->
-            HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
-            val text = response.body?.string().orEmpty()
-            HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
-            if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止")
-            routerApiException(request.url.encodedPath, text)?.let { throw it }
-            if (response.code == 401 || response.code == 403) {
-                throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
-            }
-            if (!response.isSuccessful) {
-                val serverMsg = runCatching {
-                    JSONObject(text).let { root ->
-                        root.optString("error").ifBlank { root.optString("message") }.ifBlank { root.optString("errorCode") }
-                    }
-                }.getOrNull()?.takeIf { it.isNotBlank() }
-                if (serverMsg != null) {
-                    throw HubHttpException(response.code, serverMsg)
-                }
-                if (request.url.encodedPath.contains("/api/router/") &&
-                    !request.url.encodedPath.contains("/config") &&
-                    !request.url.encodedPath.contains("/child-guard")
-                ) {
-                    throw RouterStatusUnavailableException()
-                }
-                throw HubHttpException(response.code, "HTTP ${response.code}: $text")
-            }
-            return text
-        }
+        try {
+            return call.execute().use { readTextResponse(request, call, it) }
         } catch (error: java.io.IOException) {
             HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
             if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止", error)
             throw error
-        } finally { HubConnectionRequests.remove(connectionKey, call) }
+        } finally {
+            HubConnectionRequests.remove(connectionKey, call)
+        }
     }
 
-    internal suspend fun downloadToStream(path: String, output: OutputStream): Long = withContext(Dispatchers.IO) {
+    internal suspend fun requestJsonShortCancellable(path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
+        withContext(Dispatchers.IO) {
+            HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+            val request = jsonRequest(path, method, body?.toString(), shortControlClient)
+            val call = shortControlClient.newCall(request)
+            HubConnectionRequests.register(connectionKey, connectionGeneration, call)
+            try {
+                JSONObject(call.awaitCancellableResponse().use { readTextResponse(request, call, it) })
+            } catch (error: java.io.IOException) {
+                HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+                if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止", error)
+                throw error
+            } finally {
+                HubConnectionRequests.remove(connectionKey, call)
+            }
+        }
+
+    internal suspend fun downloadToStream(path: String, output: OutputStream): Long = suspendCancellableCoroutine { continuation ->
         HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
         if (prefs.pendingHubIdentity) throw java.io.IOException("设置已保存，等待确认目标路由器身份")
         if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
@@ -13005,43 +13031,62 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
             .build()
         val call = client.newCall(request)
         HubConnectionRequests.register(connectionKey, connectionGeneration, call)
-        try {
-            call.execute().use { response ->
-                HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
-                if (!response.isSuccessful) {
-                    val message = response.body?.string().orEmpty()
-                    throw HubHttpException(response.code, message.ifBlank { "下载失败：HTTP ${response.code}" })
-                }
-                if (response.code == 401 || response.code == 403) {
-                    throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
-                }
-                val body = response.body ?: throw HubHttpException(response.code, "下载内容为空")
-                if (body.contentLength() > 5L * 1024L * 1024L) throw HubHttpException(response.code, "下载内容超过 5 MB 限制")
-                var total = 0L
-                val buffer = ByteArray(64 * 1024)
-                body.byteStream().use { input ->
-                    output.buffered().use { target ->
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            total += read
-                            if (total > 5L * 1024L * 1024L) throw HubHttpException(response.code, "下载内容超过 5 MB 限制")
-                            target.write(buffer, 0, read)
-                        }
-                        target.flush()
-                    }
-                }
-                HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
-                if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止")
-                total
-            }
-        } catch (error: java.io.IOException) {
-            HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
-            if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止", error)
-            throw error
-        } finally {
-            HubConnectionRequests.remove(connectionKey, call)
+        continuation.invokeOnCancellation {
+            call.cancel()
+            runCatching { output.close() }
         }
+        call.enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: Call, error: java.io.IOException) {
+                HubConnectionRequests.remove(connectionKey, call)
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+
+            override fun onResponse(call: Call, response: okhttp3.Response) {
+                if (!continuation.isActive) {
+                    response.close()
+                    HubConnectionRequests.remove(connectionKey, call)
+                    return
+                }
+                val worker = Thread({
+                    try {
+                        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+                        if (!response.isSuccessful) {
+                            val message = response.body?.string().orEmpty()
+                            throw HubHttpException(response.code, message.ifBlank { "下载失败：HTTP ${response.code}" })
+                        }
+                        if (response.code == 401 || response.code == 403) {
+                            throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
+                        }
+                        val body = response.body ?: throw HubHttpException(response.code, "下载内容为空")
+                        if (body.contentLength() > 5L * 1024L * 1024L) throw HubHttpException(response.code, "下载内容超过 5 MB 限制")
+                        var total = 0L
+                        val buffer = ByteArray(64 * 1024)
+                        body.byteStream().use { input ->
+                            output.buffered().use { target ->
+                                while (continuation.isActive) {
+                                    val read = input.read(buffer)
+                                    if (read < 0) break
+                                    total += read
+                                    if (total > 5L * 1024L * 1024L) throw HubHttpException(response.code, "下载内容超过 5 MB 限制")
+                                    target.write(buffer, 0, read)
+                                }
+                                target.flush()
+                            }
+                        }
+                        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+                        if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止")
+                        if (continuation.isActive) continuation.resume(total)
+                    } catch (error: Throwable) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
+                    } finally {
+                        response.close()
+                        HubConnectionRequests.remove(connectionKey, call)
+                    }
+                }, "LabProbe-download")
+                worker.isDaemon = true
+                worker.start()
+            }
+        })
     }
 
     private fun requireRouterStatus(root: JSONObject): JSONObject {

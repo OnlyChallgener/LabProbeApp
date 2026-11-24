@@ -69,7 +69,7 @@ internal class LuckyApi(prefs: AppPrefs) {
     }
 
     suspend fun read(path: String): JSONObject = withContext(Dispatchers.IO) {
-        hub.requestJsonShort("/api/lucky$path").also {
+        hub.requestJsonShortCancellable("/api/lucky$path").also {
             check(it.optBoolean("ok")) { it.optString("error", "Lucky 读取失败") }
         }
     }
@@ -140,7 +140,7 @@ internal class LuckyRefreshCoordinator(private val scope: CoroutineScope) {
     fun <T> submit(
         key: String,
         loader: suspend () -> T,
-        apply: (T) -> Unit,
+        apply: suspend (T) -> Unit,
         onError: (Throwable) -> Unit,
         onSettled: () -> Unit,
         replace: Boolean = false,
@@ -243,7 +243,7 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
             finally { busy = false }
         }
     }
-    fun <T> launchRefresh(key: String, replace: Boolean = false, loader: suspend () -> T, apply: (T) -> Unit) {
+    fun <T> launchRefresh(key: String, replace: Boolean = false, loader: suspend () -> T, apply: suspend (T) -> Unit) {
         val accepted = refreshCoordinator.submit(
             key, loader, apply,
             { error = it.message ?: "Lucky 读取失败，已保留上次数据" },
@@ -252,14 +252,23 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
         )
         if (accepted) activeRefreshes++
     }
-    fun refreshRulesNow(id: String, replace: Boolean = false) = launchRefresh("rules:$id", replace, { api.read("/$id/rules").getJSONArray("items").luckyRows() }) {
-        rules = it; snapshots.saveRules(id, it)
+    fun refreshRulesNow(id: String, replace: Boolean = false) = launchRefresh("rules:$id", replace, {
+        withContext(Dispatchers.IO) { api.read("/$id/rules").getJSONArray("items").luckyRows() }
+    }) {
+        rules = it
+        withContext(Dispatchers.IO) { snapshots.saveRules(id, it) }
     }
-    fun refreshCertsNow(id: String, replace: Boolean = false) = launchRefresh("certificates:$id", replace, { api.read("/$id/certificates").getJSONArray("items").luckyRows() }) {
-        certs = it; snapshots.saveCertificates(id, it)
+    fun refreshCertsNow(id: String, replace: Boolean = false) = launchRefresh("certificates:$id", replace, {
+        withContext(Dispatchers.IO) { api.read("/$id/certificates").getJSONArray("items").luckyRows() }
+    }) {
+        certs = it
+        withContext(Dispatchers.IO) { snapshots.saveCertificates(id, it) }
     }
-    fun refreshAccountsNow(id: String, replace: Boolean = false) = launchRefresh("accounts:$id", replace, { api.read("/$id/accounts").getJSONArray("items").luckyRows() }) {
-        accounts = it; snapshots.saveAccounts(id, it)
+    fun refreshAccountsNow(id: String, replace: Boolean = false) = launchRefresh("accounts:$id", replace, {
+        withContext(Dispatchers.IO) { api.read("/$id/accounts").getJSONArray("items").luckyRows() }
+    }) {
+        accounts = it
+        withContext(Dispatchers.IO) { snapshots.saveAccounts(id, it) }
     }
     fun refreshInstance(id: String, force: Boolean = false, replace: Boolean = false) {
         val cached = snapshots.instance(id)
@@ -279,9 +288,11 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
     }
     fun refreshConnections(force: Boolean = false, replace: Boolean = false) {
         if (!force && snapshots.connectionsFresh()) return
-        launchRefresh("connections", replace, { api.read("/connections").getJSONArray("items").luckyRows() }) { newConnections ->
+        launchRefresh("connections", replace, {
+            withContext(Dispatchers.IO) { api.read("/connections").getJSONArray("items").luckyRows() }
+        }) { newConnections ->
             connections = newConnections
-            snapshots.saveConnections(newConnections)
+            withContext(Dispatchers.IO) { snapshots.saveConnections(newConnections) }
             val active = newConnections.firstOrNull { it.optString("id") == selected?.optString("id") } ?: newConnections.firstOrNull()
             if (active?.optString("id") != selected?.optString("id")) {
                 refreshCoordinator.invalidate()
@@ -289,7 +300,6 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
                 rules = cached?.rules.orEmpty(); certs = cached?.certificates.orEmpty(); accounts = cached?.accounts.orEmpty()
             }
             selected = active
-            active?.optString("id")?.takeIf { it.isNotBlank() }?.let { refreshInstance(it, force, replace) }
         }
     }
     fun refresh(force: Boolean = false, replace: Boolean = false) {

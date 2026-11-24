@@ -2,7 +2,12 @@ package com.labprobe.app
 
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /** Cancels requests belonging to the connection the user has replaced. */
 internal object HubConnectionRequests {
@@ -29,4 +34,17 @@ internal object HubConnectionRequests {
         session.calls.toList().forEach { cancelled[it] = true; it.cancel() }
         session.calls.clear()
     }
+}
+
+internal suspend fun Call.awaitCancellableResponse(): Response = suspendCancellableCoroutine { continuation ->
+    enqueue(object : Callback {
+        override fun onFailure(call: Call, error: java.io.IOException) {
+            if (continuation.isActive) continuation.resumeWithException(error)
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            if (continuation.isActive) continuation.resume(response) else response.close()
+        }
+    })
+    continuation.invokeOnCancellation { cancel() }
 }

@@ -25,12 +25,18 @@ internal class LuckySnapshotStore(context: Context, hub: String, token: String) 
     private val key = MessageDigest.getInstance("SHA-256").digest("$hub\u0000$token".toByteArray())
         .joinToString("") { "%02x".format(it.toInt() and 255) }
     private var document = runCatching { JSONObject(prefs.getString(key, "{}") ?: "{}") }.getOrDefault(JSONObject())
+    @get:Synchronized
     val selectedId: String get() = document.optString("selectedId")
+    @get:Synchronized
     val selectedTab: Int get() = document.optInt("tab").coerceIn(0, 1)
+    @get:Synchronized
     val connectionsAt: Long get() = document.optLong("connectionsAt")
+    @Synchronized
     fun connections(): List<JSONObject> = rows(document.optJSONArray("connections"))
+    @Synchronized
     fun connectionsFresh(now: Long = System.currentTimeMillis()): Boolean =
         connectionsAt > 0L && now - connectionsAt < LUCKY_CONNECTIONS_TTL_MS
+    @Synchronized
     fun instance(id: String): LuckyInstanceSnapshot? {
         val data = document.optJSONObject("instances")?.optJSONObject(id) ?: return null
         return LuckyInstanceSnapshot(
@@ -38,7 +44,9 @@ internal class LuckySnapshotStore(context: Context, hub: String, token: String) 
             data.optLong("rulesAt"), data.optLong("certificatesAt"), data.optLong("accountsAt"),
         )
     }
+    @Synchronized
     fun select(id: String, tab: Int) { document.put("selectedId", id).put("tab", tab); persist() }
+    @Synchronized
     fun saveConnections(items: List<JSONObject>) {
         document.put("connections", JSONArray(items.map { only(it, setOf("id", "name", "url")) }))
         document.put("connectionsAt", System.currentTimeMillis())
@@ -46,6 +54,7 @@ internal class LuckySnapshotStore(context: Context, hub: String, token: String) 
         document.optJSONObject("instances")?.let { cached -> cached.keys().asSequence().toList().filter { it !in ids }.forEach(cached::remove) }
         persist()
     }
+    @Synchronized
     fun saveInstance(id: String, snapshot: LuckyInstanceSnapshot) {
         val rules = snapshot.rules.map { row ->
             only(row, setOf("id", "name", "domain", "backend", "port", "tls", "network", "listenIp", "enabled", "editable", "subruleCount")).also { safe ->
@@ -63,16 +72,19 @@ internal class LuckySnapshotStore(context: Context, hub: String, token: String) 
         persist()
     }
 
+    @Synchronized
     fun saveRules(id: String, rules: List<JSONObject>) {
         val current = instance(id) ?: LuckyInstanceSnapshot()
         saveInstance(id, current.copy(rules = rules, rulesAt = System.currentTimeMillis()))
     }
 
+    @Synchronized
     fun saveCertificates(id: String, certificates: List<JSONObject>) {
         val current = instance(id) ?: LuckyInstanceSnapshot()
         saveInstance(id, current.copy(certificates = certificates, certificatesAt = System.currentTimeMillis()))
     }
 
+    @Synchronized
     fun saveAccounts(id: String, accounts: List<JSONObject>) {
         val current = instance(id) ?: LuckyInstanceSnapshot()
         saveInstance(id, current.copy(accounts = accounts, accountsAt = System.currentTimeMillis()))
