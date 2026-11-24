@@ -252,8 +252,8 @@ class PortMapApi(private val prefs: AppPrefs) {
             online = root.optBoolean("agentOnline", false),
             router = cleanApiText(root.optString("router", "Router")),
             lastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
-            portMin = range.optInt("min", 20000),
-            portMax = range.optInt("max", 20020),
+            portMin = range.optInt("min", 1),
+            portMax = range.optInt("max", 65535),
             protocolVersion = cleanApiText(root.optString("protocolVersion")),
             hubVersion = cleanApiText(root.optString("hubVersion")),
             agentVersion = cleanApiText(root.optString("agentVersion")),
@@ -657,7 +657,7 @@ fun PortMappingScreen(
         mutableLongStateOf(cache.snapshotRevision)
     }
     var devices by remember(cache) { mutableStateOf(cache.devices) }
-    var agent by remember(cache) { mutableStateOf(cache.agent ?: PortMapAgentInfo(false, "Router", "", 20000, 20020)) }
+    var agent by remember(cache) { mutableStateOf(cache.agent ?: PortMapAgentInfo(false, "Router", "", 1, 65535)) }
     var canonicalDevicesLoaded by remember(cache) { mutableStateOf(false) }
     var hasPersistedDocument by remember(cache) {
         mutableStateOf(cache.rules.isNotEmpty())
@@ -993,9 +993,12 @@ fun PortMappingScreen(
 
 }
 
-private fun nextPort(rules: List<PortMapRule>, agent: PortMapAgentInfo): Int {
+internal fun nextPort(rules: List<PortMapRule>, agent: PortMapAgentInfo): Int {
     val used = rules.map { it.listenPort }.toSet()
-    return (agent.portMin..agent.portMax).firstOrNull { it !in used } ?: agent.portMin
+    val preferredStart = 20_000.coerceIn(agent.portMin, agent.portMax)
+    return (preferredStart..agent.portMax).firstOrNull { it !in used }
+        ?: (agent.portMin until preferredStart).firstOrNull { it !in used }
+        ?: agent.portMin
 }
 
 @Composable

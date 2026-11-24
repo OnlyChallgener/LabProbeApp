@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,6 +72,13 @@ class PortMapSnapshotAcceptanceTest {
                 hasPersistedDocument = true,
             ),
         )
+    }
+
+    @Test
+    fun fullPortRangeStillPrefersUnprivilegedDefault() {
+        val fullRange = PortMapAgentInfo(false, "Router", "", 1, 65535)
+        assertEquals(20_000, nextPort(emptyList(), fullRange))
+        assertEquals(20_001, nextPort(listOf(sampleRule("used")), fullRange))
     }
 
     private fun sampleRule(id: String) = PortMapRule(
