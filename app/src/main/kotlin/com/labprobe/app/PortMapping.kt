@@ -450,6 +450,8 @@ internal fun defaultPortMapServiceType(targetPort: Int, transportProtocol: Strin
     }
 }
 
+internal fun portMapFavoriteIconId(serviceType: String): String = suggestedFavoriteIcon("", serviceType)
+
 internal fun applyPortMapServiceTemplate(
     draft: PortMapDraft,
     template: PortMapServiceTemplate
@@ -1092,7 +1094,6 @@ private fun PortMapRuleCard(
             else -> false
         }
     }
-    val deviceProfile = device?.let(::inferDeviceProfile)
     val serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }
     val deviceName = when {
         rule.targetType == "router_self" -> "路由器本机"
@@ -1123,8 +1124,7 @@ private fun PortMapRuleCard(
                     ),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (deviceProfile != null) LabMiniDeviceIcon(deviceProfile.iconKey, deviceProfile.accent, sizeDp = 36)
-                    else LabV2ToolIcon(if (rule.targetType == "router_self") Icons.Rounded.Router else Icons.Rounded.Devices, PortBlue, size = 34)
+                    FavoriteIcon("builtin", portMapFavoriteIconId(serviceType), 34)
                 }
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {

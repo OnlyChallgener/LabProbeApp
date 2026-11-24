@@ -1475,7 +1475,7 @@ private fun FavoriteEmptyState(hasSearch: Boolean, onAction: () -> Unit) {
 }
 
 @Composable
-private fun FavoriteIcon(type: String, iconValue: String, size: Int) {
+internal fun FavoriteIcon(type: String, iconValue: String, size: Int) {
     val bitmap by produceState<ImageBitmap?>(initialValue = null, type, iconValue) {
         this.value = if (type == "local" || type == "url") {
             withContext(Dispatchers.IO) {

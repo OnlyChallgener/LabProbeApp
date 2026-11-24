@@ -81,6 +81,16 @@ class PortMapSnapshotAcceptanceTest {
         assertEquals(20_001, nextPort(listOf(sampleRule("used")), fullRange))
     }
 
+    @Test
+    fun serviceIconsReuseFavoritePresetsByProtocol() {
+        assertEquals("ssh", portMapFavoriteIconId("SSH"))
+        assertEquals("windows", portMapFavoriteIconId("RDP"))
+        assertEquals("wireguard", portMapFavoriteIconId("WireGuard"))
+        assertEquals("openvpn", portMapFavoriteIconId("OpenVPN"))
+        assertEquals("web", portMapFavoriteIconId("HTTPS"))
+        assertEquals("web", portMapFavoriteIconId("DNS"))
+    }
+
     private fun sampleRule(id: String) = PortMapRule(
         id = id,
         name = "测试映射",
