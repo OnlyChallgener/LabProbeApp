@@ -2,6 +2,7 @@ package com.labprobe.app
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +20,24 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
+
+internal class ForcedRefreshGate {
+    private val active = ConcurrentHashMap<String, AtomicInteger>()
+
+    fun tryBegin(key: String, force: Boolean): Boolean {
+        if (force) {
+            active.computeIfAbsent(key) { AtomicInteger(0) }.incrementAndGet()
+            return true
+        }
+        return !active.containsKey(key)
+    }
+
+    fun finish(key: String, force: Boolean) {
+        if (!force) return
+        val counter = active[key] ?: return
+        if (counter.decrementAndGet() <= 0) active.remove(key, counter)
+    }
+}
 
 /**
  * Single APP-side source of truth for router-control data.
@@ -58,6 +77,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private val inFlight = mutableMapOf<String, Deferred<Any?>>()
     private val generations = ConcurrentHashMap<String, AtomicLong>()
     private val configRevisions = ConcurrentHashMap<String, AtomicLong>()
+    private val forcedRefreshGate = ForcedRefreshGate()
 
     private val _status = MutableStateFlow(
         RouterResource(value = cache.hubStatus, updatedAt = cache.hubStatusAt)
@@ -468,13 +488,19 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     suspend fun refreshUpnp(force: Boolean = false) {
         val key = "upnp"
         if (_upnp.value.mutating) return
-        val seq = sequence(key).incrementAndGet()
         val old = _upnp.value
         if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.MAPPING_TTL_MS)) return
+        if (!forcedRefreshGate.tryBegin(key, force)) return
+        val seq = sequence(key).incrementAndGet()
         _upnp.value = old.copy(refreshing = true, error = "", generation = seq)
-        runCatching { coalesced(key) { api.upnp(force) } }
-            .onSuccess { latest -> applyUpnp(seq, latest) }
-            .onFailure { failure -> if (sequence(key).get() == seq) _upnp.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "UPnP 同步失败"), generation = seq) }
+        val requestKey = if (force) "$key:force" else key
+        try {
+            runCatching { coalesced(requestKey) { api.upnp(force) } }
+                .onSuccess { latest -> applyUpnp(seq, latest) }
+                .onFailure { failure -> if (sequence(key).get() == seq) _upnp.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "UPnP 同步失败"), generation = seq) }
+        } finally {
+            forcedRefreshGate.finish(key, force)
+        }
     }
 
     private fun applyUpnp(seq: Long, latest: UpnpState) {
@@ -488,13 +514,19 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     suspend fun refreshPortMappings(force: Boolean = false) {
         val key = "portMappings"
         if (_portMappings.value.mutating) return
-        val seq = sequence(key).incrementAndGet()
         val old = _portMappings.value
         if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.MAPPING_TTL_MS)) return
+        if (!forcedRefreshGate.tryBegin(key, force)) return
+        val seq = sequence(key).incrementAndGet()
         _portMappings.value = old.copy(refreshing = true, error = "", generation = seq)
-        runCatching { coalesced(key) { api.nativePortMappings(force) } }
-            .onSuccess { latest -> applyPortMappings(seq, latest) }
-            .onFailure { failure -> if (sequence(key).get() == seq) _portMappings.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "端口映射同步失败"), generation = seq) }
+        val requestKey = if (force) "$key:force" else key
+        try {
+            runCatching { coalesced(requestKey) { api.nativePortMappings(force) } }
+                .onSuccess { latest -> applyPortMappings(seq, latest) }
+                .onFailure { failure -> if (sequence(key).get() == seq) _portMappings.value = old.copy(refreshing = false, stale = old.value != null, error = message(failure, "端口映射同步失败"), generation = seq) }
+        } finally {
+            forcedRefreshGate.finish(key, force)
+        }
     }
 
     private fun applyPortMappings(seq: Long, latest: List<NativePortMapRule>) {

@@ -1510,6 +1510,9 @@ private fun favoriteBuiltinIcon(value: String): Pair<ImageVector, Color> = when 
     "cloud" -> Icons.Rounded.Cloud to Color(0xFF0EA5E9)
     "home" -> Icons.Rounded.Home to Color(0xFF16A34A)
     "download" -> Icons.Rounded.Download to Color(0xFF14B8A6)
+    "game" -> Icons.Rounded.SportsEsports to Color(0xFF0284C7)
+    "tcp" -> Icons.Rounded.SettingsEthernet to LabV2.Primary
+    "udp" -> Icons.Rounded.SettingsEthernet to LabV2.Cyan
     else -> Icons.Rounded.Language to LabV2.Primary
 }
 

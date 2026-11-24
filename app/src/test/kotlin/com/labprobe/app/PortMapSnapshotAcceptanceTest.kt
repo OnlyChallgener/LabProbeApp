@@ -89,6 +89,8 @@ class PortMapSnapshotAcceptanceTest {
         assertEquals("openvpn", portMapFavoriteIconId("OpenVPN"))
         assertEquals("web", portMapFavoriteIconId("HTTPS"))
         assertEquals("web", portMapFavoriteIconId("DNS"))
+        assertEquals("tcp", portMapFavoriteIconId("TCP"))
+        assertEquals("udp", portMapFavoriteIconId("UDP"))
     }
 
     private fun sampleRule(id: String) = PortMapRule(

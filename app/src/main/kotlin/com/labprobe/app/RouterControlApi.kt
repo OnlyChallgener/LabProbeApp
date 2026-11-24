@@ -369,6 +369,12 @@ data class UpnpState(
     val mappings: List<UpnpMapping> = emptyList()
 )
 
+internal fun upnpMappingStatus(state: UpnpState?, stale: Boolean, error: String): String = when {
+    state == null || stale || error.isNotBlank() -> "待同步"
+    !state.enabled -> "已停用"
+    else -> "已映射"
+}
+
 internal fun parseUpnp(o: JSONObject): UpnpState {
     val arr = o.optJSONArray("upnpds") ?: JSONArray()
     return UpnpState(
@@ -377,7 +383,7 @@ internal fun parseUpnp(o: JSONObject): UpnpState {
         mappings = (0 until arr.length()).mapNotNull { i ->
             arr.optJSONObject(i)?.let {
                 UpnpMapping(
-                    name = cleanApiText(it.optString("name")).ifBlank { "UPnP 映射" },
+                    name = cleanApiText(it.optString("name")),
                     clientIp = cleanApiText(it.optString("sip")),
                     protocol = cleanApiText(it.optString("proto")).uppercase(),
                     internalPort = cleanApiText(it.optString("sport")),

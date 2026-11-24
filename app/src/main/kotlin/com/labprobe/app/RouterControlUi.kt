@@ -313,7 +313,7 @@ fun MappingAndUpnpScreen(
     val scope = rememberCoroutineScope()
     val pager = rememberPagerState(initialPage = 0, pageCount = { 3 })
     Scaffold(
-        containerColor = RouterPage,
+        containerColor = Color.Transparent,
         topBar = {
             Surface(color = Color.White) {
                 Column {
@@ -323,7 +323,12 @@ fun MappingAndUpnpScreen(
             }
         }
     ) { padding ->
-        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().padding(padding), key = { it }) { page ->
+        HorizontalPager(
+            state = pager,
+            modifier = Modifier.fillMaxSize().padding(padding).labV2PageBackground(),
+            beyondViewportPageCount = 1,
+            key = { it },
+        ) { page ->
             when (page) {
                 0 -> PortMappingScreen(
                     prefs = prefs,
@@ -344,33 +349,125 @@ fun MappingAndUpnpScreen(
 @Composable
 private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
     val titles = listOf("IPv6映射", "端口映射", "UPnP")
-    Row(
-        Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 12.dp, vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = LabV2.FieldSoft,
+        border = BorderStroke(1.dp, LabV2.Border),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
     ) {
-        titles.forEachIndexed { index, title ->
-            val active = selected == index
-            Surface(
-                onClick = { onSelect(index) },
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                shape = RoundedCornerShape(14.dp),
-                color = if (active) Color(0xFFE8F1FF) else Color.Transparent,
-                tonalElevation = 0.dp,
-                shadowElevation = 0.dp,
-                border = if (active) BorderStroke(1.dp, RouterBlue.copy(alpha = .12f)) else null
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        title,
-                        style = LabTypography.Value.copy(
+        Row(
+            Modifier.fillMaxWidth().padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            titles.forEachIndexed { index, title ->
+                val active = selected == index
+                Surface(
+                    onClick = { onSelect(index) },
+                    modifier = Modifier.weight(1f).height(36.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    color = if (active) Color(0xFFE8F1FF) else Color.Transparent,
+                    border = if (active) BorderStroke(1.dp, RouterBlue.copy(alpha = .13f)) else null,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            title,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (active) RouterBlue else RouterMuted
-                        ),
-                        maxLines = 1
-                    )
+                            color = if (active) RouterBlue else RouterMuted,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun MappingOverviewSurface(
+    modifier: Modifier = Modifier,
+    height: Dp = 96.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(LabCoreSurface.CardShape)
+            .background(Brush.linearGradient(listOf(Color.White, Color(0xFFF3FAFF), Color(0xFFE7F5FF))))
+            .border(1.dp, LabCoreSurface.Border, LabCoreSurface.CardShape),
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.Center,
+            content = content,
+        )
+        MappingOverviewWave(Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+@Composable
+private fun MappingOverviewWave(modifier: Modifier = Modifier) {
+    Canvas(modifier.fillMaxWidth().height(24.dp)) {
+        val width = size.width
+        val height = size.height
+        val path = Path().apply {
+            moveTo(0f, height * .58f)
+            cubicTo(width * .22f, height * .12f, width * .42f, height * .95f, width * .64f, height * .48f)
+            cubicTo(width * .82f, height * .12f, width * .93f, height * .72f, width, height * .34f)
+            lineTo(width, height)
+            lineTo(0f, height)
+            close()
+        }
+        drawPath(path, RouterBlue.copy(alpha = .045f))
+        val second = Path().apply {
+            moveTo(0f, height * .82f)
+            cubicTo(width * .28f, height * .45f, width * .48f, height * .96f, width * .72f, height * .67f)
+            cubicTo(width * .86f, height * .50f, width * .95f, height * .78f, width, height * .60f)
+            lineTo(width, height)
+            lineTo(0f, height)
+            close()
+        }
+        drawPath(second, RouterBlue.copy(alpha = .03f))
+    }
+}
+
+@Composable
+internal fun MappingStat(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    iconTint: Color = RouterBlue,
+    numberSize: Int = 24,
+    labelSize: Int = 11,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        if (icon != null) {
+            Box(Modifier.size(24.dp).clip(CircleShape).background(iconTint.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(14.dp), tint = iconTint)
+            }
+        }
+        Text(value, fontSize = numberSize.sp, lineHeight = (numberSize + 2).sp, fontWeight = FontWeight.Bold, color = RouterBlue, maxLines = 1)
+        Text(label, fontSize = labelSize.sp, lineHeight = (labelSize + 2).sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
+    }
+}
+
+@Composable
+internal fun MappingStatusPill(text: String, color: Color, modifier: Modifier = Modifier, textSize: Int = 10) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(99.dp), color = color.copy(alpha = .10f)) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Box(Modifier.size(5.dp).clip(CircleShape).background(color))
+            Text(text, fontSize = textSize.sp, lineHeight = (textSize + 2).sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
         }
     }
 }
@@ -405,27 +502,69 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
 
     LaunchedEffect(mappingCache) { refreshDevices() }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        item {
-            CompactToolbar(
-                title = "路由器原生映射",
-                subtitle = "${rules.size} 条 · IPv4 NAT",
-                loading = resource.refreshing,
-                onRefresh = { scope.launch { repository.refreshPortMappings(false) } },
-                onAdd = { adding = true },
-                actionTouchSize = 44.dp,
-            )
+    val favorites = prefs.favoriteShortcuts()
+    val favoriteHints = remember(favorites) { favoriteServiceHintsByIp(favorites) }
+    val listState = rememberLazyListState()
+    val syncLabel = when {
+        resource.value == null && resource.refreshing -> "读取中"
+        resource.error.isNotBlank() || resource.stale -> "待同步"
+        resource.refreshing -> "同步中"
+        resource.value != null -> "已同步"
+        else -> "未读取"
+    }
+    val syncColor = when (syncLabel) {
+        "已同步" -> RouterGreen
+        "待同步" -> RouterAmber
+        else -> RouterBlue
+    }
+
+    Box(Modifier.fillMaxSize().labV2PageBackground()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 88.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                MappingOverviewSurface {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("路由器原生映射", fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1)
+                            MappingStat(rules.size.toString(), "条规则", icon = Icons.Rounded.CompareArrows)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MappingStatusPill(syncLabel, syncColor)
+                            IconButton(
+                                onClick = { scope.launch { repository.refreshPortMappings(true) } },
+                                enabled = !resource.refreshing,
+                                modifier = Modifier.size(32.dp),
+                            ) { LabRefreshIcon(resource.refreshing, Modifier.size(17.dp), RouterBlue) }
+                        }
+                    }
+                }
+            }
+            if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+            if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
+            if (resource.value == null) item { CompactMessage("端口映射正在后台预加载，页面无需等待", RouterBlue) }
+            if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { adding = true } }
+            items(rules, key = { "${it.ruleName}|${it.proto}|${it.srcPort}|${it.destIp}|${it.destPort}" }) { rule ->
+                NativePortRuleCard(
+                    rule = rule,
+                    devices = devices,
+                    favoriteHints = favoriteHints,
+                    onEdit = { editing = rule },
+                    onDelete = { deleteTarget = rule },
+                )
+            }
         }
-        if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
-        if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
-        if (resource.value == null) item { CompactMessage("端口映射正在后台预加载，页面无需等待", RouterBlue) }
-        if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { adding = true } }
-        items(rules, key = { it.ruleName }) { rule ->
-            NativePortRuleCard(rule, onEdit = { editing = rule }, onDelete = { deleteTarget = rule })
+        Surface(
+            onClick = { adding = true },
+            shape = CircleShape,
+            color = RouterBlue,
+            shadowElevation = 6.dp,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 20.dp).size(56.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新建端口映射", tint = Color.White, modifier = Modifier.size(30.dp)) }
         }
     }
 
@@ -459,67 +598,109 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
 }
 
 @Composable
-private fun NativePortRuleCard(rule: NativePortMapRule, onEdit: () -> Unit, onDelete: () -> Unit) {
-    var menu by remember(rule.ruleName) { mutableStateOf(false) }
-    val shape = LabCoreSurface.CompactShape
-    val protocol = rule.proto.uppercase(Locale.ROOT)
-    val protocolColor = if (protocol == "UDP") RouterCyan else RouterBlue
+internal fun MappingTag(text: String, accent: Boolean = false, modifier: Modifier = Modifier) {
     Surface(
-        onClick = onEdit,
-        modifier = Modifier.fillMaxWidth(),
-        shape = shape,
-        color = LabCoreSurface.Card,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LabCoreSurface.Border),
-        shadowElevation = 2.dp
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = if (accent) Color(0xFFE0F2FE) else LabCoreSurface.Inner,
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(38.dp).background(RouterBlue.copy(alpha = .10f), LabCoreSurface.InnerShape), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.CompareArrows, "端口映射", Modifier.size(20.dp), tint = RouterBlue)
-            }
-            Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(rule.ruleName, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    TinyBadge(protocol, protocolColor)
-                }
-                NativePortRouteSummary(rule)
-            }
-            Box {
-                IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.MoreVert, "更多操作", Modifier.size(17.dp), tint = RouterMuted) }
-                LabDropdownMenu(
-                    expanded = menu,
-                    onDismissRequest = { menu = false },
-                    shape = LabPopupShapes.Menu,
-                    containerColor = Color.White,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 9.dp, actionMenu = true) {
-                    LabDropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(15.dp)) }, onClick = { menu = false; onEdit() })
-                    LabDropdownMenuItem(text = { Text("删除", fontWeight = FontWeight.SemiBold, color = RouterRed) }, leadingIcon = { Icon(LabActionIcons.Delete, null, Modifier.size(15.dp), tint = RouterRed) }, onClick = { menu = false; onDelete() })
-                }
-            }
-        }
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            fontSize = 9.sp,
+            lineHeight = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (accent) RouterBlue else RouterMuted,
+            maxLines = 1,
+        )
     }
 }
 
 @Composable
-private fun NativePortRouteSummary(rule: NativePortMapRule) {
-    val sourcePort = rule.srcPort.ifBlank { "--" }
-    val destinationIp = rule.destIp.ifBlank { "--" }
-    val destinationPort = rule.destPort.takeIf { it.isNotBlank() }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("外网", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
-        Spacer(Modifier.width(3.dp))
-        Text("WAN:$sourcePort", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1)
-        Spacer(Modifier.width(5.dp))
-        Icon(Icons.Rounded.ArrowForward, null, Modifier.size(14.dp), tint = RouterMuted)
-        Spacer(Modifier.width(5.dp))
-        Text("内网", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
-        Spacer(Modifier.width(3.dp))
-        Text(destinationIp, Modifier.weight(1f), fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        destinationPort?.let { Text(":$it", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1) }
+private fun NativePortRuleCard(
+    rule: NativePortMapRule,
+    devices: List<DeviceItem>,
+    favoriteHints: Map<String, String>,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menu by remember(rule.ruleName, rule.proto, rule.destPort) { mutableStateOf(false) }
+    val protocol = rule.proto.uppercase(Locale.ROOT).ifBlank { "TCP" }
+    val recognition = remember(rule, devices, favoriteHints) {
+        recognizeMappingService(
+            name = rule.ruleName,
+            explicitType = "",
+            protocol = protocol,
+            internalPort = rule.destPort,
+            clientIp = rule.destIp,
+            devices = devices,
+            favoriteHints = favoriteHints,
+        )
+    }
+    val showServiceTag = recognition.serviceType.isNotBlank() &&
+        !recognition.serviceType.equals(protocol, true) &&
+        !recognition.serviceType.equals("Custom", true)
+    val destination = buildString {
+        append(rule.destIp.ifBlank { "--" })
+        if (rule.destPort.isNotBlank()) append(':').append(rule.destPort)
+    }
+    Surface(
+        onClick = onEdit,
+        modifier = Modifier.fillMaxWidth(),
+        shape = LabCoreSurface.CardShape,
+        color = Color.White,
+        border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .85f)),
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            FavoriteIcon("builtin", recognition.iconId, 40)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        rule.ruleName.ifBlank { "端口映射" },
+                        modifier = Modifier.weight(1f),
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RouterInk,
+                        softWrap = true,
+                        overflow = TextOverflow.Clip,
+                    )
+                    MappingTag(protocol)
+                    if (showServiceTag) MappingTag(recognition.serviceType, accent = true)
+                    if (recognition.mechanism.isNotBlank()) MappingTag(recognition.mechanism)
+                    Box {
+                        IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Rounded.MoreVert, "端口映射操作", Modifier.size(18.dp), tint = RouterMuted)
+                        }
+                        LabDropdownMenu(
+                            expanded = menu,
+                            onDismissRequest = { menu = false },
+                            shape = LabPopupShapes.Menu,
+                            containerColor = Color.White,
+                            shadowElevation = 8.dp,
+                            actionMenu = true,
+                        ) {
+                            LabDropdownMenuItem(text = { Text("编辑") }, onClick = { menu = false; onEdit() })
+                            LabDropdownMenuItem(text = { Text("删除", color = RouterRed) }, onClick = { menu = false; onDelete() })
+                        }
+                    }
+                }
+                Text(
+                    "WAN:${rule.srcPort.ifBlank { "--" }} → $destination",
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = RouterMuted,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+        }
     }
 }
 
@@ -705,65 +886,94 @@ private fun UpnpPage(prefs: AppPrefs) {
     val resource by repository.upnp.collectAsState()
     val state = resource.value ?: UpnpState()
     val scope = repository.commandScope
+    val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
+    val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
+    var devices by remember(mappingCache) { mutableStateOf(mappingCache.devices) }
     var actionError by remember { mutableStateOf("") }
     var confirmDisable by remember { mutableStateOf(false) }
+    val favorites = prefs.favoriteShortcuts()
+    val favoriteHints = remember(favorites) { favoriteServiceHintsByIp(favorites) }
+    val listState = rememberLazyListState()
     val error = actionError.ifBlank { resource.error }
+    val mappingStatus = upnpMappingStatus(resource.value, resource.stale, resource.error)
+    val mappingStatusColor = when (mappingStatus) {
+        "已映射" -> RouterGreen
+        "已停用" -> RouterMuted
+        else -> RouterAmber
+    }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { CompactToolbar("UPnP 服务", "${state.mappings.size} 条动态映射", false, { scope.launch { repository.refreshUpnp(false) } }, null) }
-        if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
-        if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
-        if (resource.value == null) item { CompactMessage("UPnP 快照正在后台预加载", RouterBlue) }
-        item {
-            PremiumCard(RouterCyan) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RouterGlyphIcon(RouterGlyph.Upnp, RouterCyan, Modifier.size(30.dp))
-                    Spacer(Modifier.width(9.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("自动端口发现", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
-                        Text("默认线路 ${state.wan} · ${state.mappings.size} 条活动映射", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                    }
-                    Switch(
-                        checked = state.enabled,
-                        enabled = !resource.mutating,
-                        onCheckedChange = { next ->
-                            if (!next) confirmDisable = true else scope.launch {
-                                repository.setUpnp(true, state.wan)
-                                    .onSuccess { actionError = "" }
-                                    .onFailure { actionError = it.message.orEmpty() }
-                            }
-                        },
-                        modifier = Modifier.scale(.84f),
-                        colors = SwitchDefaults.colors(checkedTrackColor = RouterCyan)
-                    )
+    LaunchedEffect(mappingCache) {
+        if (devices.isEmpty()) {
+            runCatching { loadCanonicalPortMappingDevices(deviceApi, mappingCache) }
+                .getOrNull()?.takeIf { it.isNotEmpty() }?.let {
+                    devices = it
+                    mappingCache.devices = it
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("默认线路", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                    Spacer(Modifier.weight(1f))
-                    CompactChoice("", state.wan, listOf("AUTO", "WAN"), Modifier.width(116.dp)) { wan ->
-                        scope.launch {
-                            repository.setUpnp(state.enabled, wan)
-                                .onSuccess { actionError = "" }
-                                .onFailure { actionError = it.message.orEmpty() }
+        }
+    }
+
+    Box(Modifier.fillMaxSize().labV2PageBackground()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                MappingOverviewSurface(height = 110.dp) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            Box(Modifier.size(36.dp).clip(CircleShape).background(RouterCyan.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
+                                RouterGlyphIcon(RouterGlyph.Upnp, RouterCyan, Modifier.size(20.dp))
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("UPnP 服务", fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1)
+                                Text("${state.mappings.size} 条动态映射", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
+                            }
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            IconButton(
+                                onClick = { scope.launch { repository.refreshUpnp(true) } },
+                                enabled = !resource.refreshing,
+                                modifier = Modifier.size(30.dp),
+                            ) { LabRefreshIcon(resource.refreshing, Modifier.size(16.dp), RouterBlue) }
+                            Switch(
+                                checked = state.enabled,
+                                enabled = !resource.mutating,
+                                onCheckedChange = { next ->
+                                    if (!next) confirmDisable = true else scope.launch {
+                                        repository.setUpnp(true, state.wan)
+                                            .onSuccess { actionError = "" }
+                                            .onFailure { actionError = it.message.orEmpty() }
+                                    }
+                                },
+                                modifier = Modifier.scale(.88f),
+                                colors = SwitchDefaults.colors(checkedTrackColor = RouterCyan),
+                            )
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("默认线路", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
+                            CompactChoice("", state.wan, listOf("AUTO", "WAN"), Modifier.width(112.dp)) { wan ->
+                                scope.launch {
+                                    repository.setUpnp(state.enabled, wan)
+                                        .onSuccess { actionError = "" }
+                                        .onFailure { actionError = it.message.orEmpty() }
+                                }
+                            }
+                        }
+                        MappingStatusPill(mappingStatus, mappingStatusColor)
                     }
                 }
             }
-        }
-        item { Text("动态映射", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, modifier = Modifier.padding(top = 2.dp, start = 2.dp)) }
-        if (resource.value != null && state.mappings.isEmpty()) item { CompactEmpty("暂无动态映射", "内网设备申请 UPnP 端口后会显示在这里", RouterGlyph.Upnp, null) }
-        items(state.mappings, key = { "${it.clientIp}-${it.protocol}-${it.externalPort}" }) { row ->
-            PremiumCard(if (row.protocol == "TCP") RouterBlue else RouterCyan) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(row.name, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            TinyBadge(row.protocol, if (row.protocol == "TCP") RouterBlue else RouterCyan)
-                        }
-                        Text(row.clientIp, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
-                        Text("内部 ${row.internalPort}  →  外部 ${row.externalPort}", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterInk)
-                    }
-                }
+            if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+            if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
+            if (resource.value == null) item { CompactMessage("UPnP 快照正在后台预加载", RouterBlue) }
+            item { Text("动态映射", fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = RouterInk, modifier = Modifier.padding(start = 2.dp, top = 2.dp)) }
+            if (resource.value != null && state.mappings.isEmpty()) item { CompactEmpty("暂无动态映射", "内网设备申请 UPnP 端口后会显示在这里", RouterGlyph.Upnp, null) }
+            items(state.mappings, key = { "${it.clientIp}|${it.protocol}|${it.internalPort}|${it.externalPort}|${it.name}" }) { row ->
+                UpnpRuleCard(row, devices, favoriteHints, mappingStatus, mappingStatusColor)
             }
         }
     }
@@ -775,6 +985,80 @@ private fun UpnpPage(prefs: AppPrefs) {
                 .onFailure { actionError = it.message.orEmpty() }
         }
     }) { confirmDisable = false }
+}
+
+@Composable
+private fun UpnpRuleCard(
+    row: UpnpMapping,
+    devices: List<DeviceItem>,
+    favoriteHints: Map<String, String>,
+    status: String,
+    statusColor: Color,
+) {
+    val protocol = row.protocol.uppercase(Locale.ROOT).ifBlank { "TCP" }
+    val device = devices.firstOrNull { it.ip.trim() == row.clientIp.trim() }
+    val recognition = remember(row, devices, favoriteHints) {
+        recognizeMappingService(
+            name = row.name,
+            protocol = protocol,
+            internalPort = row.internalPort,
+            clientIp = row.clientIp,
+            devices = devices,
+            favoriteHints = favoriteHints,
+        )
+    }
+    val title = device?.remark?.ifBlank { device.name }?.ifBlank { device.hostName }
+        ?.takeIf(String::isNotBlank)
+        ?: row.name.ifBlank { row.clientIp.ifBlank { "动态映射" } }
+    val showServiceTag = recognition.serviceType.isNotBlank() &&
+        !recognition.serviceType.equals(protocol, true) &&
+        !recognition.serviceType.equals("Custom", true)
+    val destination = buildString {
+        append(row.clientIp.ifBlank { "--" })
+        if (row.internalPort.isNotBlank()) append(':').append(row.internalPort)
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = LabCoreSurface.CardShape,
+        color = Color.White,
+        border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .85f)),
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            FavoriteIcon("builtin", recognition.iconId, 40)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        title,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RouterInk,
+                        softWrap = true,
+                        overflow = TextOverflow.Clip,
+                    )
+                    MappingTag(protocol)
+                    if (showServiceTag) MappingTag(recognition.serviceType, accent = true)
+                    if (recognition.mechanism.isNotBlank()) MappingTag(recognition.mechanism)
+                    MappingStatusPill(status, statusColor)
+                }
+                Text(
+                    "WAN:${row.externalPort.ifBlank { "--" }} → $destination",
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = RouterMuted,
+                    softWrap = true,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -2452,7 +2736,7 @@ private fun CompactEmpty(title:String,subtitle:String,glyph:RouterGlyph,onAdd:((
 private fun LoadingBlock(){Box(Modifier.fillMaxWidth().height(130.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.4.dp)}}
 
 @Composable
-private fun ConfirmDialog(
+internal fun ConfirmDialog(
     title: String,
     text: String,
     confirmText: String,

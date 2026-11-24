@@ -49,16 +49,14 @@ internal val favoriteIconPresets = listOf(
 
 /** Specific brand/service first; generic protocol and NAS fallback last. */
 internal fun suggestedFavoriteIcon(name: String, serviceType: String): String {
+    recognizeMappingApplication(name)?.let { return it.iconId }
     val text = name.lowercase(Locale.ROOT)
     val compact = text.replace(Regex("[\\s_\\-]+"), "")
     fun word(value: String) = Regex("(?<![a-z0-9])" + Regex.escape(value) + "(?![a-z0-9])").containsMatchIn(text)
     return when {
-        "ugreen" in compact || "绿联" in text -> "ugreen"
-        "synology" in compact || "群晖" in text || word("dsm") -> "dsm"
-        "fnos" in compact || "飞牛" in text -> "fnos"
-        "homeassistant" in compact || "家庭助理" in text -> "homeassistant"
         "wireguard" in compact || word("wg") -> "wireguard"
         "openvpn" in compact -> "openvpn"
+        "homeassistant" in compact || "家庭助理" in text -> "homeassistant"
         "istoreos" in compact || "istore" == compact -> "istoreos"
         "节点小宝" in text || "nodebaby" in compact -> "nodebaby"
         "openwrt" in compact -> "openwrt"
@@ -69,21 +67,156 @@ internal fun suggestedFavoriteIcon(name: String, serviceType: String): String {
         "alist" in compact -> "alist"
         "docker" in compact -> "docker"
         "更新仓" in text || "更新仓库" in text || word("repository") -> "repository"
-        "windows" in compact || "远程桌面" in text || word("rdp") -> "windows"
-        word("ssh") -> "ssh"
-        "摄像头" in text || "摄像机" in text || "监控" in text || word("camera") || word("ipc") -> "camera"
         "路由器" in text || word("router") -> "router"
-        word("nas") || "存储" in text -> "nas"
-        else -> when (serviceType.trim().uppercase(Locale.ROOT)) {
-            "WIREGUARD", "WG" -> "wireguard"
-            "OPENVPN" -> "openvpn"
-            "RDP", "WINDOWS", "远程桌面" -> "windows"
-            "SSH" -> "ssh"
-            "NAS" -> "nas"
-            "CAMERA", "IPC", "摄像头" -> "camera"
-            "ROUTER", "路由器" -> "router"
-            else -> "web"
+        else -> favoriteIconForServiceType(serviceType)
+    }
+}
+
+internal data class MappingApplicationMatch(
+    val serviceType: String,
+    val iconId: String,
+)
+
+internal data class MappingServiceRecognition(
+    val serviceType: String,
+    val iconId: String,
+    val mechanism: String = "",
+)
+
+private fun wordsIn(text: String, vararg values: String): Boolean =
+    values.any { Regex("(?<![a-z0-9])" + Regex.escape(it) + "(?![a-z0-9])").containsMatchIn(text) }
+
+/** Strong application words only. Short aliases are token-matched to avoid false positives. */
+internal fun recognizeMappingApplication(raw: String): MappingApplicationMatch? {
+    val text = raw.trim().lowercase(Locale.ROOT)
+    if (text.isBlank()) return null
+    val compact = text.replace(Regex("[\\s_\\-]+"), "")
+    return when {
+        "qbittorrent" in compact -> MappingApplicationMatch("qBittorrent", "download")
+        "transmission" in compact -> MappingApplicationMatch("Transmission", "download")
+        "bittorrent" in compact -> MappingApplicationMatch("BitTorrent", "download")
+        wordsIn(text, "rdp") || "remotedesktop" in compact || "远程桌面" in text ->
+            MappingApplicationMatch("RDP", "windows")
+        wordsIn(text, "ssh") || "openssh" in compact -> MappingApplicationMatch("SSH", "ssh")
+        wordsIn(text, "plex") -> MappingApplicationMatch("Plex", "media")
+        wordsIn(text, "emby") -> MappingApplicationMatch("Emby", "media")
+        wordsIn(text, "jellyfin") -> MappingApplicationMatch("Jellyfin", "media")
+        "minidlna" in compact || "readymedia" in compact || wordsIn(text, "dlna") ->
+            MappingApplicationMatch("DLNA", "media")
+        wordsIn(text, "smb") || "samba" in compact || wordsIn(text, "cifs") ->
+            MappingApplicationMatch("SMB", "nas")
+        wordsIn(text, "nfs") -> MappingApplicationMatch("NFS", "nas")
+        "onvif" in compact || wordsIn(text, "nvr") || wordsIn(text, "ipc") ||
+            wordsIn(text, "camera") || "监控" in text || "摄像" in text -> MappingApplicationMatch("视频监控", "camera")
+        "sftp" in compact -> MappingApplicationMatch("SFTP", "download")
+        wordsIn(text, "ftp") -> MappingApplicationMatch("FTP", "download")
+        "ugreen" in compact || "绿联" in text -> MappingApplicationMatch("绿联NAS", "ugreen")
+        "fnos" in compact || "飞牛" in text -> MappingApplicationMatch("飞牛NAS", "fnos")
+        "synology" in compact || "群晖" in text || wordsIn(text, "dsm") ->
+            MappingApplicationMatch("群晖NAS", "dsm")
+        wordsIn(text, "nas") || "存储" in text -> MappingApplicationMatch("NAS", "nas")
+        "steam" in compact || "playstation" in compact || "xbox" in compact ||
+            "nintendoswitch" in compact || wordsIn(text, "ps5") || "游戏" in text ->
+            MappingApplicationMatch("游戏联机", "game")
+        else -> null
+    }
+}
+
+internal fun favoriteIconForServiceType(raw: String): String = when (raw.trim().uppercase(Locale.ROOT)) {
+    "WIREGUARD", "WG" -> "wireguard"
+    "OPENVPN" -> "openvpn"
+    "RDP", "WINDOWS", "远程桌面" -> "windows"
+    "SSH" -> "ssh"
+    "NAS" -> "nas"
+    "绿联NAS" -> "ugreen"
+    "飞牛NAS" -> "fnos"
+    "群晖NAS" -> "dsm"
+    "CAMERA", "IPC", "摄像头", "视频监控" -> "camera"
+    "ROUTER", "路由器" -> "router"
+    "PLEX", "EMBY", "JELLYFIN", "DLNA", "MEDIA" -> "media"
+    "SMB", "NFS", "SAMBA" -> "nas"
+    "FTP", "SFTP", "QBITTORRENT", "TRANSMISSION", "BITTORRENT" -> "download"
+    "游戏联机", "GAME" -> "game"
+    "TCP" -> "tcp"
+    "UDP" -> "udp"
+    "HTTP", "HTTPS", "WEB", "DNS", "CUSTOM", "" -> "web"
+    else -> "web"
+}
+
+private fun applicationFromPort(protocol: String, port: Int): MappingApplicationMatch? {
+    val proto = protocol.trim().uppercase(Locale.ROOT)
+    return when {
+        port in setOf(22, 54133) && proto == "TCP" -> MappingApplicationMatch("SSH", "ssh")
+        port == 3389 && proto == "TCP" -> MappingApplicationMatch("RDP", "windows")
+        port == 443 && proto == "TCP" -> MappingApplicationMatch("HTTPS", "web")
+        port == 80 && proto == "TCP" -> MappingApplicationMatch("HTTP", "web")
+        port == 21 && proto == "TCP" -> MappingApplicationMatch("FTP", "download")
+        port == 23 && proto == "TCP" -> MappingApplicationMatch("Telnet", "tcp")
+        port == 53 -> MappingApplicationMatch("DNS", "web")
+        port == 51820 && proto == "UDP" -> MappingApplicationMatch("WireGuard", "wireguard")
+        port == 1194 -> MappingApplicationMatch("OpenVPN", "openvpn")
+        else -> null
+    }
+}
+
+internal fun recognizeMappingService(
+    name: String = "",
+    explicitType: String = "",
+    protocol: String = "",
+    internalPort: String = "",
+    clientIp: String = "",
+    devices: List<DeviceItem> = emptyList(),
+    favoriteHints: Map<String, String> = emptyMap(),
+): MappingServiceRecognition {
+    val explicit = explicitType.trim()
+    if (explicit.isNotBlank()) {
+        val icon = if (explicit.equals("Custom", ignoreCase = true)) favoriteIconForServiceType(protocol)
+        else favoriteIconForServiceType(explicit)
+        return MappingServiceRecognition(explicit, icon)
+    }
+    recognizeMappingApplication(name)?.let { return MappingServiceRecognition(it.serviceType, it.iconId) }
+    favoriteHints[clientIp.trim()]?.trim()?.takeIf(String::isNotBlank)?.let {
+        return MappingServiceRecognition(it, favoriteIconForServiceType(it))
+    }
+    val device = devices.firstOrNull { it.ip.trim() == clientIp.trim() }
+    val deviceText = device?.let {
+        listOf(it.remark, it.name, it.hostName, it.manufacture, it.devType, it.manualType, it.osType)
+            .joinToString(" ")
+    }.orEmpty()
+    val deviceMatch = recognizeMappingApplication(deviceText)
+    if (deviceMatch != null) return MappingServiceRecognition(deviceMatch.serviceType, deviceMatch.iconId)
+    val port = internalPort.trim().toIntOrNull()
+    val normalizedProtocol = protocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" }
+    if (port != null) {
+        val nasContext = deviceText.lowercase(Locale.ROOT).let {
+            "fnos" in it || "飞牛" in it || "ugreen" in it || "绿联" in it
         }
+        if (port in setOf(5666, 5667) && normalizedProtocol == "TCP") {
+            return if ("fnos" in deviceText.lowercase(Locale.ROOT) || "飞牛" in deviceText)
+                MappingServiceRecognition("飞牛NAS", "fnos")
+            else if (nasContext) MappingServiceRecognition("NAS", "nas") else MappingServiceRecognition("", "tcp")
+        }
+        if (port in setOf(9443, 9999) && normalizedProtocol == "TCP") {
+            return if ("ugreen" in deviceText.lowercase(Locale.ROOT) || "绿联" in deviceText)
+                MappingServiceRecognition("绿联NAS", "ugreen")
+            else if (nasContext) MappingServiceRecognition("NAS", "nas") else MappingServiceRecognition("", "tcp")
+        }
+        applicationFromPort(normalizedProtocol, port)?.let {
+            return MappingServiceRecognition(it.serviceType, it.iconId)
+        }
+    }
+    val mechanism = if (wordsIn(name.lowercase(Locale.ROOT), "nat-pmp") || "natpmp" in name.lowercase(Locale.ROOT).replace("-", ""))
+        "NAT-PMP" else ""
+    return MappingServiceRecognition("", if (normalizedProtocol == "UDP") "udp" else "tcp", mechanism)
+}
+
+internal fun favoriteServiceHintsByIp(favorites: List<FavoriteShortcut>): Map<String, String> = buildMap {
+    favorites.forEach { favorite ->
+        val type = favorite.serviceType.trim()
+        if (type.isBlank()) return@forEach
+        val endpoint = favorite.localEndpoint.ifBlank { favorite.lanUrl }
+        val host = parseQuickAccessEndpoint(endpoint)?.host?.trim().orEmpty()
+        if (host.isNotBlank()) putIfAbsent(host, type)
     }
 }
 

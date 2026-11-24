@@ -6,6 +6,7 @@ import androidx.compose.ui.draw.clip
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +18,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -399,7 +402,7 @@ data class PortMapDraft(
             targetIpv6Suffix = rule.targetIpv6Suffix,
             targetMac = rule.targetMac,
             targetPort = rule.targetPort.toString(),
-            serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) },
+            serviceType = rule.serviceType,
             transportProtocol = rule.transportProtocol.ifBlank { "TCP" },
             duration = if (rule.expiresAt == null) "永久" else "保持原有效期",
             originalExpiresAt = rule.expiresAt,
@@ -436,21 +439,16 @@ internal val PORT_MAP_SERVICE_TEMPLATES = listOf(
  */
 internal fun defaultPortMapServiceType(targetPort: Int, transportProtocol: String = "TCP"): String {
     val protocol = transportProtocol.trim().uppercase(Locale.ROOT).ifBlank { "TCP" }
-    return when {
-        targetPort == 22 && protocol == "TCP" -> "SSH"
-        targetPort == 23 && protocol == "TCP" -> "Telnet"
-        targetPort == 53 -> "DNS"
-        targetPort == 80 && protocol == "TCP" -> "HTTP"
-        targetPort == 443 && protocol == "TCP" -> "HTTPS"
-        targetPort == 1194 -> "OpenVPN"
-        targetPort == 3389 && protocol == "TCP" -> "RDP"
-        targetPort == 51820 && protocol == "UDP" -> "WireGuard"
-        protocol == "UDP" -> "Custom"
-        else -> "TCP"
-    }
+    val recognized = recognizeMappingService(
+        name = "",
+        protocol = protocol,
+        internalPort = targetPort.toString(),
+    )
+    return recognized.serviceType.ifBlank { if (protocol == "UDP") "UDP" else "TCP" }
 }
 
-internal fun portMapFavoriteIconId(serviceType: String): String = suggestedFavoriteIcon("", serviceType)
+internal fun portMapFavoriteIconId(serviceType: String, transportProtocol: String = ""): String =
+    favoriteIconForServiceType(serviceType.ifBlank { transportProtocol })
 
 internal fun applyPortMapServiceTemplate(
     draft: PortMapDraft,
@@ -667,9 +665,12 @@ fun PortMappingScreen(
     var loading by remember(cache) { mutableStateOf(cache.agent == null && initialRules.isEmpty()) }
     var refreshInFlight by remember(cache) { mutableStateOf(false) }
     var message by remember(cache) { mutableStateOf("") }
-    var filter by remember(cache) { mutableStateOf("全部") }
+    var filter by rememberSaveable(cache) { mutableStateOf("全部") }
     var selectedId by remember(cache) { mutableStateOf<String?>(null) }
     var editDraft by remember(cache) { mutableStateOf<PortMapDraft?>(null) }
+    var deleteTarget by remember(cache) { mutableStateOf<PortMapRule?>(null) }
+    var expandedIds by remember(cache) { mutableStateOf(emptySet<String>()) }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(cache) {
         val persistent = withContext(Dispatchers.IO) {
@@ -826,9 +827,10 @@ fun PortMappingScreen(
     }
 
     val favoriteShortcuts = prefs.favoriteShortcuts()
+    val favoriteHints = remember(favoriteShortcuts) { favoriteServiceHintsByIp(favoriteShortcuts) }
     val visible = rules.filter {
         when (filter) {
-            "运行中" -> it.effectiveActualState in setOf("starting", "running", "waiting_target", "waiting_agent", "draining") || it.syncState == "syncing" || (it.syncState == "stale" && it.effectiveDesiredState == "running")
+            "运行中" -> it.isRunning
             "已停止" -> it.effectiveActualState == "stopped" && it.syncState != "syncing"
             "已到期" -> it.effectiveActualState == "expired"
             else -> true
@@ -887,76 +889,140 @@ fun PortMappingScreen(
         return
     }
 
-    DetailShell("端口映射", "IPv6 入口 · Rust 四层反代 · 6→4 / 6→6", onBack, unifiedTypography = true, showHeader = !embedded, sectionGap = 6.dp) {
-        PortMapAgentCard(agent, loading) { scope.launch { refresh() } }
+    val runningCount = rules.count { it.isRunning }
+    val stoppedCount = rules.count { it.effectiveActualState == "stopped" && it.syncState != "syncing" }
+    val expiredCount = rules.count { it.effectiveActualState == "expired" }
+    val filterCounts = mapOf("全部" to rules.size, "运行中" to runningCount, "已停止" to stoppedCount, "已到期" to expiredCount)
 
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                listOf("全部", "运行中", "已停止", "已到期").forEach { item ->
-                    FilterChip(
-                        selected = filter == item,
-                        onClick = { filter = item },
-                        label = { Text(item, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold) },
-                        modifier = Modifier.padding(end = 5.dp),
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PortBlue, selectedLabelColor = Color.White)
+    Box(Modifier.fillMaxSize().labV2PageBackground()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 88.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                MappingOverviewSurface(height = 84.dp) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            MappingStat(rules.size.toString(), "条映射", icon = Icons.Rounded.SwapHoriz, numberSize = 14, labelSize = 14)
+                            Box(Modifier.width(1.dp).height(24.dp).background(LabCoreSurface.Border))
+                            MappingStat(runningCount.toString(), "个运行中", icon = Icons.Rounded.CheckCircle, iconTint = PortGreen, numberSize = 14, labelSize = 14)
+                        }
+                        MappingStatusPill(if (agent.online) "Agent 在线" else "Agent 离线", if (agent.online) PortGreen else PortRed, textSize = 14)
+                    }
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                        filterCounts.forEach { (item, count) ->
+                            FilterChip(
+                                selected = filter == item,
+                                onClick = { filter = item },
+                                label = { Text("$item $count", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) },
+                                modifier = Modifier.padding(end = 5.dp),
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PortBlue, selectedLabelColor = Color.White),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        onClick = { scope.launch { refresh() } },
+                        shape = CircleShape,
+                        color = Color.White,
+                        border = BorderStroke(1.dp, LabCoreSurface.Border),
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) { LabRefreshIcon(loading, Modifier.size(16.dp), PortBlue) }
+                    }
+                }
+            }
+            if (message.isNotBlank()) {
+                item {
+                    val informational = message.startsWith("Agent 在线") || message.contains("已保留") || message.contains("关联收藏")
+                    val messageColor = if (informational) Color(0xFFF59E0B) else PortRed
+                    Surface(shape = RoundedCornerShape(16.dp), color = messageColor.copy(alpha = .07f), border = BorderStroke(1.dp, messageColor.copy(alpha = .14f))) {
+                        Text(message, Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = messageColor, fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            if (loading && rules.isEmpty()) {
+                item {
+                    Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.4.dp, color = PortBlue)
+                    }
+                }
+            } else if (visible.isEmpty()) {
+                item {
+                    LabV2Card(compact = true) {
+                        Text("暂无IPv6映射", color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            } else {
+                items(visible, key = { it.id }) { rule ->
+                    val linkedFavorite = favoriteShortcuts.firstOrNull { it.mappingId == rule.id }
+                    val detectedIpv6 = ddnsSnapshot?.address?.detectedIpv6.orEmpty()
+                        .ifBlank { nativeDdnsResource.value.orEmpty().firstOrNull { it.enabled && it.useIpv6 }?.ip.orEmpty() }
+                    val quickEndpoint = linkedFavorite?.let {
+                        resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules, nativeDdnsResource.value.orEmpty())
+                    }.orEmpty().ifBlank {
+                        normalizeIpv6(detectedIpv6)?.let { formatServiceHostPort(it, rule.listenPort) }.orEmpty()
+                    }
+                    PortMapRuleCard(
+                        rule = rule,
+                        devices = devices,
+                        favoriteHints = favoriteHints,
+                        quickEndpoint = quickEndpoint,
+                        expanded = rule.id in expandedIds,
+                        onOpenSsh = onOpenSsh,
+                        onOpenWireGuard = onOpenWireGuard,
+                        onToggleExpand = {
+                            expandedIds = if (rule.id in expandedIds) expandedIds - rule.id else expandedIds + rule.id
+                        },
+                        onOpen = { selectedId = rule.id },
+                        onEdit = { editDraft = PortMapDraft.from(rule) },
+                        onToggle = {
+                            val action = if (rule.shouldStop) "stop" else "start"
+                            markSyncing(rule, action)
+                            scope.launch {
+                                if (!ownsPage()) return@launch
+                                runCatching { api.action(rule.id, action) }
+                                    .onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "操作失败" } }
+                                refresh(true)
+                            }
+                        },
+                        onDelete = { deleteTarget = rule },
                     )
                 }
             }
-            Spacer(Modifier.width(8.dp))
-            Surface(
-                onClick = { editDraft = PortMapDraft.new(nextPort(rules, agent).toString()) },
-                shape = CircleShape,
-                color = PortBlue,
-                shadowElevation = 5.dp,
-                modifier = Modifier.size(42.dp)
-            ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White) } }
         }
-
-        AnimatedVisibility(message.isNotBlank()) {
-            val informational = message.startsWith("Agent 在线") || message.contains("已保留") || message.contains("关联收藏")
-            val messageColor = if (informational) Color(0xFFF59E0B) else PortRed
-            Surface(shape = RoundedCornerShape(18.dp), color = messageColor.copy(alpha = .08f), border = androidx.compose.foundation.BorderStroke(1.dp, messageColor.copy(alpha = .15f))) {
-                Text(message, Modifier.padding(12.dp), color = messageColor, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
-            }
+        Surface(
+            onClick = { editDraft = PortMapDraft.new(nextPort(rules, agent).toString()) },
+            shape = CircleShape,
+            color = PortBlue,
+            shadowElevation = 6.dp,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 20.dp).size(56.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新建IPv6映射", tint = Color.White, modifier = Modifier.size(30.dp)) }
         }
+    }
 
-        if (loading && rules.isEmpty()) {
-            LabV2Card(compact = true) {
-                Text("正在后台同步映射快照，页面可以继续操作", color = LabV2.InkMuted, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
-            }
-        } else if (visible.isEmpty()) {
-            PortMapEmptyCard { editDraft = PortMapDraft.new(nextPort(rules, agent).toString()) }
-        } else {
-            visible.forEach { rule ->
-                val linkedFavorite = favoriteShortcuts.firstOrNull { it.mappingId == rule.id }
-                val detectedIpv6 = ddnsSnapshot?.address?.detectedIpv6.orEmpty()
-                    .ifBlank { nativeDdnsResource.value.orEmpty().firstOrNull { it.enabled && it.useIpv6 }?.ip.orEmpty() }
-                val quickEndpoint = linkedFavorite?.let {
-                    resolveFavoriteRemoteEndpoint(it, ddnsSnapshot, rules, nativeDdnsResource.value.orEmpty())
-                }.orEmpty().ifBlank {
-                    normalizeIpv6(detectedIpv6)?.let { formatServiceHostPort(it, rule.listenPort) }.orEmpty()
-                }
-                PortMapRuleCard(
-                    rule = rule,
-                    devices = devices,
-                    quickEndpoint = quickEndpoint,
-                    onOpenSsh = onOpenSsh,
-                    onOpenWireGuard = onOpenWireGuard,
-                    onOpen = { selectedId = rule.id },
-                    onEdit = { editDraft = PortMapDraft.from(rule) },
-                    onToggle = {
-                        val action = if (rule.shouldStop) "stop" else "start"
-                        markSyncing(rule, action)
-                        scope.launch {
-                            if (!ownsPage()) return@launch
-                            runCatching { api.action(rule.id, action) }
-                                .onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "操作失败" } }
-                            refresh(true)
-                        }
+    deleteTarget?.let { target ->
+        ConfirmDialog("删除映射？", "删除“${target.name}”后，外部访问会立即中断。", "删除", {
+            scope.launch {
+                if (!ownsPage()) return@launch
+                runCatching { api.delete(target.id) }
+                    .onSuccess {
+                        if (!ownsPage()) return@onSuccess
+                        commitRulesLocally(rules.filterNot { it.id == target.id })
+                        deleteTarget = null
+                        message = ""
                     }
-                )
+                    .onFailure { if (ownsPage()) message = uiMessageZh(it.message).ifBlank { "删除失败" } }
+                refresh(true)
             }
-        }
+        }) { deleteTarget = null }
     }
 
     if (editDraft != null) {
@@ -1003,66 +1069,41 @@ internal fun nextPort(rules: List<PortMapRule>, agent: PortMapAgentInfo): Int {
         ?: agent.portMin
 }
 
-@Composable
-private fun PortMapAgentCard(agent: PortMapAgentInfo, loading: Boolean, onRefresh: () -> Unit) {
-    val presenceState = agent.state.ifBlank { if (agent.online) "online" else "offline" }
-    val color = when (presenceState) {
-        "online" -> PortGreen
-        "stale" -> Color(0xFFF59E0B)
-        else -> PortRed
-    }
-    LabCoreCard(compact = true) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LabV2ToolIcon(Icons.Rounded.CompareArrows, PortBlue, size = 46)
-            Spacer(Modifier.width(11.dp))
-            Column(Modifier.weight(1f)) {
-                val routerName = agent.router.ifBlank { "Router" }.let { if (it.equals("router", ignoreCase = true)) "Router" else it }
-                Text(routerName, style = LabTypography.CardTitle.copy(color = LabV2.Ink))
-                val versions = listOfNotNull(
-                    agent.hubVersion.takeIf { it.isNotBlank() }?.let { "Hub $it" },
-                    agent.agentVersion.takeIf { it.isNotBlank() }?.let { "Agent $it" }
-                ).joinToString(" · ")
-                Text(versions.ifBlank { "Rust LabRelay · TCP ${agent.portMin}–${agent.portMax}" }, style = LabTypography.Supporting, maxLines = 2, overflow = TextOverflow.Clip)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(7.dp).background(color, CircleShape))
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        when (presenceState) {
-                            "online" -> "Agent 在线"
-                            "stale" -> "Agent 状态稍旧"
-                            else -> "Agent 未连接"
-                        },
-                        color = color,
-                        fontSize = LabTypography.Caption.fontSize,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    if (agent.lastSeenAt.isNotBlank()) Text(" · ${agent.lastSeenAt}", fontSize = LabTypography.Caption.fontSize, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (agent.protocolVersion.isNotBlank() || agent.capabilities.isNotBlank()) {
-                    Text(listOfNotNull(agent.protocolVersion.takeIf { it.isNotBlank() }?.let { "协议 $it" }, agent.capabilities.takeIf { it.isNotBlank() }).joinToString(" · "), style = LabTypography.Caption.copy(color = LabV2.InkFaint), maxLines = 2, overflow = TextOverflow.Clip)
-                }
-            }
-            IconButton(onClick = onRefresh) {
-                LabRefreshIcon(loading, Modifier.size(19.dp), PortBlue)
-            }
-        }
-    }
+private fun portMapCardStatus(rule: PortMapRule): PortMapStatusUi = when {
+    rule.syncState == "agent_offline" -> PortMapStatusUi("Agent 离线", PortRed)
+    rule.syncState == "syncing" -> PortMapStatusUi("同步中", PortBlue)
+    rule.syncState == "error" -> PortMapStatusUi("同步失败", PortRed)
+    rule.syncState == "stale" -> PortMapStatusUi("待同步", Color(0xFFF59E0B))
+    rule.effectiveActualState == "starting" -> PortMapStatusUi("启动中", PortBlue)
+    rule.effectiveActualState == "running" -> PortMapStatusUi("运行中", PortGreen)
+    rule.effectiveActualState == "waiting_target" -> PortMapStatusUi("等待目标", Color(0xFFF59E0B))
+    rule.effectiveActualState == "waiting_agent" -> PortMapStatusUi("等待 Agent", Color(0xFFF59E0B))
+    rule.effectiveActualState == "draining" -> PortMapStatusUi("停止中", Color(0xFFF59E0B))
+    rule.effectiveActualState == "expired" -> PortMapStatusUi("已到期", PortSlate)
+    rule.effectiveActualState == "error" -> PortMapStatusUi("执行失败", PortRed)
+    else -> PortMapStatusUi("已停止", PortSlate)
 }
 
+internal fun hasPortMapRuntimeData(rule: PortMapRule): Boolean =
+    rule.runtime.activeConnections > 0L || rule.runtime.totalUploadBytes > 0L ||
+        rule.runtime.totalDownloadBytes > 0L || rule.runtime.totalUploadPackets > 0L ||
+        rule.runtime.totalDownloadPackets > 0L
+
+private fun portMapTimeSummary(rule: PortMapRule): String =
+    if (rule.isRunning) "${portMapRunningText(rule)} · 剩余 ${portMapRemainingText(rule)}" else ""
+
 @Composable
-private fun PortMapEmptyCard(onAdd: () -> Unit) {
-    LabCoreCard {
-        Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            LabV2ToolIcon(Icons.Rounded.CompareArrows, PortBlue, size = 52)
-            Spacer(Modifier.height(10.dp))
-            Text("暂无端口映射设置", style = LabTypography.CardTitle)
-            Spacer(Modifier.height(13.dp))
-            Button(onClick = onAdd, shape = LabV2.ButtonShape) {
-                Icon(Icons.Rounded.Add, null)
-                Spacer(Modifier.width(5.dp))
-                Text("新建映射", style = LabTypography.Button)
-            }
+private fun PortMapEndpointLine(label: String, endpoint: String) {
+    val parsed = parseQuickAccessEndpoint(endpoint)
+    if (parsed?.port != null) {
+        val host = formatServiceHostPort(parsed.host)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Text("$label：", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+            Text(host, Modifier.weight(1f), fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, softWrap = true, overflow = TextOverflow.Clip)
+            Text(":${parsed.port}", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink, softWrap = false, maxLines = 1)
         }
+    } else {
+        Text("$label：${endpoint.ifBlank { "--" }}", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, softWrap = true, overflow = TextOverflow.Clip)
     }
 }
 
@@ -1070,15 +1111,19 @@ private fun PortMapEmptyCard(onAdd: () -> Unit) {
 private fun PortMapRuleCard(
     rule: PortMapRule,
     devices: List<DeviceItem>,
+    favoriteHints: Map<String, String>,
     quickEndpoint: String,
+    expanded: Boolean,
     onOpenSsh: (String, Int) -> Unit,
     onOpenWireGuard: () -> Unit,
+    onToggleExpand: () -> Unit,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onToggle: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val context = LocalContext.current
-    val status = portMapStatus(rule)
+    val status = portMapCardStatus(rule)
     val targetIpv6 = listOf(rule.targetIpv6, rule.targetIpv6Snapshot).mapNotNull(::normalizeIpv6).toSet()
     val device = devices.firstOrNull { candidate ->
         rule.targetMac.isNotBlank() && cleanMac(candidate.mac).equals(cleanMac(rule.targetMac), ignoreCase = true)
@@ -1094,12 +1139,27 @@ private fun PortMapRuleCard(
             else -> false
         }
     }
-    val serviceType = rule.serviceType.ifBlank { defaultPortMapServiceType(rule.targetPort, rule.transportProtocol) }
+    val profile = remember(device) { device?.let(::inferDeviceProfile) }
+    val recognition = remember(rule, devices, favoriteHints) {
+        recognizeMappingService(
+            name = rule.name,
+            explicitType = rule.serviceType,
+            protocol = rule.transportProtocol,
+            internalPort = rule.targetPort.toString(),
+            clientIp = device?.ip.orEmpty(),
+            devices = devices,
+            favoriteHints = favoriteHints,
+        )
+    }
+    val protocol = rule.transportProtocol.uppercase(Locale.ROOT).ifBlank { "TCP" }
+    val showServiceTag = recognition.serviceType.isNotBlank() &&
+        !recognition.serviceType.equals(protocol, true) &&
+        !recognition.serviceType.equals("Custom", true)
     val deviceName = when {
         rule.targetType == "router_self" -> "路由器本机"
-        device != null -> device.remark.ifBlank { device.name }.ifBlank { rule.name }
+        device != null -> device.remark.ifBlank { device.name }.ifBlank { device.hostName }.ifBlank { rule.name }
         rule.name.isNotBlank() -> rule.name
-        else -> "端口映射"
+        else -> "IPv6映射"
     }
     val targetRoute = rule.runtime.resolvedTarget.ifBlank {
         val host = when {
@@ -1111,54 +1171,104 @@ private fun PortMapRuleCard(
         }
         formatServiceHostPort(host, rule.targetPort)
     }
-    LabCoreCard(modifier = Modifier.clip(LabCoreSurface.CardShape).clickable(onClick = onOpen), compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp)) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    val quickServiceType = recognition.serviceType.ifBlank { protocol }
+    var menu by remember(rule.id) { mutableStateOf(false) }
+    val timeText = portMapTimeSummary(rule)
+    val error = portMapErrorText(rule.runtime.lastError)
+
+    Surface(
+        onClick = onToggleExpand,
+        modifier = Modifier.fillMaxWidth(),
+        shape = LabCoreSurface.CardShape,
+        color = Color.White,
+        border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .85f)),
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(Modifier.width(40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Box(
-                    Modifier.size(38.dp).clip(CircleShape).then(
-                        if (serviceSupportsQuickAccess(serviceType)) Modifier.clickable {
-                            val target = serviceQuickAccessTarget(serviceType, quickEndpoint)
+                    Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).then(
+                        if (serviceSupportsQuickAccess(quickServiceType)) Modifier.clickable {
+                            val target = serviceQuickAccessTarget(quickServiceType, quickEndpoint)
                             if (target == null) toast(context, "暂无访问地址")
                             else launchServiceQuickAccess(context, target, onOpenSsh, onOpenWireGuard)
                         } else Modifier
                     ),
-                    contentAlignment = Alignment.Center
+                    contentAlignment = Alignment.Center,
                 ) {
-                    FavoriteIcon("builtin", portMapFavoriteIconId(serviceType), 34)
+                    LabMiniDeviceIcon(profile?.iconKey ?: "unknown", profile?.accent ?: PortBlue, sizeDp = 36)
                 }
-                Spacer(Modifier.width(9.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(deviceName, fontSize = LabTypography.CardTitle.fontSize, lineHeight = LabTypography.CardTitle.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("WAN:${rule.listenPort} → $targetRoute", fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Clip)
-                }
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Surface(shape = RoundedCornerShape(99.dp), color = status.color.copy(alpha = .10f)) {
-                        Text(status.text, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), color = status.color, fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                    Text("${rule.transportProtocol} · $serviceType", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+                Text(rule.modeText, fontSize = 9.sp, lineHeight = 11.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
             }
-            Text(portMapStateTrail(rule), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = status.color, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                PortMapCompactMetric("连接", rule.runtime.activeConnections.toString(), PortCyan, Modifier.weight(1f))
-                PortMapCompactMetric("上传", formatPortBytes(rule.runtime.totalUploadBytes), PortBlue, Modifier.weight(1f))
-                PortMapCompactMetric("下载", formatPortBytes(rule.runtime.totalDownloadBytes), PortGreen, Modifier.weight(1f))
-            }
-            val error = portMapErrorText(rule.runtime.lastError)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    if (error.isNotBlank() && rule.syncState != "stale" && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) Text(error, style = LabTypography.Supporting.copy(color = PortRed), maxLines = 3, overflow = TextOverflow.Clip)
-                    if (rule.enabled && rule.firewallState.isNotBlank() && rule.firewallState != "ready") {
-                        Text(rule.firewallMessage.ifBlank { "IPv6 入站规则未就绪" }, style = LabTypography.Supporting.copy(color = PortRed), maxLines = 2, overflow = TextOverflow.Clip)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        deviceName,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LabV2.Ink,
+                        softWrap = true,
+                        overflow = TextOverflow.Clip,
+                    )
+                    MappingTag(protocol)
+                    if (showServiceTag) MappingTag(recognition.serviceType, accent = true)
+                    MappingStatusPill(status.text, status.color)
+                    Box {
+                        IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Rounded.MoreVert, "IPv6映射操作", Modifier.size(18.dp), tint = LabV2.InkMuted)
+                        }
+                        LabDropdownMenu(
+                            expanded = menu,
+                            onDismissRequest = { menu = false },
+                            shape = LabPopupShapes.Menu,
+                            containerColor = Color.White,
+                            shadowElevation = 8.dp,
+                            actionMenu = true,
+                        ) {
+                            LabDropdownMenuItem(text = { Text("详情") }, onClick = { menu = false; onOpen() })
+                            LabDropdownMenuItem(text = { Text("编辑") }, onClick = { menu = false; onEdit() })
+                            LabDropdownMenuItem(text = { Text(if (rule.shouldStop) "停止" else "启动") }, onClick = { menu = false; onToggle() })
+                            LabDropdownMenuItem(text = { Text("删除", color = PortRed) }, onClick = { menu = false; onDelete() })
+                        }
                     }
-                    Text(portMapTimeText(rule), fontSize = LabTypography.Supporting.fontSize, lineHeight = LabTypography.Supporting.lineHeight, color = LabV2.InkMuted, fontWeight = FontWeight.SemiBold, maxLines = 2)
                 }
-                OutlinedButton(onClick = onToggle, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (rule.shouldStop) PortRed else PortBlue)) {
-                    Text(if (rule.shouldStop) "停止" else "启动", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
+                if (quickEndpoint.isNotBlank()) {
+                    PortMapEndpointLine("外部", quickEndpoint)
+                } else {
+                    Text("外部：WAN:${rule.listenPort}", fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink, maxLines = 1)
                 }
-                Spacer(Modifier.width(5.dp))
-                OutlinedButton(onClick = onEdit, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp)) {
-                    Text("编辑", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold)
+                PortMapEndpointLine("目标", targetRoute)
+                if (timeText.isNotBlank()) {
+                    Text(timeText, fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 2, overflow = TextOverflow.Clip)
+                }
+                if (error.isNotBlank() && rule.syncState != "stale" && (rule.effectiveActualState in setOf("error", "expired") || rule.syncState == "error")) {
+                    Text(error, fontSize = 10.sp, lineHeight = 13.sp, color = PortRed, softWrap = true, overflow = TextOverflow.Clip)
+                }
+                if (rule.enabled && rule.firewallState.isNotBlank() && rule.firewallState != "ready") {
+                    Text(rule.firewallMessage.ifBlank { "IPv6 入站规则未就绪" }, fontSize = 10.sp, lineHeight = 13.sp, color = PortRed, softWrap = true, overflow = TextOverflow.Clip)
+                }
+                if (expanded && hasPortMapRuntimeData(rule)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text("连接 ${rule.runtime.activeConnections}", fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted, maxLines = 1)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Icon(Icons.Rounded.ArrowUpward, null, Modifier.size(12.dp), tint = PortCyan)
+                            Text(formatPortBytes(rule.runtime.totalUploadBytes), fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = PortCyan, maxLines = 1)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Icon(Icons.Rounded.ArrowDownward, null, Modifier.size(12.dp), tint = PortGreen)
+                            Text(formatPortBytes(rule.runtime.totalDownloadBytes), fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = PortGreen, maxLines = 1)
+                        }
+                    }
                 }
             }
         }
