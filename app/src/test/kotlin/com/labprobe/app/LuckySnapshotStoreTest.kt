@@ -1,5 +1,12 @@
 package com.labprobe.app
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -31,5 +38,67 @@ class LuckySnapshotStoreTest {
         assertTrue(LuckySnapshotStore(context, "http://hub-a/r/be72", "other-token").connections().isEmpty())
         restored.saveConnections(listOf(JSONObject().put("id", "a")))
         assertNull(restored.instance("b"))
+    }
+
+    @Test fun granularSnapshotsKeepResourceTimestampsAndListenerFields() {
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("labprobe_lucky_snapshots", 0).edit().clear().commit()
+        val store = LuckySnapshotStore(context, "http://hub/r/be72", "token")
+        store.saveInstance("a", LuckyInstanceSnapshot(
+            rules = emptyList(),
+            certificates = listOf(JSONObject().put("id", "cert")),
+            accounts = listOf(JSONObject().put("id", "account")),
+            certificatesAt = 1234L,
+            accountsAt = 5678L,
+        ))
+        store.saveRules("a", listOf(JSONObject().put("id", "rule").put("network", "tcp6").put("listenIp", "::")))
+        val restored = LuckySnapshotStore(context, "http://hub/r/be72", "token").instance("a")!!
+        assertEquals("tcp6", restored.rules.single().getString("network"))
+        assertEquals("::", restored.rules.single().getString("listenIp"))
+        assertEquals(1234L, restored.certificatesAt)
+        assertEquals(5678L, restored.accountsAt)
+        assertTrue(restored.rulesAt > 0L)
+    }
+
+    @Test fun refreshCoordinatorCoalescesAndDropsStaleResults() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val coordinator = LuckyRefreshCoordinator(scope)
+        val first = CompletableDeferred<Int>()
+        val second = CompletableDeferred<Int>()
+        var loads = 0
+        val applied = mutableListOf<Int>()
+        try {
+            assertTrue(coordinator.submit("rules", { loads++; first.await() }, { applied += it }, {}, {}))
+            assertFalse(coordinator.submit("rules", { loads++; second.await() }, { applied += it }, {}, {}))
+            assertEquals(1, loads)
+            coordinator.invalidate()
+            assertTrue(coordinator.submit("rules", { loads++; second.await() }, { applied += it }, {}, {}))
+            second.complete(2)
+            yield()
+            first.complete(1)
+            yield()
+            assertEquals(listOf(2), applied)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test fun postWriteRefreshReplacesAnActiveResourceRead() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val coordinator = LuckyRefreshCoordinator(scope)
+        val first = CompletableDeferred<Int>()
+        val second = CompletableDeferred<Int>()
+        val applied = mutableListOf<Int>()
+        try {
+            assertTrue(coordinator.submit("rules", { first.await() }, { applied += it }, {}, {}))
+            assertTrue(coordinator.submit("rules", { second.await() }, { applied += it }, {}, {}, replace = true))
+            second.complete(2)
+            yield()
+            first.complete(1)
+            yield()
+            assertEquals(listOf(2), applied)
+        } finally {
+            scope.cancel()
+        }
     }
 }

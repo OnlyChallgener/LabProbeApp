@@ -1,6 +1,11 @@
 package com.labprobe.app
 
 import org.json.JSONObject
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 internal data class LuckyRouteDisplay(val id: String, val domains: List<String>, val backends: List<String>, val type: String,
     val name: String = "", val enabled: Boolean = true, val editable: Boolean = false)
@@ -49,10 +54,31 @@ internal fun luckyRouteCopyText(rule: JSONObject, route: LuckyRouteDisplay): Str
     }
 }.trimEnd()
 
+internal fun luckyCertificateExpiry(value: String): Instant? {
+    val text = value.trim()
+    if (text.isBlank()) return null
+    return runCatching { OffsetDateTime.parse(text).toInstant() }.getOrNull()
+        ?: runCatching { Instant.parse(text) }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(text).atZone(ZoneId.systemDefault()).toInstant() }.getOrNull()
+}
+
+internal fun luckyCertificateStatus(cert: JSONObject, now: Instant = Instant.now()): String {
+    if (cert.optBoolean("issuing")) return "申请中"
+    if (cert.optBoolean("failed")) return "申请失败"
+    if (!cert.optBoolean("enabled")) return "已停用"
+    val expiry = luckyCertificateExpiry(cert.optString("expires")) ?: return "有效期未知"
+    val remainingDays = (expiry.epochSecond - now.epochSecond) / 86_400L
+    return when {
+        expiry.isBefore(now) -> "已过期"
+        remainingDays <= 30L -> "即将到期 · 剩余 $remainingDays 天"
+        else -> "有效 · 剩余 $remainingDays 天"
+    }
+}
+
 internal fun luckyCertificateCopyText(cert: JSONObject): String = buildString {
     appendLine(cert.optString("name"))
     cert.optJSONArray("domains")?.let { a -> (0 until a.length()).forEach { appendLine(a.optString(it)) } }
-    appendLine("到期：${cert.optString("expires").ifBlank { "待签发" }}")
+    appendLine(luckyCertificateStatus(cert))
     appendLine(if (cert.optBoolean("enabled")) "已启用" else "已停用")
     append(if (cert.optBoolean("automatic")) "Lucky 自动续签" else "导入证书")
 }

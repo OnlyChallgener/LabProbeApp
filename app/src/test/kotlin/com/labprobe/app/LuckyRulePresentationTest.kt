@@ -1,11 +1,13 @@
 package com.labprobe.app
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.Instant
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -29,5 +31,31 @@ class LuckyRulePresentationTest {
         assertEquals("正常", homeDdnsSubtitle(listOf(DdnsRecord(status = "ok"))))
         assertEquals("同步中", homeDdnsSubtitle(null))
         assertEquals("同步异常", homeDdnsSubtitle(emptyList(), "network unavailable"))
+    }
+
+    @Test fun certificateStatusDistinguishesValidityAndLifecycleStates() {
+        val now = Instant.parse("2026-11-24T00:00:00Z")
+        val cert = JSONObject().put("enabled", true).put("expires", "2026-12-25T00:00:00Z")
+        assertEquals("有效 · 剩余 31 天", luckyCertificateStatus(cert, now))
+        cert.put("expires", "2026-12-10T00:00:00Z")
+        assertEquals("即将到期 · 剩余 16 天", luckyCertificateStatus(cert, now))
+        cert.put("expires", "2026-11-23T00:00:00Z")
+        assertEquals("已过期", luckyCertificateStatus(cert, now))
+        cert.put("issuing", true)
+        assertEquals("申请中", luckyCertificateStatus(cert, now))
+        cert.put("issuing", false).put("failed", true)
+        assertEquals("申请失败", luckyCertificateStatus(cert, now))
+        cert.put("failed", false).put("enabled", false)
+        assertEquals("已停用", luckyCertificateStatus(cert, now))
+    }
+
+    @Test fun networkLabelsAndDownloadNamesAreSafeAndExplicit() {
+        assertEquals("IPv4", luckyNetworkLabel("tcp4"))
+        assertEquals("IPv6", luckyNetworkLabel("tcp6"))
+        assertEquals("IPv4 / IPv6", luckyNetworkLabel("tcp"))
+        val name = luckyCertificateFileName(JSONObject().put("domains", JSONArray().put("*.Example.com")))
+        assertTrue(name.endsWith(".zip"))
+        assertFalse(name.contains("*"))
+        assertFalse(name.contains("/"))
     }
 }

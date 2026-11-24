@@ -179,6 +179,7 @@ import android.graphics.Paint
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.io.FileDescriptor
 import java.io.DataOutputStream
 import java.net.DatagramPacket
@@ -12991,6 +12992,56 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
             if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止", error)
             throw error
         } finally { HubConnectionRequests.remove(connectionKey, call) }
+    }
+
+    internal suspend fun downloadToStream(path: String, output: OutputStream): Long = withContext(Dispatchers.IO) {
+        HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+        if (prefs.pendingHubIdentity) throw java.io.IOException("设置已保存，等待确认目标路由器身份")
+        if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
+        val request = Request.Builder()
+            .url(joinUrl(validateHubTransportAddress(targetHub), path))
+            .header("Accept", "application/zip")
+            .get()
+            .build()
+        val call = client.newCall(request)
+        HubConnectionRequests.register(connectionKey, connectionGeneration, call)
+        try {
+            call.execute().use { response ->
+                HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+                if (!response.isSuccessful) {
+                    val message = response.body?.string().orEmpty()
+                    throw HubHttpException(response.code, message.ifBlank { "下载失败：HTTP ${response.code}" })
+                }
+                if (response.code == 401 || response.code == 403) {
+                    throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
+                }
+                val body = response.body ?: throw HubHttpException(response.code, "下载内容为空")
+                if (body.contentLength() > 5L * 1024L * 1024L) throw HubHttpException(response.code, "下载内容超过 5 MB 限制")
+                var total = 0L
+                val buffer = ByteArray(64 * 1024)
+                body.byteStream().use { input ->
+                    output.buffered().use { target ->
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            if (total > 5L * 1024L * 1024L) throw HubHttpException(response.code, "下载内容超过 5 MB 限制")
+                            target.write(buffer, 0, read)
+                        }
+                        target.flush()
+                    }
+                }
+                HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+                if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止")
+                total
+            }
+        } catch (error: java.io.IOException) {
+            HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
+            if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止", error)
+            throw error
+        } finally {
+            HubConnectionRequests.remove(connectionKey, call)
+        }
     }
 
     private fun requireRouterStatus(root: JSONObject): JSONObject {

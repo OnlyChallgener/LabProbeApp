@@ -153,9 +153,19 @@ class LuckyUiContractTest {
         assertEquals(2, saved!!.getJSONArray("domains").length())
     }
 
+    @Test fun parentRuleCanOpenSubruleCreationWithoutEditingParent() {
+        var creates = 0
+        val rule = JSONObject("""{"id":"parent","name":"NAS","enabled":true,"tls":true,"port":2186,"routes":[{"id":"a","domains":["nas.example.com"],"backends":["http://192.168.5.46:80"],"type":"reverseproxy","enabled":true}]}""")
+        compose.setContent { MaterialTheme { Column(Modifier.padding(16.dp)) {
+            LuckyRuleCard(rule, false, {}, {}, {}, onAddSubrule = { creates++ })
+        } } }
+        compose.onNodeWithText("添加子规则").performClick()
+        assertEquals(1, creates)
+    }
+
     @Test fun editorSourceSelectionPreservesCustomPathAndQuery() {
         var saved: JSONObject? = null
-        val rule = JSONObject().put("name", "NAS").put("domain", "nas.example.com").put("backend", "http://192.168.5.46:80/be72?x=1").put("port", 8443).put("tls", true)
+        val rule = JSONObject().put("name", "NAS").put("domain", "nas.example.com").put("backend", "http://192.168.5.46:80/be72?x=1").put("port", 8443).put("tls", true).put("network", "tcp6").put("listenIp", "2001:db8::10")
         val option = FavoriteAddressOption(FavoriteEndpointBinding("stun", "s1", "wan"), "STUN 规则", "绿联", "203.0.113.9:6012", "HTTP")
         compose.setContent { MaterialTheme {
             LuckyRuleEditor(rule, false, "", listOf(option), {}, { saved = it })
@@ -165,8 +175,11 @@ class LuckyUiContractTest {
         compose.onNodeWithText("绿联 - 203.0.113.9:6012").performClick()
         compose.onNodeWithText("http://203.0.113.9:6012/be72?x=1").assertIsDisplayed()
         captureScreenRoboImage("build/outputs/roborazzi/lucky-basic-editor.png")
+        compose.onNodeWithText("IPv6").performClick()
         compose.onNodeWithText("保存").performClick()
         assertEquals("http://203.0.113.9:6012/be72?x=1", saved!!.getString("backend"))
+        assertEquals("tcp6", saved!!.getString("network"))
+        assertEquals("2001:db8::10", saved!!.getString("listenIp"))
         assertTrue(saved!!.getString("operationId").isNotBlank())
     }
 }
