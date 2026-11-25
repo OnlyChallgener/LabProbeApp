@@ -106,6 +106,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -151,6 +153,26 @@ internal data class RouterWanUi(
     val physicalPortId: Int,
     val physicalPortName: String,
     val linkSpeedMbps: Int,
+    val ifname: String = "",
+    val netmask: String = "",
+    val mtu: String = "",
+    val vlanId: String = "",
+    val mac: String = "",
+    val remark: String = "",
+    val operator: String = "",
+    val pppoeUsername: String = "",
+    val pppoePasswordConfigured: Boolean = false,
+    val broadbandPassword: String = "",
+    val dhcpLease: String = "",
+    val uploadBps: Long? = null,
+    val downloadBps: Long? = null,
+    val totalUploadBytes: Long? = null,
+    val totalDownloadBytes: Long? = null,
+    val dailyUploadBytes: Long? = null,
+    val dailyDownloadBytes: Long? = null,
+    val trafficSource: String = "",
+    val trafficObservedAt: Long = 0L,
+    val trafficComplete: Boolean = false,
 )
 
 internal data class RouterDashboardUi(
@@ -209,6 +231,17 @@ internal data class RouterDashboardUi(
 
 private fun JSONObject.obj(name: String): JSONObject = optJSONObject(name) ?: JSONObject()
 private fun JSONObject.array(name: String): JSONArray = optJSONArray(name) ?: JSONArray()
+
+private fun networkSection(network: JSONObject, name: String): JSONObject {
+    network.optJSONObject(name)?.let { return it }
+    val rows = network.optJSONArray(name) ?: return JSONObject()
+    for (index in 0 until rows.length()) {
+        val row = rows.optJSONObject(index) ?: continue
+        val rowName = row.optString("name").ifBlank { row.optString("intf_name") }.ifBlank { row.optString("ifname") }
+        if (rowName.equals(name, true)) return row
+    }
+    return JSONObject()
+}
 
 
 private fun JSONObject.stringList(name: String): List<String> {
@@ -326,20 +359,42 @@ private fun connectionType(network: JSONObject): String {
     return result.ifBlank { "--" }
 }
 
-internal fun parseRouterWans(root: JSONObject): List<RouterWanUi> {
+internal fun parseRouterWans(root: JSONObject, credentials: JSONObject? = null): List<RouterWanUi> {
     val rows = root.optJSONArray("wans") ?: return emptyList()
+    val telemetryRows = root.obj("telemetry").optJSONArray("wans")
+    val trafficByWan = buildMap {
+        for (index in 0 until (telemetryRows?.length() ?: 0)) {
+            val row = telemetryRows?.optJSONObject(index) ?: continue
+            val id = row.optString("wanId").trim().lowercase(Locale.ROOT)
+            if (id.isNotBlank()) put(id, row)
+        }
+    }
+    val credentialRows = credentials?.optJSONArray("wans")
+    val credentialByWan = buildMap {
+        for (index in 0 until (credentialRows?.length() ?: 0)) {
+            val row = credentialRows?.optJSONObject(index) ?: continue
+            val id = row.optString("wanId").trim().lowercase(Locale.ROOT)
+            if (id.isNotBlank()) put(id, row)
+        }
+    }
     return (0 until rows.length()).mapNotNull { index ->
         val row = rows.optJSONObject(index) ?: return@mapNotNull null
-        val wanId = row.optString("wanId").ifBlank { row.optString("logicalInterface") }.trim()
+        val wanId = row.optString("wanId").ifBlank { row.optString("logicalInterface") }.trim().lowercase(Locale.ROOT)
         if (wanId.isBlank()) return@mapNotNull null
+        val proto = protocolLabel(row.optString("proto"))
+        val traffic = trafficByWan[wanId] ?: row
+        val credential = credentialByWan[wanId]
+        val legacyCredential = credential ?: credentials?.takeIf { wanId == "wan" }
+        val passwordConfigured = credential?.optBoolean("passwordConfigured", false) == true ||
+            (legacyCredential?.optString("password").orEmpty().isNotBlank())
         RouterWanUi(
             wanId = wanId,
-            displayName = wanId.uppercase(Locale.ROOT),
+            displayName = if (wanId in setOf("wan", "wan1")) wanId.uppercase(Locale.ROOT) else row.optString("displayName").ifBlank { wanId.uppercase(Locale.ROOT) },
             configured = row.optBoolean("configured"),
             enabled = row.optBoolean("enabled"),
             online = row.optBoolean("online"),
             defaultEgress = row.optBoolean("defaultEgress"),
-            proto = protocolLabel(row.optString("proto")),
+            proto = proto,
             ipv4 = row.optString("ipv4").trim(),
             ipv6 = row.optString("ipv6").trim(),
             gateway = row.optString("gateway").trim(),
@@ -349,8 +404,36 @@ internal fun parseRouterWans(root: JSONObject): List<RouterWanUi> {
             physicalPortId = row.optInt("physicalPortId"),
             physicalPortName = row.optString("physicalPortName").trim(),
             linkSpeedMbps = row.optInt("linkSpeedMbps"),
+            ifname = row.optString("ifname").ifBlank { row.optString("l3Device") }.trim(),
+            netmask = row.optString("netmask").trim(),
+            mtu = row.optString("mtu").trim(),
+            vlanId = row.optString("vlanId").trim(),
+            mac = row.optString("mac").trim(),
+            remark = row.optString("remark").trim(),
+            operator = row.optString("operator").trim(),
+            pppoeUsername = if (proto == "PPPoE") {
+                row.optString("pppoeUsername").ifBlank { legacyCredential?.optString("username").orEmpty() }.trim()
+            } else "",
+            pppoePasswordConfigured = passwordConfigured,
+            broadbandPassword = if (proto == "PPPoE") legacyCredential?.optString("password").orEmpty() else "",
+            dhcpLease = row.optString("dhcpLease").trim(),
+            uploadBps = traffic.optionalLong("uploadBps"),
+            downloadBps = traffic.optionalLong("downloadBps"),
+            totalUploadBytes = traffic.optionalLong("totalUploadBytes"),
+            totalDownloadBytes = traffic.optionalLong("totalDownloadBytes"),
+            dailyUploadBytes = traffic.optionalLong("dailyUploadBytes"),
+            dailyDownloadBytes = traffic.optionalLong("dailyDownloadBytes"),
+            trafficSource = traffic.optString("trafficSource").trim(),
+            trafficObservedAt = traffic.optLong("trafficObservedAt"),
+            trafficComplete = traffic.optBoolean("trafficComplete"),
         )
-    }
+    }.distinctBy { it.wanId }
+}
+
+private fun JSONObject.optionalLong(key: String): Long? = when (val value = opt(key)) {
+    is Number -> value.toLong()
+    is String -> value.trim().toLongOrNull()
+    else -> null
 }
 
 internal fun parseRouterPorts(details: JSONObject): List<RouterPortUi> {
@@ -420,26 +503,28 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
     }
 
     val ports = parseRouterPorts(details)
+    val parsedWans = parseRouterWans(root, credentials)
+    val multiWan = parsedWans.count { it.configured } > 1
+    val networkLan = networkSection(network, "lan")
+    val networkWan = networkSection(network, "wan")
 
-    val fallbackNetmask = recursiveString(network, setOf("netmask", "subnetmask", "mask")) { it.count { ch -> ch == '.' } == 3 }
-    val fallbackVlan = recursiveString(network, setOf("vlanid", "vlan_id", "vid")) { value -> value.toIntOrNull()?.let { it in 0..4094 } == true }
-    val fallbackLanIp = recursiveString(network, setOf("lanip", "lan_ip", "ipaddr", "ipaddress")) {
-        it.startsWith("192.168.") || it.startsWith("10.") || it.startsWith("172.")
-    }
-    val fallbackGateway = recursiveString(network, setOf("gateway", "gw", "gatewayip")) { isIpText(it) }
-    val fallbackMtu = recursiveString(network, setOf("mtu")) { it.toIntOrNull() != null }
-    val fallbackLease = recursiveString(network, setOf("leasetime", "lease", "lease_time", "dhcp_lease", "leaseText"))
-    val fallbackUplink = recursiveString(network, setOf("wanif", "wan_if", "interface", "uplink", "upstream"))
+    val fallbackNetmask = networkLan.optString("netmask").ifBlank { networkLan.optString("mask") }
+    val fallbackVlan = networkLan.optString("vlanid").ifBlank { networkLan.optString("vlanId") }
+    val fallbackLanIp = networkLan.optString("ipaddr").ifBlank { networkLan.optString("ip") }
+    val fallbackGateway = if (multiWan) "" else recursiveString(network, setOf("gateway", "gw", "gatewayip")) { isIpText(it) }
+    val fallbackMtu = if (multiWan) "" else recursiveString(network, setOf("mtu")) { it.toIntOrNull() != null }
+    val fallbackLease = networkLan.optString("leasetime").ifBlank { networkLan.optString("leaseTime") }
+    val fallbackUplink = networkWan.optString("name").ifBlank { networkWan.optString("intf_name") }
 
-    val wanDns = wan.stringList("dnsServers").ifEmpty { recursiveDns(network) }
+    val wanDns = wan.stringList("dnsServers").ifEmpty { if (multiWan) emptyList() else recursiveDns(network) }
     val wanOperator = wan.optString("operator").ifBlank { "--" }
     val wanInterfaceDisplay = wan.optString("interfaceDisplay").ifBlank { "WAN" }
-    val lanMac = credentials?.optString("lanMac").orEmpty().ifBlank { lan.optString("mac") }.ifBlank { "--" }
-    val broadbandRemark = lan.optString("broadbandRemark")
-        .ifBlank { recursiveString(network, setOf("service", "serviceName")) }
+    val lanMac = credentials?.optString("lanMac").orEmpty().ifBlank { networkLan.optString("mac") }.ifBlank { "--" }
+    val broadbandRemark = if (multiWan) "--" else lan.optString("broadbandRemark")
+        .ifBlank { networkWan.optString("service").ifBlank { networkWan.optString("serviceName") } }
         .ifBlank { "--" }
-    val broadbandUser = credentials?.optString("username").orEmpty().ifBlank { "--" }
-    val broadbandPassword = credentials?.optString("password").orEmpty().ifBlank { "--" }
+    val broadbandUser = if (multiWan) "--" else credentials?.optString("username").orEmpty().ifBlank { "--" }
+    val broadbandPassword = if (multiWan) "--" else credentials?.optString("password").orEmpty().ifBlank { "--" }
     val apBands = ap.stringList("bands").ifEmpty { legacyBands.distinct() }
     val apChannels = ap.stringList("channels").ifEmpty { legacyChannels.distinct() }
     val apChannelUtilization = ap.stringList("channelUtilization")
@@ -501,7 +586,38 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         bands = apBands.joinToString(" / ").ifBlank { "--" },
         channels = apChannels.joinToString(" / ").ifBlank { "--" },
         apEnabled = apOnline,
-        wans = parseRouterWans(root),
+        wans = parsedWans.ifEmpty {
+            listOf(
+                RouterWanUi(
+                    wanId = "wan",
+                    displayName = "WAN",
+                    configured = true,
+                    enabled = true,
+                    online = root.optBoolean("online", false) || wan.optString("ipv4").isNotBlank(),
+                    defaultEgress = true,
+                    proto = protocolLabel(wan.optString("proto").ifBlank { connectionType(network) }),
+                    ipv4 = wan.optString("ipv4"),
+                    ipv6 = "",
+                    gateway = wan.optString("gateway"),
+                    gateway6 = "",
+                    dns = wanDns,
+                    uptimeSeconds = 0L,
+                    physicalPortId = ports.firstOrNull { it.isWan }?.portId ?: 0,
+                    physicalPortName = ports.firstOrNull { it.isWan }?.name.orEmpty(),
+                    linkSpeedMbps = 0,
+                    ifname = fallbackUplink,
+                    netmask = wan.optString("netmask"),
+                    mtu = wan.optString("mtu"),
+                    vlanId = networkWan.optString("vlanid").ifBlank { networkWan.optString("vlanId") },
+                    mac = networkWan.optString("macaddr").ifBlank { networkWan.optString("mac") },
+                    remark = broadbandRemark,
+                    operator = wanOperator,
+                    pppoeUsername = broadbandUser,
+                    pppoePasswordConfigured = broadbandPassword != "--",
+                    broadbandPassword = if (broadbandPassword == "--") "" else broadbandPassword,
+                )
+            )
+        },
         ports = ports,
         updatedAt = root.optString("telemetryAt").ifBlank { root.optString("receivedAt") }.ifBlank { "--" },
         telemetryStale = root.optBoolean("telemetryStale", true),
@@ -1069,7 +1185,7 @@ private fun RealtimeMetric(icon: ImageVector, label: String, value: String, colo
     }
 }
 
-private data class RouterInfoItem(
+internal data class RouterInfoItem(
     val label: String,
     val value: String,
     val copyValue: String = value,
@@ -1077,92 +1193,117 @@ private data class RouterInfoItem(
     val supportingText: String = ""
 )
 
+internal fun routerWanInfoItems(wan: RouterWanUi): List<RouterInfoItem> = buildList {
+    if (wan.ipv4.isNotBlank()) add(RouterInfoItem("IPv4", wan.ipv4))
+    if (wan.netmask.isNotBlank()) add(RouterInfoItem("子网掩码", wan.netmask))
+    if (wan.ipv6.isNotBlank()) add(RouterInfoItem("IPv6", wan.ipv6))
+    val gateways = listOf(wan.gateway, wan.gateway6).filter { it.isNotBlank() }
+    if (gateways.isNotEmpty()) add(RouterInfoItem("网关", gateways.joinToString("\n")))
+    if (wan.dns.isNotEmpty()) add(RouterInfoItem("DNS", wan.dns.take(2).joinToString("\n"), copyValue = wan.dns.joinToString("\n")))
+    if (wan.ifname.isNotBlank()) add(RouterInfoItem("链路", wan.ifname))
+    if (wan.mtu.isNotBlank()) add(RouterInfoItem("MTU", wan.mtu))
+    if (wan.vlanId.isNotBlank()) add(RouterInfoItem("VLAN ID", wan.vlanId))
+    if (wan.mac.isNotBlank()) add(RouterInfoItem("MAC", wan.mac))
+    if (wan.remark.isNotBlank()) add(RouterInfoItem("备注", wan.remark))
+    if (wan.operator.isNotBlank()) add(RouterInfoItem("运营商", wan.operator))
+    if (wan.uptimeSeconds > 0L) add(RouterInfoItem("运行时间", uptimeText(wan.uptimeSeconds)))
+    val port = listOf(wan.physicalPortName, wan.physicalPortId.takeIf { it > 0 }?.toString()).filterNotNull().joinToString(" · ")
+    if (port.isNotBlank()) add(RouterInfoItem("物理端口", port))
+    if (wan.linkSpeedMbps > 0) add(RouterInfoItem("协商速率", "${wan.linkSpeedMbps} Mbps"))
+    if (wan.proto == "PPPoE") {
+        if (wan.pppoeUsername.isNotBlank()) add(RouterInfoItem("宽带账号", wan.pppoeUsername))
+        if (wan.broadbandPassword.isNotBlank()) {
+            add(RouterInfoItem("宽带密码", "••••••••", copyValue = wan.broadbandPassword))
+        } else if (wan.pppoePasswordConfigured) {
+            add(RouterInfoItem("宽带密码", "已配置", copyValue = ""))
+        }
+    }
+    if (wan.proto == "DHCP" && wan.dhcpLease.isNotBlank()) {
+        add(RouterInfoItem("DHCP 租期", wan.dhcpLease))
+    }
+    val trafficSource = wan.trafficSource.ifBlank { "固件遥测" }
+    if (wan.uploadBps != null) add(RouterInfoItem("实时上传", formatBitRate(wan.uploadBps), supportingText = trafficSource))
+    if (wan.downloadBps != null) add(RouterInfoItem("实时下载", formatBitRate(wan.downloadBps), supportingText = trafficSource))
+    if (wan.totalUploadBytes != null || wan.totalDownloadBytes != null) {
+        add(RouterInfoItem(
+            "累计流量",
+            wanTrafficText(wan.totalUploadBytes, wan.totalDownloadBytes),
+            supportingText = trafficSource,
+        ))
+    }
+    if (wan.dailyUploadBytes != null || wan.dailyDownloadBytes != null) {
+        add(RouterInfoItem(
+            "今日流量",
+            wanTrafficText(wan.dailyUploadBytes, wan.dailyDownloadBytes),
+            supportingText = trafficSource,
+        ))
+    }
+}
+
+private fun wanTrafficText(upload: Long?, download: Long?): String = buildList {
+    upload?.let { add("↑${formatTrafficBytes(it)}") }
+    download?.let { add("↓${formatTrafficBytes(it)}") }
+}.joinToString(" / ")
+
 @Composable
-private fun RouterNetworkCard(ui: RouterDashboardUi) {
-    var wanExpanded by rememberSaveable { mutableStateOf(false) }
+internal fun RouterNetworkCard(ui: RouterDashboardUi) {
     var expandedWanId by rememberSaveable { mutableStateOf<String?>(null) }
-    val configuredWans = ui.wans.filter { it.configured }
     var lanExpanded by rememberSaveable { mutableStateOf(false) }
     var apExpanded by rememberSaveable { mutableStateOf(false) }
+    val configuredWans = ui.wans.filter { it.configured }.sortedBy { if (it.wanId == "wan") 0 else 1 }
     val context = LocalContext.current
     RouterGlassCard {
-        SectionHeader(Icons.Rounded.Public, "网络详情", LabV2.Primary)
-        if (configuredWans.size > 1) {
-            configuredWans.forEachIndexed { index, wan ->
-                ExpandableNetworkRow(
-                    icon = Icons.Rounded.Dns,
-                    title = "${wan.displayName} 信息",
-                    mainValue = wan.ipv4.ifBlank { wan.ipv6 }.ifBlank { "--" },
-                    middleLabel = "状态",
-                    middleValue = when {
-                        wan.online -> "在线"
-                        wan.enabled -> "离线"
-                        else -> "未启用"
-                    },
-                    rightLabel = "连接类型",
-                    rightValue = wan.proto,
-                    expanded = expandedWanId == wan.wanId,
-                    onToggle = { expandedWanId = if (expandedWanId == wan.wanId) null else wan.wanId },
-                ) {
-                    RouterInfoGrid(
-                        context = context,
-                        items = listOf(
-                            RouterInfoItem("IPv6", wan.ipv6.ifBlank { "--" }),
-                            RouterInfoItem(
-                                "网关",
-                                listOf(wan.gateway, wan.gateway6).filter { it.isNotBlank() }.joinToString("\n").ifBlank { "--" },
-                            ),
-                            RouterInfoItem(
-                                "DNS",
-                                wan.dns.take(2).joinToString("\n").ifBlank { "--" },
-                                copyValue = wan.dns.joinToString("\n").ifBlank { "--" },
-                            ),
-                            RouterInfoItem("运行时间", uptimeText(wan.uptimeSeconds)),
-                            RouterInfoItem(
-                                "物理端口",
-                                listOf(wan.physicalPortName, wan.physicalPortId.takeIf { it > 0 }?.toString()).filterNotNull().joinToString(" · ").ifBlank { "--" },
-                            ),
-                            RouterInfoItem("协商速率", wan.linkSpeedMbps.takeIf { it > 0 }?.let { "$it Mbps" } ?: "--"),
-                        ),
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Public, null, Modifier.size(18.dp), tint = LabV2.Primary)
+            Spacer(Modifier.width(6.dp))
+            Text("网络详情", Modifier.weight(1f), fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+            if (configuredWans.size > 1) {
+                configuredWans.forEach { wan ->
+                    WanSelectorButton(
+                        label = wan.displayName,
+                        selected = expandedWanId == wan.wanId,
+                        onClick = { expandedWanId = wan.wanId },
                     )
+                    Spacer(Modifier.width(6.dp))
                 }
-                if (index < configuredWans.lastIndex) HorizontalDivider(color = Color(0xFFE4EBF5))
             }
-        } else {
+        }
+        configuredWans.forEachIndexed { index, wan ->
+            val status = when {
+                wan.online -> "在线"
+                wan.enabled -> "离线"
+                else -> "未启用"
+            }
             ExpandableNetworkRow(
                 icon = Icons.Rounded.Dns,
-                title = "WAN 信息",
-                mainValue = ui.wanIpv4,
+                title = if (configuredWans.size > 1) "${wan.displayName} 信息" else "WAN 信息",
+                mainValue = wan.ipv4.ifBlank { wan.ipv6 }.ifBlank { "--" },
                 middleLabel = "连接类型",
-                middleValue = ui.connectionType,
+                middleValue = wan.proto,
                 rightLabel = "运营商",
-                rightValue = ui.wanOperator,
-                expanded = wanExpanded,
-                onToggle = { wanExpanded = !wanExpanded }
+                rightValue = wan.operator.ifBlank { "--" },
+                statusText = status,
+                statusColor = when {
+                    wan.online -> LabV2.Green
+                    wan.enabled -> LabV2.Amber
+                    else -> LabV2.InkMuted
+                },
+                expanded = expandedWanId == wan.wanId,
+                onToggle = { expandedWanId = if (expandedWanId == wan.wanId) null else wan.wanId },
             ) {
-                RouterInfoGrid(
-                    context = context,
-                    items = listOf(
-                        RouterInfoItem(
-                            "历史流量",
-                            historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
-                            copyValue = historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes)
-                        ),
-                        RouterInfoItem(
-                            "DNS",
-                            ui.dnsServers.take(2).joinToString("\n").ifBlank { "--" },
-                            copyValue = ui.dnsServers.joinToString("\n").ifBlank { "--" }
-                        ),
-                        RouterInfoItem("网关", ui.wanGateway),
-                        RouterInfoItem("MTU", ui.mtu)
-                    )
-                )
+                val items = routerWanInfoItems(wan)
+                if (items.isEmpty()) {
+                    Text("暂无该线路的详细数据", style = LabTypography.Supporting, color = LabV2.InkMuted)
+                } else {
+                    RouterInfoGrid(context = context, items = items)
+                }
             }
+            if (index < configuredWans.lastIndex) HorizontalDivider(color = Color(0xFFE4EBF5))
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
         ExpandableNetworkRow(
             icon = Icons.Rounded.AccountTree,
-            title = "网络配置",
+            title = "LAN 信息",
             mainValue = ui.lanIpv4,
             middleLabel = "子网掩码",
             middleValue = ui.netmask,
@@ -1173,16 +1314,7 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
         ) {
             RouterInfoGrid(
                 context = context,
-                items = listOf(
-                    RouterInfoItem("备注", ui.broadbandRemark),
-                    RouterInfoItem("MAC", ui.lanMac),
-                    RouterInfoItem("宽带账号", ui.broadbandUser),
-                    RouterInfoItem(
-                        "宽带密码",
-                        if (ui.broadbandPassword == "--") "--" else "••••••••",
-                        copyValue = ui.broadbandPassword
-                    )
-                )
+                items = listOf(RouterInfoItem("MAC", ui.lanMac))
             )
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
@@ -1215,6 +1347,28 @@ private fun RouterNetworkCard(ui: RouterDashboardUi) {
 }
 
 @Composable
+private fun WanSelectorButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.height(28.dp).semantics { contentDescription = "展开 $label 详情" },
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) LabV2.Primary.copy(alpha = .12f) else LabV2.FieldSoft,
+        border = BorderStroke(1.dp, if (selected) LabV2.Primary.copy(alpha = .35f) else LabV2.Border),
+        tonalElevation = 0.dp,
+    ) {
+        Box(Modifier.padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (selected) LabV2.Primary else LabV2.InkMuted,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ExpandableNetworkRow(
     icon: ImageVector,
     title: String,
@@ -1224,6 +1378,8 @@ private fun ExpandableNetworkRow(
     rightLabel: String,
     rightValue: String,
     rightColor: Color = Color(0xFF10264F),
+    statusText: String? = null,
+    statusColor: Color = LabV2.Green,
     expanded: Boolean,
     onToggle: () -> Unit,
     expandedContent: @Composable () -> Unit
@@ -1234,7 +1390,11 @@ private fun ExpandableNetworkRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(icon, null, Modifier.size(18.dp), tint = LabV2.Primary)
                     Spacer(Modifier.width(6.dp))
-                    Text(title, fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+                    Text(title, Modifier.weight(1f), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!statusText.isNullOrBlank()) {
+                        Spacer(Modifier.width(5.dp))
+                        Text(statusText, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = statusColor, maxLines = 1)
+                    }
                 }
                 Text(mainValue, Modifier.padding(start = 24.dp, top = 3.dp), fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 3, overflow = TextOverflow.Clip)
             }
