@@ -263,6 +263,7 @@ private fun protocolLabel(value: String): String = when (value.trim().lowercase(
     "pppoe" -> "PPPoE"
     "dhcp", "dynamic", "auto" -> "DHCP"
     "static", "manual" -> "静态 IP"
+    "bridge", "bridged" -> "桥接"
     else -> value.trim().ifBlank { "--" }
 }
 

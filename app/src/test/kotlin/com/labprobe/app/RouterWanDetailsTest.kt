@@ -71,6 +71,17 @@ class RouterWanDetailsTest {
         assertFalse(static.any { it.label == "宽带账号" || it.label == "宽带密码" })
     }
 
+    @Test fun invalidTrafficStaysUnknownAndBridgeProtocolIsNormalized() {
+        val root = JSONObject("""{
+          "telemetry":{"wans":[{"wanId":"wan1","uploadBps":"not-a-number"}]},
+          "wans":[{"wanId":"wan1","configured":true,"enabled":true,"online":false,"proto":"bridged"}]
+        }""")
+        val wan = parseRouterWans(root).single()
+        assertEquals("桥接", wan.proto)
+        assertNull(wan.uploadBps)
+        assertFalse(routerWanInfoItems(wan).any { it.label == "实时上传" })
+    }
+
     @Test fun missingTrafficSideIsNotRenderedAsZero() {
         val wan = RouterWanUi(
             wanId = "wan1", displayName = "WAN1", configured = true, enabled = true, online = false,
