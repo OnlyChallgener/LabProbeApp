@@ -478,7 +478,11 @@ fun CompactListCard(
 
 
 @Composable
-fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun CompactPopup(
+    onDismiss: () -> Unit,
+    containerColor: Color = Color.White,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val shape = LabPopupShapes.Card
         Box(
@@ -486,7 +490,7 @@ fun CompactPopup(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> U
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .clip(shape)
-                .background(Brush.verticalGradient(listOf(Color(0xFFF7FAFF), Color(0xFFEEF9FB), Color.White)))
+                .background(containerColor)
         ) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
         }

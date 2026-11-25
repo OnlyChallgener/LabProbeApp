@@ -130,3 +130,8 @@
 
 - Device IPv6 candidates are normalized, ranked and retained at shared cache/persistence boundaries. Keep at most three valid, non-historical addresses per device, with the existing best-address recommendation first in pickers.
 - The IPv6 mapping device picker independently caps visible alternatives at three. Other pages that consume only the best IPv6 address inherit the same retained source data without adding new selectors or changing device identification assets.
+
+## November 25 — Centered dialog background refinement
+
+- Centered alert, editor and popup cards use opaque white `#FFFFFF` by default, superseding the earlier blue-cyan-white dialog gradient exception. Explicit caller-provided `color` or `containerColor` values take precedence.
+- Preserve existing dialog field backgrounds, corners, shadows, scrims, buttons and typography. This refinement does not change page gradients, ordinary cards, button gradients, bottom sheets or dropdown menus.

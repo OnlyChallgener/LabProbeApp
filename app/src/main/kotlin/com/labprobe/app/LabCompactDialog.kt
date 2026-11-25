@@ -22,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
@@ -42,7 +41,7 @@ fun LabCompactAlertDialog(
     title: @Composable (() -> Unit)? = null,
     text: @Composable (() -> Unit)? = null,
     @Suppress("UNUSED_PARAMETER") shape: Shape = LabPopupShapes.Card,
-    @Suppress("UNUSED_PARAMETER") containerColor: Color = Color.White,
+    containerColor: Color = Color.White,
     iconContentColor: Color = LabV2.Primary,
     titleContentColor: Color = LabV2.Ink,
     textContentColor: Color = LabV2.InkMuted,
@@ -58,11 +57,7 @@ fun LabCompactAlertDialog(
                 .heightIn(max = 560.dp)
                 .shadow(8.dp, cardShape)
                 .clip(cardShape)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0xFFF7FAFF), Color(0xFFEEF9FB), Color.White)
-                    )
-                )
+                .background(containerColor)
                 .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
             if (icon != null) {
@@ -111,7 +106,7 @@ fun LabCompactAlertDialog(
 fun LabGradientDialogSurface(
     modifier: Modifier = Modifier,
     shape: Shape = LabPopupShapes.Card,
-    @Suppress("UNUSED_PARAMETER") color: Color = Color.White,
+    color: Color = Color.White,
     contentColor: Color = LabV2.Ink,
     @Suppress("UNUSED_PARAMETER") tonalElevation: Dp = 0.dp,
     shadowElevation: Dp = 8.dp,
@@ -122,7 +117,7 @@ fun LabGradientDialogSurface(
         modifier
             .shadow(shadowElevation.coerceAtLeast(8.dp), shape)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFFF7FAFF), Color(0xFFEEF9FB), Color.White)))
+            .background(color)
     ) {
         MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = LabV2.Primary, secondary = LabV2.Cyan)) {
             CompositionLocalProvider(LocalContentColor provides contentColor, content = content)
