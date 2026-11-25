@@ -1301,7 +1301,7 @@ private fun NetworkCell(label: String, value: String, modifier: Modifier, valueC
 }
 
 @Composable
-private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
+internal fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
     RouterGlassCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("端口状态", Modifier.weight(1f), fontSize = LabTypography.CardTitle.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
@@ -1318,7 +1318,7 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("整机实时：", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+            Text("WAN总速率：", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
             Icon(Icons.Rounded.North, null, Modifier.size(16.dp), tint = LabV2.Primary)
             Text(formatBitRate(ui.uploadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary)
             Spacer(Modifier.width(12.dp))
