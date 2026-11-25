@@ -1077,7 +1077,7 @@ fun StunPenetrationScreen(
             }
         }
     }
-    historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
+    historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, showWan = wanResource.value?.multiWanConfigured == true || normalizedStunWan(rule.wanId) != "wan" || history.any { it.wanId.isNotBlank() && normalizedStunWan(it.wanId) != "wan" }, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
     residualConfirmation?.let { pending ->
         AlertDialog(
             onDismissRequest = {
@@ -1989,7 +1989,7 @@ fun StunPenetrationScreen(
     }
 }
 
-@Composable private fun StunAddressHistoryDialog(rule: StunRule, addresses: List<StunAddressRecord>, onDismiss: () -> Unit, onCopy: (String) -> Unit) {
+@Composable private fun StunAddressHistoryDialog(rule: StunRule, addresses: List<StunAddressRecord>, showWan: Boolean, onDismiss: () -> Unit, onCopy: (String) -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(.94f),
@@ -2016,7 +2016,7 @@ fun StunPenetrationScreen(
                         Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(row.endpoint, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-                                Text(formatStunTime(row.updatedAt) + row.wanId.takeIf { it.isNotBlank() }?.let { " · ${it.uppercase(Locale.ROOT)}" }.orEmpty(), style = LabTypography.Caption, color = LabV2.InkMuted)
+                                Text(formatStunTime(row.updatedAt) + row.wanId.takeIf { showWan && it.isNotBlank() }?.let { " · ${it.uppercase(Locale.ROOT)}" }.orEmpty(), style = LabTypography.Caption, color = LabV2.InkMuted)
                             }
                             Icon(Icons.Rounded.ContentCopy, "复制", tint = StunBlue, modifier = Modifier.size(18.dp))
                         }

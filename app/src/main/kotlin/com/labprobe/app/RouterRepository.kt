@@ -71,6 +71,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private val fallbackScheduled = AtomicBoolean(false)
     private val lastReconnectRefreshAt = AtomicLong(0L)
     private val preloadMutex = Mutex()
+    private val wanRefreshMutex = Mutex()
     private val mutationMutex = Mutex()
     private val labProbeMutationMutex = Mutex()
     private val inFlightMutex = Mutex()
@@ -386,24 +387,27 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
             }
     }
 
-    suspend fun refreshWans(force: Boolean = false) {
+    suspend fun refreshWans(force: Boolean = false) = wanRefreshMutex.withLock {
         val key = "wans"
+        val fingerprint = capabilitiesFingerprint
+        val old = if (cache.wansFor == fingerprint) _wans.value else RouterResource()
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.WAN_TTL_MS)) return@withLock
         val seq = sequence(key).incrementAndGet()
-        val old = _wans.value
-        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.STATUS_TTL_MS)) return
         _wans.value = old.copy(refreshing = true, error = "", generation = seq)
         val requestKey = if (force) "$key:force" else key
-        runCatching { coalesced(requestKey) { api.wans(force) } }
-            .onSuccess { latest ->
-                if (sequence(key).get() != seq) return@onSuccess
-                val now = System.currentTimeMillis()
-                cache.wans = latest
-                cache.wansAt = now
-                cache.wansFor = capabilitiesFingerprint
-                _wans.value = RouterResource(latest, now, generation = seq)
-            }
-            .onFailure { failure ->
-                if (sequence(key).get() != seq) return@onFailure
+        try {
+            val latest = coalesced(requestKey) { api.wans(force) }
+            if (sequence(key).get() != seq || capabilitiesFingerprint != fingerprint) return@withLock
+            val now = System.currentTimeMillis()
+            cache.wans = latest
+            cache.wansAt = now
+            cache.wansFor = fingerprint
+            _wans.value = RouterResource(latest, now, generation = seq)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            if (sequence(key).get() == seq && capabilitiesFingerprint == fingerprint) _wans.value = old
+            throw cancelled
+        } catch (failure: Exception) {
+            if (sequence(key).get() == seq && capabilitiesFingerprint == fingerprint) {
                 _wans.value = old.copy(
                     refreshing = false,
                     stale = old.value != null,
@@ -411,6 +415,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                     generation = seq,
                 )
             }
+        }
     }
 
     suspend fun refreshDdns(force: Boolean = false) {

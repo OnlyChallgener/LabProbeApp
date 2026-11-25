@@ -279,15 +279,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val wanResource by routerRepository.wans.collectAsState()
     var relayAvailableWans by remember(prefs.hub, prefs.token, prefs.hubDns) { mutableStateOf<Set<String>>(emptySet()) }
-    LaunchedEffect(routerRepository) {
-        routerRepository.refreshWans()
-        relayAvailableWans = try {
-            withContext(Dispatchers.IO) {
-                val status = org.json.JSONObject(HubApi(prefs).requestText("/api/portmaps"))
-                tcpPeakAvailableWans(status)
-            }
-        } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { emptySet() }
-    }
+    LaunchedEffect(routerRepository) { routerRepository.refreshWans() }
     val pendingAiCommand = remember(prefs) {
         TcpPeakPendingAiCommand.fromJson(prefs.tcpPeakPendingAiCommandJson)
     }
@@ -315,9 +307,20 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     val explicitWan = wanSelection.selectedWanId
     val selectedLine = configuredWans.firstOrNull { it.wanId.equals(explicitWan, true) }
-    val legacyDefault = configuredWans.size <= 1 && (explicitWan.isBlank() || explicitWan == "wan") && explicitWan !in relayAvailableWans
+    val legacyDefault = configuredWans.size <= 1 && (explicitWan.isBlank() || explicitWan == "wan")
+    LaunchedEffect(routerRepository, side, legacyDefault, explicitWan) {
+        relayAvailableWans = emptySet()
+        if (side == TcpPeakSide.RELAY && !legacyDefault) {
+            relayAvailableWans = try {
+                withContext(Dispatchers.IO) {
+                    val status = org.json.JSONObject(HubApi(prefs).requestText("/api/portmaps"))
+                    tcpPeakAvailableWans(status)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { emptySet() }
+        }
+    }
     val relayLineUnavailable = side == TcpPeakSide.RELAY && !legacyDefault &&
-        (selectedLine == null || !selectedLine.online || !selectedLine.enabled || explicitWan !in relayAvailableWans)
+        (selectedLine == null || !selectedLine.enabled || explicitWan !in relayAvailableWans)
 
     fun currentConfig(): TcpPeakConfig = TcpPeakConfig(
         side = side,

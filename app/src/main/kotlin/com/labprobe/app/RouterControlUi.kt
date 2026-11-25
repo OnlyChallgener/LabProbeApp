@@ -1846,7 +1846,7 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
         title = "LabProbe DDNS",
         subtitle = "独立于路由器原生 DDNS",
         loading = resource.refreshing,
-        onRefresh = { scope.launch { repository.refreshWans(); repository.refreshLabProbeDdns(true) } },
+        onRefresh = { scope.launch { repository.refreshWans(force = true); repository.refreshLabProbeDdns(true) } },
         onAdd = { adding = true },
     )
     val error = actionError.ifBlank { resource.error }
