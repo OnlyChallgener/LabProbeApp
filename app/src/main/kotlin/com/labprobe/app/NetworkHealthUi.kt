@@ -155,7 +155,10 @@ fun NetworkHealthScreen(
     val router = data?.optJSONObject("router")
     val nasV6 = safeNasIpv6ForUi(nas, router)
     val vpnOk = buildVpnRowsForHome(data, nasV6, state.events).isNotEmpty()
-    val exitOk = cleanApiText(nas?.optString("exitIpv4")).isNotBlank() || cleanApiText(nas?.optString("exitIpv6")).isNotBlank()
+    val exitOk = cleanApiText(nas?.optString("exitIpv4")).isNotBlank() ||
+        cleanApiText(nas?.optString("exitIpv6")).isNotBlank() ||
+        cleanApiText(router?.optString("exitIpv4")).isNotBlank()
+    val wanStatusText = wanHealthStatusLabel(parseRouterWans(state.routerDashboard ?: org.json.JSONObject()).filter { it.configured })
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
     val onlineCount = state.onlineDevices.size
     val badCount = state.events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }.coerceAtMost(4)
@@ -491,6 +494,18 @@ fun NetworkHealthScreen(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (wanStatusText.isNotBlank()) {
+                    Text(
+                        wanStatusText,
+                        style = LabTypography.Caption.copy(color = when (wanStatusText) {
+                            "全部正常" -> LabV2.Green
+                            "部分线路异常" -> LabV2.Amber
+                            else -> LabV2.Red
+                        }),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (result != null && !progress.running && !progress.cancelled) {
                     val completedText = remember(result.completedAt) {
                         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(result.completedAt))
@@ -607,7 +622,12 @@ fun NetworkHealthScreen(
                 )
                 ScoreRuleRow("基础运行分", "APP 可正常展示本地缓存", 64, true)
                 ScoreRuleRow("Hub 连接", if (hubOk) "已连接" else "未连接", 12, hubOk)
-                ScoreRuleRow("公网出口", if (exitOk) "已取得 IPv4/IPv6" else "暂无出口地址", 10, exitOk)
+                ScoreRuleRow("公网出口", when {
+                    wanStatusText == "全部线路异常" -> "全部 WAN 线路离线"
+                    wanStatusText == "部分线路异常" -> "部分 WAN 线路离线"
+                    exitOk -> "已取得 IPv4/IPv6"
+                    else -> "暂无出口地址"
+                }, 10, exitOk)
                 ScoreRuleRow("VPN / STUN", if (vpnOk) "已记录地址" else "暂无记录", 7, vpnOk)
                 ScoreRuleRow("在线设备", if (onlineCount > 0) "$onlineCount 台在线" else "暂无在线设备", 5, onlineCount > 0)
                 ScoreRuleRow(

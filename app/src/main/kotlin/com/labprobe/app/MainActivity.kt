@@ -999,6 +999,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) = sp.edit().putString("cache_home_vpn_rows_v1", v).apply()
     var cacheStunRowsJson: String get() = sp.getString("cache_home_stun_rows_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("cache_home_stun_rows_v1", v).apply()
+    var cacheHomeRowsIdentity: String get() = sp.getString("cache_home_rows_identity_v1", "").orEmpty()
+        set(v) = sp.edit().putString("cache_home_rows_identity_v1", v).apply()
     var cacheDevices: String get() = sp.getString("cache_devices", "") ?: ""
         set(v) = sp.edit().putString("cache_devices", v).apply()
     var cacheOnlineDevices: String get() = sp.getString("cache_online_devices", "") ?: ""
@@ -1061,6 +1063,7 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
             .remove("cache_router_dashboard_v1")
             .remove("cache_home_vpn_rows_v1")
             .remove("cache_home_stun_rows_v1")
+            .remove("cache_home_rows_identity_v1")
             .remove("cache_devices")
             .remove("cache_online_devices")
             .remove("cache_offline_devices_v1")
@@ -5066,22 +5069,32 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val nas = data?.optJSONObject("nas")
     val router = data?.optJSONObject("router")
     val nasV6 = safeNasIpv6ForUi(nas, router)
+    val homeWans = remember(state.routerDashboard) {
+        parseRouterWans(state.routerDashboard ?: JSONObject()).filter { it.configured }
+    }
+    val homeCacheIdentity = remember(prefs.hubRoot, prefs.workspaceId, prefs.token) {
+        workspaceDigest(prefs.hubRoot + "|" + prefs.workspaceId + "|" + prefs.token)
+    }
     val liveVpnRows = remember(state.status, nasV6, state.events, routerWorkspace.wireguardSupported) {
         buildVpnRowsForHome(data, nasV6, state.events, routerWorkspace.wireguardSupported)
     }
-    var cachedVpnRows by remember { mutableStateOf(decodeHomeVpnRows(prefs.cacheVpnRowsJson)) }
-    LaunchedEffect(liveVpnRows) {
-        if (liveVpnRows.isNotEmpty()) {
+    var cachedVpnRows by remember(homeCacheIdentity) {
+        mutableStateOf(if (prefs.cacheHomeRowsIdentity == homeCacheIdentity) decodeHomeVpnRows(prefs.cacheVpnRowsJson) else emptyList())
+    }
+    LaunchedEffect(liveVpnRows, data != null, homeCacheIdentity) {
+        if (data != null) {
             cachedVpnRows = liveVpnRows
             withContext(Dispatchers.IO) {
+                prefs.cacheHomeRowsIdentity = homeCacheIdentity
                 prefs.cacheVpnRowsJson = encodeHomeVpnRows(liveVpnRows)
             }
         }
     }
-    val vpnRows = if (liveVpnRows.isNotEmpty()) liveVpnRows else cachedVpnRows
+    val vpnRows = if (data != null) liveVpnRows else cachedVpnRows
 
     var stunRules by remember(prefs.hub, prefs.token, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
     LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
+        stunRules = null
         runCatching {
             withContext(Dispatchers.IO) {
                 StunApi(prefs).list()
@@ -5093,16 +5106,20 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val liveStunRows = remember(data, stunRules) {
         buildStunRowsForHome(data, stunRules)
     }
-    var cachedStunRows by remember { mutableStateOf(decodeHomeStunRows(prefs.cacheStunRowsJson)) }
-    LaunchedEffect(liveStunRows) {
-        if (liveStunRows.isNotEmpty()) {
+    var cachedStunRows by remember(homeCacheIdentity) {
+        mutableStateOf(if (prefs.cacheHomeRowsIdentity == homeCacheIdentity) decodeHomeStunRows(prefs.cacheStunRowsJson) else emptyList())
+    }
+    LaunchedEffect(liveStunRows, stunRules != null, data != null, homeCacheIdentity) {
+        if (stunRules != null || data != null) {
             cachedStunRows = liveStunRows
             withContext(Dispatchers.IO) {
+                prefs.cacheHomeRowsIdentity = homeCacheIdentity
                 prefs.cacheStunRowsJson = encodeHomeStunRows(liveStunRows)
             }
         }
     }
-    val stunRows = if (liveStunRows.isNotEmpty()) liveStunRows else cachedStunRows
+    val stunRows = if (stunRules != null || data != null) liveStunRows else cachedStunRows
+    val homeVpnStunRows = remember(stunRows, vpnRows) { buildHomeVpnStunRows(stunRows, vpnRows) }
     LaunchedEffect(state.status) {
         val resolved = resolveRouterExitIpv4(state.status)
         if (resolved.isNotBlank() && resolved != prefs.routerExitIpv4) {
@@ -5121,8 +5138,11 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     }
 
     val onlineCount = state.onlineDevices.size
-    val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() || !cleanApiText(nas?.optString("exitIpv6")).isBlank()
-    val vpnOk = stunRows.isNotEmpty() || vpnRows.isNotEmpty()
+    val exitOk = !cleanApiText(nas?.optString("exitIpv4")).isBlank() ||
+        !cleanApiText(nas?.optString("exitIpv6")).isBlank() ||
+        !cleanApiText(router?.optString("exitIpv4")).isBlank()
+    val wanHealthLabel = wanHealthStatusLabel(homeWans)
+    val vpnOk = homeVpnStunRows.isNotEmpty()
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
     val score = networkScore(hubOk, exitOk, vpnOk, onlineCount, state.events)
     val homeGradient = remember {
@@ -5194,6 +5214,8 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         wolCount = state.wolDevices.count { it.enabled },
                         lastRefresh = prefs.lastRefresh,
                         message = state.message,
+                        wanStatusText = wanHealthLabel,
+                        exitLabel = if (wanHealthLabel == "全部线路异常") "异常" else if (wanHealthLabel == "部分线路异常") "部分异常" else null,
                         onNavigate = onNavigate
                     )
                     "mini" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -5225,15 +5247,17 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                     "exit" -> HealthExitCard(
                         nas = nas,
                         router = router,
+                        wans = homeWans,
                         privacyMode = privacyMode,
                         onClick = { onNavigate("tool_ping") },
                         onIconClick = { onNavigate("tool_portmap") }
                     )
                     "router" -> RouterSettingsHomeCard(isBe50 = isWorkspaceBe50(prefs, routerWorkspace.model, routerWorkspace.name)) { onNavigate("router_settings") }
                     "vpn", "stun" -> {
-                        if (stunRows.isNotEmpty()) {
+                        if (homeVpnStunRows.isNotEmpty()) {
                             HealthStunCard(
-                                rows = stunRows,
+                                rows = homeVpnStunRows,
+                                title = if (vpnRows.isNotEmpty()) "VPN / STUN" else "STUN 穿透",
                                 privacyMode = privacyMode,
                                 onTogglePrivacy = {
                                     privacyMode = !privacyMode
@@ -5266,13 +5290,14 @@ fun routerWan6Rows(router: JSONObject?): List<Pair<String, String>> {
             val ip = cleanApiText(o.optString("ip", o.optString("address", o.optString("value"))))
             if (ip.isBlank() || rows.any { it.second == ip }) continue
             val name = cleanApiText(o.optString("name")).ifBlank {
-                if (o.optBoolean("primary", i == 0)) "主用 WAN" else "备用 WAN"
+                if (rows.isEmpty()) "路由 WAN6" else "路由 WAN6 ${rows.size + 1}"
             }
             rows += name to ip
         }
     }
     if (rows.isEmpty()) {
-        val ip = cleanApiText(router?.optString("wanIpv6") ?: router?.optString("routerWan6") ?: "")
+        val ip = cleanApiText(router?.optString("wanIpv6"))
+            .ifBlank { cleanApiText(router?.optString("routerWan6")) }
         if (ip.isNotBlank()) rows += "路由 WAN6" to ip
     }
     return rows
@@ -5318,7 +5343,8 @@ fun buildVpnRowsForHome(
     }
 
     if (wireguardSupported) {
-        val wg = if (nasV6.isNotBlank()) "[$nasV6]:51820" else data?.optJSONObject("wireguard")?.optString("publicAddress").orEmpty()
+        val wg = cleanApiText(data?.optJSONObject("wireguard")?.optString("publicAddress"))
+            .ifBlank { if (nasV6.isNotBlank()) "[$nasV6]:51820" else "" }
         addVpnRow("WireGuard", wg)
     }
 
@@ -5337,7 +5363,8 @@ fun buildVpnRowsForHome(
             val key = keys.next()
             val obj = vpnObj.optJSONObject(key)
             val label = cleanApiText(obj?.optString("name")).ifBlank { key }
-            val addr = cleanApiText(obj?.optString("address")?.ifBlank { obj.optString("stun") } ?: "")
+            val addr = cleanApiText(obj?.optString("address"))
+                .ifBlank { cleanApiText(obj?.optString("stun")) }
             addVpnRow(label, addr)
         }
     }
@@ -5345,13 +5372,15 @@ fun buildVpnRowsForHome(
     val luckyObj = data?.optJSONObject("luckyStun")
     val luckyDirect = when (val raw = data?.opt("luckyStun")) {
         is String -> cleanApiText(raw)
-        else -> cleanApiText(luckyObj?.optString("address")?.ifBlank { luckyObj.optString("stun") })
+        else -> cleanApiText(luckyObj?.optString("address"))
+            .ifBlank { cleanApiText(luckyObj?.optString("stun")) }
     }
     val luckyLabel = cleanApiText(luckyObj?.optString("name")).ifBlank { "Lucky" }
     addVpnRow(luckyLabel, luckyDirect)
 
     val stunObj = data?.optJSONObject("stun")
-    addVpnRow(cleanApiText(stunObj?.optString("name")).ifBlank { "STUN" }, stunObj?.optString("publicAddress") ?: stunObj?.optString("address"))
+    addVpnRow(cleanApiText(stunObj?.optString("name")).ifBlank { "STUN" }, cleanApiText(stunObj?.optString("publicAddress"))
+        .ifBlank { cleanApiText(stunObj?.optString("address")) })
 
     if (rows.size <= 1) {
         events.asSequence()
@@ -5376,16 +5405,21 @@ fun buildVpnRowsForHome(
 data class HomeStunRow(
     val label: String,
     val endpoint: String,
-    val serviceType: String = ""
+    val serviceType: String = "",
+    val id: String = "",
+    val source: String = "",
+    val wanId: String = "",
+    val target: String = "",
+    val fresh: Boolean? = null,
 )
 
 fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<HomeStunRow> {
-    val rows = mutableListOf<HomeStunRow>()
-    fun addStunRow(labelRaw: String?, addrRaw: String?, typeRaw: String? = "") {
-        val addr = cleanApiText(addrRaw)
+    val rows = linkedMapOf<String, HomeStunRow>()
+    fun addStunRow(row: HomeStunRow) {
+        val addr = cleanApiText(row.endpoint)
         if (addr.isBlank() || addr.startsWith("0.0.0.0") || addr.startsWith("127.0.0.1")) return
-        val label = cleanApiText(labelRaw).ifBlank { "STUN 穿透" }
-        val inferredType = cleanApiText(typeRaw).ifBlank {
+        val label = cleanApiText(row.label).ifBlank { "STUN 穿透" }
+        val inferredType = cleanApiText(row.serviceType).ifBlank {
             when {
                 label.contains("HTTPS", ignoreCase = true) -> "HTTPS"
                 label.contains("HTTP", ignoreCase = true) -> "HTTP"
@@ -5395,55 +5429,98 @@ fun buildStunRowsForHome(data: JSONObject?, stunRules: List<StunRule>?): List<Ho
                 else -> "CUSTOM"
             }
         }
-        val sameLabelIndex = rows.indexOfFirst { it.label.equals(label, ignoreCase = true) }
-        if (sameLabelIndex >= 0) {
-            rows[sameLabelIndex] = HomeStunRow(label, addr, inferredType)
-            return
-        }
-        if (rows.none { it.endpoint == addr }) rows += HomeStunRow(label, addr, inferredType)
+        val id = cleanApiText(row.id)
+        val key = if (id.isNotBlank()) "${row.source}:$id" else
+            "${row.source}:${label.lowercase(Locale.ROOT)}:$inferredType:${cleanApiText(row.target)}:${row.wanId}"
+        rows[key] = row.copy(endpoint = addr, label = label, serviceType = inferredType)
     }
 
-    // 1. 优先采用 StunApi 加载的真实 STUN 穿透规则列表
-    stunRules?.filter { it.enabled }?.forEach { rule ->
-        val endpoint = rule.runtime.publicEndpoint.ifBlank { rule.addresses.public.endpoint }
-        if (endpoint.isNotBlank()) {
-            addStunRow(stunRuleTitle(rule), endpoint, rule.serviceType)
+    if (stunRules != null) {
+        stunRules.filter { it.enabled }.forEach { rule ->
+            val endpoint = rule.runtime.publicEndpoint
+                .ifBlank { rule.addresses.public.endpoint }
+                .ifBlank { formatServiceHostPort(rule.addresses.public.host, rule.addresses.public.port) }
+            addStunRow(
+                HomeStunRow(
+                    label = stunRuleTitle(rule),
+                    endpoint = endpoint,
+                    serviceType = rule.serviceType,
+                    id = rule.id,
+                    source = "api",
+                    wanId = rule.wanId,
+                    target = "${rule.targetIpv4}:${rule.targetPort}",
+                    fresh = rule.ready,
+                )
+            )
         }
+        return rows.values.toList()
     }
 
-    // 2. 解析 Hub /api/status 中携带的 stunRules
     val array = data?.optJSONArray("stunRules")
     if (array != null) {
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
-            val enabled = obj.optBoolean("enabled", true)
-            if (!enabled) continue
+            if (!obj.optBoolean("enabled", true)) continue
             val runtime = obj.optJSONObject("runtime")
             val addresses = obj.optJSONObject("addresses")
             val publicObj = addresses?.optJSONObject("public")
-            val endpoint = cleanApiText(
-                runtime?.optString("publicEndpoint")
-                    ?: publicObj?.optString("endpoint")
-                    ?: obj.optString("publicEndpoint")
-            )
+            val endpoint = cleanApiText(runtime?.optString("publicEndpoint"))
+                .ifBlank { cleanApiText(publicObj?.optString("endpoint")) }
+                .ifBlank { cleanApiText(obj.optString("publicEndpoint")) }
+                .ifBlank { formatServiceHostPort(publicObj?.optString("host").orEmpty(), publicObj?.optInt("port") ?: 0) }
             val serviceType = cleanApiText(obj.optString("serviceType"))
             val name = cleanApiText(obj.optString("name")).ifBlank {
                 if (serviceType.isNotBlank()) "$serviceType 穿透" else "STUN 穿透"
             }
-            addStunRow(name, endpoint, serviceType)
+            addStunRow(
+                HomeStunRow(
+                    label = name,
+                    endpoint = endpoint,
+                    serviceType = serviceType,
+                    id = obj.optString("id"),
+                    source = "status",
+                    wanId = obj.optString("wanId"),
+                    target = "${obj.optString("targetIpv4")}:${obj.optInt("targetPort")}",
+                )
+            )
         }
     }
 
-    // 3. 兼容单项原生 stun 记录（排除 Webhook 推送源）
     val singleStun = data?.optJSONObject("stun")
     val singleSource = singleStun?.optString("source").orEmpty()
     if (!singleSource.contains("webhook", ignoreCase = true) && singleStun != null) {
-        val addr = cleanApiText(singleStun.optString("publicAddress", singleStun.optString("address")))
-        val name = cleanApiText(singleStun.optString("name")).ifBlank { "STUN 穿透" }
-        val serviceType = cleanApiText(singleStun.optString("serviceType"))
-        addStunRow(name, addr, serviceType)
+        val addr = cleanApiText(singleStun.optString("publicAddress"))
+            .ifBlank { cleanApiText(singleStun.optString("address")) }
+        addStunRow(
+            HomeStunRow(
+                label = cleanApiText(singleStun.optString("name")).ifBlank { "STUN 穿透" },
+                endpoint = addr,
+                serviceType = cleanApiText(singleStun.optString("serviceType")),
+                id = singleStun.optString("id"),
+                source = "status-single",
+                wanId = singleStun.optString("wanId"),
+                target = "${singleStun.optString("targetIpv4")}:${singleStun.optInt("targetPort")}",
+            )
+        )
     }
+    return rows.values.toList()
+}
 
+fun buildHomeVpnStunRows(stunRows: List<HomeStunRow>, vpnRows: List<Pair<String, String>>): List<HomeStunRow> {
+    val rows = stunRows.toMutableList()
+    vpnRows.forEach { (label, endpoint) ->
+        val serviceType = when {
+            label.contains("HTTPS", ignoreCase = true) -> "HTTPS"
+            label.contains("HTTP", ignoreCase = true) -> "HTTP"
+            label.contains("WireGuard", ignoreCase = true) -> "WIREGUARD"
+            label.contains("SSH", ignoreCase = true) -> "SSH"
+            label.contains("RDP", ignoreCase = true) -> "RDP"
+            else -> "CUSTOM"
+        }
+        if (rows.none { it.endpoint == endpoint && it.serviceType.equals(serviceType, true) }) {
+            rows += HomeStunRow(label, endpoint, serviceType, source = "vpn")
+        }
+    }
     return rows
 }
 
@@ -5455,6 +5532,11 @@ fun encodeHomeStunRows(rows: List<HomeStunRow>): String = JSONArray().apply {
                     .put("label", row.label)
                     .put("endpoint", row.endpoint)
                     .put("serviceType", row.serviceType)
+                    .put("id", row.id)
+                    .put("source", row.source)
+                    .put("wanId", row.wanId)
+                    .put("target", row.target)
+                    .put("fresh", row.fresh ?: JSONObject.NULL)
             )
         }
     }
@@ -5466,11 +5548,18 @@ fun decodeHomeStunRows(raw: String): List<HomeStunRow> = runCatching {
         val item = array.optJSONObject(index) ?: return@mapNotNull null
         val label = cleanApiText(item.optString("label"))
         val endpoint = cleanApiText(item.optString("endpoint", item.optString("address")))
-        val serviceType = cleanApiText(item.optString("serviceType"))
-        if (label.isBlank() || endpoint.isBlank()) null else HomeStunRow(label, endpoint, serviceType)
-    }
+        if (label.isBlank() || endpoint.isBlank()) null else HomeStunRow(
+            label = label,
+            endpoint = endpoint,
+            serviceType = cleanApiText(item.optString("serviceType")),
+            id = cleanApiText(item.optString("id")),
+            source = cleanApiText(item.optString("source")),
+            wanId = cleanApiText(item.optString("wanId")),
+            target = cleanApiText(item.optString("target")),
+            fresh = if (item.has("fresh") && !item.isNull("fresh")) item.optBoolean("fresh") else null,
+        )
+    }.distinctBy { "${it.source}:${it.id}:${it.label}:${it.target}:${it.wanId}" }
 }.getOrDefault(emptyList())
-
 
 fun encodeHomeVpnRows(rows: List<Pair<String, String>>): String = JSONArray().apply {
     rows.forEach { (label, address) ->
@@ -5489,6 +5578,18 @@ fun decodeHomeVpnRows(raw: String): List<Pair<String, String>> = runCatching {
         if (label.isBlank() || address.isBlank()) null else label to address
     }.distinctBy { it.first.lowercase(Locale.getDefault()) }
 }.getOrDefault(emptyList())
+
+internal fun wanHealthStatusLabel(wans: List<RouterWanUi>): String {
+    val configured = wans.filter { it.configured }
+    if (configured.size < 2) return ""
+    val online = configured.count { it.online }
+    val defaultOnline = configured.firstOrNull { it.defaultEgress }?.online != false
+    return when {
+        online == 0 -> "全部线路异常"
+        online < configured.size || !defaultOnline -> "部分线路异常"
+        else -> "全部正常"
+    }
+}
 
 fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, events: List<EventItem>): Int {
     var score = 64
@@ -5621,7 +5722,7 @@ internal fun RouterHeroGlow() {
 }
 
 @Composable
-fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, onNavigate: (String) -> Unit) {
+fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, wolCount: Int, lastRefresh: String, message: String, wanStatusText: String = "", exitLabel: String? = null, onNavigate: (String) -> Unit) {
     val scoreColor = if (score >= 85) LabV2.Green else if (score >= 70) LabV2.Amber else LabV2.Red
     val scoreLabel = if (score >= 85) "优秀" else if (score >= 70) "良好" else "待优化"
     val shape = HomeCardShape
@@ -5662,6 +5763,19 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (wanStatusText.isNotBlank()) {
+                        Text(
+                            wanStatusText,
+                            style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold),
+                            color = when (wanStatusText) {
+                                "全部正常" -> LabV2.Green
+                                "部分线路异常" -> LabV2.Amber
+                                else -> LabV2.Red
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     HealthStatePill(
                         icon = Icons.Rounded.PowerSettingsNew,
                         label = "WOL",
@@ -5683,7 +5797,7 @@ fun HealthScoreCard(score: Int, hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean,
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 HealthShortcutTile(Icons.Rounded.Router, "Hub", if (hubOk) "就绪" else "未连", if (hubOk) LabV2.Green else LabV2.Red, Modifier.weight(1f)) { onNavigate("settings") }
-                HealthShortcutTile(Icons.Rounded.Public, "出口", if (exitOk) "正常" else "无数据", if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("router_status") }
+                HealthShortcutTile(Icons.Rounded.Public, "出口", exitLabel ?: if (exitOk) "正常" else "无数据", if (exitLabel == "异常") LabV2.Red else if (exitLabel == "部分异常") LabV2.Amber else if (exitOk) LabV2.Cyan else LabV2.InkMuted, Modifier.weight(1f)) { onNavigate("router_status") }
                 HealthShortcutTile(Icons.Rounded.Terminal, "SSH", "进入", Color(0xFF64748B), Modifier.weight(1f)) { onNavigate("tool_ssh") }
             }
         }
@@ -5931,15 +6045,31 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 }
 
 @Composable
-fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null) {
+internal fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null, wans: List<RouterWanUi> = emptyList()) {
     HealthCard(Modifier.clip(HomeCardShape)) {
-        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN6，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
+        HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN 地址，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
         val nasIpv6 = safeNasIpv6ForUi(nas, router)
         val wan6Rows = routerWan6Rows(router)
         val addressRows = buildList {
-            nas?.optString("exitIpv4")?.let { add("NAS IPv4" to it) }
+            cleanApiText(nas?.optString("exitIpv4")).takeIf { it.isNotBlank() }?.let { add("NAS IPv4" to it) }
             add("NAS IPv6" to nasIpv6)
-            wan6Rows.forEach { (label, value) -> add((if (wan6Rows.size <= 1) "路由 WAN6" else label) to value) }
+            if (wans.size > 1) {
+                wans.forEach { wan ->
+                    val name = wan.displayName.ifBlank { wan.wanId.uppercase(Locale.ROOT) }
+                    if (wan.publicIpv4.isNotBlank()) add("$name 公网 IPv4" to wan.publicIpv4)
+                    if (wan.ipv4.isNotBlank()) add("$name 接口 IPv4" to wan.ipv4)
+                    if (wan.publicIpv6.isNotBlank()) add("$name 公网 IPv6" to wan.publicIpv6)
+                    if (wan.ipv6.isNotBlank()) add("$name 接口 IPv6" to wan.ipv6)
+                    if (wan.publicIpv4.isBlank() && wan.ipv4.isBlank() && wan.publicIpv6.isBlank() && wan.ipv6.isBlank()) {
+                        add(name to if (wan.online) "暂无地址" else "离线")
+                    }
+                }
+            } else {
+                wan6Rows.forEach { (label, value) -> add((if (wan6Rows.size <= 1) "路由 WAN6" else label) to value) }
+                if (wan6Rows.isEmpty()) {
+                    wans.firstOrNull()?.ipv6?.takeIf { it.isNotBlank() }?.let { add("路由 WAN6" to it) }
+                }
+            }
         }.filter { it.second.isNotBlank() }
         Spacer(Modifier.height(9.dp))
         addressRows.forEachIndexed { index, (label, value) ->
@@ -5957,7 +6087,8 @@ fun HealthStunCard(
     onTogglePrivacy: () -> Unit,
     onClick: () -> Unit = {},
     onNavigate: (String) -> Unit = {},
-    prefs: AppPrefs? = null
+    prefs: AppPrefs? = null,
+    title: String = "STUN 穿透",
 ) {
     val context = LocalContext.current
     HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
@@ -5974,13 +6105,13 @@ fun HealthStunCard(
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("STUN 穿透", style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = LabTypography.CardTitle.copy(color = Color(0xFF0B1320), fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (privacyMode) "隐私模式已开启，点击左侧图标恢复显示。" else "NAT 穿透端点，点击卡片进入管理。", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             LabNavigationIndicator()
         }
         Spacer(Modifier.height(13.dp))
-        val displayRows = rows.take(4)
+        val displayRows = rows
         displayRows.forEachIndexed { idx, row ->
             val serviceType = row.serviceType.ifBlank {
                 when {
@@ -5992,7 +6123,7 @@ fun HealthStunCard(
                     else -> "CUSTOM"
                 }
             }
-            val copyText = serviceAddressForCopy(serviceType, row.endpoint)
+            val copyText = stunAddressForCopy(serviceType, row.endpoint)
             val displayEndpoint = maskAddressForUi(row.endpoint, privacyMode)
             val shape = RoundedCornerShape(10.dp)
             val mayWrap = displayEndpoint.length > 22 || displayEndpoint.contains('\n')
@@ -6029,7 +6160,7 @@ fun HealthStunCard(
                 verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically
             ) {
                 Text(
-                    row.label,
+                    row.label + if (row.wanId.isNotBlank()) " · ${row.wanId.uppercase(Locale.ROOT)}" else "",
                     Modifier.width(94.dp).then(if (mayWrap) Modifier.padding(top = 2.dp) else Modifier),
                     style = LabTypography.Value.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted),
                     maxLines = 1,

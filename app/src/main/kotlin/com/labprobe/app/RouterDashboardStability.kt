@@ -56,7 +56,6 @@ private fun clearDashboardMeasurements(root: JSONObject) {
         root.remove(it)
         telemetry?.optJSONObject("wan")?.remove(it)
     }
-    root.remove("wans")
     telemetry?.remove("wans")
     listOf("cpuPercent", "memoryPercent", "temperatureC", "temperature2gC", "temperature5gC",
         "storagePercent", "uptimeSeconds", "onlineDeviceCount").forEach {
@@ -82,8 +81,7 @@ private fun dashboardRealtimeSample(root: JSONObject): JSONObject {
         sample.put(key, value)
     }
     listOf("uploadBps", "downloadBps", "totalUploadBytes", "totalDownloadBytes").forEach { copy(it, wan) }
-    root.optJSONArray("wans")?.let { sample.put("wans", JSONArray(it.toString())) }
-    telemetry.optJSONArray("wans")?.let { if (!sample.has("wans")) sample.put("wans", JSONArray(it.toString())) }
+    telemetry.optJSONArray("wans")?.let { sample.put("wans", JSONArray(it.toString())) }
     listOf("cpuPercent", "memoryPercent", "temperatureC", "temperature2gC", "temperature5gC",
         "storagePercent", "uptimeSeconds", "onlineDeviceCount").forEach { copy(it, telemetry) }
     copy("ipv4Connections", connections, "ipv4")

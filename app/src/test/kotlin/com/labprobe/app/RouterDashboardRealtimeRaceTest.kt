@@ -50,6 +50,25 @@ class RouterDashboardRealtimeRaceTest {
     }
 
     @Test
+    fun lateSlowSnapshotKeepsStaticWanInventoryAndOfflineWan1() {
+        val current = mergeLiteRouterRealtime(JSONObject("""
+            {"wans":[{"wanId":"wan","configured":true},{"wanId":"wan1","configured":true,"online":false}]}
+        """.trimIndent()), JSONObject()
+            .put("sampleEpochMs", 20_000L)
+            .put("wans", org.json.JSONArray("[{\"wanId\":\"wan\",\"uploadBps\":2000}]")))
+        val late = JSONObject("""{"telemetryEpoch":10,"telemetry":{"wans":[]}}""")
+
+        val result = requireNotNull(mergeRouterDashboardSnapshot(current, late))
+        val inventory = result.getJSONArray("wans")
+        assertEquals(2, inventory.length())
+        assertEquals("wan1", inventory.getJSONObject(1).getString("wanId"))
+        assertFalse(inventory.getJSONObject(1).getBoolean("online"))
+        val telemetry = result.getJSONObject("telemetry").getJSONArray("wans")
+        assertEquals("wan", telemetry.getJSONObject(0).getString("wanId"))
+        assertEquals(2000, telemetry.getJSONObject(0).getInt("uploadBps"))
+    }
+
+    @Test
     fun newerNestedSnapshotUpdatesFlatAndNestedReadingsTogether() {
         val current = mergeLiteRouterRealtime(null, JSONObject()
             .put("sampleEpochMs", 10_000L).put("cpuPercent", 4).put("uploadBps", 10))

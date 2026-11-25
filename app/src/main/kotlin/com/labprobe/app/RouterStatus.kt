@@ -160,6 +160,9 @@ internal data class RouterWanUi(
     val mac: String = "",
     val remark: String = "",
     val operator: String = "",
+    val publicIpv4: String = "",
+    val publicIpv6: String = "",
+    val publicSource: String = "",
     val pppoeUsername: String = "",
     val pppoePasswordConfigured: Boolean = false,
     val broadbandPassword: String = "",
@@ -388,16 +391,21 @@ internal fun parseRouterWans(root: JSONObject, credentials: JSONObject? = null):
         val legacyCredential = credential ?: credentials?.takeIf { wanId == "wan" }
         val passwordConfigured = credential?.optBoolean("passwordConfigured", false) == true ||
             (legacyCredential?.optString("password").orEmpty().isNotBlank())
+        val ipv4 = row.optString("ipv4").trim()
+        val ipv6 = row.optString("ipv6").trim()
+        val configured = if (row.has("configured")) row.optBoolean("configured") else true
+        val enabled = if (row.has("enabled")) row.optBoolean("enabled") else configured
+        val online = if (row.has("online")) row.optBoolean("online") else ipv4.isNotBlank() || ipv6.isNotBlank()
         RouterWanUi(
             wanId = wanId,
             displayName = if (wanId in setOf("wan", "wan1")) wanId.uppercase(Locale.ROOT) else row.optString("displayName").ifBlank { wanId.uppercase(Locale.ROOT) },
-            configured = row.optBoolean("configured"),
-            enabled = row.optBoolean("enabled"),
-            online = row.optBoolean("online"),
+            configured = configured,
+            enabled = enabled,
+            online = online,
             defaultEgress = row.optBoolean("defaultEgress"),
             proto = proto,
-            ipv4 = row.optString("ipv4").trim(),
-            ipv6 = row.optString("ipv6").trim(),
+            ipv4 = ipv4,
+            ipv6 = ipv6,
             gateway = row.optString("gateway").trim(),
             gateway6 = row.optString("gateway6").trim(),
             dns = row.stringList("dns"),
@@ -412,6 +420,9 @@ internal fun parseRouterWans(root: JSONObject, credentials: JSONObject? = null):
             mac = row.optString("mac").trim(),
             remark = row.optString("remark").trim(),
             operator = row.optString("operator").trim(),
+            publicIpv4 = row.optString("publicIpv4").trim(),
+            publicIpv6 = row.optString("publicIpv6").trim(),
+            publicSource = row.optString("publicSource").trim(),
             pppoeUsername = if (proto == "PPPoE") {
                 row.optString("pppoeUsername").ifBlank { legacyCredential?.optString("username").orEmpty() }.trim()
             } else "",
@@ -765,7 +776,7 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
             onOpenRouter = ::openRouterUrl
         )
         RouterRealtimeCard(ui, state, isBe50 = be50)
-        RouterNetworkCard(ui)
+        RouterNetworkCard(ui, rawUi.wans.associateBy { it.wanId })
         RouterPortsCard(ui, onShowLegend = { showPortLegend = true })
         Spacer(Modifier.height(4.dp))
     }
@@ -1194,13 +1205,14 @@ internal data class RouterInfoItem(
     val supportingText: String = ""
 )
 
-internal fun routerWanInfoItems(wan: RouterWanUi): List<RouterInfoItem> = buildList {
-    if (wan.ipv4.isNotBlank()) add(RouterInfoItem("IPv4", wan.ipv4))
+internal fun routerWanInfoItems(wan: RouterWanUi, rawWan: RouterWanUi = wan): List<RouterInfoItem> = buildList {
+    if (wan.defaultEgress) add(RouterInfoItem("默认出口", "是"))
+    if (wan.ipv4.isNotBlank()) add(RouterInfoItem("IPv4", wan.ipv4, copyValue = rawWan.ipv4))
     if (wan.netmask.isNotBlank()) add(RouterInfoItem("子网掩码", wan.netmask))
-    if (wan.ipv6.isNotBlank()) add(RouterInfoItem("IPv6", wan.ipv6))
+    if (wan.ipv6.isNotBlank()) add(RouterInfoItem("IPv6", wan.ipv6, copyValue = rawWan.ipv6))
     val gateways = listOf(wan.gateway, wan.gateway6).filter { it.isNotBlank() }
-    if (gateways.isNotEmpty()) add(RouterInfoItem("网关", gateways.joinToString("\n")))
-    if (wan.dns.isNotEmpty()) add(RouterInfoItem("DNS", wan.dns.take(2).joinToString("\n"), copyValue = wan.dns.joinToString("\n")))
+    if (gateways.isNotEmpty()) add(RouterInfoItem("网关", gateways.joinToString("\n"), copyValue = listOf(rawWan.gateway, rawWan.gateway6).filter { it.isNotBlank() }.joinToString("\n")))
+    if (wan.dns.isNotEmpty()) add(RouterInfoItem("DNS", wan.dns.take(2).joinToString("\n"), copyValue = rawWan.dns.joinToString("\n")))
     if (wan.ifname.isNotBlank()) add(RouterInfoItem("链路", wan.ifname))
     if (wan.mtu.isNotBlank()) add(RouterInfoItem("MTU", wan.mtu))
     if (wan.vlanId.isNotBlank()) add(RouterInfoItem("VLAN ID", wan.vlanId))
@@ -1247,7 +1259,7 @@ private fun wanTrafficText(upload: Long?, download: Long?): String = buildList {
 }.joinToString(" / ")
 
 @Composable
-internal fun RouterNetworkCard(ui: RouterDashboardUi) {
+internal fun RouterNetworkCard(ui: RouterDashboardUi, rawWans: Map<String, RouterWanUi> = emptyMap()) {
     var expandedWanId by rememberSaveable { mutableStateOf<String?>(null) }
     var lanExpanded by rememberSaveable { mutableStateOf(false) }
     var apExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1277,7 +1289,7 @@ internal fun RouterNetworkCard(ui: RouterDashboardUi) {
             }
             ExpandableNetworkRow(
                 icon = Icons.Rounded.Dns,
-                title = if (configuredWans.size > 1) "${wan.displayName} 信息" else "WAN 信息",
+                title = "${wan.displayName} 信息",
                 mainValue = wan.ipv4.ifBlank { wan.ipv6 }.ifBlank { "--" },
                 middleLabel = "连接类型",
                 middleValue = wan.proto,
@@ -1292,7 +1304,7 @@ internal fun RouterNetworkCard(ui: RouterDashboardUi) {
                 expanded = expandedWanId == wan.wanId,
                 onToggle = { expandedWanId = if (expandedWanId == wan.wanId) null else wan.wanId },
             ) {
-                val items = routerWanInfoItems(wan)
+                val items = routerWanInfoItems(wan, rawWans[wan.wanId] ?: wan)
                 if (items.isEmpty()) {
                     Text("暂无该线路的详细数据", style = LabTypography.Supporting, color = LabV2.InkMuted)
                 } else {

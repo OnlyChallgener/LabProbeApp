@@ -186,6 +186,7 @@ data class StunRule(
     val syncError: String = "",
     val runtime: StunRuntime,
     val addresses: StunAddressLayers = StunAddressLayers(),
+    val wanId: String = "",
 ) {
     val usesRouterNativeMapping: Boolean get() = forwardMode == "router_native"
     val ready: Boolean get() = enabled && actualState == "mapped" && runtime.mappingFresh && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
@@ -308,6 +309,7 @@ private fun parseStunRule(json: JSONObject): StunRule {
             ),
             publicReachabilityState = cleanApiText(publicAddress.optString("reachabilityState", "unknown")),
         ),
+        wanId = cleanApiText(json.optString("wanId")),
     )
 }
 
