@@ -101,6 +101,69 @@ class NativeDdnsNewFirmwareTest {
     }
 
     @Test
+    fun parsesDdnsStatusContentDetectedIpAndLastSuccess() {
+        val payload = JSONObject("""
+            {"nativeProtocol":"ddns_view","list":[
+              {"id":"a","provider":"aliyun.com","domain":"a.example.com","record_type":"A",
+               "state":"success","content":"36.157.252.37","detected_ip":"36.157.252.37","last_success":1795259667},
+              {"id":"aaaa","provider":"aliyun.com","domain":"aaaa.example.com","record_type":"AAAA",
+               "state":"success","content":"2409:8a50:2e04:3990:39f4:eec9:9df6:f878",
+               "detected_ip":"2409:8a50:2e04:3990:39f4:eec9:9df6:f878","last_success":1795259669},
+              {"id":"txt","provider":"aliyun.com","domain":"t.example.com","record_type":"TXT",
+               "state":"success","content":"36.157.252.37:6500","detected_ip":"36.157.252.37",
+               "ip":"wrong-value","last_success":1795259670}
+            ]}
+        """.trimIndent())
+        val records = parseDdnsList(payload)
+        assertEquals("36.157.252.37", records[0].ip)
+        assertEquals("2409:8a50:2e04:3990:39f4:eec9:9df6:f878", records[1].ip)
+        assertEquals("36.157.252.37:6500", records[2].ip)
+        assertEquals("success", records[2].status)
+        assertEquals(1795259670L, records[2].lastUpdatedAt)
+    }
+
+    @Test
+    fun txtUsesCompleteContentBeforeDetectedIpOrLegacyIp() {
+        val payload = JSONObject("""
+            {"list":[{"id":"txt","domain":"t.example.com","record_type":"TXT",
+              "content":"2001:db8::1:6500","detected_ip":"2001:db8::1","ip":"2001:db8::1"}]}
+        """.trimIndent())
+        assertEquals("2001:db8::1:6500", parseDdnsList(payload).single().ip)
+    }
+
+    @Test
+    fun addressRecordPrefersDetectedIpAndAcceptsCamelCaseLastSuccess() {
+        val payload = JSONObject("""
+            {"list":[{"id":"a","domain":"a.example.com","record_type":"A",
+              "content":"198.51.100.2","detected_ip":"198.51.100.1","ip":"198.51.100.3",
+              "lastSuccessAt":1795259667}]}
+        """.trimIndent())
+        val record = parseDdnsList(payload).single()
+        assertEquals("198.51.100.1", record.ip)
+        assertEquals(1795259667L, record.lastUpdatedAt)
+    }
+
+    @Test
+    fun legacyIpStatusAndLastLogContractStillWorks() {
+        val payload = JSONObject("""
+            {"nativeProtocol":"ddnsCfg","list":[{"service":"legacy","domain":"legacy.example.com",
+              "status":"succeed","ip":"203.0.113.10","last_log":1795143849}]}
+        """.trimIndent())
+        val record = parseDdnsList(payload).single()
+        assertEquals("203.0.113.10", record.ip)
+        assertEquals("succeed", record.status)
+        assertEquals(1795143849L, record.lastUpdatedAt)
+        assertEquals("203.0.113.10", nativeDdnsDetailText(record))
+    }
+
+    @Test
+    fun detailTextDistinguishesSuccessFromMissingStatus() {
+        assertEquals("更新成功", nativeDdnsDetailText(DdnsRecord(status = "success")))
+        assertEquals("更新失败", nativeDdnsDetailText(DdnsRecord(status = "failed")))
+        assertEquals("等待更新", nativeDdnsDetailText(DdnsRecord()))
+    }
+
+    @Test
     fun rejectsMissingMalformedAndNonObjectRecordArrays() {
         assertThrows(JSONException::class.java) { parseDdnsList(JSONObject()) }
         assertThrows(JSONException::class.java) { parseDdnsList(JSONObject("""{"list":{}}""")) }

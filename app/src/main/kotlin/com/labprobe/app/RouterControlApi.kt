@@ -638,6 +638,16 @@ data class DdnsRecord(
         get() = recordType.ifBlank { if (useIpv6) "AAAA" else "A" }
 }
 
+internal fun nativeDdnsStatusLabel(raw: String): String = when (raw.trim().lowercase(Locale.ROOT)) {
+    "success", "succeed", "ok", "normal" -> "更新成功"
+    "error", "fail", "failed" -> "更新失败"
+    "waiting", "pending" -> "等待更新"
+    else -> raw.trim()
+}
+
+internal fun nativeDdnsDetailText(record: DdnsRecord): String =
+    record.ip.trim().ifBlank { nativeDdnsStatusLabel(record.status).ifBlank { "等待更新" } }
+
 /** Capability bits per new-firmware provider: 1=TXT, 2=AAAA, 4=zone, 8=zone_id, 16=region. */
 internal fun nativeDdnsProviderFlags(provider: String): Int = when (provider.trim().lowercase(Locale.ROOT)) {
     "aliyun.com", "dnspod.cn" -> 0x27
@@ -733,6 +743,18 @@ private fun JSONObject.ddnsFlag(default:Boolean,vararg keys:String):Boolean{
     return default
 }
 
+private fun JSONObject.ddnsEpoch(vararg keys:String):Long{
+    for(key in keys){
+        if(!has(key)||isNull(key))continue
+        val epoch=when(val value=opt(key)){
+            is Number->value.toLong()
+            else->value?.toString()?.trim()?.toLongOrNull()
+        } ?: 0L
+        if(epoch>0L)return epoch
+    }
+    return 0L
+}
+
 internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
     val arrayKey = listOf("list", "services", "data", "records", "entries")
         .firstOrNull { data.has(it) && !data.isNull(it) }
@@ -749,22 +771,33 @@ internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
         if (serviceId.isBlank() || !ids.add(serviceId)) {
             throw org.json.JSONException("DDNS 记录 ID 缺失或重复")
         }
+        val useIpv6 = o.ddnsFlag(true, "use_ipv6", "useIpv6", "ipv6", "ipVersion")
+        val recordType = o.ddnsText("record_type", "recordType")
+        val effectiveType = recordType.ifBlank { if (useIpv6) "AAAA" else "A" }
+        val fallbackIp = o.ddnsText("ip", "currentIp", "current_ip", "address")
+        val content = o.ddnsText("content")
+        val detectedIp = o.ddnsText("detected_ip", "detectedIp")
+        val resolvedIp = if (effectiveType.equals("TXT", ignoreCase = true)) {
+            content.ifBlank { fallbackIp }
+        } else {
+            detectedIp.ifBlank { content }.ifBlank { fallbackIp }
+        }
         DdnsRecord(
             serviceId = serviceId,
             provider = o.ddnsText("service_name", "serviceName", "provider", "providerName").ifBlank { "aliyun.com" },
             domain = o.ddnsText("domain", "host", "hostname", "record"),
             username = o.ddnsText("username", "user", "accessKey", "accessKeyId", "access_key_id"),
             enabled = o.ddnsFlag(true, "enable", "enabled", "isEnabled"),
-            useIpv6 = o.ddnsFlag(true, "use_ipv6", "useIpv6", "ipv6", "ipVersion"),
+            useIpv6 = useIpv6,
             interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface")
                 .ifBlank { o.ddnsText("wanId") }
                 .ifBlank { "wan" },
             status = o.ddnsText("status", "state", "message", "msg"),
-            ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
-            lastUpdatedAt = o.optLong("last_log", o.optLong("last_updated_at", o.optLong("lastUpdatedAt", 0L))),
+            ip = resolvedIp,
+            lastUpdatedAt = o.ddnsEpoch("last_success", "lastSuccessAt", "last_updated_at", "lastUpdatedAt", "lastUpdate", "last_log"),
             passwordConfigured = o.ddnsFlag(false, "passwordConfigured", "password_configured", "hasPassword", "has_password"),
             nativeProtocol = protocol,
-            recordType = o.ddnsText("record_type"),
+            recordType = recordType,
             zone = o.ddnsText("zone"),
             zoneId = o.ddnsText("zone_id"),
             region = o.ddnsText("region"),
