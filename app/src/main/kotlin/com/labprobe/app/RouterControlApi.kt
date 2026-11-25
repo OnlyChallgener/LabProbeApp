@@ -473,6 +473,10 @@ data class UpnpState(
     val mappings: List<UpnpMapping> = emptyList()
 )
 
+internal fun upnpWanOptions(inventory: WanInventory?, current: String): List<String> =
+    (listOf("AUTO", "WAN") + inventory?.selectable("upnp")?.map { it.wanId.uppercase(Locale.ROOT) }.orEmpty() + current)
+        .distinct()
+
 internal fun upnpMappingStatus(state: UpnpState?, stale: Boolean, error: String): String = when {
     state == null || stale || error.isNotBlank() -> "待同步"
     !state.enabled -> "已停用"
@@ -483,7 +487,7 @@ internal fun parseUpnp(o: JSONObject): UpnpState {
     val arr = o.optJSONArray("upnpds") ?: JSONArray()
     return UpnpState(
         enabled = o.optString("enable_upnp").equals("true", true),
-        wan = cleanApiText(o.optString("wan", "AUTO")).uppercase(),
+        wan = cleanApiText(o.optString("wan", o.optString("wanId", "AUTO"))).uppercase(),
         mappings = (0 until arr.length()).mapNotNull { i ->
             arr.optJSONObject(i)?.let {
                 UpnpMapping(

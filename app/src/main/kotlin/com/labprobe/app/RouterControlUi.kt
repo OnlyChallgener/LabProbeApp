@@ -910,6 +910,7 @@ private fun NativePortDevicePickerDialog(
 private fun UpnpPage(prefs: AppPrefs) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.upnp.collectAsState()
+    val wanResource by repository.wans.collectAsState()
     val state = resource.value ?: UpnpState()
     val scope = repository.commandScope
     val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
@@ -927,6 +928,11 @@ private fun UpnpPage(prefs: AppPrefs) {
         "已停用" -> RouterMuted
         else -> RouterAmber
     }
+    val wanOptions = remember(wanResource.value, state.wan) {
+        upnpWanOptions(wanResource.value, state.wan)
+    }
+
+    LaunchedEffect(repository) { repository.refreshWans() }
 
     LaunchedEffect(mappingCache) {
         if (devices.isEmpty()) {
@@ -981,7 +987,7 @@ private fun UpnpPage(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("默认线路", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
-                            UpnpWanSelector(state.wan) { wan ->
+                            UpnpWanSelector(state.wan, wanOptions) { wan ->
                                 scope.launch {
                                     repository.setUpnp(state.enabled, wan)
                                         .onSuccess { actionError = "" }
@@ -1014,14 +1020,14 @@ private fun UpnpPage(prefs: AppPrefs) {
 }
 
 @Composable
-private fun UpnpWanSelector(value: String, onPick: (String) -> Unit) {
+private fun UpnpWanSelector(value: String, options: List<String>, onPick: (String) -> Unit) {
     Row(
-        Modifier.width(112.dp).height(32.dp).clip(RoundedCornerShape(99.dp))
+        Modifier.width((options.size * 52 + 8).dp).height(32.dp).clip(RoundedCornerShape(99.dp))
             .background(LabCoreSurface.Inner).border(1.dp, LabCoreSurface.Border, RoundedCornerShape(99.dp))
             .padding(2.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        listOf("AUTO", "WAN").forEach { option ->
+        options.forEach { option ->
             val selected = option == value
             Surface(
                 onClick = { if (!selected) onPick(option) },
