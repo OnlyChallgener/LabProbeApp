@@ -137,6 +137,7 @@
 - Hub and router management addresses use a full-width field with history action and an external HTTPS checkbox. Password fields start masked and provide an internal eye toggle. DNS and sync remain equal-width/height 48dp fields with the existing 14dp corners.
 - Save and Calibrate remain available below both expandable cards. Section titles use 14.5sp, one step below the previous 15.5sp; privacy and about retain their original layout, icons and content.
 - The official account is global across routers/Hubs. Its secondary page shows only real authorization, project/router counts, per-HUB sync state and reliable expiry; partial logout must remain visibly incomplete.
+- Official-account matched-router rows omit model artwork and leading spacers; router and project names align to the section's left edge. Keep the existing 10dp card gap and full-width, icon-free logout button.
 
 ## November 25 — Router network details multi-WAN
 

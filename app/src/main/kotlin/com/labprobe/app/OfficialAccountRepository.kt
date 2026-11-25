@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 
 data class OfficialRouterAuthorization(
     val routerId: String,
@@ -70,9 +71,27 @@ internal fun parseOfficialAccountSnapshot(root: JSONObject): OfficialAccountSnap
     )
 }
 
-internal class OfficialAccountRepository(private val prefs: AppPrefs) {
-    private fun api() = HubApi(prefs, hubOverride = prefs.hubRoot, tokenOverride = prefs.token)
+internal typealias OfficialAccountRequest = (String, String, JSONObject?) -> JSONObject
 
+internal fun requireOfficialAccountHttps(raw: String): String {
+    val normalized = validateHubTransportAddress(raw)
+    val scheme = runCatching { URI(normalized).scheme?.lowercase() }.getOrNull()
+    if (normalized.isNotBlank() && scheme != "https") {
+        throw IllegalArgumentException("官方账号凭据仅允许通过 HTTPS Hub 地址传输")
+    }
+    return normalized
+}
+
+internal class OfficialAccountRepository(
+    private val prefs: AppPrefs,
+    private val request: OfficialAccountRequest = { path, method, body ->
+        HubApi(
+            prefs,
+            hubOverride = requireOfficialAccountHttps(prefs.hubRoot),
+            tokenOverride = prefs.token,
+        ).requestJson(path, method, body)
+    },
+) {
     private fun parse(root: JSONObject, requireOk: Boolean = true): OfficialAccountSnapshot {
         if (requireOk && !root.optBoolean("ok", true)) error(root.optString("error").ifBlank { "官方账号请求失败" })
         return parseOfficialAccountSnapshot(root)
@@ -80,7 +99,7 @@ internal class OfficialAccountRepository(private val prefs: AppPrefs) {
 
     suspend fun status(verify: Boolean = true): OfficialAccountSnapshot = withContext(Dispatchers.IO) {
         try {
-            val root = api().requestJson("/api/official-account?verify=${if (verify) "1" else "0"}")
+            val root = request("/api/official-account?verify=${if (verify) "1" else "0"}", "GET", null)
             parse(root)
         } catch (error: HubHttpException) {
             if (error.statusCode == 404 || error.statusCode == 405) {
@@ -92,10 +111,14 @@ internal class OfficialAccountRepository(private val prefs: AppPrefs) {
 
     suspend fun login(account: String, password: String): OfficialAccountSnapshot = withContext(Dispatchers.IO) {
         val body = JSONObject().put("account", account.trim()).put("password", password)
-        parse(api().requestJson("/api/official-account", "POST", body))
+        parse(request("/api/official-account", "POST", body))
+    }
+
+    suspend fun refresh(): OfficialAccountSnapshot = withContext(Dispatchers.IO) {
+        parse(request("/api/official-account", "POST", JSONObject().put("action", "refresh")))
     }
 
     suspend fun logout(): OfficialAccountSnapshot = withContext(Dispatchers.IO) {
-        parse(api().requestJson("/api/official-account", "DELETE"), requireOk = false)
+        parse(request("/api/official-account", "DELETE", null), requireOk = false)
     }
 }

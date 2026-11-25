@@ -78,6 +78,21 @@ fun OfficialAccountScreen(
         }
     }
 
+    suspend fun refreshMatches() {
+        if (busy) return
+        busy = true
+        error = ""
+        try {
+            snapshot = repository.refresh()
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Exception) {
+            error = uiMessageZh(failure.message.orEmpty())
+        } finally {
+            busy = false
+        }
+    }
+
     LaunchedEffect(repository) { loadStatus() }
 
     DetailShell(
@@ -95,12 +110,13 @@ fun OfficialAccountScreen(
             loading && current == null -> Text("正在读取真实授权状态…", style = LabTypography.Supporting, color = LabV2.InkMuted)
             current == null -> OfficialAccountMessage(error.ifBlank { "暂时无法读取官方账号状态" })
             !current.supported -> OfficialAccountMessage(current.error.ifBlank { "当前 Hub 暂不支持锐捷官方账号" })
+            current.state == "checking" -> OfficialAccountMessage("正在确认官方账号与项目匹配状态…")
             current.authorized || current.state in setOf("partial", "conflict", "failed", "pending_unknown") ->
                 OfficialAccountAuthorizedContent(
                     snapshot = current,
                     workspaces = workspaces,
                     busy = busy,
-                    onRefresh = { if (!busy) scope.launch { loadStatus() } },
+                    onRefresh = { if (!busy) scope.launch { refreshMatches() } },
                     onLogout = { confirmLogout = true },
                 )
             else -> OfficialAccountLoginContent(
@@ -258,6 +274,7 @@ internal fun OfficialAccountAuthorizedContent(
         )
     }
     Surface(
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         color = Color.White,
         border = BorderStroke(1.dp, LabV2.Border.copy(alpha = .78f)),
@@ -292,6 +309,7 @@ internal fun OfficialAccountAuthorizedContent(
                                 "conflict" -> "账号冲突"
                                 "failed" -> "退出未完成"
                                 "pending_unknown" -> "退出待确认"
+                                "checking" -> "待确认"
                                 else -> "已登录"
                             },
                             fontSize = 12.sp,
@@ -325,6 +343,7 @@ internal fun OfficialAccountAuthorizedContent(
         }
     }
     Surface(
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         color = Color.White,
         border = BorderStroke(1.dp, LabV2.Border.copy(alpha = .78f)),
@@ -342,8 +361,6 @@ internal fun OfficialAccountAuthorizedContent(
             if (rows.isEmpty()) Text("暂无已匹配路由器", style = LabTypography.Supporting, color = LabV2.InkMuted)
             rows.forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RouterModelArtwork(row.model, row.name, row.routerId, size = 46.dp)
-                    Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
                             row.name.ifBlank { row.routerId },
@@ -406,10 +423,12 @@ private fun officialHubStatusZh(raw: String, state: String): String = when (raw)
     else -> if (state == "authorized") "已授权" else "待检查"
 }
 
-private fun officialRouterStatusZh(row: OfficialRouterAuthorization): String = when {
+internal fun officialRouterStatusZh(row: OfficialRouterAuthorization): String = when {
     !row.online -> "Hub 离线"
-    row.authorized && row.matched -> "已匹配"
-    row.authorized -> "已授权"
+    row.syncState == "failed" -> "同步失败"
+    row.matched && row.authorized -> "已匹配"
+    row.authorized -> "部分授权"
+    row.syncState == "checking" -> "待确认"
     row.syncState == "serial_unknown" -> "待确认 SN"
     row.syncState == "ambiguous" -> "匹配异常"
     else -> "未匹配"

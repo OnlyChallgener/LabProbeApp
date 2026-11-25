@@ -1,6 +1,8 @@
 package com.labprobe.app
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -9,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -105,18 +108,28 @@ class SettingsUiTest {
         compose.setContent {
             MaterialTheme {
                 Box(Modifier.fillMaxSize().padding(14.dp)) {
-                    OfficialAccountAuthorizedContent(snapshot, emptyList(), false, {}, {})
+                    Column(verticalArrangement = Arrangement.spacedBy(LabV2.SectionGap)) {
+                        OfficialAccountAuthorizedContent(snapshot, emptyList(), false, {}, {})
+                    }
                 }
             }
         }
         compose.onNodeWithText("BE72").assertIsDisplayed()
         compose.onNodeWithText("BE50").assertIsDisplayed()
+        compose.onNodeWithContentDescription("BE72 路由器").assertDoesNotExist()
+        compose.onNodeWithContentDescription("BE50 路由器").assertDoesNotExist()
+        val routerName = compose.onNodeWithText("BE72").fetchSemanticsNode().boundsInRoot
+        val projectName = compose.onNodeWithText("家庭网络").fetchSemanticsNode().boundsInRoot
+        val sectionTitle = compose.onAllNodesWithText("已匹配路由器")[1].fetchSemanticsNode().boundsInRoot
+        assertEquals(sectionTitle.left, routerName.left, 1f)
+        assertEquals(routerName.left, projectName.left, 1f)
         compose.onNodeWithText("按真实 SN 匹配").assertDoesNotExist()
         compose.onNodeWithText("退出登录").assertIsDisplayed()
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
         val button = compose.onNodeWithText("退出登录").fetchSemanticsNode().boundsInRoot
         assertEquals(root.width - 56f, button.width, 1f)
         assertEquals(button.center.x, root.center.x, 1f)
+        assertEquals(10f, LabV2.SectionGap.value, 0f)
     }
 
     @Test fun partialLogoutKeepsFailedHubVisibleInsteadOfClaimingSuccess() {
@@ -141,6 +154,34 @@ class SettingsUiTest {
         compose.onNodeWithText("退出未完成").assertIsDisplayed()
         compose.onNodeWithText("BE72").assertIsDisplayed()
         compose.onNodeWithText("云端退出失败").assertIsDisplayed()
+    }
+
+    @Test fun partialAuthorizationIsNeverLabeledFullyAuthorized() {
+        val row = OfficialRouterAuthorization(
+            routerId = "be72", name = "BE72", site = "", model = "", serialNumber = "SN72",
+            online = true, authorized = true, matched = false, projectId = "", projectName = "",
+            syncState = "failed", error = "云端项目尚未匹配",
+        )
+        assertEquals("同步失败", officialRouterStatusZh(row))
+        assertEquals("部分授权", officialRouterStatusZh(row.copy(syncState = "checking")))
+        assertEquals("已匹配", officialRouterStatusZh(row.copy(matched = true, syncState = "synced")))
+    }
+
+    @Test fun matchedRouterRefreshInvokesExplicitCallback() {
+        var refreshes = 0
+        val snapshot = OfficialAccountSnapshot(
+            account = "186****3092", authorized = true, state = "authorized",
+            projectCount = 0, matchedRouterCount = 0, hubAuthorization = "synced", expireTime = 0L,
+            routers = emptyList(),
+        )
+        compose.setContent {
+            MaterialTheme {
+                OfficialAccountAuthorizedContent(snapshot, emptyList(), false, { refreshes++ }, {})
+            }
+        }
+        compose.onNode(hasClickAction() and hasContentDescription("刷新项目匹配"))
+            .performSemanticsAction(SemanticsActions.OnClick)
+        compose.runOnIdle { assertEquals(1, refreshes) }
     }
 
     @Test fun officialAccountParserPreservesPartialStateWithoutSecrets() {
