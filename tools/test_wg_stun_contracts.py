@@ -65,7 +65,7 @@ class WireGuardStaticContracts(unittest.TestCase):
         bound_rule = section(
             self.client,
             "internal fun boundWireGuardStunRule",
-            "data class WireGuardProvisionResult",
+            "internal data class WireGuardRouterPeer",
         )
         self.assertIn("it.id == profile.endpointBindingId", bound_rule)
         self.assertNotIn("sharedstun", bound_rule.lower())
@@ -118,8 +118,10 @@ class WireGuardStaticContracts(unittest.TestCase):
         )
         self.assertIn("listenPort: Int", stun_coordinator)
         self.assertIn("routerIp: String", stun_coordinator)
-        self.assertIn("rule.targetPort != listenPort", stun_coordinator)
-        self.assertIn("!isWireGuardStunTarget(rule, routerIp)", stun_coordinator)
+        self.assertIn("rule.targetPort == listenPort && rule.targetIpv4 == routerIp", stun_coordinator)
+        self.assertIn("rule.ready == true", stun_coordinator)
+        self.assertIn("!rule.usesRouterNativeMapping", stun_coordinator)
+        self.assertIn("expectedBindingId = profile.endpointBindingId", stun_coordinator)
 
     def test_gateway_update_has_configured_sync_method_and_serialized_mutation(self) -> None:
         self.assertRegex(
@@ -240,7 +242,12 @@ class StunAndFavoriteStaticContracts(unittest.TestCase):
             r"existing\.dismissedStunRuleIds\s*\+\s*dismissedStunRuleIds",
         )
         self.assertIn("rememberDismissal", self.favorites)
-        self.assertIn("rememberDismissal = true", self.stun)
+        # A source deletion leaves a user-owned favorite visible as missing;
+        # only explicit dismissal from Favorites creates a tombstone.
+        self.assertIn("removeStunFavorite(prefs, ruleId, rememberDismissal = true)", self.favorites)
+        deletion = section(self.stun, "val deleteRule =", "beginStunDependencyCheck(deletedId")
+        self.assertIn("api.delete(deletedId)", deletion)
+        self.assertNotIn("removeStunFavorite", deletion)
 
     def test_favorite_sync_does_not_turn_unknown_or_failed_lists_into_empty_state(self) -> None:
         refresh = section(self.stun, "fun refresh", "val leavePage")

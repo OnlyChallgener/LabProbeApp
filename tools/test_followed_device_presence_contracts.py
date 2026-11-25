@@ -46,7 +46,15 @@ class FollowedDevicePresenceContractTests(unittest.TestCase):
         self.assertIn("CompactListCard(coreSurface = true)", self.ui)
         self.assertIn("CompactBottomSheet", self.ui)
         self.assertIn("LabTypography", self.ui)
-        self.assertNotIn("fontSize =", self.ui)
+        # The compact insight panel has deliberately tuned 10–12.5sp labels.
+        # All other chart and page text continues to use the common typography.
+        start = self.ui.index("private fun PresenceInsightPanel(")
+        end = self.ui.index("private fun FollowedDevicePresenceSheet(", start)
+        self.assertNotIn("fontSize =", self.ui[:start] + self.ui[end:])
+        import re
+        sizes = re.findall(r"fontSize\s*=\s*([\d.]+)\.sp", self.ui[start:end])
+        self.assertTrue(sizes)
+        self.assertTrue(all(10 <= float(size) <= 12.5 for size in sizes))
         self.assertNotIn("labFrostedSurface", self.ui)
         self.assertNotIn("LabV2.Purple", self.ui)
         self.assertNotIn("HorizontalDivider(color = LabV2.Ink", self.ui)

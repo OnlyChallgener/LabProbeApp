@@ -104,7 +104,7 @@ class StunRecoveryUiContracts(unittest.TestCase):
         self.assertIn("ruleId in localBindingIds + remoteManagedRuleIds", managed)
         self.assertNotIn("targetPort", managed)
         self.assertNotIn("serviceType", managed)
-        self.assertIn("WireGuard 自动管理", self.stun)
+        self.assertIn('wireGuardManaged -> "${rule.transportProtocol} · 自动管理"', self.stun)
 
     def test_remote_only_binding_is_marked_before_user_mutates_rule(self) -> None:
         self.assertIn("loadStunDependencySnapshot().references", self.stun)
