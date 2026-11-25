@@ -75,6 +75,8 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
+            // Use the canonical Maven Central endpoint for Robolectric runtime SDK jars.
+            it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
             it.systemProperty(
                 "roborazzi.test.record",
                 providers.gradleProperty("materialScreenshots").orElse("false").get()
