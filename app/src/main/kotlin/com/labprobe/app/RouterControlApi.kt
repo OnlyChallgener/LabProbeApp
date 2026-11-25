@@ -135,6 +135,9 @@ class RouterControlApi(private val prefs: AppPrefs) {
         )
     }
 
+    suspend fun wans(force: Boolean = false): WanInventory =
+        parseWanInventory(get("/api/router/wans${if (force) "?force=1" else ""}").optJSONObject("data") ?: JSONObject())
+
     suspend fun hubStatus(): RouterHubStatus {
         val root = get("/api/router/status")
         return RouterHubStatus(
@@ -317,6 +320,92 @@ data class RouterCapabilities(
             )
         }
     }
+}
+
+data class WanInfo(
+    val wanId: String = "",
+    val logicalInterface: String = "",
+    val displayName: String = "",
+    val physicalPortId: Int = 0,
+    val physicalPortName: String = "",
+    val role: String = "",
+    val supported: Boolean = false,
+    val configured: Boolean = false,
+    val enabled: Boolean = false,
+    val online: Boolean = false,
+    val defaultEgress: Boolean = false,
+    val families: List<String> = emptyList(),
+    val proto: String = "",
+    val ipv4: String = "",
+    val ipv6: String = "",
+    val gateway: String = "",
+    val gateway6: String = "",
+    val dns: List<String> = emptyList(),
+    val uptimeSeconds: Long = 0L,
+    val linkSpeedMbps: Int = 0,
+    val capabilities: Map<String, Boolean> = emptyMap(),
+    val source: String = "firmware",
+) {
+    val selectable: Boolean get() = supported && configured && enabled
+    fun supports(capability: String): Boolean = capabilities[capability] == true
+}
+
+data class WanInventory(
+    val wans: List<WanInfo> = emptyList(),
+    val supported: Boolean = false,
+    val configuredCount: Int = 0,
+    val onlineCount: Int = 0,
+    val multiWanMode: String = "",
+    val updatedAt: Long = 0L,
+) {
+    val multiWanConfigured: Boolean get() = configuredCount > 1
+    fun find(wanId: String?): WanInfo? = wans.firstOrNull { it.wanId.equals(wanId, true) }
+    fun selectable(capability: String): List<WanInfo> = wans.filter { it.selectable && it.supports(capability) }
+}
+
+internal fun parseWanInventory(data: JSONObject): WanInventory {
+    val array = data.optJSONArray("wans") ?: JSONArray()
+    val wans = (0 until array.length()).mapNotNull { index ->
+        val row = array.optJSONObject(index) ?: return@mapNotNull null
+        val capabilities = row.optJSONObject("capabilities") ?: JSONObject()
+        val capabilityNames = listOf("portMapping", "nativeDdns", "upnp", "speedtest", "natDiagnostic")
+        WanInfo(
+            wanId = cleanApiText(row.optString("wanId", row.optString("logicalInterface"))),
+            logicalInterface = cleanApiText(row.optString("logicalInterface", row.optString("wanId"))),
+            displayName = cleanApiText(row.optString("displayName")),
+            physicalPortId = row.optInt("physicalPortId"),
+            physicalPortName = cleanApiText(row.optString("physicalPortName")),
+            role = cleanApiText(row.optString("role")),
+            supported = row.optBoolean("supported"),
+            configured = row.optBoolean("configured"),
+            enabled = row.optBoolean("enabled"),
+            online = row.optBoolean("online"),
+            defaultEgress = row.optBoolean("defaultEgress"),
+            families = row.optJSONArray("families")?.let { values ->
+                (0 until values.length()).mapNotNull { cleanApiText(values.optString(it)).takeIf { value -> value.isNotBlank() } }
+            }.orEmpty(),
+            proto = cleanApiText(row.optString("proto")),
+            ipv4 = cleanApiText(row.optString("ipv4")),
+            ipv6 = cleanApiText(row.optString("ipv6")),
+            gateway = cleanApiText(row.optString("gateway")),
+            gateway6 = cleanApiText(row.optString("gateway6")),
+            dns = row.optJSONArray("dns")?.let { values ->
+                (0 until values.length()).mapNotNull { cleanApiText(values.optString(it)).takeIf { value -> value.isNotBlank() } }
+            }.orEmpty(),
+            uptimeSeconds = row.optLong("uptimeSeconds"),
+            linkSpeedMbps = row.optInt("linkSpeedMbps"),
+            capabilities = capabilityNames.associateWith { capabilities.optBoolean(it) },
+            source = cleanApiText(row.optString("source", "firmware")),
+        )
+    }.filter { it.wanId.isNotBlank() }
+    return WanInventory(
+        wans = wans,
+        supported = data.optBoolean("supported", wans.isNotEmpty()),
+        configuredCount = data.optInt("configuredCount", wans.count { it.configured }),
+        onlineCount = data.optInt("onlineCount", wans.count { it.online }),
+        multiWanMode = cleanApiText(data.optString("multiWanMode")),
+        updatedAt = data.optLong("updatedAt"),
+    )
 }
 
 data class NativePortMapRule(

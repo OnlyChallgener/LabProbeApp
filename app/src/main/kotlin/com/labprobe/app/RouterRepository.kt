@@ -89,6 +89,14 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     )
     val capabilities: StateFlow<RouterResource<RouterCapabilities>> = _capabilities.asStateFlow()
 
+    private val _wans = MutableStateFlow(
+        RouterResource(
+            value = cache.wans.takeIf { cache.wansFor == prefs.routerCapabilitiesFingerprint() },
+            updatedAt = cache.wansAt,
+        )
+    )
+    val wans: StateFlow<RouterResource<WanInventory>> = _wans.asStateFlow()
+
     private val _ddns = MutableStateFlow(
         RouterResource(
             value = cache.ddnsRows.takeIf { cache.ddnsLoaded },
@@ -228,6 +236,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
             preloadMutex.withLock {
                 refreshStatus(force = true)
                 refreshCapabilities()
+                refreshWans()
                 refreshDdns()
             }
         }
@@ -251,6 +260,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         // router-control resources one by one. Never fan out slow router RPC reads.
         refreshStatus()
         refreshCapabilities()
+        refreshWans()
         refreshDdns()
         delay(80L)
         refreshUpnp()
@@ -263,6 +273,7 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
     private suspend fun preloadMissing() = preloadMutex.withLock {
         if (_status.value.value == null) refreshStatus(force = true)
         if (_capabilities.value.value == null) refreshCapabilities(force = true)
+        if (_wans.value.value == null) refreshWans(force = true)
         if (_ddns.value.value == null) refreshDdns(force = true)
         if (_upnp.value.value == null) refreshUpnp(force = true)
         if (_portMappings.value.value == null) refreshPortMappings(force = true)
@@ -372,6 +383,33 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
                 } else {
                     old.copy(refreshing = false, error = message(failure, "功能能力同步失败"), generation = seq)
                 }
+            }
+    }
+
+    suspend fun refreshWans(force: Boolean = false) {
+        val key = "wans"
+        val seq = sequence(key).incrementAndGet()
+        val old = _wans.value
+        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.STATUS_TTL_MS)) return
+        _wans.value = old.copy(refreshing = true, error = "", generation = seq)
+        val requestKey = if (force) "$key:force" else key
+        runCatching { coalesced(requestKey) { api.wans(force) } }
+            .onSuccess { latest ->
+                if (sequence(key).get() != seq) return@onSuccess
+                val now = System.currentTimeMillis()
+                cache.wans = latest
+                cache.wansAt = now
+                cache.wansFor = capabilitiesFingerprint
+                _wans.value = RouterResource(latest, now, generation = seq)
+            }
+            .onFailure { failure ->
+                if (sequence(key).get() != seq) return@onFailure
+                _wans.value = old.copy(
+                    refreshing = false,
+                    stale = old.value != null,
+                    error = message(failure, "WAN 线路同步失败"),
+                    generation = seq,
+                )
             }
     }
 

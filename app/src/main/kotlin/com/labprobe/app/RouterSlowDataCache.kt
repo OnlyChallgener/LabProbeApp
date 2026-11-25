@@ -17,6 +17,10 @@ internal class RouterSlowDataCache private constructor() {
     var capabilities: RouterCapabilities? = null
     var capabilitiesAt: Long = 0L
 
+    var wans: WanInventory? = null
+    var wansAt: Long = 0L
+    var wansFor: String = ""
+
     var portMappings: List<NativePortMapRule> = emptyList()
     var portMappingsLoaded: Boolean = false
     var portMappingsAt: Long = 0L
