@@ -131,6 +131,8 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -11401,6 +11403,7 @@ fun SshTool(prefs: AppPrefs, openHistory: () -> Unit) {
     var user by remember { mutableStateOf(prefs.sshUser) }
     var savePass by remember { mutableStateOf(prefs.sshSavePass) }
     var password by remember { mutableStateOf(if (prefs.sshSavePass) prefs.sshPassword else "") }
+    var showPassword by remember { mutableStateOf(false) }
     var command by remember { mutableStateOf(prefs.sshCommand) }
     var results by remember { mutableStateOf(prefs.sshResults()) }
     var openedSwipeId by remember { mutableStateOf<Long?>(null) }
@@ -11413,12 +11416,18 @@ fun SshTool(prefs: AppPrefs, openHistory: () -> Unit) {
             TinyParamInputIcon("端口", port, { port = it; prefs.sshPort = it }, Icons.Rounded.SettingsEthernet, KeyboardType.Number, Modifier.weight(1f))
             TinyParamInputIcon("用户", user, { user = it; prefs.sshUser = it }, Icons.Rounded.Person, KeyboardType.Text, Modifier.weight(1f))
         }
-        LabeledInput("密码", "SSH 密码", password, { password = it; if (savePass) prefs.sshPassword = it }, password = true)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("保存", Modifier.width(50.dp), fontWeight = FontWeight.Black, fontSize = 11.5.sp)
-            Switch(checked = savePass, onCheckedChange = { savePass = it; prefs.sshSavePass = it; if (it) prefs.sshPassword = password else prefs.sshPassword = "" })
-            Text("保存密码", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        }
+        SshPasswordInput(
+            value = password,
+            visible = showPassword,
+            save = savePass,
+            onValueChange = { password = it; if (savePass) prefs.sshPassword = it },
+            onVisibilityChange = { showPassword = it },
+            onSaveChange = {
+                savePass = it
+                prefs.sshSavePass = it
+                prefs.sshPassword = if (it) password else ""
+            },
+        )
         CompactIconHistoryInput("命令", "ip -6 neigh show", command, { command = it; prefs.sshCommand = it }, "ssh_cmd", prefs, Icons.Rounded.Terminal)
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             listOf("邻居" to "ip -6 neigh show", "WAN" to "ip -6 addr show dev pppoe-wan scope global", "运行" to "uptime", "内核" to "uname -a", "存储" to "df -h", "路由" to "ip route show").forEach { (t,c) ->
@@ -11471,6 +11480,65 @@ fun SshTool(prefs: AppPrefs, openHistory: () -> Unit) {
                 Icon(Icons.Rounded.History, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("执行记录", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SshPasswordInput(
+    value: String,
+    visible: Boolean,
+    save: Boolean,
+    onValueChange: (String) -> Unit,
+    onVisibilityChange: (Boolean) -> Unit,
+    onSaveChange: (Boolean) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "密码",
+            Modifier.width(50.dp),
+            fontWeight = FontWeight.Black,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f),
+            fontSize = 11.4.sp,
+            maxLines = 1,
+        )
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            CompactTextField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = "SSH 密码",
+                leadingIcon = { FieldIconBox(Icons.Rounded.Lock) },
+                trailingIcon = {
+                    IconButton(
+                        onClick = { onVisibilityChange(!visible) },
+                        modifier = Modifier.size(30.dp),
+                    ) {
+                        Icon(
+                            if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            if (visible) "隐藏密码" else "显示密码",
+                            Modifier.size(17.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f),
+                        )
+                    }
+                },
+                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                onClick = { onSaveChange(!save) },
+                modifier = Modifier.size(20.dp).semantics { contentDescription = "保存密码" },
+                shape = RoundedCornerShape(4.dp),
+                color = if (save) Color(0xFF2563EB) else Color.White,
+                border = BorderStroke(1.dp, if (save) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface.copy(alpha = .28f)),
+            ) {
+                if (save) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Check, null, Modifier.size(14.dp), tint = Color.White)
+                    }
+                }
             }
         }
     }
