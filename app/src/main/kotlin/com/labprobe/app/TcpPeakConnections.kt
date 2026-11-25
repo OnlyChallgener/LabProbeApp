@@ -308,7 +308,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val explicitWan = wanSelection.selectedWanId
     val selectedLine = configuredWans.firstOrNull { it.wanId.equals(explicitWan, true) }
     val legacyDefault = configuredWans.size <= 1 && (explicitWan.isBlank() || explicitWan == "wan")
-    LaunchedEffect(routerRepository, side, legacyDefault, explicitWan) {
+    LaunchedEffect(routerRepository, side, legacyDefault, wanResource.updatedAt) {
         relayAvailableWans = emptySet()
         if (side == TcpPeakSide.RELAY && !legacyDefault) {
             relayAvailableWans = try {
@@ -421,7 +421,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Text(if (active) "停止并释放连接" else "开始测试", fontWeight = FontWeight.Bold)
         }
         if (relayLineUnavailable && !active) {
-            Text("所选线路离线或 Relay 暂不支持", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+            Text("所选线路未确认可用或 Relay 暂不支持", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
         }
         if (ui.notice.isNotBlank()) {
             Text(ui.notice, style = LabTypography.Supporting.copy(color = LabV2.Red), maxLines = 3, overflow = TextOverflow.Ellipsis)
