@@ -270,9 +270,10 @@ internal fun OfficialAccountAuthorizedContent(
             name = row.name.ifBlank { workspace?.name.orEmpty() },
             site = row.site.ifBlank { workspace?.site.orEmpty() },
             model = row.model.ifBlank { workspace?.model.orEmpty() },
-            online = row.online || workspace?.online == true,
+            online = row.online,
         )
     }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -370,8 +371,9 @@ internal fun OfficialAccountAuthorizedContent(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (row.site.isNotBlank()) {
-                            Text(row.site, style = LabTypography.Supporting, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val project = row.projectName.ifBlank { row.site }
+                        if (project.isNotBlank()) {
+                            Text(project, style = LabTypography.Supporting, color = LabV2.InkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (row.error.isNotBlank()) {
                             Text(row.error, style = LabTypography.Caption, color = LabV2.Amber, maxLines = 2)
@@ -402,6 +404,7 @@ internal fun OfficialAccountAuthorizedContent(
         colors = ButtonDefaults.outlinedButtonColors(contentColor = LabV2.Red),
     ) {
         Text("退出登录", style = LabTypography.Button, color = LabV2.Red)
+    }
     }
 }
 

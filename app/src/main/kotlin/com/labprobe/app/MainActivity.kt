@@ -12716,7 +12716,8 @@ fun SettingsScreen(
     var userEditedRouter by remember { mutableStateOf(false) }
     var connectionExpanded by remember { mutableStateOf(true) }
     var routerExpanded by remember { mutableStateOf(false) }
-    var officialAccount by remember { mutableStateOf<OfficialAccountSnapshot?>(null) }
+    var officialAccount by remember(prefs.hubRoot, prefs.token) { mutableStateOf<OfficialAccountSnapshot?>(null) }
+    var officialAccountError by remember(prefs.hubRoot, prefs.token) { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
     val settingsMint = Color(0xFF10A9C8)
     val ctx = LocalContext.current
@@ -12724,8 +12725,14 @@ fun SettingsScreen(
     val officialAccountRepository = remember(prefs.hubRoot, prefs.token) { OfficialAccountRepository(prefs) }
 
     LaunchedEffect(officialAccountRepository) {
-        runCatching { officialAccountRepository.status() }
-            .onSuccess { officialAccount = it }
+        try {
+            officialAccount = officialAccountRepository.status()
+            officialAccountError = false
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            officialAccountError = true
+        }
     }
 
     fun hasVerifiedBinding(candidateHub: String, candidateToken: String): Boolean =
@@ -12964,21 +12971,12 @@ fun SettingsScreen(
     }
 
     val accountSnapshot = officialAccount
-    val officialStatus = when {
-        accountSnapshot == null -> "读取中"
-        !accountSnapshot.supported -> "不支持"
-        accountSnapshot.state == "conflict" -> "账号冲突"
-        accountSnapshot.authorized -> "已授权"
-        accountSnapshot.state == "partial" -> "部分授权"
-        accountSnapshot.state == "failed" -> "退出未完成"
-        accountSnapshot.state == "pending_unknown" -> "退出待确认"
-        else -> "未授权"
-    }
+    val officialStatus = officialAccountEntryStatus(accountSnapshot, officialAccountError)
     SettingsEntryCard(
         title = "锐捷官方账号",
         leading = { SettingsCardLeading(Icons.Rounded.Person, Color(0xFF64748B)) },
         trailing = {
-            Text(officialStatus, fontSize = 12.sp, color = if (accountSnapshot?.authorized == true) LabV2.Green else LabV2.InkMuted)
+            Text(officialStatus, fontSize = 12.sp, color = if (officialStatus == "已授权") LabV2.Green else LabV2.InkMuted)
             Icon(Icons.Rounded.ChevronRight, "打开锐捷官方账号", Modifier.size(20.dp), tint = LabV2.Primary)
         },
         onClick = onOpenOfficialAccount,

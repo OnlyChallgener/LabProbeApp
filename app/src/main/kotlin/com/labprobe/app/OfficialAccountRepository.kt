@@ -122,3 +122,16 @@ internal class OfficialAccountRepository(
         parse(request("/api/official-account", "DELETE", null), requireOk = false)
     }
 }
+
+internal fun officialAccountEntryStatus(snapshot: OfficialAccountSnapshot?, failed: Boolean): String = when {
+    failed -> "读取失败"
+    snapshot == null -> "读取中"
+    !snapshot.supported -> "不支持"
+    snapshot.state == "conflict" -> "账号冲突"
+    snapshot.state == "partial" -> "部分授权"
+    snapshot.state == "failed" -> "退出未完成"
+    snapshot.state == "pending_unknown" -> "退出待确认"
+    snapshot.state == "checking" -> "确认中"
+    snapshot.authorized -> "已授权"
+    else -> "未授权"
+}
