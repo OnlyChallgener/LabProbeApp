@@ -151,6 +151,8 @@ data class StunRuntime(
     val totalUploadBytes: Long = 0,
     val totalDownloadBytes: Long = 0,
     val lastError: String = "",
+    val wanId: String = "",
+    val egressVerification: String = "",
 )
 
 data class StunAddressLayer(
@@ -189,10 +191,27 @@ data class StunRule(
     val wanId: String = "",
 ) {
     val usesRouterNativeMapping: Boolean get() = forwardMode == "router_native"
-    val ready: Boolean get() = enabled && actualState == "mapped" && runtime.mappingFresh && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
+    val ready: Boolean get() = stunWanVerified(wanId, runtime.wanId, runtime.egressVerification) && enabled && actualState == "mapped" && runtime.mappingFresh && runtime.publicEndpoint.isNotBlank() && if (usesRouterNativeMapping) nativeMappingState == "ready" else firewallState == "ready"
 }
 
-data class StunAddressRecord(val endpoint: String, val updatedAt: Long)
+data class StunAddressRecord(val endpoint: String, val updatedAt: Long, val wanId: String = "")
+
+internal fun normalizedStunWan(value: String): String = value.trim().lowercase(Locale.ROOT).ifBlank { "wan" }
+
+internal fun stunWanVerified(expected: String, reported: String, verification: String): Boolean {
+    val line = normalizedStunWan(expected)
+    if (reported.isNotBlank() && normalizedStunWan(reported) != line) return false
+    if (line != "wan" && (reported.isBlank() || !verification.equals("verified", true))) return false
+    return verification.isBlank() || verification.equals("verified", true)
+}
+
+internal fun stunWanOptions(configured: List<WanInfo>, current: String): List<String> =
+    (configured.filter { it.configured }.map { normalizedStunWan(it.wanId) } + normalizedStunWan(current))
+        .distinct().sortedWith(compareBy({ it != "wan" }, { it }))
+
+internal fun stunWanSelectable(id: String, available: Set<String>): Boolean =
+    normalizedStunWan(id) == "wan" || normalizedStunWan(id) in available
+
 
 /** 顶部五分类筛选：HTTP/HTTPS/SSH 按应用层协议精确区分，其余全部归入 MORE。 */
 internal enum class StunProtocolFilter(val label: String) {
@@ -217,6 +236,7 @@ data class StunSnapshot(
     val rulesLoaded: Boolean = false,
     val agentOnline: Boolean = false,
     val agentLastSeenAt: String = "",
+    val availableWanIds: Set<String> = emptySet(),
 )
 
 internal fun parseStunSnapshot(root: JSONObject): StunSnapshot {
@@ -230,6 +250,9 @@ internal fun parseStunSnapshot(root: JSONObject): StunSnapshot {
         rulesLoaded = rulesLoaded,
         agentOnline = root.optBoolean("agentOnline", false),
         agentLastSeenAt = cleanApiText(root.optString("agentLastSeenAt")),
+        availableWanIds = root.optJSONArray("availableWanIds")?.let { ids ->
+            (0 until ids.length()).map { ids.optString(it).trim().lowercase(Locale.ROOT) }.filter { it.isNotBlank() }.toSet()
+        }.orEmpty(),
     )
 }
 
@@ -290,6 +313,8 @@ private fun parseStunRule(json: JSONObject): StunRule {
             totalUploadBytes = runtime.optLong("totalUploadBytes"),
             totalDownloadBytes = runtime.optLong("totalDownloadBytes"),
             lastError = cleanApiText(runtime.optString("lastError")),
+            wanId = cleanApiText(runtime.optString("wanId")),
+            egressVerification = cleanApiText(runtime.optString("egressVerification")),
         ),
         addresses = StunAddressLayers(
             target = StunAddressLayer(
@@ -364,7 +389,7 @@ class StunApi(private val prefs: AppPrefs) {
         val response = hubApi.requestText("/api/stun/$id/addresses")
         checkIdentity()
         val array = JSONObject(response).optJSONArray("addresses") ?: JSONArray()
-        (0 until array.length()).mapNotNull { index -> array.optJSONObject(index)?.let { StunAddressRecord(cleanApiText(it.optString("endpoint")), parseEpoch(it, "updatedAt") ?: 0L) } }.filter { it.endpoint.isNotBlank() }
+        (0 until array.length()).mapNotNull { index -> array.optJSONObject(index)?.let { StunAddressRecord(cleanApiText(it.optString("endpoint")), parseEpoch(it, "updatedAt") ?: 0L, cleanApiText(it.optString("wanId"))) } }.filter { it.endpoint.isNotBlank() }
     }
 }
 
@@ -377,6 +402,7 @@ data class StunDraft(
     val targetIpv4: String = "",
     val targetPort: String = "443",
     val name: String = "",
+    val wanId: String = "wan",
 ) {
     fun toJson() = JSONObject().apply {
         if (id.isNotBlank()) put("id", id)
@@ -387,6 +413,7 @@ data class StunDraft(
         put("targetPort", targetPort.toIntOrNull() ?: 0)
         put("name", name.trim())
         put("enabled", enabled)
+        put("wanId", normalizedStunWan(wanId))
     }
     companion object {
         fun from(rule: StunRule) = StunDraft(
@@ -398,6 +425,7 @@ data class StunDraft(
             targetIpv4 = rule.targetIpv4,
             targetPort = rule.targetPort.toString(),
             name = rule.name.takeUnless(::isGeneratedStunRuleName).orEmpty(),
+            wanId = normalizedStunWan(rule.wanId),
         )
     }
 }
@@ -419,6 +447,7 @@ internal fun stunRuleTitle(rule: StunRule): String = rule.name.trim().let {
     }
 }
 internal fun stunDraftValidationError(draft: StunDraft): String? {
+    if (!Regex("wan[0-9]*").matches(normalizedStunWan(draft.wanId))) return "线路 ID 格式无效"
     if (draft.targetType !in setOf("router_self", "device", "manual")) return "请选择目标类型"
     val ipv4 = draft.targetIpv4.trim()
     val validIpv4 = ipv4.split('.').let { parts -> parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && (part.toIntOrNull() ?: -1) in 0..255 } }
@@ -444,6 +473,7 @@ internal fun stunTargetBindingChanged(rule: StunRule, draft: StunDraft): Boolean
             targetType = rule.targetType,
             targetIpv4 = rule.targetIpv4,
             targetPort = rule.targetPort.toString(),
+            wanId = normalizedStunWan(rule.wanId),
         ),
         draft.copy(targetIpv4 = targetIpv4),
     )
@@ -452,7 +482,8 @@ internal fun stunTargetBindingChanged(rule: StunRule, draft: StunDraft): Boolean
 internal fun stunDraftBindingChanged(previous: StunDraft, next: StunDraft): Boolean {
     val previousIpv4 = if (previous.targetType == "router_self") "127.0.0.1" else previous.targetIpv4.trim()
     val nextIpv4 = if (next.targetType == "router_self") "127.0.0.1" else next.targetIpv4.trim()
-    return previous.targetType != next.targetType ||
+    return normalizedStunWan(previous.wanId) != normalizedStunWan(next.wanId) ||
+        previous.targetType != next.targetType ||
         previousIpv4 != nextIpv4 ||
         previous.targetPort.toIntOrNull() != next.targetPort.toIntOrNull() ||
         !previous.transportProtocol.equals(next.transportProtocol, ignoreCase = true) ||
@@ -469,6 +500,7 @@ internal fun stunRuleStateLabel(rule: StunRule, agentOnline: Boolean, deleting: 
     rule.actualState == "router_mapping_error" -> "路由器映射未就绪"
     rule.actualState == "router_mapping" -> "正在同步路由器映射"
     rule.actualState == "firewall_error" -> "防火墙未就绪"
+    rule.actualState == "error" -> "穿透异常"
     rule.actualState == "waiting_agent" -> "命令待 Agent 同步"
     rule.actualState == "mapped" || rule.actualState == "mapping" -> "已保存 / 正在确认穿透"
     else -> "正在同步"
@@ -542,6 +574,7 @@ fun StunPenetrationScreen(
     val presenceStore = remember(prefs.hub, prefs.token, prefs.hubDns) { AgentPresenceStoreRegistry.get(prefs) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val liveAgent by presenceStore.state.collectAsState()
+    val wanResource by routerRepository.wans.collectAsState()
     val ddnsResource by routerRepository.labProbeDdns.collectAsState()
     val nativeDdnsResource by routerRepository.ddns.collectAsState()
     val ddnsSnapshot = ddnsResource.value
@@ -666,6 +699,7 @@ fun StunPenetrationScreen(
                             rulesLoaded = if (acceptsRules) true else snapshot.rulesLoaded,
                             agentOnline = effectiveAgentOnline,
                             agentLastSeenAt = effectiveAgent?.lastSeenAt?.ifBlank { latest.agentLastSeenAt } ?: latest.agentLastSeenAt,
+                            availableWanIds = latest.availableWanIds,
                         )
                         val completedStunError = operationAfter?.takeIf {
                             !it.running && isStunOperationTarget(it.targetId) &&
@@ -706,6 +740,7 @@ fun StunPenetrationScreen(
                         throw cancelled
                     } catch (failure: Throwable) {
                         if (!leaving) {
+                            snapshot = snapshot.copy(availableWanIds = emptySet())
                             val operationAfter = latestOperationState
                             val unrelatedOperationChanged = operationAfter?.let {
                                 it.completedVersion != operationVersion && !isStunOperationTarget(it.targetId)
@@ -753,6 +788,7 @@ fun StunPenetrationScreen(
         }
     }
     LaunchedEffect(Unit) {
+        routerRepository.refreshWans()
         routerRepository.refreshLabProbeDdns(false)
         routerRepository.refreshDdns(false)
         refresh()
@@ -899,6 +935,7 @@ fun StunPenetrationScreen(
             visibleRules.forEach { rule ->
                 StunRuleCard(
                     rule = rule,
+                    showWan = wanResource.value?.multiWanConfigured == true || normalizedStunWan(rule.wanId) != "wan",
                     agentOnline = snapshot.agentOnline,
                     wireGuardManaged = isWireGuardManagedStunRule(
                         rule.id,
@@ -966,11 +1003,15 @@ fun StunPenetrationScreen(
         StunEditorDialog(
             initial = draft,
             prefs = prefs,
+            wanOptions = stunWanOptions(wanResource.value?.wans.orEmpty(), draft.wanId),
+            availableWanIds = snapshot.availableWanIds,
             error = editorError,
             saving = editorSaving,
             onDismiss = { if (!editorSaving) { editor = null; editorError = "" } },
         ) { saved ->
-            val validationError = stunDraftValidationError(saved)
+            val old = snapshot.rules.firstOrNull { it.id == saved.id }
+            val lineChanged = old == null || normalizedStunWan(old.wanId) != normalizedStunWan(saved.wanId) || (!old.enabled && saved.enabled)
+            val validationError = stunDraftValidationError(saved) ?: if (saved.enabled && lineChanged && !stunWanSelectable(saved.wanId, snapshot.availableWanIds)) "所选线路暂不可用" else null
             if (validationError != null) {
                 editorError = validationError
             } else {
@@ -1299,6 +1340,7 @@ fun StunPenetrationScreen(
     onEdit: () -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
+    showWan: Boolean = false,
 ) {
     val liveReady = agentOnline && rule.ready
     val stateText = operationLabel ?: stunRuleStateLabel(rule, agentOnline, deleting)
@@ -1306,7 +1348,7 @@ fun StunPenetrationScreen(
         deleting || operationLabel != null -> StunAmber
         rule.syncError.isNotBlank() -> StunRed
         !rule.enabled || !agentOnline -> LabV2.InkMuted
-        rule.actualState == "firewall_error" || rule.actualState == "router_mapping_error" -> StunRed
+        rule.actualState in setOf("firewall_error", "router_mapping_error", "error") -> StunRed
         liveReady -> StunGreen
         else -> StunAmber
     }
@@ -1325,11 +1367,11 @@ fun StunPenetrationScreen(
         rule.serviceType.ifBlank { rule.transportProtocol }
     }
     val iconId = recognition.iconId.ifBlank { favoriteIconForServiceType(quickServiceType) }
-    val subtitle = when {
+    val subtitle = (when {
         wireGuardManaged -> "${rule.transportProtocol} · 自动管理"
         rule.serviceType.equals("WireGuard", true) -> rule.transportProtocol
         else -> "$quickServiceType · ${rule.transportProtocol}"
-    }
+    }) + if (showWan) " · ${normalizedStunWan(rule.wanId).uppercase(Locale.ROOT)}" else ""
     val endpoint = rule.runtime.publicEndpoint
     val targetText = if (rule.targetType == "router_self") {
         "路由器本机:${rule.targetPort}"
@@ -1608,7 +1650,7 @@ fun StunPenetrationScreen(
     }
 }
 
-@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
+@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, wanOptions: List<String>, availableWanIds: Set<String>, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
     val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
     val deviceApi = remember(mappingCache, prefs.hubDns) { HubApi(prefs) }
     var draft by remember(initial.id, mappingCache) { mutableStateOf(initial) }
@@ -1688,6 +1730,23 @@ fun StunPenetrationScreen(
                                 modifier = Modifier.weight(1f),
                                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = StunBlue, selectedLabelColor = Color.White),
                             )
+                        }
+                    }
+                }
+                if (wanOptions.size > 1 || normalizedStunWan(draft.wanId) != "wan") {
+                    Text("线路", style = LabTypography.SectionTitle)
+                    wanOptions.chunked(3).forEach { group ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            group.forEach { id ->
+                                FilterChip(
+                                    selected = normalizedStunWan(draft.wanId) == id,
+                                    onClick = { draft = draft.copy(wanId = id) },
+                                    enabled = !saving && stunWanSelectable(id, availableWanIds),
+                                    label = { Text(id.uppercase(Locale.ROOT), fontSize = LabTypography.Supporting.fontSize) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            repeat(3 - group.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
                 }
@@ -1945,7 +2004,7 @@ fun StunPenetrationScreen(
             ) {
                 Text("最近 STUN 地址", style = LabTypography.PageTitle)
                 Text("仅保留最近 3 条；收藏页始终使用当前地址。", style = LabTypography.Supporting, color = LabV2.InkMuted)
-                val rows = addresses.ifEmpty { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { listOf(StunAddressRecord(it, rule.runtime.mappingUpdatedAt ?: 0L)) }.orEmpty() }
+                val rows = addresses.ifEmpty { rule.runtime.publicEndpoint.takeIf { it.isNotBlank() }?.let { listOf(StunAddressRecord(it, rule.runtime.mappingUpdatedAt ?: 0L, rule.runtime.wanId)) }.orEmpty() }
                 if (rows.isEmpty()) Text("尚未获取到公网地址", style = LabTypography.Supporting, color = LabV2.InkMuted)
                 rows.take(3).forEach { row ->
                     Surface(
@@ -1957,7 +2016,7 @@ fun StunPenetrationScreen(
                         Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(row.endpoint, fontWeight = FontWeight.SemiBold, color = LabV2.Ink)
-                                Text(formatStunTime(row.updatedAt), style = LabTypography.Caption, color = LabV2.InkMuted)
+                                Text(formatStunTime(row.updatedAt) + row.wanId.takeIf { it.isNotBlank() }?.let { " · ${it.uppercase(Locale.ROOT)}" }.orEmpty(), style = LabTypography.Caption, color = LabV2.InkMuted)
                             }
                             Icon(Icons.Rounded.ContentCopy, "复制", tint = StunBlue, modifier = Modifier.size(18.dp))
                         }
