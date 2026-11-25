@@ -855,6 +855,7 @@ data class LabProbeDdnsSnapshot(
     val records: List<LabProbeDdnsRecord> = emptyList(),
     val address: LabProbeDdnsAddress = LabProbeDdnsAddress(),
     val providers: List<LabProbeDdnsProvider> = emptyList(),
+    val wanSupported: Boolean = false,
 )
 
 data class LabProbeDdnsRecord(
@@ -915,8 +916,8 @@ internal data class LabProbeDdnsWanEditorState(
     val showSelector: Boolean,
 )
 
-internal fun labProbeDdnsWanEditorState(record: LabProbeDdnsRecord, inventory: WanInventory?): LabProbeDdnsWanEditorState {
-    val configuredWans = inventory?.wans.orEmpty().filter { it.configured && it.wanId.isNotBlank() }
+internal fun labProbeDdnsWanEditorState(record: LabProbeDdnsRecord, inventory: WanInventory?, wanSupported: Boolean): LabProbeDdnsWanEditorState {
+    val configuredWans = if (wanSupported) inventory?.wans.orEmpty().filter { it.configured && it.wanId.isNotBlank() } else emptyList()
     val currentWanId = record.wanId.trim()
     val selectedWanId = when {
         currentWanId.isNotBlank() -> currentWanId
@@ -1007,7 +1008,7 @@ internal fun parseLabProbeDdns(root: JSONObject): LabProbeDdnsSnapshot {
             }
         }
     }
-    return LabProbeDdnsSnapshot(records = records, address = address, providers = parseLabProbeDdnsProviders(root))
+    return LabProbeDdnsSnapshot(records = records, address = address, providers = parseLabProbeDdnsProviders(root), wanSupported = root.optBoolean("wanSupported", false))
 }
 
 private fun labProbeFlowStatus(value: String): String = when (value.lowercase(Locale.ROOT)) {

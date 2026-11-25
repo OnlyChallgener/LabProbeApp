@@ -45,6 +45,25 @@ class LabProbeDdnsModelTest {
     }
 
     @Test
+    fun hubSnapshotWanSupportGatesLineSelection() {
+        val root = JSONObject().put("records", JSONArray()).put("wanSupported", true)
+        assertTrue(parseLabProbeDdns(root).wanSupported)
+        assertFalse(parseLabProbeDdns(JSONObject()).wanSupported)
+
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", configured = true),
+                WanInfo(wanId = "wan1", configured = true),
+            ),
+            configuredCount = 2,
+        )
+        val unsupported = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory, false)
+        assertEquals("", unsupported.selectedWanId)
+        assertFalse(unsupported.showSelector)
+        assertTrue(unsupported.options.isEmpty())
+    }
+
+    @Test
     fun singleConfiguredWan1IsSelectedAutomaticallyWithoutSelector() {
         val inventory = WanInventory(
             wans = listOf(
@@ -54,7 +73,7 @@ class LabProbeDdnsModelTest {
             configuredCount = 1,
         )
 
-        val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory)
+        val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory, true)
         assertEquals("wan1", state.selectedWanId)
         assertEquals(listOf("wan1"), state.options)
         assertFalse(state.showSelector)
@@ -70,12 +89,12 @@ class LabProbeDdnsModelTest {
             configuredCount = 2,
         )
 
-        val newState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory)
+        val newState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory, true)
         assertEquals("broadband2", newState.selectedWanId)
         assertEquals(listOf("wan", "broadband2"), newState.options)
         assertTrue(newState.showSelector)
 
-        val existingState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "existing", wanId = "legacy0"), inventory)
+        val existingState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "existing", wanId = "legacy0"), inventory, true)
         assertEquals("legacy0", existingState.selectedWanId)
         assertEquals(listOf("wan", "broadband2", "legacy0"), existingState.options)
         assertTrue(existingState.showSelector)
@@ -88,9 +107,9 @@ class LabProbeDdnsModelTest {
             configuredCount = 1,
         )
         val legacyRecord = LabProbeDdnsRecord(id = "legacy")
-        assertEquals("wan1", labProbeDdnsWanEditorState(legacyRecord, singleWan).selectedWanId)
-        assertEquals("", labProbeDdnsWanEditorState(legacyRecord, null).selectedWanId)
-        assertTrue(labProbeDdnsWanEditorState(legacyRecord, null).options.isEmpty())
+        assertEquals("wan1", labProbeDdnsWanEditorState(legacyRecord, singleWan, true).selectedWanId)
+        assertEquals("", labProbeDdnsWanEditorState(legacyRecord, null, true).selectedWanId)
+        assertTrue(labProbeDdnsWanEditorState(legacyRecord, null, true).options.isEmpty())
     }
 
     @Test
@@ -103,7 +122,7 @@ class LabProbeDdnsModelTest {
             configuredCount = 2,
         )
 
-        val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "legacy"), inventory)
+        val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "legacy"), inventory, true)
         assertEquals("", state.selectedWanId)
         assertEquals(listOf("wan", "wan1"), state.options)
         assertTrue(state.showSelector)

@@ -1876,6 +1876,7 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
                     initial = editing ?: LabProbeDdnsRecord(provider = "cloudflare"),
                     providers = snapshot?.providers.orEmpty(),
                     wanInventory = wanResource.value,
+                    wanSupported = snapshot?.wanSupported == true,
                     externalError = actionError,
                     onBack = { adding = false; editing = null },
                 ) { record, credentials ->
@@ -2236,13 +2237,14 @@ private fun LabProbeDdnsEditorPage(
     initial: LabProbeDdnsRecord,
     providers: List<LabProbeDdnsProvider>,
     wanInventory: WanInventory?,
+    wanSupported: Boolean,
     externalError: String,
     onBack: () -> Unit,
     onSave: (LabProbeDdnsRecord, Map<String, String>) -> Unit,
 ) {
     val normalized = remember(initial) { initial.copy(provider = initial.provider.ifBlank { "cloudflare" }, recordTypes = normalizeLabProbeRecordTypes(initial.recordTypes)) }
     var record by remember(normalized) { mutableStateOf(normalized) }
-    val wanEditorState = labProbeDdnsWanEditorState(record, wanInventory)
+    val wanEditorState = labProbeDdnsWanEditorState(record, wanInventory, wanSupported)
     LaunchedEffect(wanEditorState.selectedWanId) {
         if (record.wanId != wanEditorState.selectedWanId) record = record.copy(wanId = wanEditorState.selectedWanId)
     }
