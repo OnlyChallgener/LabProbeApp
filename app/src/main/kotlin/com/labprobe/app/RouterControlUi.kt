@@ -478,6 +478,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
     val resource by repository.portMappings.collectAsState()
+    val wanResource by repository.wans.collectAsState()
     val rules = resource.value.orEmpty()
     val scope = repository.commandScope
     var devices by remember(mappingCache) { mutableStateOf(mappingCache.devices) }
@@ -501,6 +502,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     }
 
     LaunchedEffect(mappingCache) { refreshDevices() }
+    LaunchedEffect(repository) { repository.refreshWans() }
 
     val favorites = prefs.favoriteShortcuts()
     val favoriteHints = remember(favorites) { favoriteServiceHints(favorites) }
@@ -572,6 +574,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
         NativePortEditorSheet(
             initial = editing ?: NativePortMapRule(),
             existingNames = rules.map { it.ruleName }.toSet(),
+            wanInventory = wanResource.value,
             devices = devices,
             devicesLoading = devicesLoading,
             refreshDevices = { refreshDevices(force = true) },
@@ -691,7 +694,7 @@ private fun NativePortRuleCard(
                     }
                 }
                 Text(
-                    "WAN:${rule.srcPort.ifBlank { "--" }} → $destination",
+                    "${nativePortWanLabel(rule)}:${rule.srcPort.ifBlank { "--" }} → $destination",
                     fontSize = 11.5.sp,
                     lineHeight = 15.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -709,6 +712,7 @@ private fun NativePortRuleCard(
 private fun NativePortEditorSheet(
     initial: NativePortMapRule,
     existingNames: Set<String>,
+    wanInventory: WanInventory?,
     devices: List<DeviceItem>,
     devicesLoading: Boolean,
     refreshDevices: suspend () -> List<DeviceItem>,
@@ -716,8 +720,14 @@ private fun NativePortEditorSheet(
     onSave: (NativePortMapRule) -> Unit,
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
+    var sourceMode by remember(initial) { mutableStateOf(if (initial.srcIp.isBlank()) "任意来源" else "指定IP") }
     var error by remember { mutableStateOf("") }
     var showDevicePicker by remember { mutableStateOf(false) }
+    val lineOptions = remember(wanInventory, draft.wanId) {
+        (listOf("all") + (wanInventory?.selectable("portMapping")?.map { it.wanId }.orEmpty()) + listOfNotNull(draft.wanId))
+            .distinct()
+    }
+    val showLineSelector = wanInventory?.multiWanConfigured == true && lineOptions.size > 1
     val scope = rememberCoroutineScope()
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -736,10 +746,26 @@ private fun NativePortEditorSheet(
                 IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Close, null, Modifier.size(19.dp)) }
             }
             CompactField("规则名称", draft.ruleName, "例如 NAS管理") { draft = draft.copy(ruleName = it.take(24)) }
+            if (showLineSelector) {
+                CompactChoice("线路", draft.wanId, lineOptions, display = { option ->
+                    when (option) {
+                        "all" -> "全部WAN"
+                        "wan1" -> "WAN1"
+                        else -> "WAN"
+                    }
+                }) { selected ->
+                    draft = draft.copy(src = when (selected) {
+                        "all" -> ""
+                        "wan", "wan1" -> selected
+                        else -> draft.src
+                    })
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CompactChoice("协议", draft.proto, listOf("tcp", "udp", "tcp+udp"), Modifier.weight(1f)) { draft = draft.copy(proto = it) }
-                CompactChoice("来源", if (draft.srcIp.isBlank()) "全部WAN" else "指定IP", listOf("全部WAN", "指定IP"), Modifier.weight(1f)) {
-                    draft = if (it == "全部WAN") draft.copy(src = "wan", srcIp = "") else draft.copy(src = "", srcIp = draft.srcIp)
+                CompactChoice("来源", sourceMode, listOf("任意来源", "指定IP"), Modifier.weight(1f)) { selected ->
+                    sourceMode = selected
+                    if (selected == "任意来源") draft = draft.copy(srcIp = "")
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -761,8 +787,8 @@ private fun NativePortEditorSheet(
                 }
             }
             Text("可手动填写地址，也可从终端列表关联路由器内网设备。", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
-            AnimatedVisibility(draft.srcIp.isNotBlank() || draft.src.isBlank()) {
-                CompactField("允许来源IP", draft.srcIp, "例如 10.0.0.8", keyboardType = KeyboardType.Ascii) { draft = draft.copy(src = "", srcIp = it.take(64)) }
+            AnimatedVisibility(sourceMode == "指定IP") {
+                CompactField("允许来源IP", draft.srcIp, "例如 10.0.0.8", keyboardType = KeyboardType.Ascii) { draft = draft.copy(srcIp = it.take(64)) }
             }
             if (error.isNotBlank()) Text(error, fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterRed)
             Spacer(Modifier.height(4.dp))

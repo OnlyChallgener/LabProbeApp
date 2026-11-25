@@ -417,14 +417,29 @@ data class NativePortMapRule(
     val destPort: String = "",
     val proto: String = "tcp"
 ) {
+    val wanId: String
+        get() = when (src.trim().lowercase(Locale.ROOT)) {
+            "" -> "all"
+            "wan", "wan1" -> src.trim().lowercase(Locale.ROOT)
+            else -> ""
+        }
+
     fun toJson() = JSONObject()
         .put("ruleName", ruleName.trim())
+        .put("wanId", wanId)
         .put("src", src)
         .put("srcIp", srcIp.trim())
         .put("srcPort", srcPort.trim())
         .put("destIp", destIp.trim())
         .put("destPort", destPort.trim())
         .put("proto", proto)
+}
+
+internal fun nativePortWanLabel(rule: NativePortMapRule): String = when (rule.wanId) {
+    "all" -> "全部WAN"
+    "wan1" -> "WAN1"
+    "wan" -> "WAN"
+    else -> "WAN"
 }
 
 internal fun parseNativePortRules(data: JSONObject): List<NativePortMapRule> {
