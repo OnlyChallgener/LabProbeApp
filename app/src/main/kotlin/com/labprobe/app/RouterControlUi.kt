@@ -2267,6 +2267,7 @@ private fun LabProbeDdnsEditorPage(
 private fun DdnsRecordsSection(prefs: AppPrefs, nativeDdns: Boolean = false) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.ddns.collectAsState()
+    val wanResource by repository.wans.collectAsState()
     val rows = resource.value.orEmpty()
     val scope = repository.commandScope
     var actionError by remember { mutableStateOf("") }
@@ -2275,6 +2276,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs, nativeDdns: Boolean = false) {
     var deleteTarget by remember { mutableStateOf<DdnsRecord?>(null) }
     val error = actionError.ifBlank { resource.error }
     LaunchedEffect(repository, nativeDdns) {
+        repository.refreshWans()
         if (nativeDdns && rows.isEmpty()) repository.refreshDdns(force = true)
     }
 
@@ -2308,6 +2310,7 @@ private fun DdnsRecordsSection(prefs: AppPrefs, nativeDdns: Boolean = false) {
                     initial = editing ?: DdnsRecord(nativeProtocol = deviceProtocol),
                     externalError = actionError,
                     nativeDdns = nativeDdns,
+                    wanInventory = wanResource.value,
                     onBack = { adding = false; editing = null },
                 ) { record, password ->
                     scope.launch {
@@ -2387,7 +2390,7 @@ private fun DdnsCard(record:DdnsRecord,nativeDdns:Boolean=false,onEdit:()->Unit,
     }
 }
 @Composable
-private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns:Boolean=false,onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
+private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns:Boolean=false,wanInventory:WanInventory?=null,onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
     val normalizedInitial=remember(initial){
         initial.copy(
             provider=initial.provider.trim().ifBlank{"aliyun.com"},
@@ -2413,9 +2416,8 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns
             if(record.provider in defaults)defaults else listOf(record.provider)+defaults
         }
     }
-    val interfaceOptions=remember(record.interfaceName){
-        val defaults=listOf("wan","wan1")
-        if(record.interfaceName in defaults)defaults else listOf(record.interfaceName)+defaults
+    val interfaceOptions=remember(wanInventory,record.interfaceName){
+        nativeDdnsWanOptions(wanInventory,record.interfaceName)
     }
     val recordTypes=remember(record.provider){
         listOf("A","AAAA","TXT").filter{nativeDdnsSupportsRecordType(record.provider,it)}

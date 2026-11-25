@@ -599,8 +599,11 @@ data class DdnsRecord(
 ) {
     /** New ReyeeOS firmware exposes ddns_view; old firmware only has ddnsCfg. */
     val modernNative: Boolean get() = nativeProtocol.equals("ddns_view", ignoreCase = true)
+    val wanId: String
+        get() = interfaceName.trim().lowercase(Locale.ROOT).takeIf { it in setOf("wan", "wan1") }.orEmpty()
 
     fun toJson(password: String?) = JSONObject().apply {
+        put("wanId", wanId)
         if (modernNative) {
             // HUB maps service_name -> provider and merges all public fields on update.
             put("provider", provider)
@@ -685,6 +688,11 @@ internal fun ddnsEditorUsesModernForm(nativeProtocol: String, nativeDdns: Boolea
     nativeProtocol.trim().equals("ddns_view", ignoreCase = true) ||
         (nativeProtocol.isBlank() && nativeDdns)
 
+internal fun nativeDdnsWanOptions(inventory: WanInventory?, current: String): List<String> =
+    (listOf("wan") + inventory?.selectable("nativeDdns")?.map { it.wanId }.orEmpty() + current)
+        .filter { it.isNotBlank() }
+        .distinct()
+
 internal fun nativeDdnsSupportsRecordType(provider: String, recordType: String): Boolean {
     val flags = nativeDdnsProviderFlags(provider)
     return when (recordType.uppercase(Locale.ROOT)) {
@@ -748,7 +756,9 @@ internal fun parseDdnsList(data: JSONObject): List<DdnsRecord> {
             username = o.ddnsText("username", "user", "accessKey", "accessKeyId", "access_key_id"),
             enabled = o.ddnsFlag(true, "enable", "enabled", "isEnabled"),
             useIpv6 = o.ddnsFlag(true, "use_ipv6", "useIpv6", "ipv6", "ipVersion"),
-            interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface").ifBlank { "wan" },
+            interfaceName = o.ddnsText("interface", "interfaceName", "wan", "iface")
+                .ifBlank { o.ddnsText("wanId") }
+                .ifBlank { "wan" },
             status = o.ddnsText("status", "state", "message", "msg"),
             ip = o.ddnsText("ip", "currentIp", "current_ip", "address"),
             lastUpdatedAt = o.optLong("last_log", o.optLong("last_updated_at", o.optLong("lastUpdatedAt", 0L))),
