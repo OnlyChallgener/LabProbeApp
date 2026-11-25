@@ -119,7 +119,9 @@ class SettingsUiTest {
         compose.onNodeWithContentDescription("BE72 路由器").assertDoesNotExist()
         compose.onNodeWithContentDescription("BE50 路由器").assertDoesNotExist()
         val routerName = compose.onNodeWithText("BE72").fetchSemanticsNode().boundsInRoot
-        val projectName = compose.onNodeWithText("家庭网络").fetchSemanticsNode().boundsInRoot
+        // The card prioritizes the official project name over the local site name.
+        val projectName = compose.onNodeWithText("家庭").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithText("第二").assertIsDisplayed()
         val sectionTitle = compose.onAllNodesWithText("已匹配路由器")[1].fetchSemanticsNode().boundsInRoot
         assertEquals(sectionTitle.left, routerName.left, 1f)
         assertEquals(routerName.left, projectName.left, 1f)

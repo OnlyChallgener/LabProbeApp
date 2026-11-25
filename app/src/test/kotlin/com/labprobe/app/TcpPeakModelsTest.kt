@@ -301,6 +301,17 @@ class TcpPeakModelsTest {
     }
 
     @Test
+    fun legacyDefaultNeverDiscardsKnownMultiWanOrExplicitSecondaryLine() {
+        assertTrue(tcpPeakUsesLegacyDefault(null, ""))
+        assertTrue(tcpPeakUsesLegacyDefault(WanInventory(configuredCount = 1), "WAN"))
+        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(configuredCount = 2), "wan"))
+        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(configuredCount = 1), "wan1"))
+        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(
+            WanInfo(wanId = "wan", configured = true), WanInfo(wanId = "wan1", configured = true)
+        )), ""))
+    }
+
+    @Test
     fun wanLabelIsEmptyForLegacySnapshotsAndIdentifiesConfiguredLine() {
         assertEquals("", tcpPeakWanLabel(""))
         assertEquals("", tcpPeakWanLabel("  "))

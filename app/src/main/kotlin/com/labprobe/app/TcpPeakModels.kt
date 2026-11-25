@@ -122,6 +122,11 @@ internal fun tcpPeakWanSelectionState(
     )
 }
 
+internal fun tcpPeakUsesLegacyDefault(inventory: WanInventory?, wanId: String): Boolean =
+    inventory?.multiWanConfigured != true &&
+        inventory?.wans.orEmpty().count { it.configured } <= 1 &&
+        (wanId.isBlank() || normalizeTcpPeakWanId(wanId) == "wan")
+
 internal fun tcpPeakWanLabel(wanId: String): String =
     wanId.trim().takeIf(String::isNotBlank)?.let { "线路 ${it.uppercase(Locale.ROOT)}" }.orEmpty()
 

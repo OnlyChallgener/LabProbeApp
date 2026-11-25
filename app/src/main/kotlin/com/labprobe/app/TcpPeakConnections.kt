@@ -53,6 +53,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -278,8 +279,8 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val controller = remember(prefs) { TcpPeakController(context, prefs) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val wanResource by routerRepository.wans.collectAsState()
-    var relayAvailableWans by remember(prefs.hub, prefs.token, prefs.hubDns) { mutableStateOf<Set<String>>(emptySet()) }
-    LaunchedEffect(routerRepository) { routerRepository.refreshWans() }
+    var wanRetry by remember(routerRepository) { mutableStateOf(0) }
+    LaunchedEffect(routerRepository, wanRetry) { routerRepository.refreshWans(force = wanRetry > 0) }
     val pendingAiCommand = remember(prefs) {
         TcpPeakPendingAiCommand.fromJson(prefs.tcpPeakPendingAiCommandJson)
     }
@@ -301,15 +302,15 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     val wanSelection = tcpPeakWanSelectionState(side, selectedWanId, configuredWans)
 
-    LaunchedEffect(side, configuredWans) {
-        selectedWanId = wanSelection.selectedWanId
-    }
-
     val explicitWan = wanSelection.selectedWanId
     val selectedLine = configuredWans.firstOrNull { it.wanId.equals(explicitWan, true) }
-    val legacyDefault = configuredWans.size <= 1 && (explicitWan.isBlank() || explicitWan == "wan")
-    LaunchedEffect(routerRepository, side, legacyDefault, wanResource.updatedAt) {
-        relayAvailableWans = emptySet()
+    val legacyDefault = tcpPeakUsesLegacyDefault(wanResource.value, explicitWan)
+    val inventoryPending = side == TcpPeakSide.RELAY && wanResource.value == null &&
+        (wanResource.refreshing || wanResource.error.isBlank())
+    var relayAvailableWans by remember(routerRepository, side, legacyDefault, wanResource.updatedAt, wanRetry) {
+        mutableStateOf<Set<String>>(emptySet())
+    }
+    LaunchedEffect(routerRepository, side, legacyDefault, wanResource.updatedAt, wanRetry) {
         if (side == TcpPeakSide.RELAY && !legacyDefault) {
             relayAvailableWans = try {
                 withContext(Dispatchers.IO) {
@@ -408,7 +409,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     controller.start(cfg)
                 }
             },
-            enabled = active || !relayLineUnavailable,
+            enabled = active || (!inventoryPending && !relayLineUnavailable),
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             shape = LabV2.CardShape,
             colors = ButtonDefaults.buttonColors(
@@ -420,8 +421,19 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Spacer(Modifier.width(6.dp))
             Text(if (active) "停止并释放连接" else "开始测试", fontWeight = FontWeight.Bold)
         }
-        if (relayLineUnavailable && !active) {
-            Text("所选线路未确认可用或 Relay 暂不支持", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+        if (!active && side == TcpPeakSide.RELAY) {
+            if (inventoryPending) {
+                Text("正在读取线路配置…", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
+            } else if (relayLineUnavailable || (wanResource.value == null && wanResource.error.isNotBlank())) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (relayLineUnavailable) "所选线路未确认可用或 Relay 暂不支持" else "未获取线路配置，将使用默认出口",
+                        modifier = Modifier.weight(1f),
+                        style = LabTypography.Supporting.copy(color = LabV2.InkMuted),
+                    )
+                    TextButton(onClick = { wanRetry += 1 }, enabled = !wanResource.refreshing) { Text("重试") }
+                }
+            }
         }
         if (ui.notice.isNotBlank()) {
             Text(ui.notice, style = LabTypography.Supporting.copy(color = LabV2.Red), maxLines = 3, overflow = TextOverflow.Ellipsis)
