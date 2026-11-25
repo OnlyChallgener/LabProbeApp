@@ -96,10 +96,10 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     val state by viewModel.state.collectAsState()
-    val wanOptions = wanResource.value?.wans
+    val wanOptions = (wanResource.value?.wans
         ?.filter { it.configured && it.enabled && "ipv6" in it.families }
-        ?.map { it.wanId }
-        .orEmpty()
+        ?.map { it.wanId }.orEmpty() + state.config?.wans?.map { it.wanId }.orEmpty())
+        .distinct()
     DetailShell(
         title = "IPv6 设置",
         subtitle = "配置将通过 LabProbe Hub 安全同步",

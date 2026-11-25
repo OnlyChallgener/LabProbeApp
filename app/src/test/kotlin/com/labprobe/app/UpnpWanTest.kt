@@ -36,6 +36,20 @@ class UpnpWanTest {
     }
 
     @Test
+    fun knownZeroCapabilityDoesNotInventWan() {
+        val inventory = WanInventory(
+            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("upnp" to false))),
+            configuredCount = 1,
+        )
+        assertEquals(emptyList<String>(), upnpWanOptions(inventory, ""))
+    }
+
+    @Test
+    fun legacyHubRetainsAutoAndWanWithoutInventory() {
+        assertEquals(listOf("AUTO", "WAN"), upnpWanOptions(null, "AUTO"))
+    }
+
+    @Test
     fun parserAcceptsWanIdFromNewHubWithoutLosingWanField() {
         val state = parseUpnp(JSONObject("""{"enable_upnp":"true","wanId":"wan1","upnpds":[]}"""))
         assertEquals("WAN1", state.wan)

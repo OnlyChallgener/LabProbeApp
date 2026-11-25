@@ -361,6 +361,7 @@ data class WanInventory(
     val multiWanConfigured: Boolean get() = configuredCount > 1
     fun find(wanId: String?): WanInfo? = wans.firstOrNull { it.wanId.equals(wanId, true) }
     fun selectable(capability: String): List<WanInfo> = wans.filter { it.selectable && it.supports(capability) }
+    fun preferred(capability: String): WanInfo? = selectable(capability).firstOrNull { it.defaultEgress } ?: selectable(capability).firstOrNull()
 }
 
 internal fun parseWanInventory(data: JSONObject): WanInventory {
@@ -368,25 +369,29 @@ internal fun parseWanInventory(data: JSONObject): WanInventory {
     val wans = (0 until array.length()).mapNotNull { index ->
         val row = array.optJSONObject(index) ?: return@mapNotNull null
         val capabilities = row.optJSONObject("capabilities") ?: JSONObject()
-        val capabilityNames = listOf("portMapping", "nativeDdns", "upnp", "speedtest", "natDiagnostic")
+        val wanId = cleanApiText(row.optString("wanId", row.optString("logicalInterface")))
+        val ipv4 = cleanApiText(row.optString("ipv4"))
+        val ipv6 = cleanApiText(row.optString("ipv6"))
+        val configured = if (row.has("configured")) row.optBoolean("configured") else true
+        val enabled = if (row.has("enabled")) row.optBoolean("enabled") else configured
         WanInfo(
-            wanId = cleanApiText(row.optString("wanId", row.optString("logicalInterface"))),
-            logicalInterface = cleanApiText(row.optString("logicalInterface", row.optString("wanId"))),
-            displayName = cleanApiText(row.optString("displayName")),
+            wanId = wanId,
+            logicalInterface = cleanApiText(row.optString("logicalInterface", wanId)),
+            displayName = cleanApiText(row.optString("displayName")).ifBlank { wanId.uppercase(Locale.ROOT) },
             physicalPortId = row.optInt("physicalPortId"),
             physicalPortName = cleanApiText(row.optString("physicalPortName")),
             role = cleanApiText(row.optString("role")),
-            supported = row.optBoolean("supported"),
-            configured = row.optBoolean("configured"),
-            enabled = row.optBoolean("enabled"),
-            online = row.optBoolean("online"),
+            supported = if (row.has("supported")) row.optBoolean("supported") else configured,
+            configured = configured,
+            enabled = enabled,
+            online = if (row.has("online")) row.optBoolean("online") else ipv4.isNotBlank() || ipv6.isNotBlank(),
             defaultEgress = row.optBoolean("defaultEgress"),
             families = row.optJSONArray("families")?.let { values ->
                 (0 until values.length()).mapNotNull { cleanApiText(values.optString(it)).takeIf { value -> value.isNotBlank() } }
             }.orEmpty(),
             proto = cleanApiText(row.optString("proto")),
-            ipv4 = cleanApiText(row.optString("ipv4")),
-            ipv6 = cleanApiText(row.optString("ipv6")),
+            ipv4 = ipv4,
+            ipv6 = ipv6,
             gateway = cleanApiText(row.optString("gateway")),
             gateway6 = cleanApiText(row.optString("gateway6")),
             dns = row.optJSONArray("dns")?.let { values ->
@@ -394,7 +399,13 @@ internal fun parseWanInventory(data: JSONObject): WanInventory {
             }.orEmpty(),
             uptimeSeconds = row.optLong("uptimeSeconds"),
             linkSpeedMbps = row.optInt("linkSpeedMbps"),
-            capabilities = capabilityNames.associateWith { capabilities.optBoolean(it) },
+            capabilities = buildMap {
+                val keys = capabilities.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    put(key, capabilities.optBoolean(key))
+                }
+            },
             source = cleanApiText(row.optString("source", "firmware")),
         )
     }.filter { it.wanId.isNotBlank() }
@@ -418,11 +429,7 @@ data class NativePortMapRule(
     val proto: String = "tcp"
 ) {
     val wanId: String
-        get() = when (src.trim().lowercase(Locale.ROOT)) {
-            "" -> "all"
-            "wan", "wan1" -> src.trim().lowercase(Locale.ROOT)
-            else -> ""
-        }
+        get() = src.trim().lowercase(Locale.ROOT).ifBlank { "all" }
 
     fun toJson() = JSONObject()
         .put("ruleName", ruleName.trim())
@@ -439,7 +446,7 @@ internal fun nativePortWanLabel(rule: NativePortMapRule): String = when (rule.wa
     "all" -> "全部WAN"
     "wan1" -> "WAN1"
     "wan" -> "WAN"
-    else -> "WAN"
+    else -> rule.wanId.uppercase(Locale.ROOT)
 }
 
 internal fun parseNativePortRules(data: JSONObject): List<NativePortMapRule> {
@@ -473,9 +480,20 @@ data class UpnpState(
     val mappings: List<UpnpMapping> = emptyList()
 )
 
-internal fun upnpWanOptions(inventory: WanInventory?, current: String): List<String> =
-    (listOf("AUTO", "WAN") + inventory?.selectable("upnp")?.map { it.wanId.uppercase(Locale.ROOT) }.orEmpty() + current)
+internal fun upnpWanOptions(inventory: WanInventory?, current: String): List<String> {
+    if (inventory == null) return (listOf("AUTO", "WAN") + current).filter { it.isNotBlank() }.distinct()
+    val available = inventory.selectable("upnp").map { it.wanId.uppercase(Locale.ROOT) }
+    return ((if (available.isNotEmpty()) listOf("AUTO") else emptyList()) + available + current)
+        .filter { it.isNotBlank() }
         .distinct()
+}
+
+internal fun firewallWanOptions(inventory: WanInventory?, current: String): List<String> {
+    if (inventory == null) return (listOf("wan") + current).filter { it.isNotBlank() }.distinct()
+    return (inventory.wans.filter { it.configured }.map { it.logicalInterface.ifBlank { it.wanId } } + current)
+        .filter { it.isNotBlank() }
+        .distinct()
+}
 
 internal fun upnpMappingStatus(state: UpnpState?, stale: Boolean, error: String): String = when {
     state == null || stale || error.isNotBlank() -> "待同步"
@@ -600,7 +618,7 @@ data class DdnsRecord(
     /** New ReyeeOS firmware exposes ddns_view; old firmware only has ddnsCfg. */
     val modernNative: Boolean get() = nativeProtocol.equals("ddns_view", ignoreCase = true)
     val wanId: String
-        get() = interfaceName.trim().lowercase(Locale.ROOT).takeIf { it in setOf("wan", "wan1") }.orEmpty()
+        get() = interfaceName.trim().lowercase(Locale.ROOT)
 
     fun toJson(password: String?) = JSONObject().apply {
         put("wanId", wanId)
@@ -698,10 +716,12 @@ internal fun ddnsEditorUsesModernForm(nativeProtocol: String, nativeDdns: Boolea
     nativeProtocol.trim().equals("ddns_view", ignoreCase = true) ||
         (nativeProtocol.isBlank() && nativeDdns)
 
-internal fun nativeDdnsWanOptions(inventory: WanInventory?, current: String): List<String> =
-    (listOf("wan") + inventory?.selectable("nativeDdns")?.map { it.wanId }.orEmpty() + current)
+internal fun nativeDdnsWanOptions(inventory: WanInventory?, current: String): List<String> {
+    if (inventory == null) return (listOf("wan") + current).filter { it.isNotBlank() }.distinct()
+    return (inventory.selectable("nativeDdns").map { it.wanId } + current)
         .filter { it.isNotBlank() }
         .distinct()
+}
 
 internal fun nativeDdnsSupportsRecordType(provider: String, recordType: String): Boolean {
     val flags = nativeDdnsProviderFlags(provider)

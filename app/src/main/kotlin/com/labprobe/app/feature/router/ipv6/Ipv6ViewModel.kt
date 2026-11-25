@@ -22,7 +22,8 @@ data class Ipv6UiState(
     val selectedWanId: String = "wan",
 ) {
     val dirty: Boolean get() = config?.let { form != Ipv6FormState.from(it, selectedWanId) } == true
-    val canSave: Boolean get() = dirty && !loading && !saving && form.validationError == null
+    val canSave: Boolean get() = dirty && !loading && !saving && form.validationError == null &&
+        config?.let { current -> current.wans.any { it.wanId.equals(form.wanId, true) } || (current.wans.isEmpty() && current.wan.wanId.equals(form.wanId, true)) } == true
 }
 
 data class Dhcpv6ClientUiState(
@@ -53,18 +54,26 @@ class Ipv6ViewModel(private val repository: Ipv6Repository, private val supports
             notice = "",
         )
         scope.launch {
-            val statusResult = safeCall { repository.status(old.selectedWanId) }
-            val configResult = safeCall { repository.config(old.selectedWanId) }
+            val configResult = safeCall { repository.config() }
             if (requestGeneration != generation) return@launch
             val latestConfig = configResult.getOrNull()
+            val selectedWanId = latestConfig?.let { config ->
+                config.wans.firstOrNull { it.wanId.equals(old.selectedWanId, true) }?.wanId
+                    ?: config.wans.firstOrNull { it.wanId.equals(config.wan.wanId, true) }?.wanId
+                    ?: config.wans.firstOrNull()?.wanId
+                    ?: config.wan.wanId
+            } ?: old.selectedWanId
+            val statusResult = safeCall { repository.status(selectedWanId) }
+            if (requestGeneration != generation) return@launch
             val error = listOfNotNull(
                 statusResult.exceptionOrNull()?.message,
                 configResult.exceptionOrNull()?.message,
             ).firstOrNull().orEmpty()
             _state.value = _state.value.copy(
+                selectedWanId = selectedWanId,
                 status = statusResult.getOrNull() ?: old.status,
                 config = latestConfig ?: old.config,
-                form = latestConfig?.let { Ipv6FormState.from(it, old.selectedWanId) } ?: old.form,
+                form = latestConfig?.let { Ipv6FormState.from(it, selectedWanId) } ?: old.form,
                 loading = false,
                 refreshing = false,
                 error = error.ifBlank { if (latestConfig == null) "IPv6 配置读取失败" else "" },

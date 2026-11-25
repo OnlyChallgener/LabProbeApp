@@ -30,6 +30,28 @@ class NativeDdnsWanTest {
     }
 
     @Test
+    fun knownZeroCapabilityDoesNotInventWan() {
+        val inventory = WanInventory(
+            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("nativeDdns" to false))),
+            configuredCount = 1,
+        )
+        assertEquals(emptyList<String>(), nativeDdnsWanOptions(inventory, ""))
+    }
+
+    @Test
+    fun arbitraryWanIdentityAndDefaultEgressArePreserved() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("nativeDdns" to true)),
+                WanInfo(wanId = "broadband2", displayName = "WAN1", supported = true, configured = true, enabled = true, online = false, defaultEgress = true, capabilities = mapOf("nativeDdns" to true)),
+            ),
+            configuredCount = 2,
+        )
+        assertEquals("broadband2", inventory.preferred("nativeDdns")?.wanId)
+        assertEquals(listOf("wan", "broadband2"), nativeDdnsWanOptions(inventory, "wan"))
+    }
+
+    @Test
     fun recordSerializesWanIdentityWithoutLosingInterface() {
         val record = DdnsRecord(domain = "a.example.com", interfaceName = "wan1")
         val json = record.toJson(null)

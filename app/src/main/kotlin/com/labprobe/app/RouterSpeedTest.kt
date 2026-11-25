@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.Brush
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -306,7 +307,7 @@ internal fun speedTestInterfaceOptions(
         ?.mapNotNull { wan -> wan.logicalInterface.takeIf { SpeedWanName.matches(it) } }
         ?.distinct()
         .orEmpty()
-    val available = if (unified.isNotEmpty()) {
+    val available = if (unified.isNotEmpty() || inventory != null) {
         unified.sortedWith(compareBy({ if (it == "wan") 0 else 1 }, { it }))
     } else {
         ports.filter { it.wan && it.testable }
@@ -335,6 +336,8 @@ internal fun speedTestSelection(
 ): List<String> {
     val options = speedTestInterfaceOptions(ports, inventory)
     options.firstOrNull { it.id == selected }?.let { return it.interfaces }
+    inventory?.wans?.firstOrNull { it.defaultEgress && it.selectable && it.supports("speedtest") }
+        ?.logicalInterface?.let { default -> options.firstOrNull { it.id == default }?.interfaces?.let { return it } }
     // WAN remains the default when present; the first live WAN is the fallback
     // for single-WAN routers whose interface has a different suffix.
     return options.firstOrNull { it.id == "wan" }?.interfaces
@@ -593,9 +596,27 @@ private data class RouterToolEntry(
     val route: String
 )
 
+internal fun routerToolRouteVisible(route: String, capabilities: RouterCapabilities?, inventory: WanInventory?): Boolean = when (route) {
+    "tool_router_firewall" -> capabilities?.firewall ?: true
+    "tool_router_diag" -> capabilities?.diagnostic ?: true
+    "tool_router_ipv6" -> capabilities?.configured ?: true
+    "tool_router_nat" -> inventory?.selectable("natDiagnostic")?.isNotEmpty() ?: true
+    "tool_wireguard" -> capabilities?.wireguard ?: true
+    "tool_portmap" -> (inventory?.selectable("portMapping")?.isNotEmpty() ?: capabilities?.nativePortMapping ?: true) ||
+        (inventory?.selectable("upnp")?.isNotEmpty() ?: capabilities?.upnp ?: true)
+    else -> true
+}
+
 @Composable
 private fun RouterToolsQuickSection(prefs: AppPrefs, onOpen: (String) -> Unit) {
     val isBe50 = isWorkspaceBe50(prefs)
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val capabilityResource by repository.capabilities.collectAsState()
+    val wanResource by repository.wans.collectAsState()
+    LaunchedEffect(repository) {
+        repository.refreshCapabilities()
+        repository.refreshWans()
+    }
     // 儿童上网和特征库都已经有自己独立的卡片了，这里别再重复列一遍入口。
     val settingSection = listOf(
         RouterToolEntry("映射与 UPnP", "IPv6 映射 · 原生端口映射 · UPnP", "tool_portmap"),
@@ -606,7 +627,8 @@ private fun RouterToolsQuickSection(prefs: AppPrefs, onOpen: (String) -> Unit) {
         RouterToolEntry("DDNS", if (isBe50) "LabProbe · 证书监控" else "LabProbe · 路由器原生 · 证书监控", "tool_router_ddns"),
         RouterToolEntry("WireGuard", "APP 客户端 · DDNS 与 STUN 联动", "tool_wireguard"),
         RouterToolEntry("Webhook", "自定义服务推送与公网地址", "tool_router_webhook")
-    ).filterNot { isBe50 && it.route in setOf("tool_router_firewall", "tool_router_nat", "tool_wireguard") }
+    ).filter { routerToolRouteVisible(it.route, capabilityResource.value, wanResource.value) }
+        .filterNot { isBe50 && it.route in setOf("tool_router_firewall", "tool_router_nat", "tool_wireguard") }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text("路由设置与诊断", style = LabTypography.SectionTitle.copy(color = SpeedInk))
         settingSection.forEach { entry ->

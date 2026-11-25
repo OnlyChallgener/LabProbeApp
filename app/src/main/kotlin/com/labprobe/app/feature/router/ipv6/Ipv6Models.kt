@@ -41,6 +41,11 @@ data class Ipv6Config(
 ) {
     fun wan(wanId: String): WanIpv6Config =
         wans.firstOrNull { it.wanId.equals(wanId, true) } ?: wan
+
+    fun requireWan(wanId: String): WanIpv6Config =
+        wans.firstOrNull { it.wanId.equals(wanId, true) }
+            ?: wan.takeIf { wans.isEmpty() && it.wanId.equals(wanId, true) }
+            ?: throw IllegalArgumentException("所选 WAN 的 IPv6 配置不存在")
 }
 
 data class Dhcpv6Client(
@@ -114,7 +119,7 @@ data class Ipv6FormState(
 
     companion object {
         fun from(config: Ipv6Config, wanId: String = config.wan.wanId): Ipv6FormState {
-            val wan = config.wan(wanId)
+            val wan = config.requireWan(wanId)
             return Ipv6FormState(
                 wanMode = if (wan.relay || wan.proto.equals("relay", true)) WanIpv6Mode.RELAY else WanIpv6Mode.DHCPV6,
                 dnsMode = if (wan.dnsType.equals("manual", true) || wan.dnsType.equals("admin", true)) Ipv6DnsMode.MANUAL else Ipv6DnsMode.AUTO,

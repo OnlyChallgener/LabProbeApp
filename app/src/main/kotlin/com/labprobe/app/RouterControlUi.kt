@@ -312,14 +312,27 @@ fun MappingAndUpnpScreen(
     onOpenFavorites: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    val pager = rememberPagerState(initialPage = 0, pageCount = { 3 })
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val capabilityResource by repository.capabilities.collectAsState()
+    val wanResource by repository.wans.collectAsState()
+    val pages = remember(capabilityResource.value, wanResource.value) {
+        mappingSuitePages(capabilityResource.value, wanResource.value)
+    }
+    val pager = rememberPagerState(initialPage = 0, pageCount = { pages.size })
+    LaunchedEffect(repository) {
+        repository.refreshCapabilities()
+        repository.refreshWans()
+    }
+    LaunchedEffect(pages.size) {
+        if (pager.currentPage >= pages.size) pager.scrollToPage(pages.lastIndex)
+    }
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
             Surface(color = Color.White) {
                 Column {
                     CompactTopBar("映射与 UPnP", onBack)
-                    RouterSuiteTabs(pager.currentPage) { scope.launch { pager.animateScrollToPage(it) } }
+                    RouterSuiteTabs(pages.map(::mappingSuitePageTitle), pager.currentPage) { scope.launch { pager.animateScrollToPage(it) } }
                 }
             }
         }
@@ -328,10 +341,10 @@ fun MappingAndUpnpScreen(
             state = pager,
             modifier = Modifier.fillMaxSize().padding(padding).labV2PageBackground(),
             beyondViewportPageCount = 1,
-            key = { it },
+            key = { pages[it] },
         ) { page ->
-            when (page) {
-                0 -> PortMappingScreen(
+            when (pages[page]) {
+                "ipv6" -> PortMappingScreen(
                     prefs = prefs,
                     onBack = onBack,
                     embedded = true,
@@ -339,7 +352,7 @@ fun MappingAndUpnpScreen(
                     onOpenWireGuard = onOpenWireGuard,
                     onOpenFavorites = onOpenFavorites,
                 )
-                1 -> NativePortMappingPage(prefs)
+                "portMapping" -> NativePortMappingPage(prefs)
                 else -> UpnpPage(prefs)
             }
         }
@@ -347,9 +360,21 @@ fun MappingAndUpnpScreen(
 }
 
 
+internal fun mappingSuitePages(capabilities: RouterCapabilities?, inventory: WanInventory?): List<String> = buildList {
+    add("ipv6")
+    if (inventory?.selectable("portMapping")?.isNotEmpty() ?: capabilities?.nativePortMapping ?: true) add("portMapping")
+    if (inventory?.selectable("upnp")?.isNotEmpty() ?: capabilities?.upnp ?: true) add("upnp")
+}
+
+private fun mappingSuitePageTitle(page: String): String = when (page) {
+    "portMapping" -> "端口映射"
+    "upnp" -> "UPnP"
+    else -> "IPv6映射"
+}
+
+
 @Composable
-private fun RouterSuiteTabs(selected: Int, onSelect: (Int) -> Unit) {
-    val titles = listOf("IPv6映射", "端口映射", "UPnP")
+private fun RouterSuiteTabs(titles: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
         shape = RoundedCornerShape(18.dp),
@@ -489,6 +514,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<NativePortMapRule?>(null) }
     val error = actionError.ifBlank { resource.error }
+    val mappingSupported = wanResource.value?.selectable("portMapping")?.isNotEmpty() ?: true
 
     suspend fun refreshDevices(force: Boolean = false): List<DeviceItem> {
         if (devices.isNotEmpty() && !force) return devices
@@ -547,9 +573,10 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
                 }
             }
             if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
+            if (!mappingSupported) item { CompactMessage("当前固件或 Hub 未提供可用的原生端口映射线路", RouterAmber) }
             if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
             if (resource.value == null) item { CompactMessage("端口映射正在后台预加载，页面无需等待", RouterBlue) }
-            if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { adding = true } }
+            if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { if (mappingSupported) adding = true } }
             items(rules, key = { "${it.ruleName}|${it.proto}|${it.srcPort}|${it.destIp}|${it.destPort}" }) { rule ->
                 NativePortRuleCard(
                     rule = rule,
@@ -560,20 +587,23 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
                 )
             }
         }
-        Surface(
-            onClick = { adding = true },
-            shape = CircleShape,
-            color = RouterBlue,
-            shadowElevation = 6.dp,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 20.dp).size(56.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新建端口映射", tint = Color.White, modifier = Modifier.size(30.dp)) }
+        if (mappingSupported) {
+            Surface(
+                onClick = { adding = true },
+                shape = CircleShape,
+                color = RouterBlue,
+                shadowElevation = 6.dp,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 20.dp).size(56.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, "新建端口映射", tint = Color.White, modifier = Modifier.size(30.dp)) }
+            }
         }
     }
 
     if (adding || editing != null) {
+        val preferredWan = wanResource.value?.preferred("portMapping")
         NativePortEditorSheet(
-            initial = editing ?: NativePortMapRule(),
+            initial = editing ?: NativePortMapRule(src = preferredWan?.wanId ?: "wan"),
             existingNames = rules.map { it.ruleName }.toSet(),
             wanInventory = wanResource.value,
             devices = devices,
@@ -728,7 +758,8 @@ private fun NativePortEditorSheet(
         (listOf("all") + (wanInventory?.selectable("portMapping")?.map { it.wanId }.orEmpty()) + listOfNotNull(draft.wanId))
             .distinct()
     }
-    val showLineSelector = wanInventory?.multiWanConfigured == true && lineOptions.size > 1
+    val capableWanCount = wanInventory?.selectable("portMapping")?.size ?: 1
+    val showLineSelector = lineOptions.size > 1 && (capableWanCount > 1 || (wanInventory == null && draft.wanId !in setOf("all", "wan")))
     val scope = rememberCoroutineScope()
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -751,15 +782,10 @@ private fun NativePortEditorSheet(
                 CompactChoice("线路", draft.wanId, lineOptions, display = { option ->
                     when (option) {
                         "all" -> "全部WAN"
-                        "wan1" -> "WAN1"
-                        else -> "WAN"
+                        else -> option.uppercase(Locale.ROOT)
                     }
                 }) { selected ->
-                    draft = draft.copy(src = when (selected) {
-                        "all" -> ""
-                        "wan", "wan1" -> selected
-                        else -> draft.src
-                    })
+                    draft = draft.copy(src = if (selected == "all") "" else selected)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -929,8 +955,9 @@ private fun UpnpPage(prefs: AppPrefs) {
         "已停用" -> RouterMuted
         else -> RouterAmber
     }
-    val wanOptions = remember(wanResource.value, state.wan) {
-        upnpWanOptions(wanResource.value, state.wan)
+    val upnpSupported = wanResource.value?.selectable("upnp")?.isNotEmpty() ?: true
+    val wanOptions = remember(wanResource.value, state.wan, upnpSupported) {
+        if (upnpSupported) upnpWanOptions(wanResource.value, state.wan) else emptyList()
     }
 
     LaunchedEffect(repository) { repository.refreshWans() }
@@ -972,7 +999,7 @@ private fun UpnpPage(prefs: AppPrefs) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Switch(
                                 checked = state.enabled,
-                                enabled = !resource.mutating,
+                                enabled = !resource.mutating && upnpSupported,
                                 onCheckedChange = { next ->
                                     if (!next) confirmDisable = true else scope.launch {
                                         repository.setUpnp(true, state.wan)
@@ -988,11 +1015,13 @@ private fun UpnpPage(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("默认线路", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
-                            UpnpWanSelector(state.wan, wanOptions) { wan ->
-                                scope.launch {
-                                    repository.setUpnp(state.enabled, wan)
-                                        .onSuccess { actionError = "" }
-                                        .onFailure { actionError = it.message.orEmpty() }
+                            if (wanOptions.size > 1) {
+                                UpnpWanSelector(state.wan, wanOptions) { wan ->
+                                    scope.launch {
+                                        repository.setUpnp(state.enabled, wan)
+                                            .onSuccess { actionError = "" }
+                                            .onFailure { actionError = it.message.orEmpty() }
+                                    }
                                 }
                             }
                         }
@@ -1000,6 +1029,7 @@ private fun UpnpPage(prefs: AppPrefs) {
                     }
                 }
             }
+            if (!upnpSupported) item { CompactMessage("当前固件或 Hub 未提供可用的 UPnP 线路", RouterAmber) }
             if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
             if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
             if (resource.value == null) item { CompactMessage("UPnP 快照正在后台预加载", RouterBlue) }
@@ -1138,6 +1168,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val automationRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { FirewallAutomationRepository(prefs) }
     val resource by repository.firewall.collectAsState()
+    val wanResource by repository.wans.collectAsState()
     val automationResource by automationRepository.state.collectAsState()
     val state = resource.value ?: FirewallState()
     val scope = rememberCoroutineScope()
@@ -1155,6 +1186,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val error = actionError.ifBlank { resource.error }.ifBlank { automationResource.error }
 
     LaunchedEffect(automationRepository, resource.updatedAt) { automationRepository.refresh() }
+    LaunchedEffect(repository) { repository.refreshWans() }
     LaunchedEffect(followRule?.uuid) {
         if (followRule != null) {
             followTargetsLoading = true
@@ -1205,9 +1237,15 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     if (adding || editing != null) {
+        val defaultWan = wanResource.value?.wans
+            ?.filter { it.configured }
+            ?.firstOrNull { it.defaultEgress }
+            ?: wanResource.value?.wans?.firstOrNull { it.configured }
+        val defaultInterface = defaultWan?.logicalInterface?.ifBlank { defaultWan.wanId }?.ifBlank { "wan" } ?: "wan"
         FirewallEditorPage(
-            initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else "wan", outIface = if (currentDirection == "inbound") "" else "lan"),
+            initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else defaultInterface, outIface = if (currentDirection == "inbound") "" else "lan"),
             managedByMapping = editing?.let { bindings.containsKey(it.uuid) } == true,
+            wanInventory = wanResource.value,
             onBack = { adding = false; editing = null },
             onSave = { rule -> scope.launch {
                 val result = if (editing == null) repository.addFirewallRule(rule) else repository.updateFirewallRule(rule)
@@ -1563,19 +1601,23 @@ private fun firewallDirectionLabel(value: String): String = when (value.lowercas
 private fun firewallIpVersionLabel(value: String): String = when (value.lowercase()) { "ipv4" -> "IPv4"; "ipv6" -> "IPv6"; "dual" -> "双栈"; else -> value }
 private fun firewallProtocolLabel(value: String): String = when (value.lowercase()) { "tcp" -> "TCP"; "udp" -> "UDP"; "icmp" -> "ICMP"; "any" -> "全部协议"; else -> value }
 private fun firewallActionLabel(value: String): String = when (value.uppercase()) { "ACCEPT" -> "允许"; "DROP" -> "丢弃"; else -> value }
-private fun firewallInterfaceLabel(value: String): String = when (value.lowercase()) { "wan" -> "外网（WAN）"; "lan" -> "内网（LAN）"; "" -> "路由器本机"; else -> value }
+private fun firewallInterfaceLabel(value: String): String = when (value.lowercase()) { "wan" -> "外网（WAN）"; "wan1" -> "外网（WAN1）"; "lan" -> "内网（LAN）"; "" -> "路由器本机"; else -> if (value.startsWith("wan", true)) value.uppercase(Locale.ROOT) else value }
 
 @Composable
-private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean, onBack: () -> Unit, onSave: (FirewallRule) -> Unit) {
+private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean, wanInventory: WanInventory?, onBack: () -> Unit, onSave: (FirewallRule) -> Unit) {
     var rule by remember(initial.uuid) { mutableStateOf(initial) }
     var error by remember { mutableStateOf("") }
     val addressEnabled = rule.ipVersion != "dual"
     val portEnabled = rule.proto in setOf("tcp", "udp")
+    val wanOptions = remember(wanInventory, rule.inIface, rule.outIface) {
+        firewallWanOptions(wanInventory, rule.inIface.ifBlank { rule.outIface })
+    }
+    val defaultWanInterface = wanOptions.firstOrNull { it.isNotBlank() && !it.equals("lan", true) } ?: "wan"
     RouterFormPage(if (initial.uuid.isBlank()) "新增防火墙规则" else "编辑防火墙规则", "精确匹配 · 保存后同步路由器", onBack, topBarColor = RouterPage) {
         if (managedByMapping) CompactMessage("这条规则已关联路由器映射。保存人工修改后，自动联动会暂停且不会覆盖新设置。", RouterAmber)
         CompactField("规则名称", rule.ruleName, "例如 WireGuard") { rule = rule.copy(ruleName = it.take(24)) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactChoice("方向", rule.direction, listOf("forward", "inbound", "outbound"), Modifier.weight(1f), ::firewallDirectionLabel) { value -> rule = rule.copy(direction = value, inIface = if (value == "outbound") "" else rule.inIface.ifBlank { "wan" }, outIface = if (value == "inbound") "" else rule.outIface.ifBlank { "lan" }) }
+            CompactChoice("方向", rule.direction, listOf("forward", "inbound", "outbound"), Modifier.weight(1f), ::firewallDirectionLabel) { value -> rule = rule.copy(direction = value, inIface = if (value == "outbound") "" else rule.inIface.ifBlank { defaultWanInterface }, outIface = if (value == "inbound") "" else rule.outIface.ifBlank { "lan" }) }
             CompactChoice("IP版本", rule.ipVersion, listOf("ipv4", "ipv6", "dual"), Modifier.weight(1f), ::firewallIpVersionLabel) { rule = rule.copy(ipVersion = it) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1601,8 +1643,8 @@ private fun FirewallEditorPage(initial: FirewallRule, managedByMapping: Boolean,
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (rule.direction != "outbound") CompactChoice("入接口", rule.inIface.ifBlank { "wan" }, listOf("wan", "lan"), Modifier.weight(1f), ::firewallInterfaceLabel) { rule = rule.copy(inIface = it) }
-            if (rule.direction != "inbound") CompactChoice("出接口", rule.outIface.ifBlank { "lan" }, listOf("lan", "wan"), Modifier.weight(1f), ::firewallInterfaceLabel) { rule = rule.copy(outIface = it) }
+            if (rule.direction != "outbound") CompactChoice("入接口", rule.inIface.ifBlank { defaultWanInterface }, (listOf("lan") + wanOptions).distinct(), Modifier.weight(1f), ::firewallInterfaceLabel) { rule = rule.copy(inIface = it) }
+            if (rule.direction != "inbound") CompactChoice("出接口", rule.outIface.ifBlank { "lan" }, (wanOptions + listOf("lan")).distinct(), Modifier.weight(1f), ::firewallInterfaceLabel) { rule = rule.copy(outIface = it) }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("保存后立即启用", fontSize = LabTypography.Supporting.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
@@ -2404,10 +2446,10 @@ private fun DdnsCard(record:DdnsRecord,nativeDdns:Boolean=false,onEdit:()->Unit,
 }
 @Composable
 private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns:Boolean=false,wanInventory:WanInventory?=null,onBack:()->Unit,onSave:(DdnsRecord,String?)->Unit){
-    val normalizedInitial=remember(initial){
+    val normalizedInitial=remember(initial,wanInventory,nativeDdns){
         initial.copy(
             provider=initial.provider.trim().ifBlank{"aliyun.com"},
-            interfaceName=initial.interfaceName.trim().ifBlank{"wan"},
+            interfaceName=initial.interfaceName.trim().ifBlank{wanInventory?.takeIf{nativeDdns}?.preferred("nativeDdns")?.wanId ?: "wan"},
             domain=initial.domain.trim(),
             username=initial.username.trim(),
             txtFamily=initial.txtFamily.trim().ifBlank{"ipv4"},
@@ -2432,6 +2474,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns
     val interfaceOptions=remember(wanInventory,record.interfaceName){
         nativeDdnsWanOptions(wanInventory,record.interfaceName)
     }
+    val ddnsSupported = if (nativeDdns) wanInventory?.selectable("nativeDdns")?.isNotEmpty() ?: true else true
     val recordTypes=remember(record.provider){
         listOf("A","AAAA","TXT").filter{nativeDdnsSupportsRecordType(record.provider,it)}
     }
@@ -2454,7 +2497,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns
         CompactField("用户名 / AccessKey",record.username,"AccessKey ID"){record=record.copy(username=it.take(160))}
         CompactPasswordField(if(normalizedInitial.passwordConfigured)"密码 / Secret（留空保持）" else "密码 / Secret",password,"请输入密钥",showPassword,{showPassword=!showPassword}){password=it.take(256)}
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            CompactChoice("接口",record.interfaceName,interfaceOptions,Modifier.weight(1f)){record=record.copy(interfaceName=it)}
+            if(interfaceOptions.size>1) CompactChoice("接口",record.interfaceName,interfaceOptions,Modifier.weight(1f)){record=record.copy(interfaceName=it)}
             if(modern){
                 CompactChoice("记录类型",record.effectiveRecordType.uppercase(Locale.ROOT),recordTypes,Modifier.weight(1f)){
                     record=record.copy(recordType=it,useIpv6=it.equals("AAAA",ignoreCase=true))
@@ -2463,6 +2506,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns
                 CompactChoice("记录类型",if(record.useIpv6)"IPv6" else "IPv4",listOf("IPv6","IPv4"),Modifier.weight(1f)){record=record.copy(useIpv6=it=="IPv6")}
             }
         }
+        if(!ddnsSupported) Text("当前固件或 Hub 未提供可用的原生 DDNS 线路",fontSize = LabTypography.Supporting.fontSize,color=RouterAmber,fontWeight=FontWeight.SemiBold)
         if(modern){
             if(showZone)CompactField("DNS 托管域 / Zone",record.zone,"例如 example.com"){record=record.copy(zone=it.take(160))}
             if(showZoneId)CompactField("区域 ID / Zone ID",record.zoneId,"Zone ID"){record=record.copy(zoneId=it.take(160))}
@@ -2487,7 +2531,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns
                 else->""
             }
             if(error.isBlank())onSave(record,password.ifBlank{null})
-        },modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
+        },enabled=ddnsSupported,modifier=Modifier.fillMaxWidth().height(42.dp),shape=RoundedCornerShape(13.dp),colors=ButtonDefaults.buttonColors(containerColor=RouterCyan)){Text("保存并同步",fontSize = LabTypography.Supporting.fontSize,fontWeight=FontWeight.SemiBold)}
     }
 }
 @Composable

@@ -542,9 +542,10 @@ private fun mergeNatLog(previous: String, incoming: String): String {
 }
 
 internal fun natWanOptions(inventory: WanInventory?, current: String): List<Pair<String, String>> {
-    val available = inventory?.selectable("natDiagnostic")?.map { it.wanId to it.displayName }.orEmpty()
-    val merged = (available + (current to current.uppercase())).distinctBy { it.first }
-    return if (merged.isEmpty()) listOf("wan" to "WAN") else merged
+    if (inventory == null) return listOf(current.ifBlank { "wan" } to current.ifBlank { "wan" }.uppercase())
+    return inventory.selectable("natDiagnostic")
+        .map { it.wanId to it.displayName.ifBlank { it.wanId.uppercase() } }
+        .distinctBy { it.first }
 }
 
 @Composable
@@ -592,8 +593,9 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     LaunchedEffect(routerRepository) { routerRepository.refreshWans() }
+    val natSupported = wanResource.value?.selectable("natDiagnostic")?.isNotEmpty() ?: true
     LaunchedEffect(interfaceOptions) {
-        if (interfaceOptions.none { it.first == interfaceName }) interfaceName = interfaceOptions.first().first
+        if (interfaceOptions.none { it.first == interfaceName }) interfaceName = interfaceOptions.firstOrNull()?.first.orEmpty()
     }
     LaunchedEffect(Unit) { tasks.ensure("nat") }
     LaunchedEffect(task.updatedAt, task.state) {
@@ -640,6 +642,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         modifier = Modifier.weight(1.35f),
                         leadingIcon = Icons.Rounded.Tune,
                     )
+                if (interfaceOptions.size > 1) {
                     NativeSelector(
                         label = "WAN 类型",
                         value = interfaceName.uppercase(),
@@ -650,6 +653,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         modifier = Modifier.weight(.85f),
                         leadingIcon = Icons.Rounded.Public,
                     )
+                }
                 }
                 val startShape = RoundedCornerShape(14.dp)
                 Surface(
@@ -670,7 +674,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             tasks.startNat(server, port, interfaceName, mode)
                         }
                     },
-                    enabled = !running,
+                    enabled = !running && natSupported && interfaceName.isNotBlank(),
                     shape = startShape,
                     color = Color.Transparent,
                     modifier = Modifier.fillMaxWidth().height(44.dp)
@@ -703,6 +707,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
             }
         }
 
+        if (!natSupported) NativeMessage("当前固件或 Hub 未提供可用的 NAT 诊断线路", NativeAmber)
         if (error.isNotBlank()) NativeMessage(error, NativeRed)
 
         NatResultCard(result = result, task = task, loading = loading, modifier = Modifier.fillMaxWidth())
