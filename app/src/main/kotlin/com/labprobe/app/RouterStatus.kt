@@ -127,7 +127,30 @@ internal data class RouterPortUi(
     val isWan: Boolean,
     val isGame: Boolean,
     val isHybrid: Boolean,
-    val speedLabel: String = ""
+    val speedLabel: String = "",
+    val portId: Int = 0,
+    val role: String = "",
+    val wanId: String = "",
+    val portType: String = "",
+)
+
+internal data class RouterWanUi(
+    val wanId: String,
+    val displayName: String,
+    val configured: Boolean,
+    val enabled: Boolean,
+    val online: Boolean,
+    val defaultEgress: Boolean,
+    val proto: String,
+    val ipv4: String,
+    val ipv6: String,
+    val gateway: String,
+    val gateway6: String,
+    val dns: List<String>,
+    val uptimeSeconds: Long,
+    val physicalPortId: Int,
+    val physicalPortName: String,
+    val linkSpeedMbps: Int,
 )
 
 internal data class RouterDashboardUi(
@@ -176,6 +199,7 @@ internal data class RouterDashboardUi(
     val bands: String = "--",
     val channels: String = "--",
     val apEnabled: Boolean = false,
+    val wans: List<RouterWanUi> = emptyList(),
     val ports: List<RouterPortUi> = emptyList(),
     val updatedAt: String = "--",
     val telemetryStale: Boolean = true,
@@ -302,6 +326,63 @@ private fun connectionType(network: JSONObject): String {
     return result.ifBlank { "--" }
 }
 
+internal fun parseRouterWans(root: JSONObject): List<RouterWanUi> {
+    val rows = root.optJSONArray("wans") ?: return emptyList()
+    return (0 until rows.length()).mapNotNull { index ->
+        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+        val wanId = row.optString("wanId").ifBlank { row.optString("logicalInterface") }.trim()
+        if (wanId.isBlank()) return@mapNotNull null
+        RouterWanUi(
+            wanId = wanId,
+            displayName = wanId.uppercase(Locale.ROOT),
+            configured = row.optBoolean("configured"),
+            enabled = row.optBoolean("enabled"),
+            online = row.optBoolean("online"),
+            defaultEgress = row.optBoolean("defaultEgress"),
+            proto = protocolLabel(row.optString("proto")),
+            ipv4 = row.optString("ipv4").trim(),
+            ipv6 = row.optString("ipv6").trim(),
+            gateway = row.optString("gateway").trim(),
+            gateway6 = row.optString("gateway6").trim(),
+            dns = row.stringList("dns"),
+            uptimeSeconds = row.optLong("uptimeSeconds"),
+            physicalPortId = row.optInt("physicalPortId"),
+            physicalPortName = row.optString("physicalPortName").trim(),
+            linkSpeedMbps = row.optInt("linkSpeedMbps"),
+        )
+    }
+}
+
+internal fun parseRouterPorts(details: JSONObject): List<RouterPortUi> {
+    val list = details.optJSONArray("ports") ?: return emptyList()
+    return (0 until list.length()).mapNotNull { index ->
+        val item = list.optJSONObject(index) ?: return@mapNotNull null
+        val panelName = item.optString("panel_name").ifBlank { item.optString("name") }.ifBlank { "端口${index + 1}" }
+        val speedRaw = item.optString("speed")
+        val speedLabel = when (speedRaw.trim().uppercase()) {
+            "10" -> "10M"
+            "100" -> "100M"
+            "1000", "1G" -> "1G"
+            "2500", "2.5G" -> "2.5G"
+            "10000", "10G" -> "10G"
+            else -> speedRaw.takeIf { it.isNotBlank() } ?: ""
+        }
+        val logicalName = item.optString("name").trim()
+        RouterPortUi(
+            name = panelName,
+            connected = item.optString("status").equals("on", true) || item.optBoolean("status", false),
+            isWan = panelName.equals("WAN", true) || logicalName.equals("WAN", true),
+            isGame = panelName.contains("GAME", true),
+            isHybrid = panelName.contains("WAN1", true) || panelName.contains("聚合", true) || item.optString("aggregator_port") == "1",
+            speedLabel = speedLabel,
+            portId = item.optInt("portId"),
+            role = item.optString("role").trim(),
+            wanId = item.optString("wanId").trim().ifBlank { logicalName.lowercase(Locale.ROOT).takeIf { it in setOf("wan", "wan1") }.orEmpty() },
+            portType = item.optString("port_type").trim(),
+        )
+    }
+}
+
 private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = null): RouterDashboardUi {
     if (root == null) return RouterDashboardUi()
     val telemetry = root.obj("telemetry")
@@ -338,32 +419,7 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
             .takeIf(String::isNotBlank)?.let(legacyChannels::add)
     }
 
-    val ports = buildList {
-        val list = details.array("ports")
-        for (i in 0 until list.length()) {
-            val item = list.optJSONObject(i) ?: continue
-            val panelName = item.optString("panel_name").ifBlank { item.optString("name") }.ifBlank { "端口${i + 1}" }
-            val speedRaw = item.optString("speed")
-            val speedLabel = when (speedRaw.trim().uppercase()) {
-                "10" -> "10M"
-                "100" -> "100M"
-                "1000", "1G" -> "1G"
-                "2500", "2.5G" -> "2.5G"
-                "10000", "10G" -> "10G"
-                else -> speedRaw.takeIf { it.isNotBlank() } ?: ""
-            }
-            add(
-                RouterPortUi(
-                    name = panelName,
-                    connected = item.optString("status").equals("on", true) || item.optBoolean("status", false),
-                    isWan = panelName.equals("WAN", true) || item.optString("name").equals("WAN", true),
-                    isGame = panelName.contains("GAME", true),
-                    isHybrid = panelName.contains("WAN1", true) || panelName.contains("聚合", true) || item.optString("aggregator_port") == "1",
-                    speedLabel = speedLabel
-                )
-            )
-        }
-    }
+    val ports = parseRouterPorts(details)
 
     val fallbackNetmask = recursiveString(network, setOf("netmask", "subnetmask", "mask")) { it.count { ch -> ch == '.' } == 3 }
     val fallbackVlan = recursiveString(network, setOf("vlanid", "vlan_id", "vid")) { value -> value.toIntOrNull()?.let { it in 0..4094 } == true }
@@ -445,6 +501,7 @@ private fun parseRouterDashboard(root: JSONObject?, credentials: JSONObject? = n
         bands = apBands.joinToString(" / ").ifBlank { "--" },
         channels = apChannels.joinToString(" / ").ifBlank { "--" },
         apEnabled = apOnline,
+        wans = parseRouterWans(root),
         ports = ports,
         updatedAt = root.optString("telemetryAt").ifBlank { root.optString("receivedAt") }.ifBlank { "--" },
         telemetryStale = root.optBoolean("telemetryStale", true),
@@ -494,7 +551,16 @@ fun RouterStatusScreen(prefs: AppPrefs, state: AppState, onBack: () -> Unit, onO
     val rawUi = remember(state.routerDashboard, state.routerCredentials) { parseRouterDashboard(state.routerDashboard, state.routerCredentials) }
     val displayName = prefs.routerDisplayName.ifBlank { rawUi.name }
     val maskedWan = if (prefs.privacyMode) maskAddressForUi(rawUi.wanIpv4, true) else rawUi.wanIpv4
-    val ui = rawUi.copy(name = displayName, wanIpv4 = maskedWan)
+    val ui = rawUi.copy(
+        name = displayName,
+        wanIpv4 = maskedWan,
+        wans = rawUi.wans.map { wan ->
+            wan.copy(
+                ipv4 = if (prefs.privacyMode) maskAddressForUi(wan.ipv4, true) else wan.ipv4,
+                ipv6 = if (prefs.privacyMode) maskAddressForUi(wan.ipv6, true) else wan.ipv6,
+            )
+        },
+    )
     val be50 = isWorkspaceBe50(prefs, ui.model, ui.name)
 
     LaunchedEffect(Unit) {
@@ -1014,39 +1080,84 @@ private data class RouterInfoItem(
 @Composable
 private fun RouterNetworkCard(ui: RouterDashboardUi) {
     var wanExpanded by rememberSaveable { mutableStateOf(false) }
+    var expandedWanId by rememberSaveable { mutableStateOf<String?>(null) }
+    val configuredWans = ui.wans.filter { it.configured }
     var lanExpanded by rememberSaveable { mutableStateOf(false) }
     var apExpanded by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     RouterGlassCard {
         SectionHeader(Icons.Rounded.Public, "网络详情", LabV2.Primary)
-        ExpandableNetworkRow(
-            icon = Icons.Rounded.Dns,
-            title = "WAN 信息",
-            mainValue = ui.wanIpv4,
-            middleLabel = "连接类型",
-            middleValue = ui.connectionType,
-            rightLabel = "运营商",
-            rightValue = ui.wanOperator,
-            expanded = wanExpanded,
-            onToggle = { wanExpanded = !wanExpanded }
-        ) {
-            RouterInfoGrid(
-                context = context,
-                items = listOf(
-                    RouterInfoItem(
-                        "历史流量",
-                        historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
-                        copyValue = historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes)
-                    ),
-                    RouterInfoItem(
-                        "DNS",
-                        ui.dnsServers.take(2).joinToString("\n").ifBlank { "--" },
-                        copyValue = ui.dnsServers.joinToString("\n").ifBlank { "--" }
-                    ),
-                    RouterInfoItem("网关", ui.wanGateway),
-                    RouterInfoItem("MTU", ui.mtu)
+        if (configuredWans.size > 1) {
+            configuredWans.forEachIndexed { index, wan ->
+                ExpandableNetworkRow(
+                    icon = Icons.Rounded.Dns,
+                    title = "${wan.displayName} 信息",
+                    mainValue = wan.ipv4.ifBlank { wan.ipv6 }.ifBlank { "--" },
+                    middleLabel = "状态",
+                    middleValue = when {
+                        wan.online -> "在线"
+                        wan.enabled -> "离线"
+                        else -> "未启用"
+                    },
+                    rightLabel = "连接类型",
+                    rightValue = wan.proto,
+                    expanded = expandedWanId == wan.wanId,
+                    onToggle = { expandedWanId = if (expandedWanId == wan.wanId) null else wan.wanId },
+                ) {
+                    RouterInfoGrid(
+                        context = context,
+                        items = listOf(
+                            RouterInfoItem("IPv6", wan.ipv6.ifBlank { "--" }),
+                            RouterInfoItem(
+                                "网关",
+                                listOf(wan.gateway, wan.gateway6).filter { it.isNotBlank() }.joinToString("\n").ifBlank { "--" },
+                            ),
+                            RouterInfoItem(
+                                "DNS",
+                                wan.dns.take(2).joinToString("\n").ifBlank { "--" },
+                                copyValue = wan.dns.joinToString("\n").ifBlank { "--" },
+                            ),
+                            RouterInfoItem("运行时间", uptimeText(wan.uptimeSeconds)),
+                            RouterInfoItem(
+                                "物理端口",
+                                listOf(wan.physicalPortName, wan.physicalPortId.takeIf { it > 0 }?.toString()).filterNotNull().joinToString(" · ").ifBlank { "--" },
+                            ),
+                            RouterInfoItem("协商速率", wan.linkSpeedMbps.takeIf { it > 0 }?.let { "$it Mbps" } ?: "--"),
+                        ),
+                    )
+                }
+                if (index < configuredWans.lastIndex) HorizontalDivider(color = Color(0xFFE4EBF5))
+            }
+        } else {
+            ExpandableNetworkRow(
+                icon = Icons.Rounded.Dns,
+                title = "WAN 信息",
+                mainValue = ui.wanIpv4,
+                middleLabel = "连接类型",
+                middleValue = ui.connectionType,
+                rightLabel = "运营商",
+                rightValue = ui.wanOperator,
+                expanded = wanExpanded,
+                onToggle = { wanExpanded = !wanExpanded }
+            ) {
+                RouterInfoGrid(
+                    context = context,
+                    items = listOf(
+                        RouterInfoItem(
+                            "历史流量",
+                            historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes),
+                            copyValue = historyTrafficText(ui.totalUploadBytes, ui.totalDownloadBytes)
+                        ),
+                        RouterInfoItem(
+                            "DNS",
+                            ui.dnsServers.take(2).joinToString("\n").ifBlank { "--" },
+                            copyValue = ui.dnsServers.joinToString("\n").ifBlank { "--" }
+                        ),
+                        RouterInfoItem("网关", ui.wanGateway),
+                        RouterInfoItem("MTU", ui.mtu)
+                    )
                 )
-            )
+            }
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
         ExpandableNetworkRow(
@@ -1207,7 +1318,7 @@ private fun RouterPortsCard(ui: RouterDashboardUi, onShowLegend: () -> Unit) {
         }
         HorizontalDivider(color = Color(0xFFE4EBF5))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("WAN口速率：", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
+            Text("整机实时：", fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F))
             Icon(Icons.Rounded.North, null, Modifier.size(16.dp), tint = LabV2.Primary)
             Text(formatBitRate(ui.uploadBps), fontSize = LabTypography.Value.fontSize, fontWeight = FontWeight.SemiBold, color = LabV2.Primary)
             Spacer(Modifier.width(12.dp))
