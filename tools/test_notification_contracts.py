@@ -161,7 +161,9 @@ class NotificationContractTests(unittest.TestCase):
         self.assertNotIn("messages.add", consume)
         self.assertNotIn("writeConversation", consume)
         self.assertNotIn("loadingHistory", consume)
-        self.assertIn("AiNotificationDetailDialog(", screens)
+        self.assertIn("AiNotificationInboxDialog(", screens)
+        self.assertIn("highlightedId = highlightedInboxId", screens)
+        self.assertIn("requestedInboxHubKey != aiNotificationHubKey(client.identity)", screens)
 
     def test_notification_intents_are_consumed_and_routes_allowlisted(self):
         main = (ROOT / "app/src/main/kotlin/com/labprobe/app/MainActivity.kt").read_text(encoding="utf-8")
