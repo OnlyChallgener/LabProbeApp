@@ -825,8 +825,7 @@ fun RouterWorkspacePickerDialog(
                     ) { Icon(Icons.Rounded.Add, "添加路由器", tint = LabV2.Ink) }
                 }
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    workspaces.forEachIndexed { index, item ->
-                        if (index > 0) HorizontalDivider(color = LabV2.Border, thickness = 0.5.dp)
+                    workspaces.forEach { item ->
                         val counts = remember(item.routerId) { workspaceDeviceCounts(context, item.routerId) }
                         val effectiveItem = item.copy(
                             deviceCount = item.deviceCount ?: counts?.deviceCount,
@@ -866,8 +865,9 @@ fun RouterWorkspacePickerDialog(
                                     interactionSource = remember { MutableInteractionSource() }, indication = null,
                                 ) { onEdit(effectiveItem) },
                                 contentAlignment = Alignment.Center,
-                            ) { Icon(Icons.Rounded.Edit, "编辑${effectiveItem.name}", Modifier.size(18.dp), tint = LabV2.InkMuted) }
+                            ) { Icon(Icons.Rounded.Edit, "编辑${effectiveItem.name}", Modifier.size(16.dp), tint = LabV2.InkMuted) }
                         }
+                        HorizontalDivider(color = LabV2.Border, thickness = 0.5.dp)
                     }
                 }
             }
