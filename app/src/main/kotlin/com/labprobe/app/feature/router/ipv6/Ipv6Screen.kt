@@ -65,12 +65,15 @@ import com.labprobe.app.LabCoreSurface
 import com.labprobe.app.LabInfoRow
 import com.labprobe.app.LabTypography
 import com.labprobe.app.LabV2
+import com.labprobe.app.RouterRepositoryRegistry
 import com.labprobe.app.isWorkspaceBe50
 
 @Composable
 fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
     val supportsRelay = !isWorkspaceBe50(prefs)
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { Ipv6Repository(prefs) }
+    val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val wanResource by routerRepository.wans.collectAsState()
     val viewModel = remember(repository, supportsRelay) { Ipv6ViewModel(repository, supportsRelay) }
     var showingClients by remember { mutableStateOf(false) }
 
@@ -79,6 +82,9 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
     }
     LaunchedEffect(viewModel) {
         viewModel.load()
+    }
+    LaunchedEffect(routerRepository) {
+        routerRepository.refreshWans()
     }
     BackHandler(enabled = showingClients) {
         showingClients = false
@@ -90,6 +96,10 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     val state by viewModel.state.collectAsState()
+    val wanOptions = wanResource.value?.wans
+        ?.filter { it.configured && it.enabled && "ipv6" in it.families }
+        ?.map { it.wanId }
+        .orEmpty()
     DetailShell(
         title = "IPv6 设置",
         subtitle = "配置将通过 LabProbe Hub 安全同步",
@@ -97,6 +107,13 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
         compactHeader = true,
         unifiedTypography = true,
     ) {
+        if (wanOptions.size > 1) {
+            CompactSegmentedControl(
+                options = wanOptions.map { it.uppercase() },
+                selected = state.selectedWanId.uppercase(),
+                onSelect = { selected -> viewModel.selectWan(selected.lowercase()) },
+            )
+        }
         Ipv6StatusCard(state = state, onRefresh = { viewModel.load(force = true) })
 
         if (state.config == null && state.loading) {

@@ -5,6 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class Ipv6Status(
+    val wanId: String = "wan",
     val connected: Boolean = false,
     val proto: String = "",
     val address: String = "",
@@ -14,6 +15,7 @@ data class Ipv6Status(
 )
 
 data class WanIpv6Config(
+    val wanId: String = "wan",
     val proto: String = "dhcpv6",
     val ifname: String = "@wan",
     val dns: List<String> = emptyList(),
@@ -34,8 +36,12 @@ data class LanIpv6Config(
 
 data class Ipv6Config(
     val wan: WanIpv6Config = WanIpv6Config(),
+    val wans: List<WanIpv6Config> = emptyList(),
     val lan: LanIpv6Config = LanIpv6Config(),
-)
+) {
+    fun wan(wanId: String): WanIpv6Config =
+        wans.firstOrNull { it.wanId.equals(wanId, true) } ?: wan
+}
 
 data class Dhcpv6Client(
     val hostname: String = "",
@@ -63,6 +69,7 @@ data class Ipv6FormState(
     val ra: Boolean = true,
     val prefixLength: String = "64",
     val leaseMinutes: String = "120",
+    val wanId: String = "wan",
 ) {
     val validationError: String?
         get() {
@@ -82,6 +89,7 @@ data class Ipv6FormState(
         }
 
     fun toJson(): JSONObject = JSONObject().apply {
+        put("wanId", wanId)
         put("wan", JSONObject().apply {
             put("proto", if (wanMode == WanIpv6Mode.RELAY) "relay" else "dhcpv6")
             put("relay", wanMode == WanIpv6Mode.RELAY)
@@ -105,20 +113,25 @@ data class Ipv6FormState(
         .distinct()
 
     companion object {
-        fun from(config: Ipv6Config): Ipv6FormState = Ipv6FormState(
-            wanMode = if (config.wan.relay || config.wan.proto.equals("relay", true)) WanIpv6Mode.RELAY else WanIpv6Mode.DHCPV6,
-            dnsMode = if (config.wan.dnsType.equals("manual", true) || config.wan.dnsType.equals("admin", true)) Ipv6DnsMode.MANUAL else Ipv6DnsMode.AUTO,
-            manualDns = config.wan.dns.joinToString(", "),
-            dhcpv6Server = config.lan.dhcpv6Server,
-            slaac = config.lan.slaac,
-            ra = config.lan.ra,
-            prefixLength = config.lan.prefixLength.toString(),
-            leaseMinutes = config.lan.leaseMinutes.toString(),
-        )
+        fun from(config: Ipv6Config, wanId: String = config.wan.wanId): Ipv6FormState {
+            val wan = config.wan(wanId)
+            return Ipv6FormState(
+                wanMode = if (wan.relay || wan.proto.equals("relay", true)) WanIpv6Mode.RELAY else WanIpv6Mode.DHCPV6,
+                dnsMode = if (wan.dnsType.equals("manual", true) || wan.dnsType.equals("admin", true)) Ipv6DnsMode.MANUAL else Ipv6DnsMode.AUTO,
+                manualDns = wan.dns.joinToString(", "),
+                dhcpv6Server = config.lan.dhcpv6Server,
+                slaac = config.lan.slaac,
+                ra = config.lan.ra,
+                prefixLength = config.lan.prefixLength.toString(),
+                leaseMinutes = config.lan.leaseMinutes.toString(),
+                wanId = wan.wanId,
+            )
+        }
     }
 }
 
 internal fun parseIpv6Status(data: JSONObject): Ipv6Status = Ipv6Status(
+    wanId = data.optString("wanId", "wan").trim(),
     connected = data.optBoolean("connected", false),
     proto = data.optString("proto").trim(),
     address = data.optString("address").trim(),
@@ -127,17 +140,26 @@ internal fun parseIpv6Status(data: JSONObject): Ipv6Status = Ipv6Status(
     dns = data.stringList("dns"),
 )
 
+private fun parseWanIpv6Config(wan: JSONObject): WanIpv6Config = WanIpv6Config(
+    wanId = wan.optString("wanId").ifBlank { wan.optString("ifname", "@wan").removePrefix("@") }.ifBlank { "wan" },
+    proto = wan.optString("proto", "dhcpv6").trim(),
+    ifname = wan.optString("ifname", "@wan").trim(),
+    dns = wan.stringList("dns"),
+    dnsType = wan.optString("dnsType", "auto").trim(),
+    relay = wan.optBoolean("relay", false),
+)
+
 internal fun parseIpv6Config(data: JSONObject): Ipv6Config {
     val wan = data.optJSONObject("wan") ?: JSONObject()
     val lan = data.optJSONObject("lan") ?: JSONObject()
+    val wans = data.optJSONArray("wans")?.let { rows ->
+        (0 until rows.length()).mapNotNull { index ->
+            rows.optJSONObject(index)?.let(::parseWanIpv6Config)
+        }
+    }.orEmpty()
     return Ipv6Config(
-        wan = WanIpv6Config(
-            proto = wan.optString("proto", "dhcpv6").trim(),
-            ifname = wan.optString("ifname", "@wan").trim(),
-            dns = wan.stringList("dns"),
-            dnsType = wan.optString("dnsType", "auto").trim(),
-            relay = wan.optBoolean("relay", false),
-        ),
+        wan = parseWanIpv6Config(wan),
+        wans = wans,
         lan = LanIpv6Config(
             prefixLength = lan.optInt("ip6assign", 64),
             dhcpv6Server = lan.optBoolean("dhcpv6Server", true),

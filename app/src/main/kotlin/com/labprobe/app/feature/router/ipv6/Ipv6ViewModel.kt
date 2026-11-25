@@ -19,8 +19,9 @@ data class Ipv6UiState(
     val saving: Boolean = false,
     val error: String = "",
     val notice: String = "",
+    val selectedWanId: String = "wan",
 ) {
-    val dirty: Boolean get() = config?.let { form != Ipv6FormState.from(it) } == true
+    val dirty: Boolean get() = config?.let { form != Ipv6FormState.from(it, selectedWanId) } == true
     val canSave: Boolean get() = dirty && !loading && !saving && form.validationError == null
 }
 
@@ -52,8 +53,8 @@ class Ipv6ViewModel(private val repository: Ipv6Repository, private val supports
             notice = "",
         )
         scope.launch {
-            val statusResult = safeCall { repository.status() }
-            val configResult = safeCall { repository.config() }
+            val statusResult = safeCall { repository.status(old.selectedWanId) }
+            val configResult = safeCall { repository.config(old.selectedWanId) }
             if (requestGeneration != generation) return@launch
             val latestConfig = configResult.getOrNull()
             val error = listOfNotNull(
@@ -63,12 +64,29 @@ class Ipv6ViewModel(private val repository: Ipv6Repository, private val supports
             _state.value = _state.value.copy(
                 status = statusResult.getOrNull() ?: old.status,
                 config = latestConfig ?: old.config,
-                form = latestConfig?.let(Ipv6FormState::from) ?: old.form,
+                form = latestConfig?.let { Ipv6FormState.from(it, old.selectedWanId) } ?: old.form,
                 loading = false,
                 refreshing = false,
                 error = error.ifBlank { if (latestConfig == null) "IPv6 配置读取失败" else "" },
             )
         }
+    }
+
+    fun selectWan(wanId: String) {
+        val old = _state.value
+        if (old.selectedWanId == wanId || old.saving) return
+        generation++
+        _state.value = old.copy(
+            selectedWanId = wanId,
+            status = null,
+            config = null,
+            form = Ipv6FormState(wanId = wanId),
+            loading = true,
+            refreshing = false,
+            error = "",
+            notice = "",
+        )
+        load(force = true)
     }
 
     fun updateForm(transform: (Ipv6FormState) -> Ipv6FormState) {
@@ -78,7 +96,7 @@ class Ipv6ViewModel(private val repository: Ipv6Repository, private val supports
 
     fun resetForm() {
         val config = _state.value.config ?: return
-        _state.value = _state.value.copy(form = Ipv6FormState.from(config), error = "", notice = "")
+        _state.value = _state.value.copy(form = Ipv6FormState.from(config, _state.value.selectedWanId), error = "", notice = "")
     }
 
     fun save() {
@@ -99,11 +117,11 @@ class Ipv6ViewModel(private val repository: Ipv6Repository, private val supports
             if (requestGeneration != generation) return@launch
             val config = saved.getOrNull()
             if (config != null) {
-                val refreshedStatus = safeCall { repository.status() }.getOrNull()
+                val refreshedStatus = safeCall { repository.status(old.form.wanId) }.getOrNull()
                 _state.value = _state.value.copy(
                     status = refreshedStatus ?: _state.value.status,
                     config = config,
-                    form = Ipv6FormState.from(config),
+                    form = Ipv6FormState.from(config, old.form.wanId),
                     saving = false,
                     error = "",
                     notice = "IPv6 设置已保存并校验",

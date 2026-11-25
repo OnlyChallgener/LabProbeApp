@@ -81,6 +81,7 @@ class Ipv6ModelsTest {
         val lan = root.getJSONObject("lan")
 
         assertNull(form.validationError)
+        assertEquals("wan", root.getString("wanId"))
         assertEquals("relay", wan.getString("proto"))
         assertTrue(wan.getBoolean("relay"))
         assertEquals("manual", wan.getString("dnsType"))
@@ -90,6 +91,32 @@ class Ipv6ModelsTest {
         assertEquals(60, lan.getInt("ip6assign"))
         assertEquals(240, lan.getInt("leasetime6"))
         assertEquals("0", lan.getString("ra_management"))
+    }
+
+    @Test
+    fun parsesWanInventoryAndSerializesSelectedWan() {
+        val config = parseIpv6Config(
+            JSONObject()
+                .put("wan", JSONObject().put("wanId", "wan").put("proto", "dhcpv6"))
+                .put(
+                    "wans",
+                    JSONArray()
+                        .put(JSONObject().put("wanId", "wan").put("proto", "dhcpv6"))
+                        .put(JSONObject().put("wanId", "wan1").put("proto", "relay").put("relay", true)),
+                )
+                .put("lan", JSONObject().put("ip6assign", 64)),
+        )
+        assertEquals(listOf("wan", "wan1"), config.wans.map { it.wanId })
+        val form = Ipv6FormState.from(config, "wan1")
+        assertEquals("wan1", form.wanId)
+        assertEquals(WanIpv6Mode.RELAY, form.wanMode)
+        assertEquals("wan1", form.toJson().getString("wanId"))
+    }
+
+    @Test
+    fun statusKeepsWanIdentity() {
+        val status = parseIpv6Status(JSONObject().put("wanId", "wan1").put("address", "2001:db8::1"))
+        assertEquals("wan1", status.wanId)
     }
 
     @Test

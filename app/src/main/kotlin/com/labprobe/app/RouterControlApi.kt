@@ -259,11 +259,11 @@ class RouterControlApi(private val prefs: AppPrefs) {
 
     suspend fun refreshLabProbeDdnsAddress(): Long = hubApi.requestRouterDashboardRefresh()
 
-    suspend fun ipv6Status(): Ipv6Status =
-        parseIpv6Status(get("/api/router/ipv6/status").optJSONObject("data") ?: JSONObject())
+    suspend fun ipv6Status(wanId: String? = null): Ipv6Status =
+        parseIpv6Status(get("/api/router/ipv6/status${wanId?.let { "?wanId=${URLEncoder.encode(it, StandardCharsets.UTF_8.toString())}" }.orEmpty()}").optJSONObject("data") ?: JSONObject())
 
-    suspend fun ipv6Config(): Ipv6Config =
-        parseIpv6Config(get("/api/router/ipv6/config").optJSONObject("data") ?: JSONObject())
+    suspend fun ipv6Config(wanId: String? = null): Ipv6Config =
+        parseIpv6Config(get("/api/router/ipv6/config${wanId?.let { "?wanId=${URLEncoder.encode(it, StandardCharsets.UTF_8.toString())}" }.orEmpty()}").optJSONObject("data") ?: JSONObject())
 
     suspend fun dhcpv6Clients(): List<Dhcpv6Client> =
         parseDhcpv6Clients(get("/api/router/ipv6/clients").optJSONObject("data") ?: JSONObject())

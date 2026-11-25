@@ -7,9 +7,9 @@ import com.labprobe.app.RouterControlApi
 class Ipv6Repository internal constructor(private val api: RouterControlApi) {
     constructor(prefs: AppPrefs) : this(RouterControlApi(prefs))
 
-    suspend fun status(): Ipv6Status = api.ipv6Status()
+    suspend fun status(wanId: String? = null): Ipv6Status = api.ipv6Status(wanId)
 
-    suspend fun config(): Ipv6Config = api.ipv6Config()
+    suspend fun config(wanId: String? = null): Ipv6Config = api.ipv6Config(wanId)
 
     suspend fun clients(): List<Dhcpv6Client> = api.dhcpv6Clients()
 
