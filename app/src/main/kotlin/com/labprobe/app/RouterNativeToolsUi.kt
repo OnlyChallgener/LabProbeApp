@@ -257,7 +257,10 @@ private data class RouterNatResult(
     val taskState: String = "idle",
     val stageText: String = "尚未开始",
     val elapsedSeconds: Long = 0L,
-    val lastRouterResponseAt: Long = 0L
+    val lastRouterResponseAt: Long = 0L,
+    val requestedInterface: String = "wan",
+    val detectedInterface: String = "",
+    val sourceIp: String = "",
 ) {
     val completed: Boolean get() =
         status.equals("completed", true) || status.equals("success", true) ||
@@ -277,6 +280,9 @@ private data class RouterNatResult(
         .put("externalAddress", externalAddress)
         .put("otherAddress", otherAddress)
         .put("stunPort", stunPort)
+        .put("requestedInterface", requestedInterface)
+        .put("detectedInterface", detectedInterface)
+        .put("sourceIp", sourceIp)
 }
 
 private fun natResultFromTask(task: RouterTaskSnapshot): RouterNatResult {
@@ -305,7 +311,10 @@ private fun natResultFromTask(task: RouterTaskSnapshot): RouterNatResult {
         otherAddress = textOf("other_address", "otherAddress"),
         stunPort = data.optInt("requested_port", data.optInt("stun_port", data.optInt("port", 0))),
         log = combinedLog, taskState = task.state, stageText = task.stageText,
-        elapsedSeconds = task.elapsedSeconds, lastRouterResponseAt = task.lastRouterResponseAt
+        elapsedSeconds = task.elapsedSeconds, lastRouterResponseAt = task.lastRouterResponseAt,
+        requestedInterface = textOf("requestedInterface", "requested_interface").ifBlank { "wan" },
+        detectedInterface = textOf("detectedInterface", "detected_interface"),
+        sourceIp = textOf("sourceIp", "source_ip"),
     )
 }
 
@@ -420,7 +429,10 @@ private class RouterNativeApi(private val prefs: AppPrefs) {
             externalAddress = textOf("external_address", "externalAddress", "mapped_address", "mappedAddress"),
             otherAddress = textOf("other_address", "otherAddress"),
             stunPort = data.optInt("requested_port", data.optInt("stun_port", data.optInt("port", 0))),
-            log = textOf("log")
+            log = textOf("log"),
+            requestedInterface = textOf("requestedInterface", "requested_interface").ifBlank { "wan" },
+            detectedInterface = textOf("detectedInterface", "detected_interface"),
+            sourceIp = textOf("sourceIp", "source_ip"),
         )
     }
 
@@ -501,10 +513,18 @@ private fun mergeNatLog(previous: String, incoming: String): String {
     return lines.takeLast(300).joinToString("\n")
 }
 
+internal fun natWanOptions(inventory: WanInventory?, current: String): List<Pair<String, String>> {
+    val available = inventory?.selectable("natDiagnostic")?.map { it.wanId to it.displayName }.orEmpty()
+    val merged = (available + (current to current.uppercase())).distinctBy { it.first }
+    return if (merged.isEmpty()) listOf("wan" to "WAN") else merged
+}
+
 @Composable
 fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     RouterNativeMemoryCache.ensureScope(prefs)
     val tasks = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterTaskRepositoryRegistry.get(prefs) }
+    val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val wanResource by routerRepository.wans.collectAsState()
     val task by tasks.nat.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val servers = remember {
@@ -522,6 +542,9 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var portText by rememberSaveable { mutableStateOf("3478") }
     var mode by rememberSaveable { mutableStateOf("classic") }
     var interfaceName by rememberSaveable { mutableStateOf("wan") }
+    val interfaceOptions = remember(wanResource.value, interfaceName) {
+        natWanOptions(wanResource.value, interfaceName)
+    }
     val cachedResult = RouterNativeMemoryCache.natResult
     var result by remember { mutableStateOf(cachedResult ?: RouterNatResult()) }
     var sessionLog by remember { mutableStateOf(cachedResult?.log.orEmpty()) }
@@ -540,6 +563,10 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
         RouterNativeMemoryCache.natResult = result
     }
 
+    LaunchedEffect(routerRepository) { routerRepository.refreshWans() }
+    LaunchedEffect(interfaceOptions) {
+        if (interfaceOptions.none { it.first == interfaceName }) interfaceName = interfaceOptions.first().first
+    }
     LaunchedEffect(Unit) { tasks.ensure("nat") }
     LaunchedEffect(task.updatedAt, task.state) {
         val normalized = natResultFromTask(task).copy(
@@ -619,7 +646,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 NativeSelector(
                     label = "WAN 类型",
                     value = interfaceName.uppercase(),
-                    options = listOf("wan" to "WAN", "wan1" to "WAN1"),
+                    options = interfaceOptions,
                     expanded = interfaceMenu,
                     onExpandedChange = { interfaceMenu = it },
                     onSelect = { interfaceName = it },
@@ -644,7 +671,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                                 "WAN 接口：${interfaceName.uppercase()}",
                                 "检测协议：${if (mode == "5780") "RFC 5780" else "RFC 3489"}"
                             ).joinToString("\n")
-                            publish(RouterNatResult(status = "running", taskState = "queued", mode = mode, stunPort = port, log = sessionLog, stageText = "正在提交检测任务"))
+                            publish(RouterNatResult(status = "running", taskState = "queued", mode = mode, stunPort = port, log = sessionLog, stageText = "正在提交检测任务", requestedInterface = interfaceName))
                             tasks.startNat(server, port, interfaceName, mode)
                         }
                     },
@@ -677,6 +704,11 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 result.completed -> "检测完成"
                 else -> natStatusZh(result.status)
             })
+            NativeAnalysisValueRow(
+                "检测线路",
+                (result.detectedInterface.ifBlank { result.requestedInterface }).uppercase(),
+            )
+            if (result.sourceIp.isNotBlank()) NativeAnalysisValueRow("源地址", result.sourceIp)
             if (result.mode == "5780") {
                 NativeAnalysisValueRow("映射行为", natMappingBehaviorZh(result.mappingBehavior))
                 NativeAnalysisValueRow("过滤行为", natFilteringBehaviorZh(result.filteringBehavior))
@@ -747,6 +779,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             Text(
                                 listOf(
                                     item.externalAddress,
+                                    (item.detectedInterface.ifBlank { item.requestedInterface }).uppercase(),
                                     if (item.mode == "5780") "RFC5780" else "RFC3489",
                                     item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
                                 ).filter(String::isNotBlank).joinToString(" · "),
@@ -1077,8 +1110,8 @@ private fun RouterNatResult.hasHistoryResult(): Boolean = completed && when {
 }
 
 private fun RouterNatResult.historyKey(): String = listOf(
-    timestamp.toString(), mode.lowercase(), natType.lowercase(), mappingBehavior.lowercase(),
-    filteringBehavior.lowercase(), externalAddress.lowercase(), stunPort.toString()
+    timestamp.toString(), mode.lowercase(), detectedInterface.ifBlank { requestedInterface }.lowercase(),
+    natType.lowercase(), mappingBehavior.lowercase(), filteringBehavior.lowercase(), externalAddress.lowercase(), stunPort.toString()
 ).joinToString("|")
 
 private fun normalizeNatHistory(rows: List<RouterNatResult>): List<RouterNatResult> = rows
@@ -1113,7 +1146,10 @@ private fun loadNatHistory(context: Context): List<RouterNatResult> {
                 externalPort = it.optInt("externalPort"),
                 externalAddress = it.optString("externalAddress"),
                 otherAddress = it.optString("otherAddress"),
-                stunPort = it.optInt("stunPort", 0)
+                stunPort = it.optInt("stunPort", 0),
+                requestedInterface = it.optString("requestedInterface", "wan"),
+                detectedInterface = it.optString("detectedInterface"),
+                sourceIp = it.optString("sourceIp"),
             )
         }
     })
