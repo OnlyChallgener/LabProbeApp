@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -935,25 +936,33 @@ fun PortMappingScreen(
             }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         filterCounts.forEach { (item, count) ->
                             val selected = filter == item
                             Surface(
                                 onClick = { filter = item },
-                                shape = RoundedCornerShape(99.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 color = if (selected) PortBlue else Color.White,
                                 border = BorderStroke(1.dp, if (selected) PortBlue else LabCoreSurface.Border),
-                                modifier = Modifier.height(32.dp).padding(end = 3.dp),
+                                modifier = Modifier.width(if (item == "全部") 64.dp else 72.dp).height(32.dp),
                             ) {
-                                Text(
-                                    "$item $count",
-                                    fontSize = 11.sp,
-                                    lineHeight = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (selected) Color.White else LabV2.InkMuted,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                )
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "$item $count",
+                                        fontSize = 11.sp,
+                                        lineHeight = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (selected) Color.White else LabV2.InkMuted,
+                                        maxLines = 1,
+                                        textAlign = TextAlign.Center,
+                                        overflow = TextOverflow.Clip,
+                                        modifier = Modifier.padding(horizontal = 4.dp),
+                                    )
+                                }
                             }
                         }
                     }
