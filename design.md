@@ -138,6 +138,12 @@
 - Save and Calibrate remain available below both expandable cards. Section titles use 14.5sp, one step below the previous 15.5sp; privacy and about retain their original layout, icons and content.
 - The official account is global across routers/Hubs. Its secondary page shows only real authorization, project/router counts, per-HUB sync state and reliable expiry; partial logout must remain visibly incomplete.
 
+## November 25 — Router network details multi-WAN
+
+- Network details show WAN/WAN1 selector buttons only when more than one WAN is configured. WAN rows expand independently with at most one open line; configured offline WAN1 remains visible with its real state.
+- WAN fields are associated only by stable `wanId`. PPPoE shows real credentials/configuration, DHCP shows a lease only when supplied, static IP shows address/mask/gateway/DNS, and bridge shows only actual link/config data. No recursive first-match fallback may copy fields across lines.
+- LAN address, netmask and MAC remain a separate LAN section; AP information is unchanged. Per-WAN rates/traffic prefer firmware flow_audit and missing metrics remain absent rather than zero or aggregate substitutions.
+
 ## November 25 — Centered dialog background refinement
 
 - Centered alert, editor and popup cards use opaque white `#FFFFFF` by default, superseding the earlier blue-cyan-white dialog gradient exception. Explicit caller-provided `color` or `containerColor` values take precedence.
