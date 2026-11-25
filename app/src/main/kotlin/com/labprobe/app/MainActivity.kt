@@ -12515,21 +12515,6 @@ fun recentSevenDates(): List<String> {
     return out
 }
 
-private fun realtimeFailureText(raw: String): String {
-    val reason = raw.trim()
-    if (reason.isBlank()) return ""
-    return when {
-        reason.contains("unauthorized", true) || reason.contains("forbidden", true) || reason.contains("1008") -> "APP Token 认证失败"
-        reason.contains("SSLHandshake", true) || reason.contains("certificate", true) || reason.contains("CertPath", true) -> "TLS证书验证失败"
-        reason.contains("UnknownHost", true) || reason.contains("unable to resolve", true) -> "Hub 域名解析失败"
-        reason.contains("timeout", true) || reason.contains("timed out", true) -> "WSS 连接超时"
-        reason.contains("WebSocket", true) || reason.contains("handshake", true) -> "WSS握手失败"
-        reason.contains("connection refused", true) -> "Hub 拒绝实时连接"
-        reason.contains("network is unreachable", true) || reason.contains("no route", true) -> "当前网络无法到达 Hub"
-        else -> uiMessageZh(reason).take(120)
-    }
-}
-
 data class RouterConfigSnapshot(
     val name: String = "",
     val username: String = "",
@@ -12742,23 +12727,43 @@ fun SettingsScreen(
             }
         }
         if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
-        val liveConnectionMessage = if (state.realtimeFallbackActive && state.realtimeDataFresh) {
-            if (state.mqttConnected) "实时数据由备用链路更新" else "实时数据由备用链路更新，实时连接恢复中"
-        } else when (val realtime = state.mqttState) {
-            HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时同步正常" else if (state.lastRouterRealtimeAt > 0L) "Hub 已连接，等待路由器最新数据" else "实时链路已连接，等待首帧数据"
-            HubRealtimeState.Connecting -> if (state.hubConnected) "实时链路恢复中，已保留上次数据" else "正在连接 Hub"
-            is HubRealtimeState.Reconnecting -> "实时链路恢复中，已保留上次数据"
-            HubRealtimeState.Disabled -> if (state.hubConnected) "Hub 已连接，实时链路未建立" else state.message.ifBlank { "等待连接" }
+        val connectionStatus = settingsConnectionStatus(
+            message = msg,
+            stateMessage = state.message,
+            realtimeState = state.mqttState,
+            hubConnected = state.hubConnected,
+            mqttConnected = state.mqttConnected,
+            realtimeDataFresh = state.realtimeDataFresh,
+            lastRouterRealtimeAt = state.lastRouterRealtimeAt,
+            realtimeFallbackActive = state.realtimeFallbackActive,
+        )
+        val connectionColor = when (connectionStatus.tone) {
+            SettingsConnectionTone.Success -> LabV2.Green
+            SettingsConnectionTone.Connecting -> Color(0xFF2563EB)
+            SettingsConnectionTone.Warning -> LabV2.Amber
+            SettingsConnectionTone.Error -> LabV2.Red
+            SettingsConnectionTone.Neutral -> LabV2.InkMuted
         }
-        val connectionMessage = msg.ifBlank { liveConnectionMessage }
-        val realtimeFailure = when (val realtime = state.mqttState) {
-            is HubRealtimeState.Reconnecting -> realtimeFailureText(realtime.reason)
-            else -> ""
+        val connectionIcon = when (connectionStatus.kind) {
+            SettingsConnectionKind.Hub -> Icons.Rounded.Link
+            SettingsConnectionKind.Token -> Icons.Rounded.Key
+            SettingsConnectionKind.Router -> Icons.Rounded.Router
+            SettingsConnectionKind.Realtime -> Icons.Rounded.Sync
+            SettingsConnectionKind.Notice -> if (connectionStatus.tone == SettingsConnectionTone.Connecting) Icons.Rounded.Sync else Icons.Rounded.Info
+            SettingsConnectionKind.Normal -> if (connectionStatus.tone == SettingsConnectionTone.Success) Icons.Rounded.CheckCircle else Icons.Rounded.Link
         }
-        // 这一行以前锁死单行，合并前端那句"要哪一台"的说明被省略号切掉，等于没写。
-        Text(uiMessageZh(connectionMessage), color = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected || state.hubConnected) LabV2.Amber else MaterialTheme.colorScheme.onSurface.copy(alpha = .62f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (realtimeFailure.isNotBlank()) {
-            Text("原因：$realtimeFailure", color = LabV2.InkMuted, fontSize = 10.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Icon(connectionIcon, null, Modifier.size(15.dp).padding(top = 1.dp), tint = connectionColor)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                connectionStatus.message,
+                color = connectionColor,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
