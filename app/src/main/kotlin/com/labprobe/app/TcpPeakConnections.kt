@@ -135,6 +135,7 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
             snapshot = TcpPeakSnapshot(
                 taskId = localTaskId,
                 side = config.side,
+                wanId = config.wanId,
                 state = "queued",
                 status = if (config.side == TcpPeakSide.APP) "正在启动本机测试" else "正在向 Hub 提交一次性任务",
                 resourcesReleased = true,
@@ -184,7 +185,7 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
         } else {
             scope.launch {
                 runCatching { api.stopTcpPeakTask(current.taskId) }
-                    .onSuccess { publish(it) }
+                    .onSuccess { publish(it.withRetainedWanId(current.wanId)) }
                     .onFailure {
                         _state.value = _state.value.copy(notice = "停止通知暂未送达，正在继续确认 Relay 状态")
                     }
@@ -209,7 +210,7 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
         }
         publish(snapshot)
         if (stopRequested.get() && snapshot.active && snapshot.taskId.isNotBlank()) {
-            snapshot = api.stopTcpPeakTask(snapshot.taskId)
+            snapshot = api.stopTcpPeakTask(snapshot.taskId).withRetainedWanId(snapshot.wanId)
             publish(snapshot)
         }
         var consecutiveFailures = 0
@@ -217,7 +218,7 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
             delay(1_000L)
             val next = runCatching { api.getTcpPeakTask() }
             if (next.isSuccess) {
-                snapshot = next.getOrThrow()
+                snapshot = next.getOrThrow().withRetainedWanId(snapshot.wanId)
                 consecutiveFailures = 0
                 publish(snapshot)
             } else {
@@ -275,11 +276,14 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
 fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val controller = remember(prefs) { TcpPeakController(context, prefs) }
+    val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val wanResource by routerRepository.wans.collectAsState()
     val pendingAiCommand = remember(prefs) {
         TcpPeakPendingAiCommand.fromJson(prefs.tcpPeakPendingAiCommandJson)
     }
     val ui by controller.state.collectAsState()
     var side by remember { mutableStateOf(pendingAiCommand?.config?.side ?: TcpPeakSide.APP) }
+    var selectedWanId by remember { mutableStateOf(pendingAiCommand?.config?.wanId.orEmpty()) }
     var family by remember { mutableStateOf(pendingAiCommand?.config?.family ?: TcpPeakFamily.BOTH) }
     var host by remember { mutableStateOf(pendingAiCommand?.config?.host ?: prefs.tcpPeakHost) }
     var port by remember { mutableStateOf(pendingAiCommand?.config?.port?.toString() ?: prefs.tcpPeakPort) }
@@ -290,10 +294,19 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
+    val configuredWans = remember(wanResource.value) {
+        wanResource.value?.wans.orEmpty().filter { it.configured }
+    }
+    val wanSelection = tcpPeakWanSelectionState(side, selectedWanId, configuredWans)
+
+    LaunchedEffect(side, configuredWans) {
+        selectedWanId = wanSelection.selectedWanId
+    }
 
     fun currentConfig(): TcpPeakConfig = TcpPeakConfig(
         side = side,
         host = host,
+        wanId = wanSelection.selectedWanId,
         port = port.toIntOrNull() ?: 0,
         family = family,
         targetConnections = target.toIntOrNull() ?: 0,
@@ -338,8 +351,12 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             cps = cps,
             extremeMode = extremeMode,
             hostHistory = hostHistory,
+            wanOptions = wanSelection.options,
+            selectedWanId = wanSelection.selectedWanId,
+            showWanSelector = wanSelection.showSelector,
             enabled = !active,
             onSide = { side = it },
+            onWan = { selectedWanId = it },
             onFamily = { family = it },
             onHost = { host = it; prefs.tcpPeakHost = it },
             onDeleteHistory = { item ->
@@ -408,8 +425,12 @@ private fun TcpPeakConfigCard(
     cps: String,
     extremeMode: Boolean,
     hostHistory: List<String> = emptyList(),
+    wanOptions: List<WanInfo> = emptyList(),
+    selectedWanId: String = "",
+    showWanSelector: Boolean = false,
     enabled: Boolean,
     onSide: (TcpPeakSide) -> Unit,
+    onWan: (String) -> Unit,
     onFamily: (TcpPeakFamily) -> Unit,
     onHost: (String) -> Unit,
     onDeleteHistory: (String) -> Unit = {},
@@ -444,6 +465,14 @@ private fun TcpPeakConfigCard(
                         )
                     }
                 }
+            }
+            if (side == TcpPeakSide.RELAY && showWanSelector) {
+                TcpPeakWanSelector(
+                    options = wanOptions,
+                    selectedWanId = selectedWanId,
+                    enabled = enabled,
+                    onPick = onWan,
+                )
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("目标域名或 IP（支持逗号分隔多IP）", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
@@ -677,6 +706,81 @@ private fun tcpPeakSegmentedColors() = SegmentedButtonColors(
 )
 
 @Composable
+private fun TcpPeakWanSelector(
+    options: List<WanInfo>,
+    selectedWanId: String,
+    enabled: Boolean,
+    onPick: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.wanId == selectedWanId }
+        ?.displayName
+        ?.ifBlank { selectedWanId.uppercase(Locale.ROOT) }
+        ?: selectedWanId.uppercase(Locale.ROOT)
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text("线路", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted))
+        Box {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .clickable(enabled = enabled) { expanded = true },
+                shape = LabV2.CompactCardShape,
+                color = if (enabled) Color.White else LabV2.FieldSoft,
+                border = BorderStroke(
+                    1.dp,
+                    if (enabled) LabCoreSurface.Border else LabCoreSurface.Border.copy(alpha = 0.5f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        selectedLabel,
+                        modifier = Modifier.weight(1f),
+                        style = LabTypography.FieldValue.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (enabled) LabV2.Ink else LabV2.InkMuted
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Icon(
+                        Icons.Rounded.ArrowDropDown,
+                        contentDescription = "选择线路",
+                        tint = if (enabled) LabV2.InkMuted else LabV2.InkFaint,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            LabDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                shape = LabPopupShapes.Menu,
+                containerColor = Color.White,
+            ) {
+                options.forEach { option ->
+                    LabDropdownMenuItem(
+                        text = {
+                            Text(
+                                option.displayName.ifBlank { option.wanId.uppercase(Locale.ROOT) },
+                                fontSize = LabTypography.Supporting.fontSize,
+                                fontWeight = if (option.wanId == selectedWanId) FontWeight.Bold else FontWeight.SemiBold,
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            onPick(option.wanId)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TcpPeakNumberField(
     label: String,
     value: String,
@@ -734,6 +838,22 @@ private fun TcpPeakProgressCard(
                 Box(Modifier.size(7.dp).background(statusColor, CircleShape))
                 Spacer(Modifier.width(7.dp))
                 Text(snapshot.status, style = LabTypography.CardTitle.copy(color = LabV2.Ink), modifier = Modifier.weight(1f))
+                if (snapshot.wanId.isNotBlank()) {
+                    Surface(
+                        shape = LabV2.CompactCardShape,
+                        color = LabV2.Primary.copy(alpha = .08f),
+                        border = BorderStroke(1.dp, LabV2.Primary.copy(alpha = .18f))
+                    ) {
+                        Text(
+                            tcpPeakWanLabel(snapshot.wanId),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = LabTypography.Caption.copy(color = LabV2.Primary, fontWeight = FontWeight.SemiBold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
                 Spacer(Modifier.width(8.dp))
                 Text(formatTcpPeakDuration(snapshot.elapsedMs), style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
             }
@@ -949,7 +1069,16 @@ private fun TcpPeakHistoryContent(history: List<TcpPeakHistory>) {
                 border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .72f))
             ) {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("${timeFormatter.format(Date(row.startedEpochMs))} · ${row.side.label} · ${row.host}:${row.port}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LabV2.Ink)
+                    val wanLabel = tcpPeakWanLabel(row.snapshot.wanId)
+                    Text(
+                        "${timeFormatter.format(Date(row.startedEpochMs))} · ${row.side.label} · ${row.host}:${row.port}" +
+                            if (wanLabel.isNotEmpty()) " · $wanLabel" else "",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = LabV2.Ink,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text("IPv4 峰值 ${row.snapshot.ipv4.peak} · IPv6 峰值 ${row.snapshot.ipv6.peak} · ${row.snapshot.finishReason}", style = LabTypography.Supporting.copy(color = LabV2.InkMuted), maxLines = 3)
                     if (row.side == TcpPeakSide.RELAY) {
                         Text("Conntrack ${row.snapshot.conntrackPeak} · CPU ${String.format(Locale.getDefault(), "%.1f%%", row.snapshot.cpuPeak)} · 最低可用内存 ${row.snapshot.memoryMinAvailableMb} MB", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))

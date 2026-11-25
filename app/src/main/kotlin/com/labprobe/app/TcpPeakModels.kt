@@ -15,9 +15,18 @@ enum class TcpPeakFamily(val wireValue: String, val label: String) {
     BOTH("both", "分别测试")
 }
 
+private val TCP_PEAK_WAN_ID_PATTERN = Regex("[a-z0-9][a-z0-9_.-]{0,63}")
+
+internal fun normalizeTcpPeakWanId(value: String): String =
+    value.trim().lowercase(Locale.ROOT)
+
+internal fun isValidTcpPeakWanId(value: String): Boolean =
+    TCP_PEAK_WAN_ID_PATTERN.matches(normalizeTcpPeakWanId(value))
+
 data class TcpPeakConfig(
     val side: TcpPeakSide = TcpPeakSide.APP,
     val host: String = "",
+    val wanId: String = "",
     val port: Int = 443,
     val family: TcpPeakFamily = TcpPeakFamily.BOTH,
     val targetConnections: Int = 10_000,
@@ -28,6 +37,7 @@ data class TcpPeakConfig(
 ) {
     fun normalized(): TcpPeakConfig = copy(
         host = host.trim().replace(" ", "").removePrefix("[").removeSuffix("]"),
+        wanId = normalizeTcpPeakWanId(wanId),
         port = port.coerceIn(1, 65_535),
         targetConnections = targetConnections.coerceIn(1, 131_072),
         cps = cps.coerceIn(1, if (extremeMode) 10_000 else 2_000),
@@ -38,16 +48,85 @@ data class TcpPeakConfig(
     fun validationError(): String? {
         val maximumCps = if (extremeMode) 10_000 else 2_000
         val targets = host.split(',').map { it.trim().removePrefix("[").removeSuffix("]") }.filter { it.isNotEmpty() }
+        val normalizedWanId = normalizeTcpPeakWanId(wanId)
         return when {
             targets.isEmpty() -> "请输入测试目标主机"
             targets.any { it.contains("://") || it.any(Char::isWhitespace) } -> "测试目标主机格式无效"
+            normalizedWanId.isNotEmpty() && !TCP_PEAK_WAN_ID_PATTERN.matches(normalizedWanId) -> "线路 ID 格式无效"
             port !in 1..65_535 -> "目标端口必须是 1–65535"
             targetConnections !in 1..131_072 -> "连接量程必须是 1–131072"
             cps !in 1..maximumCps -> "CPS 必须是 1–$maximumCps"
             else -> null
         }
     }
+
+    internal fun toRelayStartJson(): JSONObject {
+        val value = normalized()
+        return JSONObject()
+            .put("host", value.host)
+            .put("wanId", value.wanId)
+            .put("port", value.port)
+            .put("family", value.family.wireValue)
+            .put("targetConnections", value.targetConnections)
+            .put("cps", value.cps)
+            .put("extremeMode", value.extremeMode)
+            .put("connectTimeoutMs", value.connectTimeoutMs)
+            .put("maxDurationSeconds", value.maxDurationSeconds)
+    }
 }
+
+internal data class TcpPeakWanSelectionState(
+    val selectedWanId: String,
+    val options: List<WanInfo>,
+    val showSelector: Boolean,
+)
+
+internal fun tcpPeakWanSelectionState(
+    side: TcpPeakSide,
+    currentWanId: String,
+    wans: List<WanInfo>,
+): TcpPeakWanSelectionState {
+    if (side != TcpPeakSide.RELAY) return TcpPeakWanSelectionState("", emptyList(), false)
+    val configuredWans = wans
+        .filter { it.configured && isValidTcpPeakWanId(it.wanId) }
+        .map { it.copy(wanId = normalizeTcpPeakWanId(it.wanId)) }
+        .distinctBy(WanInfo::wanId)
+    val normalizedCurrent = normalizeTcpPeakWanId(currentWanId)
+        .takeIf { isValidTcpPeakWanId(it) }
+        .orEmpty()
+    if (configuredWans.isEmpty()) {
+        return TcpPeakWanSelectionState(
+            selectedWanId = normalizedCurrent,
+            options = emptyList(),
+            showSelector = false,
+        )
+    }
+    val selectedWanId = configuredWans.firstOrNull { it.wanId == normalizedCurrent }?.wanId
+        ?: normalizedCurrent.ifEmpty {
+            configuredWans.firstOrNull { it.defaultEgress }?.wanId
+                ?: configuredWans.first().wanId
+        }
+    val options = if (normalizedCurrent.isNotEmpty() && configuredWans.none { it.wanId == normalizedCurrent }) {
+        configuredWans + WanInfo(
+            wanId = normalizedCurrent,
+            displayName = normalizedCurrent.uppercase(Locale.ROOT),
+            configured = true,
+        )
+    } else {
+        configuredWans
+    }
+    return TcpPeakWanSelectionState(
+        selectedWanId = selectedWanId,
+        options = options,
+        showSelector = options.size > 1,
+    )
+}
+
+internal fun tcpPeakWanLabel(wanId: String): String =
+    wanId.trim().takeIf(String::isNotBlank)?.let { "线路 ${it.uppercase(Locale.ROOT)}" }.orEmpty()
+
+internal fun TcpPeakSnapshot.withRetainedWanId(previousWanId: String): TcpPeakSnapshot =
+    if (wanId.isBlank() && previousWanId.isNotBlank()) copy(wanId = previousWanId) else this
 
 /** One-shot handoff from an AI confirmation to the canonical screen controller. */
 data class TcpPeakPendingAiCommand(
@@ -59,6 +138,7 @@ data class TcpPeakPendingAiCommand(
         .put("id", id)
         .put("expiresAtEpochMs", expiresAtEpochMs)
         .put("host", config.host)
+        .put("wanId", config.wanId)
         .put("port", config.port)
         .put("family", config.family.wireValue)
         .put("targetConnections", config.targetConnections)
@@ -79,6 +159,7 @@ data class TcpPeakPendingAiCommand(
             val config = TcpPeakConfig(
                 side = TcpPeakSide.APP,
                 host = row.optString("host"),
+                wanId = row.optString("wanId"),
                 port = row.optInt("port"),
                 family = family,
                 targetConnections = row.optInt("targetConnections"),
@@ -137,6 +218,7 @@ data class TcpPeakMetric(
 data class TcpPeakSnapshot(
     val taskId: String = "",
     val side: TcpPeakSide = TcpPeakSide.APP,
+    val wanId: String = "",
     val state: String = "idle",
     val status: String = "待测试",
     val finishReason: String = "",
@@ -168,6 +250,7 @@ data class TcpPeakSnapshot(
             return TcpPeakSnapshot(
                 taskId = row.optString("id"),
                 side = TcpPeakSide.RELAY,
+                wanId = row.optString("wanId"),
                 state = state,
                 status = row.optString("status").ifBlank { tcpPeakStateZh(state) },
                 finishReason = row.optString("finishReason"),
@@ -305,6 +388,7 @@ fun tcpPeakStateZh(state: String): String = when (state.lowercase(Locale.ROOT)) 
 private fun TcpPeakSnapshot.toHistoryJson(): JSONObject = JSONObject()
     .put("taskId", taskId)
     .put("side", side.name)
+    .put("wanId", wanId)
     .put("state", state)
     .put("status", status)
     .put("finishReason", finishReason)
@@ -325,6 +409,7 @@ private fun TcpPeakSnapshot.Companion.fromHistoryJson(row: JSONObject): TcpPeakS
     return TcpPeakSnapshot(
         taskId = row.optString("taskId"),
         side = runCatching { TcpPeakSide.valueOf(row.optString("side")) }.getOrDefault(TcpPeakSide.APP),
+        wanId = row.optString("wanId"),
         state = row.optString("state", "interrupted"),
         status = row.optString("status").ifBlank { "历史记录" },
         finishReason = row.optString("finishReason"),

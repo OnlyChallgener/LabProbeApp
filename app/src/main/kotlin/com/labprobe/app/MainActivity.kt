@@ -13171,16 +13171,7 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
         TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test"))
     }
     suspend fun startTcpPeakTask(config: TcpPeakConfig): TcpPeakSnapshot = withContext(Dispatchers.IO) {
-        val value = config.normalized()
-        val body = JSONObject()
-            .put("host", value.host)
-            .put("port", value.port)
-            .put("family", value.family.wireValue)
-            .put("targetConnections", value.targetConnections)
-            .put("cps", value.cps)
-            .put("extremeMode", value.extremeMode)
-            .put("connectTimeoutMs", value.connectTimeoutMs)
-            .put("maxDurationSeconds", value.maxDurationSeconds)
+        val body = config.toRelayStartJson()
         TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test/start", "POST", body))
     }
     suspend fun stopTcpPeakTask(taskId: String): TcpPeakSnapshot = withContext(Dispatchers.IO) {
