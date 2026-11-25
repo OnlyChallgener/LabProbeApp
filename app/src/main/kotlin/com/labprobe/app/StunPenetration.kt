@@ -72,7 +72,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -186,6 +190,24 @@ data class StunRule(
 }
 
 data class StunAddressRecord(val endpoint: String, val updatedAt: Long)
+
+/** 顶部五分类筛选：HTTP/HTTPS/SSH 按应用层协议精确区分，其余全部归入 MORE。 */
+internal enum class StunProtocolFilter(val label: String) {
+    ALL("全部"), HTTPS("HTTPS"), HTTP("HTTP"), SSH("SSH"), MORE("更多");
+
+    internal fun matches(serviceType: String): Boolean = when (this) {
+        ALL -> true
+        HTTPS -> serviceType.equals("HTTPS", true)
+        HTTP -> serviceType.equals("HTTP", true)
+        SSH -> serviceType.equals("SSH", true)
+        MORE -> serviceType.equals("HTTPS", true).not() &&
+            serviceType.equals("HTTP", true).not() &&
+            serviceType.equals("SSH", true).not()
+    }
+}
+
+internal fun stunFilterCounts(rules: List<StunRule>): Map<StunProtocolFilter, Int> =
+    StunProtocolFilter.entries.associateWith { filter -> rules.count { filter.matches(it.serviceType) } }
 
 data class StunSnapshot(
     val rules: List<StunRule> = emptyList(),
@@ -540,6 +562,7 @@ fun StunPenetrationScreen(
     var wireGuardManagedRuleIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var dependencyCheckingRuleId by remember { mutableStateOf<String?>(null) }
     var residualConfirmation by remember { mutableStateOf<StunResidualConfirmation?>(null) }
+    var stunFilter by remember { mutableStateOf(StunProtocolFilter.ALL) }
     val refreshMutex = remember { Mutex() }
     val activeStunOperation = operationState?.takeIf { isStunOperationTarget(it.targetId) }
     LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
@@ -756,7 +779,7 @@ fun StunPenetrationScreen(
     }
     DetailShell(
         title = "STUN 穿透",
-        subtitle = "公网 IPv4 · NAT 映射 · Agent 自动保活",
+        subtitle = "",
         onBack = leavePage,
         unifiedTypography = true,
         sectionGap = LabV2.SectionGap,
@@ -843,6 +866,15 @@ fun StunPenetrationScreen(
                 }
             }
         }
+        val filterCounts = stunFilterCounts(snapshot.rules)
+        val visibleRules = snapshot.rules.filter { stunFilter.matches(it.serviceType) }
+        if (snapshot.rules.isNotEmpty()) {
+            StunProtocolFilterBar(
+                counts = filterCounts,
+                selected = stunFilter,
+                onSelect = { stunFilter = it },
+            )
+        }
         if (loading && snapshot.rules.isEmpty()) {
             LabCoreCard(compact = true) {
                 Text("正在同步", style = LabTypography.Supporting)
@@ -862,7 +894,7 @@ fun StunPenetrationScreen(
                 Text("STUN 规则状态暂未同步", style = LabTypography.Supporting, color = LabV2.InkMuted)
             }
         } else {
-            snapshot.rules.forEach { rule ->
+            visibleRules.forEach { rule ->
                 StunRuleCard(
                     rule = rule,
                     agentOnline = snapshot.agentOnline,
@@ -1063,14 +1095,68 @@ fun StunPenetrationScreen(
 }
 
 @Composable private fun StunIntro(agentOnline: Boolean, agentLastSeenAt: String, loading: Boolean, onRefresh: () -> Unit, onAdd: () -> Unit) {
-    LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LabV2ToolIcon(Icons.Rounded.Public, StunBlue, size = 40)
+    Box(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(
+            androidx.compose.ui.graphics.Brush.linearGradient(
+                listOf(Color(0xFFE8F4FD), Color(0xFFF5FAFF)),
+            ),
+        ).border(1.dp, Color(0xFFDCEAF6), RoundedCornerShape(20.dp)),
+    ) {
+        androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+            val wave = androidx.compose.ui.graphics.Path().apply {
+                moveTo(size.width * .55f, size.height)
+                quadraticTo(size.width * .72f, size.height * .42f, size.width * .86f, size.height * .72f)
+                quadraticTo(size.width * .95f, size.height * .92f, size.width, size.height * .55f)
+                lineTo(size.width, size.height)
+                close()
+            }
+            drawPath(wave, Color(0xFFD4E9FB).copy(alpha = .55f))
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Color.White),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.foundation.Canvas(Modifier.size(24.dp)) {
+                    val shield = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(size.width * .5f, size.height * .10f)
+                        lineTo(size.width * .86f, size.height * .28f)
+                        lineTo(size.width * .86f, size.height * .56f)
+                        quadraticTo(size.width * .86f, size.height * .82f, size.width * .5f, size.height * .94f)
+                        quadraticTo(size.width * .14f, size.height * .82f, size.width * .14f, size.height * .56f)
+                        lineTo(size.width * .14f, size.height * .28f)
+                        close()
+                    }
+                    drawPath(shield, StunBlue)
+                    val check = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(size.width * .33f, size.height * .52f)
+                        lineTo(size.width * .46f, size.height * .65f)
+                        lineTo(size.width * .70f, size.height * .38f)
+                    }
+                    drawPath(
+                        check,
+                        Color.White,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 1.8.dp.toPx(),
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                        ),
+                    )
+                }
+            }
             Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("内网服务 STUN 穿透", style = LabTypography.SectionTitle)
-                val presenceText = if (agentOnline) "Agent 在线" else "Agent 未同步"
-                Text(presenceText, color = if (agentOnline) StunGreen else StunAmber, style = LabTypography.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).background(if (agentOnline) StunGreen else StunAmber, androidx.compose.foundation.shape.CircleShape))
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        if (agentOnline) "Agent 在线" else "Agent 未同步",
+                        color = if (agentOnline) StunGreen else StunAmber,
+                        style = LabTypography.Caption,
+                        maxLines = 1,
+                    )
+                }
                 if (agentLastSeenAt.isNotBlank() && !agentOnline) {
                     Text("最近上报 $agentLastSeenAt", style = LabTypography.Caption, color = LabV2.InkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -1078,16 +1164,98 @@ fun StunPenetrationScreen(
             IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(34.dp)) {
                 LabRefreshIcon(loading, Modifier.size(20.dp), StunBlue)
             }
-            OutlinedButton(
-                onClick = onAdd,
-                shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
-                modifier = Modifier.height(36.dp),
+            Box(Modifier.size(1.dp, 30.dp).background(Color(0xFFD5E3F0)))
+            Box(
+                Modifier.size(34.dp).clip(androidx.compose.foundation.shape.CircleShape).background(StunBlue).clickable(onClick = onAdd),
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.Add, null, Modifier.size(16.dp), tint = StunBlue); Spacer(Modifier.width(3.dp)); Text("新建", style = LabTypography.CompactButton.copy(color = StunBlue))
+                Icon(Icons.Rounded.Add, "新增", Modifier.size(19.dp), tint = Color.White)
             }
         }
+    }
+}
+
+@Composable private fun StunProtocolFilterBar(
+    counts: Map<StunProtocolFilter, Int>,
+    selected: StunProtocolFilter,
+    onSelect: (StunProtocolFilter) -> Unit,
+) {
+    val order = listOf(StunProtocolFilter.ALL, StunProtocolFilter.HTTPS, StunProtocolFilter.HTTP, StunProtocolFilter.SSH, StunProtocolFilter.MORE)
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(99.dp)).background(Color.White)
+            .border(1.dp, Color(0xFFE2ECF5), RoundedCornerShape(99.dp))
+            .padding(horizontal = 5.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        order.forEachIndexed { index, filter ->
+            val active = filter == selected
+            val count = counts[filter] ?: 0
+            val itemBase = Modifier.weight(1f).height(34.dp).clip(RoundedCornerShape(99.dp))
+            val itemModifier = if (active) {
+                itemBase.background(Brush.linearGradient(listOf(Color(0xFF3A8EE6), Color(0xFF1C6FC4))))
+            } else {
+                itemBase
+            }.clickable { onSelect(filter) }
+            Row(modifier = itemModifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                Text(
+                    filter.label,
+                    color = if (active) Color.White else Color(0xFF61758A),
+                    style = LabTypography.Caption.copy(fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium),
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(3.dp))
+                Box(
+                    Modifier.size(20.dp).clip(RoundedCornerShape(99.dp))
+                        .background(if (active) Color.White.copy(alpha = .88f) else Color(0xFFEFF4F9)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "$count",
+                        color = if (active) Color(0xFF2F86E0) else Color(0xFF61758A),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            if (index < order.lastIndex) Box(Modifier.size(1.dp, 20.dp).background(Color(0xFFE7EEF6)))
+        }
+    }
+}
+
+/** 地址记录：圆形时钟 + 回溯箭头。 */
+@Composable private fun StunHistoryIcon(color: Color, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(1.8.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        drawCircle(color, radius = size.minDimension * .38f, style = stroke)
+        drawLine(color, Offset(size.width * .5f, size.height * .27f), Offset(size.width * .5f, size.height * .5f), strokeWidth = 1.8.dp.toPx())
+        drawLine(color, Offset(size.width * .5f, size.height * .5f), Offset(size.width * .64f, size.height * .58f), strokeWidth = 1.8.dp.toPx())
+        drawLine(color, Offset(size.width * .75f, size.height * .26f), Offset(size.width * .84f, size.height * .22f), strokeWidth = 1.8.dp.toPx())
+        drawLine(color, Offset(size.width * .75f, size.height * .26f), Offset(size.width * .78f, size.height * .35f), strokeWidth = 1.8.dp.toPx())
+    }
+}
+
+/** 快捷访问：圆形罗盘 + 方向指针。 */
+@Composable private fun StunCompassIcon(outline: Color, needle: Color, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(1.8.dp.toPx())
+        drawCircle(outline, radius = size.minDimension * .38f, style = stroke)
+        val pointer = androidx.compose.ui.graphics.Path().apply {
+            moveTo(size.width * .62f, size.height * .36f)
+            lineTo(size.width * .56f, size.height * .56f)
+            lineTo(size.width * .36f, size.height * .62f)
+            lineTo(size.width * .44f, size.height * .44f)
+            close()
+        }
+        drawPath(pointer, needle)
+    }
+}
+
+/** 复制：两张错位圆角文档。 */
+@Composable private fun StunCopyIcon(outline: Color, accent: Color, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(1.6.dp.toPx())
+        drawRoundRect(outline, androidx.compose.ui.geometry.Offset(size.width * .04f, size.height * .18f), Size(size.width * .62f, size.height * .68f), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), style = stroke)
+        drawRoundRect(accent, androidx.compose.ui.geometry.Offset(size.width * .32f, size.height * .04f), Size(size.width * .62f, size.height * .68f), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), style = stroke)
     }
 }
 
